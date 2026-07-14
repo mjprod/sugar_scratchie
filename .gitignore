@@ -1,0 +1,46 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Dependencies / virtualenvs
+node_modules/
+.venv/
+.venv311/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build / tooling
+dist/
+build/
+*.tsbuildinfo
+.vite/
+.playwright-mcp/
+
+# Local / temp artifacts
+.tmp/
+.video-backups/
+.DS_Store
+*.log
+.cache/
+
+# Local media backups / originals (keep app assets under public/)
+*.original.mp4
+/ai girl 2.original.mp4
+
+# Accidental empty/junk files
+/vite
+/sugar-scratchie@0.1.0
+
+# Generated ControlNet frames and output
+public/cards/controlnet-frames/
+public/cards/controlnet-output/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
