@@ -338,6 +338,48 @@ def swap_face_on_image_seedream(
     return out
 
 
+def edit_image_scenery_seedream(
+    *,
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    from backend.services.grok import scenery_edit_prompt
+
+    payload = {
+        "prompt": scenery_edit_prompt(theme),
+        "images": [media_url(image, "image/png")],
+        "size": aspect_ratio_to_seedream_size(aspect_ratio),
+        "output_format": "png",
+        "enable_base64_output": False,
+        "enable_sync_mode": False,
+    }
+    run_image_task(SEEDREAM_EDIT_PATH, payload, out, label="seedream scenery edit")
+    return out
+
+
+def edit_image_scenery(
+    *,
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    from backend.services.grok import scenery_edit_prompt
+
+    payload = {
+        "prompt": scenery_edit_prompt(theme),
+        "image": media_url(image, "image/png"),
+        "aspect_ratio": aspect_ratio,
+        "resolution": "1k",
+        "num_images": 1,
+        "output_format": "png",
+    }
+    run_image_task(IMAGE_EDIT_PATH, payload, out, label="scenery edit")
+    return out
+
+
 def swap_face_on_image(
     *,
     base_image: str | Path,

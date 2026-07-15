@@ -457,22 +457,104 @@ def _motion_energy(path: Path):
     return (energy - energy.mean()) / (energy.std() + 1e-6)
 
 
-def _best_frame_offset(background: Path, foreground: Path) -> tuple[int, float]:
-    """Best integer frame offset k (bg frame i+k pairs with fg frame i) and its correlation."""
+_PAIR_GRID_HZ = 200  # common time grid for cross-fps correlation
+
+
+def _motion_on_grid(path: Path, native_fps: float) -> tuple:
+    """Return (motion_energy_on_200Hz_grid, duration_s).
+
+    Decodes at native rate (no resampling artifacts), computes per-frame motion
+    energy, then interpolates onto a 200Hz time grid so clips at different fps
+    can be compared at aligned time positions.
+    """
     import numpy as np
 
-    bg = _motion_energy(background)
-    fg = _motion_energy(foreground)
-    best_k, best_c = 0, -1.0
-    for k in range(-PAIR_OFFSET_SCAN, PAIR_OFFSET_SCAN + 1):
-        lo_fg = max(0, -k)
-        hi_fg = min(len(fg), len(bg) - k)
-        if hi_fg - lo_fg < 20:
-            continue
-        c = float(np.corrcoef(fg[lo_fg:hi_fg], bg[lo_fg + k : hi_fg + k])[0, 1])
-        if c > best_c:
-            best_k, best_c = k, c
-    return best_k, best_c
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            f"scale={_PAIR_PROBE_W}:{_PAIR_PROBE_H}",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "pipe:1",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    frame_bytes = _PAIR_PROBE_W * _PAIR_PROBE_H
+    if result.returncode != 0 or len(result.stdout) < frame_bytes * 2:
+        raise RuntimeError(
+            f"Failed to decode {path.name} for motion analysis: "
+            f"{(result.stderr or b'').decode('utf-8', errors='replace')}"
+        )
+    count = len(result.stdout) // frame_bytes
+    frames = (
+        np.frombuffer(result.stdout[: count * frame_bytes], dtype=np.uint8)
+        .reshape(count, _PAIR_PROBE_H, _PAIR_PROBE_W)
+        .astype(np.float32)
+    )
+    energy = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+    energy = (energy - energy.mean()) / (energy.std() + 1e-6)
+    # motion sample i is between frames i and i+1 → mid-point time (i+0.5)/fps
+    t = (np.arange(len(energy)) + 0.5) / native_fps
+    dur = count / native_fps
+    grid = np.arange(0, dur, 1.0 / _PAIR_GRID_HZ)
+    return np.interp(grid, t, energy), dur
+
+
+def _best_time_offset(
+    background: Path,
+    bg_fps: float,
+    foreground: Path,
+    fg_fps: float,
+) -> tuple[float, float]:
+    """Best time offset in seconds (bg leads fg by this amount) and its correlation.
+
+    Uses a 200Hz interpolated motion-energy grid so that clips at different fps
+    are compared at matched wall-clock times rather than matched frame indices.
+    Searches offsets up to ±0.5s in 5ms steps.
+    """
+    import numpy as np
+
+    bg_grid, bg_dur = _motion_on_grid(background, bg_fps)
+    fg_grid, fg_dur = _motion_on_grid(foreground, fg_fps)
+
+    step_s = 1.0 / _PAIR_GRID_HZ
+    span = int(0.5 * _PAIR_GRID_HZ)
+    win = int(min(1.5 * _PAIR_GRID_HZ, min(len(bg_grid), len(fg_grid)) // 2))
+
+    # Global best: slide over the full clip in 1.5s windows, take the median offset
+    # of the top-corr windows so a single bad window doesn't dominate.
+    window_bests: list[tuple[int, float]] = []
+    w_step = _PAIR_GRID_HZ // 2
+    for lo in range(0, len(fg_grid) - win, w_step):
+        hi = lo + win
+        best_k, best_c = 0, -9.0
+        for k in range(-span, span + 1):
+            if lo + k < 0 or hi + k > len(bg_grid):
+                continue
+            c = float(np.corrcoef(fg_grid[lo:hi], bg_grid[lo + k : hi + k])[0, 1])
+            if c > best_c:
+                best_k, best_c = k, c
+        if best_c > 0:
+            window_bests.append((best_k, best_c))
+
+    if not window_bests:
+        return 0.0, 0.0
+
+    # Weighted median offset
+    window_bests.sort(key=lambda x: x[1], reverse=True)
+    top = window_bests[: max(1, len(window_bests) // 2 + 1)]
+    offsets = sorted(x[0] for x in top)
+    best_k = offsets[len(offsets) // 2]
+    best_c = float(np.mean([x[1] for x in top]))
+    return best_k * step_s, best_c
 
 
 def ensure_pair_fps_match(background: Path, foreground: Path) -> dict:
@@ -480,11 +562,17 @@ def ensure_pair_fps_match(background: Path, foreground: Path) -> dict:
 
     The foreground is what the tracked mesh (and the scratch layer) follows, so
     it is never touched. When the pair disagrees on fps or frame count, motion
-    correlation first verifies that the clips really are the same content frame
-    for frame (with a possible start offset); the background is then re-stamped
-    at the foreground's fps with a one-to-one frame mapping, dropping any extra
-    frames. If the frames don't pair up, nothing is modified and the report says
-    so — that pair needs regeneration, not retiming.
+    correlation first verifies that the clips really are the same content (at
+    matched wall-clock times, tolerating different fps); the background is then
+    converted to the foreground's fps and trimmed to the same frame count.
+
+    Two cases are handled:
+    - Same fps, different frame count: one-to-one frame remap (no interpolation).
+    - Different fps (e.g. 24 vs 30): proper fps conversion via the ffmpeg `fps`
+      filter (temporal interpolation), then trim to the foreground's frame count.
+
+    If motion correlation is too low at every offset the pair is likely unrelated
+    content; nothing is modified and the report explains the problem.
     """
     bg_timing = probe_video_timing(background)
     fg_timing = probe_video_timing(foreground)
@@ -493,65 +581,129 @@ def ensure_pair_fps_match(background: Path, foreground: Path) -> dict:
     bg_frames = int(bg_timing["frames"])
     fg_frames = int(fg_timing["frames"])
 
-    report = {
+    bg_dur = float(bg_timing["duration"])
+    fg_dur = float(fg_timing["duration"])
+
+    report: dict = {
         "background": str(background),
         "foreground": str(foreground),
         "bg_fps": bg_fps,
         "fg_fps": fg_fps,
         "bg_frames": bg_frames,
         "fg_frames": fg_frames,
+        "bg_duration": round(bg_dur, 4),
+        "fg_duration": round(fg_dur, 4),
         "modified": False,
         "ok": True,
     }
     if abs(bg_fps - fg_fps) < 0.01 and bg_frames == fg_frames:
         return report
 
-    offset, corr = _best_frame_offset(background, foreground)
-    report["frame_offset"] = offset
-    report["motion_corr"] = round(corr, 4)
-    if corr < PAIR_MOTION_CORR_MIN:
+    # Clips with very different durations are almost certainly not the same
+    # content — a 5s background cannot be a valid pair for a 7.5s foreground.
+    max_dur = max(bg_dur, fg_dur)
+    if max_dur > 0 and abs(bg_dur - fg_dur) / max_dur > 0.15:
         report["ok"] = False
         report["reason"] = (
-            f"fps/frame-count mismatch (bg {bg_fps:g}fps/{bg_frames}f vs "
-            f"fg {fg_fps:g}fps/{fg_frames}f) but motion correlation is only "
-            f"{corr:.2f} — frames don't pair up, refusing to retime. "
+            f"duration mismatch too large to auto-retime "
+            f"(bg {bg_dur:.2f}s vs fg {fg_dur:.2f}s, "
+            f"{abs(bg_dur - fg_dur) / max_dur:.0%} apart). "
             "Regenerate this pair."
         )
         print(f"Warning: {report['reason']}")
         return report
 
-    start = max(0, offset)
-    end = min(bg_frames, start + fg_frames)  # exclusive
-    print(
-        f"Pair mismatch: bg {bg_fps:g}fps/{bg_frames}f vs fg {fg_fps:g}fps/{fg_frames}f "
-        f"(offset {offset:+d}, corr {corr:.2f}) — re-stamping background at {fg_fps:g}fps, "
-        f"keeping frames {start}..{end - 1}"
-    )
+    fps_mismatch = abs(bg_fps - fg_fps) >= 0.5
+    offset_s, corr = _best_time_offset(background, bg_fps, foreground, fg_fps)
+    report["time_offset_s"] = round(offset_s, 4)
+    report["motion_corr"] = round(corr, 4)
+
+    if corr < PAIR_MOTION_CORR_MIN:
+        report["ok"] = False
+        report["reason"] = (
+            f"fps/frame-count mismatch (bg {bg_fps:g}fps/{bg_frames}f vs "
+            f"fg {fg_fps:g}fps/{fg_frames}f) but motion correlation is only "
+            f"{corr:.2f} — clips don't look like the same content, refusing to retime. "
+            "Regenerate this pair."
+        )
+        print(f"Warning: {report['reason']}")
+        return report
+
     tmp = background.with_name(f".{background.stem}.fps-tmp{background.suffix}")
-    run_ffmpeg(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(background),
-            "-vf",
-            f"select=between(n\\,{start}\\,{end - 1}),setpts=N/{fg_fps}/TB",
-            "-r",
-            f"{fg_fps}",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            str(tmp),
-        ]
-    )
+
+    if fps_mismatch:
+        # Different fps: use the fps filter for proper temporal conversion, then
+        # trim to the foreground's frame count. A start-frame offset is applied
+        # before the fps filter by seeking with -ss so the bg aligns in time.
+        start_s = max(0.0, offset_s)
+        print(
+            f"Pair fps mismatch: bg {bg_fps:g}fps/{bg_frames}f vs "
+            f"fg {fg_fps:g}fps/{fg_frames}f "
+            f"(time offset {offset_s:+.3f}s, corr {corr:.2f}) — "
+            f"converting background to {fg_fps:g}fps, keeping {fg_frames} frames"
+        )
+        run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-ss",
+                f"{start_s:.6f}",
+                "-i",
+                str(background),
+                "-vf",
+                f"fps={fg_fps},select=between(n\\,0\\,{fg_frames - 1}),setpts=N/{fg_fps}/TB",
+                "-r",
+                f"{fg_fps}",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ]
+        )
+    else:
+        # Same fps, different frame count: one-to-one remap, skip offset frames.
+        offset_frames = round(offset_s * bg_fps)
+        start = max(0, offset_frames)
+        end = min(bg_frames, start + fg_frames)
+        print(
+            f"Pair frame-count mismatch: bg {bg_fps:g}fps/{bg_frames}f vs "
+            f"fg {fg_fps:g}fps/{fg_frames}f "
+            f"(offset {offset_frames:+d} frames, corr {corr:.2f}) — "
+            f"keeping frames {start}..{end - 1}"
+        )
+        run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(background),
+                "-vf",
+                f"select=between(n\\,{start}\\,{end - 1}),setpts=N/{fg_fps}/TB",
+                "-r",
+                f"{fg_fps}",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ]
+        )
+
     tmp.replace(background)
     after = probe_video_timing(background)
     report["modified"] = True

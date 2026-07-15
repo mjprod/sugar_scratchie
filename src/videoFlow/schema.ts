@@ -73,6 +73,12 @@ export function normalizeTheme(theme: string | undefined | null): string {
 
 export function backgroundMotionPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
+  return `Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene and matching lighting. Do not keep the original backdrop. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} scenery throughout.`;
+}
+
+/** Pre-any-bg stock: only asked to replace blank/studio backdrops. */
+export function legacyBlankWallBackgroundMotionPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
   return `Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — replace any blank wall, plain studio, or empty backdrop with a vivid ${scenery} location/scene and matching lighting. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} scenery throughout.`;
 }
 
@@ -124,12 +130,21 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
   const scenery = normalizeTheme(theme);
   if (!stripped) return true;
   if (stripped.endsWith("setting with matching lighting.")) return true;
+  // Older hand-edits that only swapped "blank wall" → "background" are still stock themed templates.
+  if (
+    stripped.includes("Place her in a clearly recognizable ") &&
+    stripped.includes(" environment — replace any background, plain studio, or empty backdrop with a vivid ")
+  ) {
+    return true;
+  }
   return (
     stripped === LEGACY_BACKGROUND_MOTION_PROMPT ||
     stripped === LEGACY_LOCKED_CAMERA_MOTION_PROMPT ||
     stripped === LEGACY_DEFAULT_BACKGROUND_MOTION_PROMPT ||
     stripped === legacySoftBackgroundMotionPromptForTheme(scenery) ||
     stripped === legacySoftBackgroundMotionPromptForTheme(DEFAULT_THEME) ||
+    stripped === legacyBlankWallBackgroundMotionPromptForTheme(scenery) ||
+    stripped === legacyBlankWallBackgroundMotionPromptForTheme(DEFAULT_THEME) ||
     stripped === backgroundMotionPromptForTheme(scenery) ||
     stripped === backgroundMotionPromptForTheme(DEFAULT_THEME)
   );

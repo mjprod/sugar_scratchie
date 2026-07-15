@@ -40,6 +40,26 @@
       "model_id": "asia"
     },
     {
+      "id": "thai_1",
+      "label": "Thai 1",
+      "bottom": "/cards/thai_1/background.mp4",
+      "foreground": "/cards/thai_1/foreground.mp4",
+      "mesh": "thai_1.json",
+      "chroma_key": false,
+      "sort_order": 4,
+      "model_id": "asia"
+    },
+    {
+      "id": "asia_gym",
+      "label": "Asia gym",
+      "bottom": "/cards/asia_gym/background.mp4",
+      "foreground": "/cards/asia_gym/foreground.mp4",
+      "mesh": "asia_gym.json",
+      "chroma_key": false,
+      "sort_order": 5,
+      "model_id": "asia"
+    },
+    {
       "id": "girl_1",
       "label": "Girl 1",
       "bottom": "/cards/girl_1/background.mp4",

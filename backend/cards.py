@@ -326,12 +326,15 @@ def create_card(root: Path, cards_dir: Path, mesh_dir: Path, request: CreateCard
     if card_id == ORIGINAL_ID:
         raise HTTPException(status_code=400, detail="Cannot create a card with id 'original'")
     card_dir = cards_dir / card_id
-    if card_dir.exists():
+    background_dst, foreground_dst = card_paths(root, cards_dir, card_id)
+    # Empty leftover folders (e.g. aborted publish) block create AND update —
+    # list_cards skips dirs without both videos, create_card used to 409 on any dir.
+    if card_dir.exists() and (background_dst.is_file() or foreground_dst.is_file()):
         raise HTTPException(status_code=409, detail=f"Card already exists: {card_id}")
+    card_dir.mkdir(parents=True, exist_ok=True)
 
     background_src = resolve_source(root, request.background)
     foreground_src = resolve_source(root, request.foreground)
-    background_dst, foreground_dst = card_paths(root, cards_dir, card_id)
     copy_video(background_src, background_dst)
     copy_video(foreground_src, foreground_dst)
     write_card_label(card_dir, request.label)

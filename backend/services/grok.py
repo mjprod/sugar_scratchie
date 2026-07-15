@@ -101,11 +101,13 @@ MOTION_ENHANCE_SYSTEM = (
     "every frame — same undertone and lightness, no skin color flicker, no sudden "
     "tanning/paling, no beauty-filter shifts. (5) Prefer a seamless looping boomerang "
     "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
-    "(e.g. police station, beach, neon city), KEEP and STRENGTHEN that: place her in a "
-    "clearly recognizable themed environment and replace a blank/studio/plain-wall "
-    "background when needed. Do NOT strip theme or scenery requests. Do NOT invent "
-    "unrelated wardrobe changes beyond what the user wrote (bikini in step 1 stays a "
-    "bikini). (7) Output ONLY the rewritten prompt, one paragraph, no preamble or quotes.")
+    "(e.g. nurse clinic, hospital room, police station, beach, neon city), KEEP and "
+    "STRENGTHEN that: place her in a clearly recognizable themed environment. Completely "
+    "replace ANY existing background — city skylines, balconies, streets, outdoors, busy "
+    "photos, studio, or plain walls — not only blank backdrops. Do NOT strip theme or "
+    "scenery requests. Do NOT invent unrelated wardrobe changes beyond what the user wrote "
+    "(bikini in step 1 stays a bikini). (7) Output ONLY the rewritten prompt, one "
+    "paragraph, no preamble or quotes.")
 
 DRESS_CAPTION_SYSTEM = (
     "You describe clothing for a video EDIT prompt. Look ONLY at the outfit worn "
@@ -640,6 +642,34 @@ def normalize_background_motion_prompt(prompt: str) -> str:
     if is_stock_background_motion_prompt(prompt):
         return DEFAULT_BACKGROUND_MOTION_PROMPT
     return prompt.strip()
+
+
+def scenery_edit_prompt(theme: str) -> str:
+    scenery = (theme or "").strip() or "warm beach"
+    return (
+        f"Replace the entire background behind the person with a vividly recognizable {scenery} "
+        f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
+        "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
+        "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
+        "body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, "
+        "or reframe. Only change the background scenery."
+    )
+
+
+def edit_image_scenery(
+    *,
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
+    key = api_key()
+    text = scenery_edit_prompt(theme)
+    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}) ...")
+    result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image)
+    _save_image_response(result, out)
+    return out
 
 
 def swap_face_on_image(

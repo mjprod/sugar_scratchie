@@ -150,6 +150,36 @@ def swap_face_on_image(
     )
 
 
+def edit_image_scenery(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
+    route = source_image_route(provider, image_model)
+    if route == "seedream-v5-lite":
+        return wavespeed.edit_image_scenery_seedream(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+        )
+    return _with_xai_fallback(
+        "scenery edit",
+        route,
+        lambda module: module.edit_image_scenery(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+        ),
+    )
+
+
 def image_to_video(
     *,
     provider: AiProvider,

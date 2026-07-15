@@ -52,6 +52,21 @@ type VideoFlowStepState = {
   artifacts: string[];
 };
 
+type StepTiming = {
+  started_at?: number | null;
+  ended_at?: number | null;
+  approved_at?: number | null;
+  duration_seconds?: number | null;
+};
+
+type FlowTimings = {
+  steps: Partial<Record<VideoFlowStepKey, StepTiming>>;
+  flow_started_at?: number | null;
+  completed_at?: number | null;
+  total_duration_seconds?: number | null;
+  total_elapsed_seconds?: number | null;
+};
+
 type VideoFlowState = {
   card_id: string;
   approved: VideoFlowStepKey[];
@@ -59,8 +74,41 @@ type VideoFlowState = {
   complete: boolean;
   mesh_compare?: { path: string; tracker: string; active: boolean }[];
   compress_report?: CompressReport | null;
+  timings?: FlowTimings | null;
   recovered_approvals?: boolean;
 };
+
+function formatTimingDateTime(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatTimingDuration(seconds: number): string {
+  if (seconds < 1) return "<1s";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function stepTimingLabel(timing: StepTiming | undefined): string {
+  if (!timing) return "";
+  const stamp = timing.ended_at ?? timing.approved_at ?? timing.started_at;
+  if (typeof stamp !== "number") return "";
+  const when = formatTimingDateTime(stamp);
+  if (typeof timing.duration_seconds === "number") {
+    return `${when} · ${formatTimingDuration(timing.duration_seconds)}`;
+  }
+  if (timing.started_at && !timing.ended_at) return `${when} · running…`;
+  return when;
+}
 
 function CompressReportPanel({ report }: { report: CompressReport }) {
   const beforeBg = report.before?.background;
@@ -1308,8 +1356,10 @@ export function RunMode(props: RunModeProps) {
   }
 
   const cardApproved = Boolean(flowState?.approved?.includes("card"));
-  const needsSourceImage =
-    actionStep === "background" || actionStep === "dress" || actionStep === "card";
+  const cardArtifactsReady = Boolean(
+    flowState?.steps.card?.artifacts?.filter(Boolean).length === 2,
+  );
+  const needsSourceImage = actionStep === "background" || actionStep === "dress";
 
   const canRunActionStep = Boolean(
     actionStep &&
@@ -1516,6 +1566,7 @@ export function RunMode(props: RunModeProps) {
             const status = stepListStatus(step);
             const node = flow.nodes.find((entry) => entry.step === step);
             const badge = flowStepBadge(status);
+            const timingLabel = stepTimingLabel(flowState?.timings?.steps?.[step]);
             return (
               <button
                 key={step}
@@ -1535,6 +1586,9 @@ export function RunMode(props: RunModeProps) {
                 <span className="video-flow-run-step-body">
                   <strong>{node?.title ?? step}</strong>
                   <span>{node?.subtitle ?? step}</span>
+                  {timingLabel ? (
+                    <span className="video-flow-run-step-time">{timingLabel}</span>
+                  ) : null}
                 </span>
                 <Badge color={badge.color} size="1">
                   {badge.label}
@@ -1542,6 +1596,33 @@ export function RunMode(props: RunModeProps) {
               </button>
             );
           })}
+          {typeof flowState?.timings?.total_duration_seconds === "number" ? (
+            <div className="video-flow-run-total-time">
+              <Text size="1" color="gray" weight="medium">
+                {flowState.complete ? "Card created in" : "Time spent so far"}
+              </Text>
+              <Text size="2" weight="bold">
+                {formatTimingDuration(flowState.timings.total_duration_seconds)}
+                <Text size="1" color="gray" weight="regular">
+                  {" "}
+                  active step time
+                </Text>
+              </Text>
+              {typeof flowState.timings.flow_started_at === "number" ? (
+                <Text size="1" color="gray">
+                  Started {formatTimingDateTime(flowState.timings.flow_started_at)}
+                </Text>
+              ) : null}
+              {typeof flowState.timings.completed_at === "number" ? (
+                <Text size="1" color="gray">
+                  Finished {formatTimingDateTime(flowState.timings.completed_at)}
+                  {typeof flowState.timings.total_elapsed_seconds === "number"
+                    ? ` · ${formatTimingDuration(flowState.timings.total_elapsed_seconds)} start to finish`
+                    : ""}
+                </Text>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
 
         <section className="video-flow-run-detail">
@@ -1917,10 +1998,10 @@ export function RunMode(props: RunModeProps) {
               />
             </Field>
             <Text color="gray" size="2">
-              Locked camera + stable skin: the backend upgrades legacy prompts and enhances the
-              motion text (when XAI_API_KEY is set) so framing, subject size, and skin tone stay
-              consistent with the source still — match the blue reference crop in your upload for
-              best results.
+              Theme scenery is baked into a still first (image edit), then animated — image-to-video
+              alone keeps city/balcony/outdoor backdrops. Locked camera + skin continuity are
+              enhanced when XAI_API_KEY is set. Click Apply theme on Setup if the prompt still looks
+              like the old blank-wall wording.
             </Text>
           </Flex>
         ) : null}
@@ -1951,10 +2032,10 @@ export function RunMode(props: RunModeProps) {
               >
                 <Select.Trigger />
                 <Select.Content>
-                  <Select.Item value="wan-2.2-video-edit">
-                    WaveSpeed WAN 2.2 Video Edit (recommended)
-                  </Select.Item>
                   <Select.Item value="grok-imagine">x.ai Grok Imagine</Select.Item>
+                  <Select.Item value="wan-2.2-video-edit">
+                    WaveSpeed WAN 2.2 Video Edit
+                  </Select.Item>
                 </Select.Content>
               </Select.Root>
             </Field>
@@ -2101,7 +2182,9 @@ export function RunMode(props: RunModeProps) {
                 onClick={() => void importManualClips()}
               >
                 {importBusy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
-                {cardApproved ? "Replace clips & unlock mesh" : "Import clips & unlock mesh"}
+                {cardApproved && cardArtifactsReady
+                  ? "Replace clips & unlock mesh"
+                  : "Import clips & unlock mesh"}
               </Button>
               {!cardId.trim() || !cardLabel.trim() ? (
                 <Text color="gray" size="2">
@@ -2109,10 +2192,18 @@ export function RunMode(props: RunModeProps) {
                 </Text>
               ) : null}
             </Flex>
-            {cardApproved ? (
+            {cardApproved && cardArtifactsReady ? (
               <Text color="gray" size="2">
                 Card already published. Re-importing replaces both videos and keeps mesh ready.
               </Text>
+            ) : cardApproved && !cardArtifactsReady ? (
+              <Callout.Root color="amber">
+                <Callout.Text>
+                  Card is marked done but <Code>public/cards/{cardId || "<id>"}/</Code> is missing
+                  the videos. Click <strong>Run step</strong> to republish from the approved
+                  clips, or import both files above.
+                </Callout.Text>
+              </Callout.Root>
             ) : (
               <Text color="gray" size="2">
                 Or run the AI pipeline (Setup → image to video → dress → Create card) instead.

@@ -1372,6 +1372,20 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.video-flow-run-step-time {
+  color: var(--gray-10);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-flow-run-total-time {
+  border-top: 1px solid var(--gray-5);
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 10px 4px 2px;
+}
+
 .video-flow-run-detail {
   min-width: 0;
 }
