@@ -730,13 +730,26 @@ const CHEST_SMOOTH = 0.08;
 // get its current canvas-pixel location (the mesh UV grid is regular 0..1).
 // sampleMeshUvToWorld lives in meshGeometry.ts
 
-// Drift past this (seconds) is a genuine discontinuity (loop wrap) and is the
-// only case we correct with a hard seek — seeks stall the decoder, and on
+// Drift past this (seconds) is a genuine discontinuity (loop wrap) and is
+// corrected immediately with a hard seek. Seeks stall the decoder, and on
 // Safari, whose currentTime is coarse, a low threshold makes us seek constantly
-// (every stale reading crosses it) which reads as continuous lag. Keep it high:
-// a normal startup offset is closed smoothly by the gentle rate steering below,
-// not by seeking.
+// (every stale reading crosses it) which reads as continuous lag — so keep it
+// high.
 const HARD_SEEK_DRIFT = 0.45;
+
+// Smaller but persistent drift (a startup offset between the two play() calls,
+// a decode stall, tab-suspend catch-up) is closed with a rare one-shot seek
+// instead: the drift must hold past SOFT_SEEK_DRIFT for SOFT_SEEK_CONFIRM_MS
+// before we act, and corrections are spaced by SOFT_SEEK_COOLDOWN_MS, so a
+// single coarse/stale currentTime reading can never trigger a seek storm.
+const SOFT_SEEK_DRIFT = 0.09;
+const SOFT_SEEK_CONFIRM_MS = 400;
+const SOFT_SEEK_COOLDOWN_MS = 2000;
+
+const videoSyncState = new WeakMap<
+  HTMLVideoElement,
+  { driftSince: number; lastSeekAt: number }
+>();
 
 function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
   if (source.paused && !target.paused) {
@@ -760,19 +773,44 @@ function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
   // and pile on more seeks — a seek storm that looks like a hard stutter.
   if (target.seeking) return;
 
-  // Let the foreground free-run at 1×. The two clips are near-identical length,
-  // so left alone they stay visually locked. Actively steering the foreground
-  // (changing playbackRate / seeking it) knocks Safari's video decoder off its
-  // smooth-decode path, which starves the foreground to a few fps and makes it
-  // fall behind — the opposite of what the steering is trying to do.
+  // Let the foreground free-run at 1×. Continuously steering playbackRate
+  // knocks Safari's video decoder off its smooth-decode path, which starves the
+  // foreground to a few fps and makes it fall behind — the opposite of what the
+  // steering is trying to do. Corrections below are seeks only, and rare.
   if (target.playbackRate !== 1) target.playbackRate = 1;
 
   const targetTime = foregroundTimeFromBottom(source, target);
   const drift = targetTime - target.currentTime;
+  const now = performance.now();
+  let state = videoSyncState.get(target);
+  if (!state) {
+    state = { driftSince: 0, lastSeekAt: 0 };
+    videoSyncState.set(target, state);
+  }
 
-  // Only correct a genuine discontinuity (a loop wrap), with a single snap.
+  // A genuine discontinuity (loop wrap): snap immediately.
   if (Math.abs(drift) > HARD_SEEK_DRIFT) {
     target.currentTime = targetTime;
+    state.driftSince = 0;
+    state.lastSeekAt = now;
+    return;
+  }
+
+  // Sub-wrap drift: require it to persist before correcting, and never correct
+  // more often than the cooldown, so coarse/stale readings can't cause a storm.
+  if (Math.abs(drift) > SOFT_SEEK_DRIFT) {
+    if (state.driftSince === 0) {
+      state.driftSince = now;
+    } else if (
+      now - state.driftSince >= SOFT_SEEK_CONFIRM_MS &&
+      now - state.lastSeekAt >= SOFT_SEEK_COOLDOWN_MS
+    ) {
+      target.currentTime = targetTime;
+      state.driftSince = 0;
+      state.lastSeekAt = now;
+    }
+  } else {
+    state.driftSince = 0;
   }
 }
 

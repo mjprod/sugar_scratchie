@@ -401,6 +401,166 @@ def trim_video_frames(
     }
 
 
+# --- background/foreground pair reconciliation -------------------------------
+#
+# The prototype plays the pair in two free-running <video> elements, so both
+# clips must carry the same fps stamp and the same frame count. Generators
+# sometimes return the same content frames with a different fps (the pair then
+# drifts apart linearly, ~1/fps seconds per second of playback, resetting at
+# each loop) or with extra padding frames on one clip (the pair then desyncs
+# around the loop point). Both defects are invisible to duration-only checks.
+
+# Frames are considered paired only if their motion-energy signals correlate at
+# least this strongly at the best integer offset.
+PAIR_MOTION_CORR_MIN = 0.6
+# How many frames of start offset to scan for when pairing the clips.
+PAIR_OFFSET_SCAN = 12
+_PAIR_PROBE_W = 48
+_PAIR_PROBE_H = 84
+
+
+def _motion_energy(path: Path):
+    """Per-frame motion energy: mean |frame[i] - frame[i-1]| over a tiny gray decode."""
+    import numpy as np
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            f"scale={_PAIR_PROBE_W}:{_PAIR_PROBE_H}",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "pipe:1",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    frame_bytes = _PAIR_PROBE_W * _PAIR_PROBE_H
+    if result.returncode != 0 or len(result.stdout) < frame_bytes * 2:
+        raise RuntimeError(
+            f"Failed to decode {path.name} for motion analysis: "
+            f"{(result.stderr or b'').decode('utf-8', errors='replace')}"
+        )
+    count = len(result.stdout) // frame_bytes
+    frames = (
+        np.frombuffer(result.stdout[: count * frame_bytes], dtype=np.uint8)
+        .reshape(count, _PAIR_PROBE_H, _PAIR_PROBE_W)
+        .astype(np.float32)
+    )
+    energy = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+    return (energy - energy.mean()) / (energy.std() + 1e-6)
+
+
+def _best_frame_offset(background: Path, foreground: Path) -> tuple[int, float]:
+    """Best integer frame offset k (bg frame i+k pairs with fg frame i) and its correlation."""
+    import numpy as np
+
+    bg = _motion_energy(background)
+    fg = _motion_energy(foreground)
+    best_k, best_c = 0, -1.0
+    for k in range(-PAIR_OFFSET_SCAN, PAIR_OFFSET_SCAN + 1):
+        lo_fg = max(0, -k)
+        hi_fg = min(len(fg), len(bg) - k)
+        if hi_fg - lo_fg < 20:
+            continue
+        c = float(np.corrcoef(fg[lo_fg:hi_fg], bg[lo_fg + k : hi_fg + k])[0, 1])
+        if c > best_c:
+            best_k, best_c = k, c
+    return best_k, best_c
+
+
+def ensure_pair_fps_match(background: Path, foreground: Path) -> dict:
+    """Conform the background clip to the foreground's fps stamp and frame count.
+
+    The foreground is what the tracked mesh (and the scratch layer) follows, so
+    it is never touched. When the pair disagrees on fps or frame count, motion
+    correlation first verifies that the clips really are the same content frame
+    for frame (with a possible start offset); the background is then re-stamped
+    at the foreground's fps with a one-to-one frame mapping, dropping any extra
+    frames. If the frames don't pair up, nothing is modified and the report says
+    so — that pair needs regeneration, not retiming.
+    """
+    bg_timing = probe_video_timing(background)
+    fg_timing = probe_video_timing(foreground)
+    bg_fps = float(bg_timing["fps"])
+    fg_fps = float(fg_timing["fps"])
+    bg_frames = int(bg_timing["frames"])
+    fg_frames = int(fg_timing["frames"])
+
+    report = {
+        "background": str(background),
+        "foreground": str(foreground),
+        "bg_fps": bg_fps,
+        "fg_fps": fg_fps,
+        "bg_frames": bg_frames,
+        "fg_frames": fg_frames,
+        "modified": False,
+        "ok": True,
+    }
+    if abs(bg_fps - fg_fps) < 0.01 and bg_frames == fg_frames:
+        return report
+
+    offset, corr = _best_frame_offset(background, foreground)
+    report["frame_offset"] = offset
+    report["motion_corr"] = round(corr, 4)
+    if corr < PAIR_MOTION_CORR_MIN:
+        report["ok"] = False
+        report["reason"] = (
+            f"fps/frame-count mismatch (bg {bg_fps:g}fps/{bg_frames}f vs "
+            f"fg {fg_fps:g}fps/{fg_frames}f) but motion correlation is only "
+            f"{corr:.2f} — frames don't pair up, refusing to retime. "
+            "Regenerate this pair."
+        )
+        print(f"Warning: {report['reason']}")
+        return report
+
+    start = max(0, offset)
+    end = min(bg_frames, start + fg_frames)  # exclusive
+    print(
+        f"Pair mismatch: bg {bg_fps:g}fps/{bg_frames}f vs fg {fg_fps:g}fps/{fg_frames}f "
+        f"(offset {offset:+d}, corr {corr:.2f}) — re-stamping background at {fg_fps:g}fps, "
+        f"keeping frames {start}..{end - 1}"
+    )
+    tmp = background.with_name(f".{background.stem}.fps-tmp{background.suffix}")
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(background),
+            "-vf",
+            f"select=between(n\\,{start}\\,{end - 1}),setpts=N/{fg_fps}/TB",
+            "-r",
+            f"{fg_fps}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+    )
+    tmp.replace(background)
+    after = probe_video_timing(background)
+    report["modified"] = True
+    report["bg_fps_after"] = float(after["fps"])
+    report["bg_frames_after"] = int(after["frames"])
+    log_video("Pair-synced", background)
+    return report
+
+
 def target_width_for_preset(preset: CompressPreset, source_width: int | None = None) -> int:
     del source_width
     return delivery_size(preset)[0]
@@ -563,6 +723,8 @@ def finalize_card_videos(
     fg_source = foreground_src if foreground_src.is_file() else foreground_dst
     bg_meta = probe_video(motion_ref)
     fg_meta = probe_video(fg_source)
+    pair_sync = ensure_pair_fps_match(background_dst, foreground_dst)
+
     card_bg_meta = probe_video(background_dst)
     card_fg_meta = probe_video(foreground_dst)
     duration_delta = abs(float(card_bg_meta["duration"]) - float(card_fg_meta["duration"]))
@@ -647,6 +809,7 @@ def finalize_card_videos(
         "fit": "cover-crop",
         "crf": int(spec["crf"]),
         "duration_delta_before": round(duration_delta, 3),
+        "pair_sync": pair_sync,
         "aspect_ok": aspect_ok,
         "before": before,
         "after": after,

@@ -41,6 +41,7 @@ from backend.services.mesh_tune import build_mesh_tracking_env, mesh_tune_from_d
 from backend.services.video_prep import (
     align_clip_to_reference,
     detect_white_edge_frames,
+    ensure_pair_fps_match,
     finalize_card_videos,
     normalize_compress_preset,
     trim_video_frames,
@@ -704,6 +705,14 @@ def _publish_card(
     paths: dict[str, Path],
     model_id: str | None = None,
 ) -> None:
+    # The published pair must share one clock (same fps stamp + frame count) or
+    # the two free-running <video> elements drift apart during playback. Catch
+    # generator fps/padding defects here, before the clips are copied to the card.
+    try:
+        ensure_pair_fps_match(paths["background_raw"], paths["foreground_dressed"])
+    except RuntimeError as exc:
+        print(f"Warning: pair fps check failed for {card_id}: {exc}")
+
     work = paths["background_raw"].parent
     effective_model_id = model_id or _draft_model_id(work)
     background = str(paths["background_raw"].relative_to(ROOT))
