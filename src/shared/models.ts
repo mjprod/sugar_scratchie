@@ -2,6 +2,7 @@ import { api } from "./api";
 import {
   DEFAULT_BACKGROUND_MOTION_PROMPT,
   DEFAULT_DRESS_PROMPT,
+  DEFAULT_THEME,
 } from "../videoFlow/schema";
 
 export type ModelInfo = {
@@ -76,6 +77,7 @@ export async function createMotionCardDraft(
     method: "POST",
     body: JSON.stringify({
       image: "",
+      theme: DEFAULT_THEME,
       background_motion_prompt: DEFAULT_BACKGROUND_MOTION_PROMPT,
       foreground_motion_prompt: DEFAULT_BACKGROUND_MOTION_PROMPT,
       dress_prompt: DEFAULT_DRESS_PROMPT,

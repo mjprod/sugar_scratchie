@@ -62,8 +62,50 @@ export type VideoFlowJson = {
 export const FLOW_NODE_WIDTH = 176;
 export const FLOW_NODE_HEIGHT = 88;
 
-export const DEFAULT_BACKGROUND_MOTION_PROMPT =
-  "Animate this portrait into a seamless looping boomerang video. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep the exact same framing and subject size as the input image in every frame. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, warm beach lighting.";
+export const DEFAULT_THEME = "warm beach";
+
+export function normalizeTheme(theme: string | undefined | null): string {
+  const stripped = (theme ?? "").trim();
+  return stripped || DEFAULT_THEME;
+}
+
+export function backgroundMotionPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — replace any blank wall, plain studio, or empty backdrop with a vivid ${scenery} location/scene and matching lighting. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} scenery throughout.`;
+}
+
+/** Weaker themed motion prompt before explicit scenery replacement. */
+export function legacySoftBackgroundMotionPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Animate this portrait into a seamless looping boomerang video. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep the exact same framing and subject size as the input image in every frame. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} setting with matching lighting.`;
+}
+
+export function dressPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace her entire bikini with a sexy glamorous ${scenery} costume (complete top and bottom — unmistakably ${scenery}; if this is a role or profession, dress her in that ${scenery} uniform/outfit). Do not leave any bikini. Do not use a generic emerald evening gown or unrelated fashion dress. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+}
+
+/** Prefer this when a dress reference image is attached. */
+export function dressPromptForThemeWithReference(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Match the dress reference image outfit exactly (colors, cut, accessories, materials, glow). Replace her entire bikini with that full costume (complete top and bottom). Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+}
+
+/** Earlier stock dress prompt: emerald satin + theme only in the scenery clause. */
+export function legacyEmeraldDressPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+}
+
+/** Softer themed prompt before costume/role wording was added. */
+export function legacySoftThemeDressPromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace her entire bikini with a full dress-up outfit that matches the ${scenery} theme (complete top and bottom — glamorous, cohesive with the setting, not a bikini). Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+}
+
+/** Pre-theme stock dress prompt that referenced "beach background". */
+export const LEGACY_DEFAULT_DRESS_PROMPT =
+  "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.";
 
 export const LEGACY_BACKGROUND_MOTION_PROMPT =
   "Animate this portrait into a seamless looping boomerang video. She wears a bikini, gentle swaying body motion, steady camera, perfect loop, warm beach lighting.";
@@ -71,9 +113,57 @@ export const LEGACY_BACKGROUND_MOTION_PROMPT =
 export const LEGACY_LOCKED_CAMERA_MOTION_PROMPT =
   "Animate this portrait into a seamless looping boomerang video. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep the exact same framing and subject size as the input image in every frame. Perfect loop, warm beach lighting.";
 
-export const DEFAULT_DRESS_PROMPT =
-  "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.";
+/** Pre-theme stock default that ended with fixed "warm beach lighting." */
+export const LEGACY_DEFAULT_BACKGROUND_MOTION_PROMPT =
+  "Animate this portrait into a seamless looping boomerang video. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep the exact same framing and subject size as the input image in every frame. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, warm beach lighting.";
 
+export function isStockBackgroundMotionPromptText(prompt: string, theme: string): boolean {
+  const stripped = prompt.trim();
+  const scenery = normalizeTheme(theme);
+  if (!stripped) return true;
+  if (stripped.endsWith("setting with matching lighting.")) return true;
+  return (
+    stripped === LEGACY_BACKGROUND_MOTION_PROMPT ||
+    stripped === LEGACY_LOCKED_CAMERA_MOTION_PROMPT ||
+    stripped === LEGACY_DEFAULT_BACKGROUND_MOTION_PROMPT ||
+    stripped === legacySoftBackgroundMotionPromptForTheme(scenery) ||
+    stripped === legacySoftBackgroundMotionPromptForTheme(DEFAULT_THEME) ||
+    stripped === backgroundMotionPromptForTheme(scenery) ||
+    stripped === backgroundMotionPromptForTheme(DEFAULT_THEME)
+  );
+}
+
+/** True when the dress prompt is still a stock/legacy template (safe to overwrite from theme). */
+export function isStockDressPromptText(prompt: string, theme: string): boolean {
+  const stripped = prompt.trim();
+  const scenery = normalizeTheme(theme);
+  const legacyDressNoSkin =
+    "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. No zoom or camera move.";
+  if (!stripped) return true;
+  if (stripped.startsWith("Replace her entire bikini with a fitted emerald satin dress")) return true;
+  if (stripped.startsWith("Replace her entire bikini with a full dress-up outfit that matches the ")) {
+    return true;
+  }
+  if (stripped.startsWith("Replace her entire bikini with a glamorous ")) return true;
+  if (stripped.startsWith("Replace her entire bikini with a sexy glamorous ")) return true;
+  if (stripped.startsWith("Match the dress reference image outfit exactly")) return true;
+  return (
+    stripped === legacyDressNoSkin ||
+    stripped === LEGACY_DEFAULT_DRESS_PROMPT ||
+    stripped === legacyEmeraldDressPromptForTheme(scenery) ||
+    stripped === legacyEmeraldDressPromptForTheme(DEFAULT_THEME) ||
+    stripped === legacySoftThemeDressPromptForTheme(scenery) ||
+    stripped === legacySoftThemeDressPromptForTheme(DEFAULT_THEME) ||
+    stripped === dressPromptForTheme(scenery) ||
+    stripped === dressPromptForTheme(DEFAULT_THEME) ||
+    stripped === dressPromptForThemeWithReference(scenery) ||
+    stripped === dressPromptForThemeWithReference(DEFAULT_THEME)
+  );
+}
+
+export const DEFAULT_BACKGROUND_MOTION_PROMPT = backgroundMotionPromptForTheme(DEFAULT_THEME);
+
+export const DEFAULT_DRESS_PROMPT = dressPromptForTheme(DEFAULT_THEME);
 export type CompressPreset = "mobile" | "hd" | "master";
 
 export const COMPRESS_PRESETS: {
@@ -297,14 +387,13 @@ function migrateLockedCameraDefaults(flow: Partial<VideoFlowJson>): Partial<Vide
     !motion ||
     motion === LEGACY_BACKGROUND_MOTION_PROMPT ||
     motion === LEGACY_LOCKED_CAMERA_MOTION_PROMPT ||
+    motion === LEGACY_DEFAULT_BACKGROUND_MOTION_PROMPT ||
     motion === DEFAULT_BACKGROUND_MOTION_PROMPT
   ) {
     nextDefaults.background_motion_prompt = DEFAULT_BACKGROUND_MOTION_PROMPT;
     changed = true;
   }
-  const legacyDress =
-    "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. No zoom or camera move.";
-  if (!dress || dress === legacyDress || dress === DEFAULT_DRESS_PROMPT) {
+  if (isStockDressPromptText(dress, DEFAULT_THEME)) {
     nextDefaults.dress_prompt = DEFAULT_DRESS_PROMPT;
     changed = true;
   }

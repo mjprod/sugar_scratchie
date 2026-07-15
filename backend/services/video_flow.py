@@ -412,11 +412,9 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         request_id_sidecar(rel_path).unlink(missing_ok=True)
 
     if step == "card":
-        card_dir = CARDS_DIR / card_id
-        if card_dir.exists():
-            for child in card_dir.iterdir():
-                child.unlink(missing_ok=True)
-            card_dir.rmdir()
+        # Keep published card videos on disk so a failed remake (or dress remake)
+        # does not blank the live gallery. Re-running Create card overwrites them.
+        pass
 
     if step == "mesh":
         for tracker in MESH_TRACKERS:
@@ -822,10 +820,14 @@ def save_flow_draft(
     dress_video_model: str = "wan-2.2-video-edit",
     compress_preset: str = "mobile",
     model_id: str = "",
+    theme: str = "",
 ) -> dict:
     work = work_dir(card_id)
+    existing = read_flow_draft(card_id) or {}
+    saved_theme = (theme or "").strip() or str(existing.get("theme") or "").strip()
     draft = {
         "image": str(image),
+        "theme": saved_theme,
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -1171,6 +1173,7 @@ def run_video_flow_step(
     dress_video_model: str = "wan-2.2-video-edit",
     compress_preset: str = "mobile",
     model_id: str = "",
+    theme: str = "",
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -1186,6 +1189,7 @@ def run_video_flow_step(
 
     save_flow_draft(
         image=image,
+        theme=theme,
         background_motion_prompt=background_motion_prompt,
         foreground_motion_prompt=background_motion_prompt,
         dress_prompt=dress_prompt,
@@ -1263,7 +1267,13 @@ def run_video_flow_step(
         )
     elif step == "dress":
         if not output_video_ready(paths["background_raw"]):
-            raise RuntimeError("Background clip missing — run the bikini step first.")
+            # Work-dir raw is often cleaned up after publish; restore from the card.
+            card_bg = CARDS_DIR / card_id / "background.mp4"
+            if output_video_ready(card_bg):
+                shutil.copy2(card_bg, paths["background_raw"])
+                print(f"Restored background clip from published card: {card_bg}")
+            else:
+                raise RuntimeError("Background clip missing — run the bikini step first.")
         print("Dress edit uses the approved background clip as input (same motion and scenery).")
         if dress_model == "wan-2.2-video-edit":
             print("Dress video: WaveSpeed WAN 2.2 Video Edit")

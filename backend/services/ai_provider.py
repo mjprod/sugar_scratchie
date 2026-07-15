@@ -215,22 +215,25 @@ def edit_video(
     if dress_video_model == "wan-2.2-video-edit":
         final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""
+        caption = ""
         if (enhance or reference_str) and xai_key_available():
             key = grok.api_key()
             if reference_str:
                 print(f"Captioning dress reference image via {grok.vision_model()} ...")
-                caption = grok.describe_outfit(reference_str, key)
+                caption = grok.describe_outfit(reference_str, key) or ""
                 if caption:
                     print(f"Reference outfit caption:\n  {caption}\n")
-                    final_prompt = (
-                        f"{final_prompt.rstrip()}\n\n"
-                        f"Outfit from the reference image — match shape, color, and emissive "
-                        f"glow/shine intensity exactly: {caption}"
-                    )
             if enhance:
                 print(f"Enhancing dress prompt via {grok.chat_model()} (for WAN edit) ...")
                 final_prompt = grok.enhance_prompt(final_prompt, key, system=enhance_system)
                 print(f"Enhanced dress prompt:\n  {final_prompt}\n")
+            # Append reference LAST so the caption wins over any enhance rewrite.
+            if caption:
+                final_prompt = (
+                    f"{final_prompt.rstrip()}\n\n"
+                    f"CRITICAL — match the dress reference image outfit exactly "
+                    f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+                )
         elif enhance and not xai_key_available():
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
         wavespeed.edit_video_wan22(

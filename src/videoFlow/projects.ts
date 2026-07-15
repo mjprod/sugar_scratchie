@@ -14,6 +14,7 @@ export type VideoFlowProject = {
   updated_at?: number;
   draft?: {
     image?: string;
+    theme?: string;
     background_motion_prompt?: string;
     foreground_motion_prompt?: string;
     dress_prompt?: string;

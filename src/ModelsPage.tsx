@@ -60,6 +60,8 @@ type CardInfo = {
   photos?: PhotoInfo[];
   /** True when this row is a Video Flow draft that has not been published as a card yet. */
   draft?: boolean;
+  /** Theme from the card's Video Flow draft (scenery + costume), when one exists. */
+  theme?: string;
 };
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
@@ -99,9 +101,19 @@ function draftCardsFromFlows(flows: VideoFlowProject[], publishedIds: Set<string
       model_id: modelId,
       draft: true,
       photos: [],
+      theme: flow.draft?.theme?.trim() || undefined,
     });
   }
   return drafts;
+}
+
+function themesByCardId(flows: VideoFlowProject[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const flow of flows) {
+    const theme = flow.draft?.theme?.trim();
+    if (theme) map.set(flow.card_id, theme);
+  }
+  return map;
 }
 
 export function ModelsPage() {
@@ -127,7 +139,11 @@ export function ModelsPage() {
       api<{ cards: CardInfo[] }>("/api/cards"),
       api<{ flows: VideoFlowProject[] }>("/api/video-flow").catch(() => ({ flows: [] as VideoFlowProject[] })),
     ]);
-    const published = assets.cards;
+    const themes = themesByCardId(flowData.flows);
+    const published = assets.cards.map((card) => ({
+      ...card,
+      theme: card.theme ?? themes.get(card.id),
+    }));
     setModels(nextModels);
     setCards(published);
     setDraftCards(draftCardsFromFlows(flowData.flows, new Set(published.map((card) => card.id))));
@@ -532,6 +548,11 @@ export function ModelsPage() {
                     <Table.Row key={card.id}>
                       <Table.Cell>
                         {card.label} <CodeInline>{card.id}</CodeInline>
+                        {card.theme ? (
+                          <Badge color="iris" ml="2" variant="soft" title="Theme">
+                            {card.theme}
+                          </Badge>
+                        ) : null}
                       </Table.Cell>
                       <Table.Cell>
                         <Flex align="center" gap="2" wrap="wrap">
@@ -723,6 +744,11 @@ export function ModelsPage() {
                               {card.draft ? (
                                 <Badge color="amber" ml="2" variant="soft">
                                   draft
+                                </Badge>
+                              ) : null}
+                              {card.theme ? (
+                                <Badge color="iris" ml="2" variant="soft" title="Theme">
+                                  {card.theme}
                                 </Badge>
                               ) : null}
                             </Table.Cell>

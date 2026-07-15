@@ -434,6 +434,7 @@ type RunModeProps = {
   dressVideoModel: DressVideoModel;
   enhancePrompt: boolean;
   image: string;
+  theme: string;
   backgroundMotionPrompt: string;
   dressPrompt: string;
   dressReferenceImage: string;
@@ -450,6 +451,8 @@ type RunModeProps = {
   faceImage: string;
   baseImage: string;
   onImageChange: (value: string) => void;
+  onThemeChange: (value: string) => void;
+  onApplyThemeToPrompts: () => void;
   onBackgroundMotionPromptChange: (value: string) => void;
   onDressPromptChange: (value: string) => void;
   onDressReferenceImageChange: (value: string) => void;
@@ -616,6 +619,7 @@ export function RunMode(props: RunModeProps) {
     dressVideoModel,
     enhancePrompt,
     image,
+    theme,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -632,6 +636,8 @@ export function RunMode(props: RunModeProps) {
     faceImage,
     baseImage,
     onImageChange,
+    onThemeChange,
+    onApplyThemeToPrompts,
     onBackgroundMotionPromptChange,
     onDressPromptChange,
     onDressReferenceImageChange,
@@ -973,6 +979,7 @@ export function RunMode(props: RunModeProps) {
 
   const stepPayload = {
     image,
+    theme,
     background_motion_prompt: backgroundMotionPrompt,
     foreground_motion_prompt: backgroundMotionPrompt,
     dress_prompt: dressPrompt,
@@ -1584,6 +1591,23 @@ export function RunMode(props: RunModeProps) {
                 />
               </Field>
             </Grid>
+            <Field label="Theme (scenery + dress-up costume)">
+              <TextField.Root
+                placeholder="warm beach, police, neon city night…"
+                value={theme}
+                onChange={(event) => onThemeChange(event.currentTarget.value)}
+              />
+            </Field>
+            <Flex gap="2" align="center" wrap="wrap">
+              <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
+                Apply theme to prompts
+              </Button>
+              <Text color="gray" size="2">
+                Rewrites background scenery + dress costume from the theme. With a dress
+                reference image attached, the dress prompt matches that reference. Hand-edited
+                prompts stay until you click Apply.
+              </Text>
+            </Flex>
           </Flex>
         ) : null}
 
@@ -1678,7 +1702,10 @@ export function RunMode(props: RunModeProps) {
                 onChange={(event) => onDressPromptChange(event.currentTarget.value)}
               />
             </Field>
-            <Field label="Dress reference image (optional — Grok only; describe outfit in prompt for WAN)">
+            <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
+              Apply theme to dress prompt
+            </Button>
+            <Field label="Dress reference image (optional — captioned into prompt for WAN & Grok)">
               <FilePathPicker
                 accept="image/*"
                 placeholder="Pick a dress photo or paste a path/URL"
@@ -1690,6 +1717,12 @@ export function RunMode(props: RunModeProps) {
                 onError={onError}
               />
             </Field>
+            {dressReferenceImage.trim() ? (
+              <Text color="gray" size="2">
+                Reference is captioned and appended after prompt enhance so the outfit match
+                wins. Click Apply theme if the dress prompt still looks generic.
+              </Text>
+            ) : null}
             <label className="checkbox-label">
               <Checkbox
                 checked={enhancePrompt}

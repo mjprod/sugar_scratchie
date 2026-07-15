@@ -100,10 +100,12 @@ MOTION_ENHANCE_SYSTEM = (
     "in every frame. (4) Lock identity continuity: same face, hair, and skin tone in "
     "every frame — same undertone and lightness, no skin color flicker, no sudden "
     "tanning/paling, no beauty-filter shifts. (5) Prefer a seamless looping boomerang "
-    "unless the user asked otherwise. (6) Do NOT invent new scenery, wardrobe changes, "
-    "or camera moves. (7) Output ONLY the rewritten prompt, one paragraph, no preamble "
-    "or quotes."
-)
+    "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
+    "(e.g. police station, beach, neon city), KEEP and STRENGTHEN that: place her in a "
+    "clearly recognizable themed environment and replace a blank/studio/plain-wall "
+    "background when needed. Do NOT strip theme or scenery requests. Do NOT invent "
+    "unrelated wardrobe changes beyond what the user wrote (bikini in step 1 stays a "
+    "bikini). (7) Output ONLY the rewritten prompt, one paragraph, no preamble or quotes.")
 
 DRESS_CAPTION_SYSTEM = (
     "You describe clothing for a video EDIT prompt. Look ONLY at the outfit worn "
@@ -124,7 +126,11 @@ DRESS_ENHANCE_SYSTEM = (
     "described — both top and bottom, not a skirt overlay on a bikini. Describe "
     "fabric, apparent color, cut, length, fit, AND any emissive glow/neon/luminous "
     "shine on the garment vividly — garment glow is part of the outfit, not a scene "
-    "effect; preserve glow intensity from the reference description. (2) Keep the "
+    "effect; preserve glow intensity from the reference description. If the user "
+    "names a themed costume or role (police, nurse, beach cover-up, etc.), keep that "
+    "theme unmistakable — do NOT replace it with a generic evening gown. If a "
+    "reference-outfit caption is present, that outfit wins over any conflicting "
+    "description. (2) Keep the "
     "EXACT same background, scenery, lighting, shadows, and environment as the "
     "input video — do NOT replace the background with a green screen or any other "
     "scene. (3) Keep the same person, face, identity, hair, and skin tone "
@@ -732,16 +738,12 @@ def edit_video(
 
     final_prompt = prompt
     reference_str = str(reference_image).strip() if reference_image is not None else ""
+    caption = ""
     if reference_str:
         print(f"Captioning dress reference image via {vision_model()} ...")
-        caption = describe_outfit(reference_str, key)
+        caption = describe_outfit(reference_str, key) or ""
         if caption:
             print(f"Reference outfit caption:\n  {caption}\n")
-            final_prompt = (
-                f"{final_prompt.rstrip()}\n\n"
-                f"Outfit from the reference image — match shape, color, and emissive "
-                f"glow/shine intensity exactly: {caption}"
-            )
         else:
             print("Warning: reference image provided but outfit caption was empty.")
 
@@ -749,6 +751,14 @@ def edit_video(
         print(f"Enhancing prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=enhance_system)
         print(f"Enhanced prompt:\n  {final_prompt}\n")
+
+    # Append reference LAST so the caption wins over any enhance rewrite.
+    if caption:
+        final_prompt = (
+            f"{final_prompt.rstrip()}\n\n"
+            f"CRITICAL — match the dress reference image outfit exactly "
+            f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+        )
 
     edit_model = video_edit_model(model)
     if edit_model != model:

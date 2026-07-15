@@ -100,13 +100,23 @@
       "model_id": "janja"
     },
     {
+      "id": "julianaval_cop",
+      "label": "Julianaval Cop",
+      "bottom": "/cards/julianaval_cop/background.mp4",
+      "foreground": "/cards/julianaval_cop/foreground.mp4",
+      "mesh": "julianaval_cop.json",
+      "chroma_key": false,
+      "sort_order": 0,
+      "model_id": "julianaval"
+    },
+    {
       "id": "juliana_1",
       "label": "Juliana 1",
       "bottom": "/cards/juliana_1/background.mp4",
       "foreground": "/cards/juliana_1/foreground.mp4",
       "mesh": "juliana_1.json",
       "chroma_key": false,
-      "sort_order": 0,
+      "sort_order": 1,
       "model_id": "julianaval"
     },
     {
@@ -116,7 +126,7 @@
       "foreground": "/cards/juliana_2/foreground.mp4",
       "mesh": "juliana_2.json",
       "chroma_key": false,
-      "sort_order": 0,
+      "sort_order": 2,
       "model_id": "julianaval"
     },
     {
@@ -126,7 +136,17 @@
       "foreground": "/cards/juliana_3/foreground.mp4",
       "mesh": "juliana_3.json",
       "chroma_key": false,
-      "sort_order": 0,
+      "sort_order": 3,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_gym",
+      "label": "Julianaval gym",
+      "bottom": "/cards/julianaval_gym/background.mp4",
+      "foreground": "/cards/julianaval_gym/foreground.mp4",
+      "mesh": "julianaval_gym.json",
+      "chroma_key": false,
+      "sort_order": 4,
       "model_id": "julianaval"
     },
     {

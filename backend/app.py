@@ -193,6 +193,7 @@ class ImageDressFlowRequest(BaseModel):
 
 class VideoFlowRequest(BaseModel):
     image: str = ""
+    theme: str = ""
     background_motion_prompt: str = Field(min_length=1)
     foreground_motion_prompt: str = ""
     dress_prompt: str = Field(min_length=1)
@@ -803,6 +804,7 @@ def image_dress_flow(request: ImageDressFlowRequest) -> dict:
 def video_flow_draft_kwargs(request: VideoFlowRequest, *, image: Path | str) -> dict:
     return {
         "image": image,
+        "theme": request.theme,
         "background_motion_prompt": request.background_motion_prompt,
         "foreground_motion_prompt": request.foreground_motion_prompt,
         "dress_prompt": request.dress_prompt,
@@ -1014,6 +1016,7 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
         lambda image=image, dress_reference=dress_reference, request=request: run_video_flow_step(
             step=request.step,
             image=image,
+            theme=request.theme,
             background_motion_prompt=request.background_motion_prompt,
             foreground_motion_prompt=request.foreground_motion_prompt,
             dress_prompt=request.dress_prompt,
