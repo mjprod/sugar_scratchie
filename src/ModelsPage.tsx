@@ -725,11 +725,11 @@ export function ModelsPage() {
                   ) : null}
 
                   {modelCards.length > 0 ? (
-                    <Table.Root size="1" variant="surface">
+                      <Table.Root size="1" variant="surface">
                       <Table.Header>
                         <Table.Row>
                           <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Photos</Table.ColumnHeaderCell>
+                          <Table.ColumnHeaderCell>Photo Scratch</Table.ColumnHeaderCell>
                           <Table.ColumnHeaderCell />
                         </Table.Row>
                       </Table.Header>

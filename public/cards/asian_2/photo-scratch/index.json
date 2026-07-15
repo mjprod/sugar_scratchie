@@ -1,0 +1,52 @@
+[
+  {
+    "id": "slot_01",
+    "label": "warm beach \u2013 1",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_01.jpg"
+  },
+  {
+    "id": "slot_02",
+    "label": "warm beach \u2013 2",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_02.jpg"
+  },
+  {
+    "id": "slot_03",
+    "label": "warm beach \u2013 3",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_03.jpg"
+  },
+  {
+    "id": "slot_04",
+    "label": "warm beach \u2013 4",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_04.jpg"
+  },
+  {
+    "id": "slot_05",
+    "label": "warm beach \u2013 5",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_05.jpg"
+  },
+  {
+    "id": "slot_06",
+    "label": "warm beach \u2013 6",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_06.jpg"
+  },
+  {
+    "id": "slot_07",
+    "label": "warm beach \u2013 7",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_07.jpg"
+  },
+  {
+    "id": "slot_08",
+    "label": "warm beach \u2013 8",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_08.jpg"
+  },
+  {
+    "id": "slot_09",
+    "label": "warm beach \u2013 9",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_09.jpg"
+  },
+  {
+    "id": "slot_10",
+    "label": "warm beach \u2013 10",
+    "pending_bg": "/cards/asian_2/photo-scratch/pending/slot_10.jpg"
+  }
+]

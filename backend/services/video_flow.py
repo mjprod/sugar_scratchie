@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths, create_card, update_card
 from backend.services.ai_provider import (
     edit_image_scenery,
+    edit_photo_scratch_layer,
     edit_video,
     generate_portrait_image,
     image_to_video,
@@ -28,6 +29,13 @@ from backend.services.grok import (
     is_stock_portrait_prompt,
     normalize_background_motion_prompt,
     output_video_ready,
+    PHOTO_SCRATCH_POSE_VARIATIONS,
+    PHOTO_SCRATCH_SCENE_VARIATIONS,
+    photo_scratch_background_prompt,
+    photo_scratch_bikini_prompt,
+    photo_scratch_clothes_prompt,
+    photo_scratch_custom_locks_source_pose,
+    photo_scratch_prompt_with_background,
     probe_video,
     request_id_sidecar,
 )
@@ -1218,6 +1226,250 @@ def run_generate_source_image(
     invalidate_after_source_image_change(card_id)
     print(f"Source image written: {out.name}")
     return patched
+
+
+def _resolve_photo_scratch_media(src: str) -> Path:
+    """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
+    from urllib.parse import unquote
+
+    trimmed = unquote(src.strip()).lstrip("/")
+    if trimmed.startswith("public/"):
+        trimmed = trimmed.removeprefix("public/")
+    path = ROOT / "public" / trimmed
+    if not path.is_file():
+        raise RuntimeError(f"Photo-scratch media not found: {src}")
+    return path
+
+
+def run_generate_photo_scratch_layer(
+    *,
+    card_id: str,
+    layer_type: str = "background",
+    theme: str = "",
+    count: int = 10,
+    provider: str = "xai",
+    image_model: str = "grok-imagine",
+    source_image: str = "",
+    slot_id: str = "",
+    prompt: str = "",
+) -> dict:
+    """Generate still images for one photo-scratch layer type.
+
+    If slot_id is set, only that one slot is generated (one-by-one AI).
+    Otherwise generates up to `count` slots (1..10).
+    """
+    from backend.cards import (
+        PHOTO_SCRATCH_LAYER_NAMES,
+        PHOTO_SCRATCH_SLOT_COUNT,
+        list_photo_scratch_slots,
+        public_url,
+        set_photo_scratch_pending_layer,
+    )
+
+    if layer_type not in PHOTO_SCRATCH_LAYER_NAMES:
+        raise RuntimeError(f"Unknown photo-scratch layer: {layer_type}")
+
+    ai_provider = normalize_provider(provider)
+    source_image_model = normalize_source_image_model(image_model, provider=provider)
+
+    pending_dir = CARDS_DIR / card_id / "photo-scratch" / "pending"
+    pending_dir.mkdir(parents=True, exist_ok=True)
+
+    theme_str = theme.strip()
+
+    slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme_str)
+    target_slot = (slot_id or "").strip()
+    if target_slot:
+        slots_to_run = [s for s in slots if s.id == target_slot]
+        if not slots_to_run:
+            raise RuntimeError(f"Slot not found: {target_slot}")
+    else:
+        slots_to_run = slots[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
+
+    written: list[str] = []
+
+    girl_path: Path | None = None
+    if layer_type in ("bikini", "clothes"):
+        raw_source = (source_image or "").strip()
+        if not raw_source:
+            draft = read_flow_draft(card_id) or {}
+            raw_source = str(draft.get("image") or "").strip()
+        if not raw_source:
+            raise RuntimeError(
+                "Bikini/clothes generation needs the Flow source image. "
+                "Set it in Setup first."
+            )
+        if raw_source.startswith(("http://", "https://")):
+            raise RuntimeError("Source image must be a local workspace path, not a URL.")
+        girl_path = Path(raw_source)
+        if not girl_path.is_absolute():
+            girl_path = ROOT / girl_path
+        if not girl_path.is_file():
+            raise RuntimeError(f"Source image not found: {raw_source}")
+
+    if layer_type == "clothes":
+        if target_slot:
+            slot0 = slots_to_run[0]
+            if not slot0.bikini:
+                raise RuntimeError(
+                    f"Approve bikini for {target_slot} first so the top matches that pose."
+                )
+        elif not any(s.bikini for s in slots):
+            raise RuntimeError(
+                "Approve at least one bikini first so top/clothes match the same girl and pose."
+            )
+
+    for slot in slots_to_run:
+        # Variation hint keyed off slot number so regenerations stay distinctive.
+        try:
+            slot_num = int(slot.id.replace("slot_", "")) - 1
+        except ValueError:
+            slot_num = 0
+        pose_hint = PHOTO_SCRATCH_POSE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_POSE_VARIATIONS)]
+        scene_hint = PHOTO_SCRATCH_SCENE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_SCENE_VARIATIONS)]
+        filename = f"{slot.id}_{layer_type}.jpg"
+        out = pending_dir / filename
+        out.unlink(missing_ok=True)
+        custom = (prompt or "").strip()
+        try:
+            if layer_type == "bikini":
+                assert girl_path is not None
+                bg_path = (
+                    _resolve_photo_scratch_media(slot.background) if slot.background else None
+                )
+                with_bg = bg_path is not None
+                if with_bg and (not custom or photo_scratch_custom_locks_source_pose(custom)):
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=True
+                    )
+                elif with_bg:
+                    patched = photo_scratch_prompt_with_background(
+                        custom, has_background=True, pose=pose_hint
+                    )
+                    final_prompt = patched or photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=True
+                    )
+                elif custom and (
+                    "reference 1" in custom.lower()
+                    or "second reference" in custom.lower()
+                    or "environment" in custom.lower()
+                ):
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=False
+                    )
+                elif custom and not photo_scratch_custom_locks_source_pose(custom):
+                    final_prompt = f"{custom} Pose and framing for this card: {pose_hint}."
+                else:
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=False
+                    )
+                if with_bg:
+                    print(
+                        f"Photo-scratch bikini {slot.id}: environment+woman composite, "
+                        f"pose={pose_hint[:48]}…"
+                    )
+                edit_photo_scratch_layer(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=final_prompt,
+                    out=out,
+                    source_image=girl_path,
+                    background_image=bg_path,
+                    aspect_ratio="9:16",
+                )
+            elif layer_type == "clothes":
+                if slot.bikini:
+                    # Bikini already has pose+scene; lock them for scratch alignment.
+                    edit_src = _resolve_photo_scratch_media(slot.bikini)
+                    bg_ref = None
+                elif girl_path is not None:
+                    edit_src = girl_path
+                    bg_ref = (
+                        _resolve_photo_scratch_media(slot.background)
+                        if slot.background
+                        else None
+                    )
+                else:
+                    print(f"Photo-scratch clothes: skip {slot.id} (need bikini)")
+                    continue
+                final_prompt = (
+                    f"{custom} Outfit accent: {scene_hint}."
+                    if custom
+                    else photo_scratch_clothes_prompt(theme_str, scene_hint)
+                )
+                if bg_ref is not None:
+                    patched = photo_scratch_prompt_with_background(
+                        final_prompt, has_background=True, pose=""
+                    )
+                    final_prompt = patched or final_prompt
+                edit_photo_scratch_layer(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=final_prompt,
+                    out=out,
+                    source_image=edit_src,
+                    background_image=bg_ref,
+                    aspect_ratio="9:16",
+                )
+            else:  # background — empty scene plate only
+                base = custom if custom else photo_scratch_background_prompt(theme_str)
+                generate_portrait_image(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=f"{base}, {scene_hint}",
+                    out=out,
+                    aspect_ratio="9:16",
+                )
+
+            src = public_url(f"cards/{card_id}/photo-scratch/pending/{filename}")
+            set_photo_scratch_pending_layer(CARDS_DIR, card_id, slot.id, layer_type, src, theme_str)
+            written.append(slot.id)
+            print(f"Photo-scratch {layer_type} written: {out.name}")
+        except Exception as exc:
+            print(f"Photo-scratch {layer_type} {slot.id} failed: {exc}")
+            if target_slot:
+                raise
+
+    if not written:
+        raise RuntimeError(
+            f"No {layer_type} images were generated."
+            + (" For tops, approve the bikini on that card first." if layer_type == "clothes" else "")
+        )
+
+    # One-by-one: auto-approve so the slot fills immediately (no batch review needed).
+    if target_slot:
+        from backend.cards import approve_photo_scratch_layer
+
+        for sid in written:
+            approve_photo_scratch_layer(CARDS_DIR, card_id, sid, layer_type, theme_str)
+
+    return {
+        "card_id": card_id,
+        "layer": layer_type,
+        "slot_id": target_slot or None,
+        "generated": len(written),
+        "slots": written,
+        "auto_approved": bool(target_slot),
+    }
+
+
+def run_generate_photo_scratch_backgrounds(
+    *,
+    card_id: str,
+    theme: str = "",
+    count: int = 10,
+    provider: str = "xai",
+    image_model: str = "grok-imagine",
+) -> dict:
+    """Thin wrapper — prefer run_generate_photo_scratch_layer."""
+    return run_generate_photo_scratch_layer(
+        card_id=card_id,
+        layer_type="background",
+        theme=theme,
+        count=count,
+        provider=provider,
+        image_model=image_model,
+    )
 
 
 def read_flow_draft(card_id: str) -> dict | None:

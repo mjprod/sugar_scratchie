@@ -23,16 +23,24 @@ from backend.cards import (
     CardInfo,
     CreateCardRequest,
     PhotoInfo,
+    PhotoScratchSlot,
     ReorderCardsRequest,
     UpdateCardRequest,
+    approve_photo_scratch_bg,
+    approve_photo_scratch_layer,
     compress_card,
     create_card,
     delete_card,
     delete_card_photo,
+    delete_photo_scratch_layer,
     list_cards,
+    list_photo_scratch_slots,
+    reject_photo_scratch_bg,
+    reject_photo_scratch_layer,
     reorder_model_cards,
     update_card,
     upload_card_photo,
+    upload_photo_scratch_layer,
     write_cards_index,
 )
 from backend.models_store import (
@@ -68,6 +76,8 @@ from backend.services.video_flow import (
     read_flow_draft,
     reject_flow_step,
     reset_trim_step,
+    run_generate_photo_scratch_backgrounds,
+    run_generate_photo_scratch_layer,
     run_generate_source_image,
     run_mesh_candidate_generation,
     run_video_flow_step,
@@ -563,6 +573,114 @@ async def post_card_photo(card_id: str, file: UploadFile = File(...)) -> dict:
 def remove_card_photo(card_id: str, photo_id: str) -> dict:
     delete_card_photo(ROOT, CARDS_DIR, MESH_DIR, card_id, photo_id)
     return {"ok": True, "id": photo_id}
+
+
+# ── Photo-scratch slot endpoints ──────────────────────────────────────────────
+
+class GeneratePhotoScratchRequest(BaseModel):
+    theme: str = ""
+    count: int = Field(default=10, ge=1, le=10)
+    provider: str = "xai"
+    image_model: str = "grok-imagine"
+    layer: Literal["background", "bikini", "clothes"] = "background"
+    image: str = ""  # Flow source image path — required for bikini/clothes
+    slot_id: str = ""  # When set, generate only this one slot (one-by-one)
+    prompt: str = ""  # Optional override; empty = built-in default for the layer
+
+
+@app.get("/api/cards/{card_id}/photo-scratch")
+def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
+    slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
+    return {"slots": [slot.dict() for slot in slots]}
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/generate")
+def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    layer = request.layer
+    source_image = request.image.strip()
+    slot_id = request.slot_id.strip()
+    if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    if layer in ("bikini", "clothes") and source_image:
+        if not source_image.startswith(("http://", "https://")):
+            # Validate early so the job queue doesn't silently fail.
+            workspace_path(source_image, must_exist=True)
+    custom_prompt = request.prompt.strip()
+    job = enqueue(
+        "generate-photo-scratch-layer",
+        ["generate-photo-scratch-layer", card_id, layer, slot_id or "all"],
+        lambda: run_generate_photo_scratch_layer(
+            card_id=card_id,
+            layer_type=layer,
+            theme=request.theme,
+            count=1 if slot_id else request.count,
+            provider=request.provider,
+            image_model=request.image_model,
+            source_image=source_image,
+            slot_id=slot_id,
+            prompt=custom_prompt,
+        ),
+    )
+    return job.public()
+
+
+# Static action routes MUST come before the dynamic {layer} route so FastAPI
+# does not swallow "approve-layer" / "reject-layer" as a layer parameter value.
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/approve-layer")
+def approve_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: Literal["background", "bikini", "clothes"] = "background",
+    theme: str = "",
+) -> dict:
+    slot = approve_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-layer")
+def reject_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: Literal["background", "bikini", "clothes"] = "background",
+    theme: str = "",
+) -> dict:
+    slot = reject_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
+
+
+# Keep old bg endpoints as aliases for backwards compatibility.
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/approve-bg")
+def approve_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
+    slot = approve_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-bg")
+def reject_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
+    slot = reject_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
+async def upload_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: str,
+    theme: str = "",
+    file: UploadFile = File(...),
+) -> dict:
+    slot = await upload_photo_scratch_layer(ROOT, CARDS_DIR, card_id, slot_id, layer, file, theme)
+    return slot.dict()
+
+
+@app.delete("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
+def delete_photo_scratch_layer_endpoint(
+    card_id: str, slot_id: str, layer: str, theme: str = ""
+) -> dict:
+    slot = delete_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
 
 
 @app.get("/api/models")

@@ -380,6 +380,26 @@ def edit_image_scenery(
     return out
 
 
+def edit_photo_scratch_layer(
+    *,
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Single-image outfit/pose edit (WaveSpeed Grok edit has no multi-image slot)."""
+    payload = {
+        "prompt": prompt,
+        "image": media_url(source_image, "image/png"),
+        "aspect_ratio": aspect_ratio,
+        "resolution": "1k",
+        "num_images": 1,
+        "output_format": "png",
+    }
+    run_image_task(IMAGE_EDIT_PATH, payload, out, label="photo-scratch layer edit")
+    return out
+
+
 def swap_face_on_image(
     *,
     base_image: str | Path,

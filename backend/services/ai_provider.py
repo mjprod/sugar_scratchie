@@ -180,6 +180,73 @@ def edit_image_scenery(
     )
 
 
+def edit_photo_scratch_layer(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    background_image: str | Path | None = None,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Keep the Flow source girl's identity while building bikini/clothes photo-scratch layers.
+
+    Girl + approved background needs a multi-image edit (x.ai or Seedream). WaveSpeed Grok
+    Imagine edit is single-image only — when WaveSpeed is selected with a background plate,
+    route through Seedream so we do not silently fall back to x.ai moderation.
+    """
+    route = source_image_route(provider, image_model)
+    needs_bg = background_image is not None
+
+    def _seedream_edit() -> Path:
+        # Environment first, woman second — matches photo_scratch bikini prompts.
+        if background_image is not None:
+            images = [background_image, source_image]
+        else:
+            images = [source_image]
+        payload = {
+            "prompt": prompt,
+            "images": [wavespeed.media_url(img, "image/png") for img in images],
+            "size": wavespeed.aspect_ratio_to_seedream_size(aspect_ratio),
+            "output_format": "png",
+            "enable_base64_output": False,
+            "enable_sync_mode": False,
+        }
+        wavespeed.run_image_task(
+            wavespeed.SEEDREAM_EDIT_PATH,
+            payload,
+            out,
+            label="seedream photo-scratch edit",
+        )
+        return out
+
+    if route == "seedream-v5-lite":
+        return _seedream_edit()
+
+    # WaveSpeed + background: Seedream can take both refs; Grok Imagine edit cannot.
+    if needs_bg and provider == "wavespeed":
+        print("Photo-scratch: using Seedream for girl+background composite (WaveSpeed)")
+        return _seedream_edit()
+
+    if provider == "xai" and xai_key_available():
+        return grok.edit_photo_scratch_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            background_image=background_image,
+            aspect_ratio=aspect_ratio,
+        )
+
+    # WaveSpeed single-image edit (outfit change only — no background plate).
+    return wavespeed.edit_photo_scratch_layer(
+        prompt=prompt,
+        out=out,
+        source_image=source_image,
+        aspect_ratio=aspect_ratio,
+    )
+
+
 def image_to_video(
     *,
     provider: AiProvider,

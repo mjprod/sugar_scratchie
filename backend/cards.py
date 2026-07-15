@@ -442,6 +442,249 @@ def compress_card(
             compress_video_webm(src, src.with_suffix(".webm"), preset=preset)
 
 
+PHOTO_SCRATCH_SLOT_COUNT = 10
+PHOTO_SCRATCH_LAYER_NAMES = {"background", "bikini", "clothes"}
+
+# Maps logical layer → (approved_field, pending_field)
+PHOTO_SCRATCH_PENDING_FIELDS = {
+    "background": ("background", "pending_bg"),
+    "bikini": ("bikini", "pending_bikini"),
+    "clothes": ("clothes", "pending_clothes"),
+}
+
+
+class PhotoScratchSlot(BaseModel):
+    id: str
+    label: str
+    background: str | None = None
+    bikini: str | None = None
+    clothes: str | None = None
+    pending_bg: str | None = None
+    pending_bikini: str | None = None
+    pending_clothes: str | None = None
+
+
+def _photo_scratch_dir(cards_dir: Path, card_id: str) -> Path:
+    return cards_dir / card_id / "photo-scratch"
+
+
+def _photo_scratch_index_path(cards_dir: Path, card_id: str) -> Path:
+    return _photo_scratch_dir(cards_dir, card_id) / "index.json"
+
+
+def _default_slot_label(slot_id: str, theme: str) -> str:
+    num = slot_id.replace("slot_", "")
+    base = str(int(num)) if num.isdigit() else num
+    return f"{theme.strip()} – {base}" if theme.strip() else f"Photo {base}"
+
+
+def _read_photo_scratch_index(cards_dir: Path, card_id: str) -> list[dict]:
+    path = _photo_scratch_index_path(cards_dir, card_id)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _write_photo_scratch_index(cards_dir: Path, card_id: str, slots: list[dict]) -> None:
+    ps_dir = _photo_scratch_dir(cards_dir, card_id)
+    ps_dir.mkdir(parents=True, exist_ok=True)
+    _photo_scratch_index_path(cards_dir, card_id).write_text(
+        json.dumps(slots, indent=2) + "\n"
+    )
+
+
+def list_photo_scratch_slots(
+    cards_dir: Path, card_id: str, theme: str = ""
+) -> list[PhotoScratchSlot]:
+    """Always returns exactly PHOTO_SCRATCH_SLOT_COUNT slots, filling gaps with empties."""
+    raw = {entry["id"]: entry for entry in _read_photo_scratch_index(cards_dir, card_id) if isinstance(entry, dict)}
+    slots: list[PhotoScratchSlot] = []
+    for i in range(1, PHOTO_SCRATCH_SLOT_COUNT + 1):
+        slot_id = f"slot_{i:02d}"
+        entry = raw.get(slot_id, {})
+        label = entry.get("label") or _default_slot_label(slot_id, theme)
+        slots.append(
+            PhotoScratchSlot(
+                id=slot_id,
+                label=label,
+                background=entry.get("background") or None,
+                bikini=entry.get("bikini") or None,
+                clothes=entry.get("clothes") or None,
+                pending_bg=entry.get("pending_bg") or None,
+                pending_bikini=entry.get("pending_bikini") or None,
+                pending_clothes=entry.get("pending_clothes") or None,
+            )
+        )
+    return slots
+
+
+def _save_photo_scratch_slots(
+    cards_dir: Path, card_id: str, slots: list[PhotoScratchSlot]
+) -> None:
+    data = [
+        {k: v for k, v in slot.dict().items() if v is not None}
+        for slot in slots
+    ]
+    _write_photo_scratch_index(cards_dir, card_id, data)
+
+
+def _get_slot(slots: list[PhotoScratchSlot], slot_id: str) -> PhotoScratchSlot | None:
+    return next((s for s in slots if s.id == slot_id), None)
+
+
+async def upload_photo_scratch_layer(
+    root: Path,
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    layer: str,
+    upload: UploadFile,
+    theme: str = "",
+) -> PhotoScratchSlot:
+    if layer not in PHOTO_SCRATCH_LAYER_NAMES:
+        raise HTTPException(status_code=400, detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_LAYER_NAMES))}")
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot add photo scratch to the original card")
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in PHOTO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Image must be JPG, PNG, or WebP")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    layer_dir = _photo_scratch_dir(cards_dir, card_id) / slot_id
+    layer_dir.mkdir(parents=True, exist_ok=True)
+    # Replace any existing file for this layer.
+    for old in layer_dir.glob(f"{layer}.*"):
+        old.unlink(missing_ok=True)
+    target = layer_dir / f"{layer}{ext}"
+    target.write_bytes(data)
+
+    src = public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}{ext}")
+    setattr(slot, layer, src)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return slot
+
+
+def delete_photo_scratch_layer(
+    cards_dir: Path, card_id: str, slot_id: str, layer: str, theme: str = ""
+) -> PhotoScratchSlot:
+    if layer not in PHOTO_SCRATCH_LAYER_NAMES:
+        raise HTTPException(status_code=400, detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_LAYER_NAMES))}")
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+
+    layer_dir = _photo_scratch_dir(cards_dir, card_id) / slot_id
+    for path in layer_dir.glob(f"{layer}.*"):
+        path.unlink(missing_ok=True)
+    setattr(slot, layer, None)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return slot
+
+
+def set_photo_scratch_pending_layer(
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    layer_type: str,
+    pending_src: str,
+    theme: str = "",
+) -> None:
+    """Write a pending_<layer> URL into the slot index (called from the generation job)."""
+    fields = PHOTO_SCRATCH_PENDING_FIELDS.get(layer_type)
+    if fields is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
+        )
+    _, pending_field = fields
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        return
+    setattr(slot, pending_field, pending_src)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+
+
+def approve_photo_scratch_layer(
+    cards_dir: Path, card_id: str, slot_id: str, layer_type: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Promote pending_<layer> → the approved layer field."""
+    fields = PHOTO_SCRATCH_PENDING_FIELDS.get(layer_type)
+    if fields is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
+        )
+    approved_field, pending_field = fields
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    pending = getattr(slot, pending_field)
+    if not pending:
+        raise HTTPException(status_code=400, detail=f"No pending {layer_type} to approve")
+    setattr(slot, approved_field, pending)
+    setattr(slot, pending_field, None)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return slot
+
+
+def reject_photo_scratch_layer(
+    cards_dir: Path, card_id: str, slot_id: str, layer_type: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Clear pending_<layer> without promoting it."""
+    fields = PHOTO_SCRATCH_PENDING_FIELDS.get(layer_type)
+    if fields is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
+        )
+    _, pending_field = fields
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    setattr(slot, pending_field, None)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return slot
+
+
+def set_photo_scratch_pending_bg(
+    cards_dir: Path, card_id: str, slot_id: str, pending_src: str, theme: str = ""
+) -> None:
+    """Thin wrapper — prefer set_photo_scratch_pending_layer."""
+    set_photo_scratch_pending_layer(cards_dir, card_id, slot_id, "background", pending_src, theme)
+
+
+def approve_photo_scratch_bg(
+    cards_dir: Path, card_id: str, slot_id: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Thin wrapper — prefer approve_photo_scratch_layer."""
+    return approve_photo_scratch_layer(cards_dir, card_id, slot_id, "background", theme)
+
+
+def reject_photo_scratch_bg(
+    cards_dir: Path, card_id: str, slot_id: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Thin wrapper — prefer reject_photo_scratch_layer."""
+    return reject_photo_scratch_layer(cards_dir, card_id, slot_id, "background", theme)
+
+
 def card_photos_dir(cards_dir: Path, card_id: str) -> Path:
     if card_id == ORIGINAL_ID:
         raise HTTPException(status_code=400, detail="Cannot add photos to the original card")
