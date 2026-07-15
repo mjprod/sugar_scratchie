@@ -1,6 +1,7 @@
 export type FlowNodeId =
   | "source"
   | "background"
+  | "trim"
   | "dress"
   | "compress"
   | "card"
@@ -12,6 +13,7 @@ export type FlowNodeKind = "input" | "grok" | "process" | "output";
 
 export type VideoFlowStepKey =
   | "background"
+  | "trim"
   | "dress"
   | "compress"
   | "card"
@@ -196,10 +198,10 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Bikini background from the source image, then a dress edit on the same frames. Card and mesh run automatically; place symbol points, then compress.",
+    "Bikini background from the source image, fix white edge frames, then a dress edit on the same frames. Card and mesh run automatically; place symbol points, then compress.",
   version: 1,
-  pipeline: ["background", "dress", "card", "mesh", "symbols", "compress"],
-  reviewSteps: ["background", "dress"],
+  pipeline: ["background", "trim", "dress", "card", "mesh", "symbols", "compress"],
+  reviewSteps: ["background", "trim", "dress"],
   canvas: { width: 1280, height: 200 },
   nodes: [
     {
@@ -228,15 +230,27 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "video", label: "video" }],
     },
     {
+      id: "trim",
+      kind: "process",
+      title: "Fix frames",
+      subtitle: "Delete white frames",
+      description: "Drop near-white flash frames from the start/end of the bikini clip before dress-up",
+      x: 360,
+      y: 56,
+      step: "trim",
+      inputs: [{ id: "video", label: "background" }],
+      outputs: [{ id: "video", label: "video" }],
+    },
+    {
       id: "dress",
       kind: "grok",
       title: "Video edit",
       subtitle: "Foreground dress",
       description: "Dress edit on the approved background clip — same scenery, same frames",
-      x: 420,
+      x: 520,
       y: 56,
       step: "dress",
-      inputs: [{ id: "video", label: "background" }],
+      inputs: [{ id: "video", label: "trimmed" }],
       outputs: [{ id: "video", label: "video" }],
     },
     {
@@ -245,7 +259,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Create card",
       subtitle: "public/cards/",
       description: "Publish raw clips under public/cards/<id>/, or import both videos by hand",
-      x: 620,
+      x: 700,
       y: 56,
       step: "card",
       inputs: [
@@ -260,7 +274,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Generate mesh",
       subtitle: "Garment tracking",
       description: "Track the foreground for garment-local scratching",
-      x: 820,
+      x: 880,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -272,7 +286,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Place symbols",
       subtitle: "12 mesh points",
       description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 920,
+      x: 1000,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -284,7 +298,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Finalize",
       subtitle: "390∶672 delivery",
       description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
-      x: 1120,
+      x: 1160,
       y: 56,
       step: "compress",
       inputs: [
@@ -299,7 +313,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow output",
       subtitle: "Scratch card",
       description: "Playable card in the scratch prototype",
-      x: 1184,
+      x: 1280,
       y: 56,
       step: null,
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -308,8 +322,9 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   ],
   wires: [
     { from: "source", to: "background" },
-    { from: "background", to: "dress" },
-    { from: "background", to: "card" },
+    { from: "background", to: "trim" },
+    { from: "trim", to: "dress" },
+    { from: "trim", to: "card" },
     { from: "dress", to: "card" },
     { from: "card", to: "mesh" },
     { from: "mesh", to: "symbols" },
@@ -332,6 +347,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
 
 const STEP_IDS = new Set<VideoFlowStepKey>([
   "background",
+  "trim",
   "dress",
   "card",
   "mesh",
@@ -341,6 +357,7 @@ const STEP_IDS = new Set<VideoFlowStepKey>([
 const NODE_IDS = new Set<FlowNodeId>([
   "source",
   "background",
+  "trim",
   "dress",
   "compress",
   "card",
@@ -353,23 +370,44 @@ export function stringifyVideoFlowJson(flow: VideoFlowJson): string {
   return `${JSON.stringify(flow, null, 2)}\n`;
 }
 
-/** Upgrade flows saved before the symbols step existed. */
+/** Upgrade flows saved before symbols / trim steps existed. */
 function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> {
-  const pipeline = Array.isArray(flow.pipeline) ? [...flow.pipeline] : [];
-  if (pipeline.includes("symbols") || !pipeline.includes("mesh")) {
-    return migrateLockedCameraDefaults(flow);
+  let pipeline = Array.isArray(flow.pipeline) ? [...flow.pipeline] : [];
+  let nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
+  let reviewSteps = Array.isArray(flow.reviewSteps) ? [...flow.reviewSteps] : [];
+  let changed = false;
+
+  if (!pipeline.includes("symbols") && pipeline.includes("mesh")) {
+    const meshIndex = pipeline.indexOf("mesh");
+    pipeline.splice(meshIndex + 1, 0, "symbols");
+    if (!nodes.some((node) => node?.id === "symbols")) {
+      const symbolsNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "symbols");
+      if (symbolsNode) nodes.push(symbolsNode);
+    }
+    changed = true;
   }
-  const meshIndex = pipeline.indexOf("mesh");
-  pipeline.splice(meshIndex + 1, 0, "symbols");
-  const nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
-  if (!nodes.some((node) => node?.id === "symbols")) {
-    const symbolsNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "symbols");
-    if (symbolsNode) nodes.push(symbolsNode);
+
+  if (!pipeline.includes("trim") && pipeline.includes("background")) {
+    const backgroundIndex = pipeline.indexOf("background");
+    pipeline.splice(backgroundIndex + 1, 0, "trim");
+    if (!nodes.some((node) => node?.id === "trim")) {
+      const trimNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "trim");
+      if (trimNode) nodes.push(trimNode);
+    }
+    if (!reviewSteps.includes("trim")) {
+      reviewSteps = [...reviewSteps, "trim"];
+    }
+    changed = true;
+  }
+
+  if (!changed) {
+    return migrateLockedCameraDefaults(flow);
   }
   return migrateLockedCameraDefaults({
     ...flow,
     pipeline,
     nodes,
+    reviewSteps,
     wires: DEFAULT_VIDEO_FLOW_JSON.wires,
     description: DEFAULT_VIDEO_FLOW_JSON.description,
   });

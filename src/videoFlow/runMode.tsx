@@ -126,10 +126,270 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
 function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
   if (command[0] !== "video-flow-step") return null;
   const step = command[1];
-  if (step === "background" || step === "dress" || step === "compress" || step === "card" || step === "mesh" || step === "symbols") {
+  if (
+    step === "background" ||
+    step === "trim" ||
+    step === "dress" ||
+    step === "compress" ||
+    step === "card" ||
+    step === "mesh" ||
+    step === "symbols"
+  ) {
     return step;
   }
   return null;
+}
+
+type TrimDetection = {
+  frames: number;
+  fps: number;
+  duration: number;
+  drop_start: number;
+  drop_end: number;
+  suggested: boolean;
+};
+
+type TrimApplied = {
+  drop_start: number;
+  drop_end: number;
+  frames_before: number | null;
+  frames_after: number | null;
+  auto?: boolean;
+  detected_start?: number;
+  detected_end?: number;
+};
+
+type TrimStepInfo = {
+  source: string;
+  clip: string;
+  detection: TrimDetection;
+  applied: TrimApplied | null;
+  status: string;
+  revised_at?: number;
+};
+
+function TrimFramesPanel({
+  cardId,
+  busy,
+  onBusy,
+  onError,
+  onState,
+}: {
+  cardId: string;
+  busy: boolean;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string) => void;
+  onState: (state: VideoFlowState) => void;
+}) {
+  const [info, setInfo] = useState<TrimStepInfo | null>(null);
+  const [dropStart, setDropStart] = useState(0);
+  const [dropEnd, setDropEnd] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
+
+  async function refresh() {
+    if (!cardId) return;
+    setLoading(true);
+    onError("");
+    try {
+      const next = await api<TrimStepInfo>(`/api/video-flow/${encodeURIComponent(cardId)}/trim`);
+      setInfo(next);
+      if (next.applied) {
+        setDropStart(next.applied.drop_start);
+        setDropEnd(next.applied.drop_end);
+      } else {
+        setDropStart(next.detection.drop_start);
+        setDropEnd(next.detection.drop_end);
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when card changes
+  }, [cardId]);
+
+  async function apply(body: { drop_start?: number; drop_end?: number; auto?: boolean }) {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.applied?.drop_start ?? next.trim.detection.drop_start);
+        setDropEnd(next.trim.applied?.drop_end ?? next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  async function reset() {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim/reset`,
+        { method: "POST", body: "{}" },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.detection.drop_start);
+        setDropEnd(next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  const clip = info?.clip || info?.source || "";
+  const detection = info?.detection;
+
+  return (
+    <Flex direction="column" gap="4">
+      <Callout.Root color="blue">
+        <Callout.Text size="2">
+          Image-to-video often flashes a white frame at the start or end. Drop those frames here
+          before Video edit, or keep the clip as-is if it looks clean.
+        </Callout.Text>
+      </Callout.Root>
+
+      {clip ? (
+        <MediaPreview
+          key={`${clip}:${previewKey}:${info?.revised_at ?? 0}`}
+          label="Bikini clip (edit before dress-up)"
+          type="video"
+          value={clip}
+          cacheBust={info?.revised_at ?? previewKey}
+        />
+      ) : (
+        <Text color="gray" size="2">
+          {loading ? "Scanning frames…" : "No background clip yet — approve step 1 first."}
+        </Text>
+      )}
+
+      {detection ? (
+        <Callout.Root color={detection.suggested ? "amber" : "green"}>
+          <Callout.Text size="2">
+            {detection.suggested ? (
+              <>
+                Detected a bright flash: drop <strong>{detection.drop_start}</strong> frame
+                {detection.drop_start === 1 ? "" : "s"} from the start and{" "}
+                <strong>{detection.drop_end}</strong> from the end (
+                {detection.frames} frames · {detection.fps.toFixed(1)} fps). Click{" "}
+                <strong>Delete white frames</strong> to apply.
+              </>
+            ) : (
+              <>
+                No bright flash at the edges ({detection.frames} frames ·{" "}
+                {detection.fps.toFixed(1)} fps). You can still drop frames manually if the loop
+                looks wrong.
+              </>
+            )}
+          </Callout.Text>
+        </Callout.Root>
+      ) : null}
+
+      <Grid columns="2" gap="3">
+        <Field label="Drop start frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropStart)}
+            onChange={(event) => setDropStart(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+        <Field label="Drop end frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropEnd)}
+            onChange={(event) => setDropEnd(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+      </Grid>
+
+      <Flex gap="2" wrap="wrap" align="center">
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          onClick={() => void apply({ auto: true })}
+        >
+          Delete white frames
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: dropStart, drop_end: dropEnd, auto: false })}
+        >
+          Apply trim
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: 0, drop_end: 0, auto: false })}
+        >
+          Keep as-is
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="outline"
+          onClick={() => void reset()}
+        >
+          <RotateCcw {...iconProps} />
+          Reset to original
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="ghost"
+          onClick={() => void refresh()}
+        >
+          Re-scan
+        </Button>
+      </Flex>
+
+      {info?.applied ? (
+        <Text color="gray" size="2">
+          Applied: drop start {info.applied.drop_start}, end {info.applied.drop_end}
+          {typeof info.applied.frames_before === "number" &&
+          typeof info.applied.frames_after === "number"
+            ? ` · ${info.applied.frames_before} → ${info.applied.frames_after} frames`
+            : ""}
+          . Approve when the loop looks right.
+        </Text>
+      ) : (
+        <Text color="gray" size="2">
+          Apply a trim (or Keep as-is), preview the clip, then approve to unlock Video edit.
+        </Text>
+      )}
+    </Flex>
+  );
 }
 
 function nextPipelineStep(
@@ -179,7 +439,7 @@ function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | nu
     ) {
       return cleaned;
     }
-    return `${cleaned} Step 2 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to WaveSpeed WAN 2.2 Video Edit above.`;
+    return `${cleaned} Step 3 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to WaveSpeed WAN 2.2 Video Edit above.`;
   }
   return cleaned;
 }
@@ -943,7 +1203,7 @@ export function RunMode(props: RunModeProps) {
     backgroundVideoModel === "wan-2.2-spicy" ? canUseWavespeed : canUseGrok;
   const canUseDressVideo =
     dressVideoModel === "wan-2.2-video-edit" ? canUseWavespeed : canUseGrok;
-  const actionIsInteractive = actionStep === "symbols";
+  const actionIsInteractive = actionStep === "symbols" || actionStep === "trim";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -1649,7 +1909,7 @@ export function RunMode(props: RunModeProps) {
                 </Select.Content>
               </Select.Root>
             </Field>
-            <Field label="Bikini background prompt (image to video — approve before dress-up)">
+            <Field label="Bikini background prompt (image to video — approve before fix frames)">
               <TextArea
                 className="dashboard-textarea"
                 value={backgroundMotionPrompt}
@@ -1665,16 +1925,26 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
+        {activeNode === "trim" ? (
+          <TrimFramesPanel
+            cardId={cardId.trim()}
+            busy={jobBusy}
+            onBusy={setFlowBusy}
+            onError={onError}
+            onState={setFlowState}
+          />
+        ) : null}
+
         {activeNode === "dress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="orange">
               <Callout.Text size="2">
-                Step 2 edits your approved bikini clip in place. x.ai Grok scans every frame of
-                that video for moderation — a modest dress prompt can still fail. Use{" "}
+                Step 3 edits your approved (trimmed) bikini clip in place. x.ai Grok scans every
+                frame of that video for moderation — a modest dress prompt can still fail. Use{" "}
                 <strong>WaveSpeed WAN 2.2 Video Edit</strong> to avoid that scan.
               </Callout.Text>
             </Callout.Root>
-            <Field label="Step 2 video model">
+            <Field label="Step 3 video model">
               <Select.Root
                 value={dressVideoModel}
                 onValueChange={(value) => onDressVideoModelChange(value as DressVideoModel)}

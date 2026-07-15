@@ -3,12 +3,25 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 from typing import Literal
 
 from backend.services.grok import probe_video
 
 CompressPreset = Literal["mobile", "hd", "master"]
+
+# Near-white / washed flash frames from image-to-video models (first/last).
+# Pure white is rare — Grok flashes are usually just much brighter than the body.
+WHITE_LUMA_THRESHOLD = 245.0
+WHITE_NEAR_RATIO = 0.88
+WHITE_NEAR_MIN = 245
+# Frame is a flash if mean luma is this many points above the mid-clip baseline.
+FLASH_LUMA_DELTA = 35.0
+# Or this many times the mid-clip median (catches milder washes).
+FLASH_LUMA_RATIO = 1.35
+MAX_EDGE_SCAN_FRAMES = 12
+BASELINE_SAMPLE_COUNT = 8
 
 # Prototype canvas is 390×672 — every delivery encode must match this aspect.
 DELIVERY_ASPECT_W = 390
@@ -151,6 +164,241 @@ def align_clip_to_reference(reference: Path, clip: Path, out: Path) -> Path:
     )
     log_video("Aligned", out)
     return out
+
+
+def probe_video_timing(path: Path) -> dict[str, float | int]:
+    """Return fps + frame count for accurate start/end frame trims."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=r_frame_rate,nb_read_frames,nb_frames:format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed:\n{result.stderr or result.stdout}")
+    info = json.loads(result.stdout)
+    stream = (info.get("streams") or [{}])[0]
+    rate_raw = str(stream.get("r_frame_rate") or "0/1")
+    try:
+        fps = float(Fraction(rate_raw))
+    except (ValueError, ZeroDivisionError):
+        fps = 0.0
+    frames = 0
+    for key in ("nb_read_frames", "nb_frames"):
+        raw = stream.get(key)
+        if raw not in (None, "N/A", "0", 0):
+            try:
+                frames = int(raw)
+                break
+            except (TypeError, ValueError):
+                pass
+    duration = float((info.get("format") or {}).get("duration") or 0.0)
+    if frames <= 0 and fps > 0 and duration > 0:
+        frames = max(1, int(round(duration * fps)))
+    if fps <= 0 and frames > 0 and duration > 0:
+        fps = frames / duration
+    if frames <= 0:
+        raise RuntimeError(f"Could not determine frame count for {path}")
+    if fps <= 0:
+        fps = 24.0
+    return {"fps": fps, "frames": frames, "duration": duration}
+
+
+def _frame_luma_stats(path: Path, frame_index: int) -> tuple[float, float]:
+    """Return (mean luma 0–255, fraction of near-white pixels) for one frame."""
+    meta = probe_video(path)
+    width = int(meta["width"])
+    height = int(meta["height"])
+    expected = width * height * 3
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            f"select=eq(n\\,{frame_index})",
+            "-vframes",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0 or len(result.stdout) < expected:
+        raise RuntimeError(
+            f"Failed to sample frame {frame_index} from {path.name}: "
+            f"{(result.stderr or b'').decode('utf-8', errors='replace')}"
+        )
+    data = result.stdout[:expected]
+    total_luma = 0.0
+    near_white = 0
+    pixels = width * height
+    for i in range(0, expected, 3):
+        r = data[i]
+        g = data[i + 1]
+        b = data[i + 2]
+        luma = 0.299 * r + 0.587 * g + 0.114 * b
+        total_luma += luma
+        if r >= WHITE_NEAR_MIN and g >= WHITE_NEAR_MIN and b >= WHITE_NEAR_MIN:
+            near_white += 1
+    return total_luma / pixels, near_white / pixels
+
+
+def _is_flash_frame(
+    mean_luma: float,
+    near_white_ratio: float,
+    baseline_luma: float,
+) -> bool:
+    if mean_luma >= WHITE_LUMA_THRESHOLD or near_white_ratio >= WHITE_NEAR_RATIO:
+        return True
+    if baseline_luma <= 1:
+        return False
+    return (
+        mean_luma >= baseline_luma + FLASH_LUMA_DELTA
+        or mean_luma >= baseline_luma * FLASH_LUMA_RATIO
+    )
+
+
+def _mid_clip_baseline_luma(path: Path, frames: int) -> float:
+    """Median mean-luma of interior frames — what a 'normal' frame looks like."""
+    if frames <= 4:
+        mean_luma, _ = _frame_luma_stats(path, max(0, frames // 2))
+        return mean_luma
+    start = max(1, frames // 5)
+    end = max(start + 1, (frames * 4) // 5)
+    span = end - start
+    step = max(1, span // BASELINE_SAMPLE_COUNT)
+    samples: list[float] = []
+    for index in range(start, end, step):
+        mean_luma, _ = _frame_luma_stats(path, index)
+        samples.append(mean_luma)
+        if len(samples) >= BASELINE_SAMPLE_COUNT:
+            break
+    if not samples:
+        mean_luma, _ = _frame_luma_stats(path, frames // 2)
+        return mean_luma
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
+def detect_white_edge_frames(path: Path) -> dict:
+    """Count consecutive washed/white flash frames at the start and end of a clip."""
+    timing = probe_video_timing(path)
+    frames = int(timing["frames"])
+    scan = min(MAX_EDGE_SCAN_FRAMES, max(0, frames // 2))
+    baseline = _mid_clip_baseline_luma(path, frames)
+    drop_start = 0
+    for index in range(scan):
+        mean_luma, near_ratio = _frame_luma_stats(path, index)
+        if not _is_flash_frame(mean_luma, near_ratio, baseline):
+            break
+        drop_start += 1
+    drop_end = 0
+    for offset in range(scan):
+        index = frames - 1 - offset
+        if index < drop_start:
+            break
+        mean_luma, near_ratio = _frame_luma_stats(path, index)
+        if not _is_flash_frame(mean_luma, near_ratio, baseline):
+            break
+        drop_end += 1
+    return {
+        "frames": frames,
+        "fps": float(timing["fps"]),
+        "duration": float(timing["duration"]),
+        "baseline_luma": round(baseline, 1),
+        "drop_start": drop_start,
+        "drop_end": drop_end,
+        "suggested": drop_start > 0 or drop_end > 0,
+    }
+
+
+def trim_video_frames(
+    src: Path,
+    dst: Path,
+    *,
+    drop_start: int = 0,
+    drop_end: int = 0,
+) -> dict:
+    """Drop N frames from the start and/or end. Writes a fresh H.264 MP4 to dst."""
+    if drop_start < 0 or drop_end < 0:
+        raise RuntimeError("drop_start and drop_end must be >= 0")
+    timing = probe_video_timing(src)
+    frames = int(timing["frames"])
+    fps = float(timing["fps"])
+    if drop_start + drop_end >= frames:
+        raise RuntimeError(
+            f"Cannot drop {drop_start}+{drop_end} frames from a {frames}-frame clip."
+        )
+    start = drop_start
+    end = frames - drop_end  # exclusive
+    keep = end - start
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.stem}.trim-tmp{dst.suffix}")
+    if drop_start == 0 and drop_end == 0:
+        if src.resolve() != dst.resolve():
+            shutil.copy2(src, dst)
+        return {
+            "frames_before": frames,
+            "frames_after": frames,
+            "fps": fps,
+            "drop_start": 0,
+            "drop_end": 0,
+            "duration_after": float(timing["duration"]),
+        }
+    print(
+        f"Trimming {src.name}: drop first {drop_start}, last {drop_end} "
+        f"→ keep frames {start}..{end - 1} ({keep} frames)"
+    )
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-vf",
+            f"select=between(n\\,{start}\\,{end - 1}),setpts=N/{fps}/TB",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+    )
+    tmp.replace(dst)
+    after = probe_video_timing(dst)
+    log_video("Trimmed", dst)
+    return {
+        "frames_before": frames,
+        "frames_after": int(after["frames"]),
+        "fps": fps,
+        "drop_start": drop_start,
+        "drop_end": drop_end,
+        "duration_after": float(after["duration"]),
+    }
 
 
 def target_width_for_preset(preset: CompressPreset, source_width: int | None = None) -> int:

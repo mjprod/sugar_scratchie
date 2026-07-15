@@ -27,13 +27,15 @@ export const iconProps = {
   strokeWidth: 2.25,
 } as const;
 
-export function previewSource(value: string) {
+export function previewSource(value: string, cacheBust?: string | number) {
   const trimmed = value.trim();
   if (!trimmed) return "";
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("data:")) {
-    return trimmed;
+    const join = trimmed.includes("?") ? "&" : "?";
+    return cacheBust != null && cacheBust !== "" ? `${trimmed}${join}v=${cacheBust}` : trimmed;
   }
-  return `/api/files/preview?path=${encodeURIComponent(trimmed)}`;
+  const url = `/api/files/preview?path=${encodeURIComponent(trimmed)}`;
+  return cacheBust != null && cacheBust !== "" ? `${url}&v=${cacheBust}` : url;
 }
 
 export function Field({ children, label }: { children: ReactNode; label: string }) {
@@ -53,6 +55,7 @@ export function MediaPreview({
   type,
   value,
   zoomable = false,
+  cacheBust,
   onDelete,
 }: {
   label: string;
@@ -60,9 +63,10 @@ export function MediaPreview({
   type: "image" | "video";
   value: string;
   zoomable?: boolean;
+  cacheBust?: string | number;
   onDelete?: () => void;
 }) {
-  const src = previewSource(value);
+  const src = previewSource(value, cacheBust);
   const [hasError, setHasError] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
 

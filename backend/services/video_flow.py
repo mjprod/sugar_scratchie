@@ -40,8 +40,10 @@ from backend.services.mesh_tracking import generate_mesh
 from backend.services.mesh_tune import build_mesh_tracking_env, mesh_tune_from_dict
 from backend.services.video_prep import (
     align_clip_to_reference,
+    detect_white_edge_frames,
     finalize_card_videos,
     normalize_compress_preset,
+    trim_video_frames,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,7 +51,15 @@ CARDS_DIR = ROOT / "public" / "cards"
 MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
 
-VideoFlowStep = Literal["background", "dress", "card", "mesh", "symbols", "compress"]
+VideoFlowStep = Literal[
+    "background",
+    "trim",
+    "dress",
+    "card",
+    "mesh",
+    "symbols",
+    "compress",
+]
 MeshTracker = Literal["bootstapir", "cotracker", "blend"]
 MeshTrackerChoice = Literal["bootstapir", "cotracker", "blend", "all"]
 
@@ -59,9 +69,10 @@ MESH_TRACKERS: tuple[MeshTracker, MeshTracker, MeshTracker] = (
     "blend",
 )
 
-# Bikini background first (master motion), dress edit from it, then publish + track, compress last.
+# Bikini background → drop white edge frames → dress edit → publish + track → compress.
 STEP_ORDER: list[VideoFlowStep] = [
     "background",
+    "trim",
     "dress",
     "card",
     "mesh",
@@ -71,17 +82,19 @@ STEP_ORDER: list[VideoFlowStep] = [
 
 STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
     "background": [],
-    "dress": ["background"],
+    "trim": ["background"],
+    "dress": ["trim"],
     "card": ["background", "dress"],
     "mesh": ["card"],
     "symbols": ["mesh"],
     "compress": ["symbols"],
 }
 
-REVIEW_STEPS = frozenset({"background", "dress"})
+REVIEW_STEPS = frozenset({"background", "trim", "dress"})
 
 STEP_LABELS: dict[VideoFlowStep, str] = {
     "background": "Background bikini (image to video)",
+    "trim": "Fix frames (delete white frames)",
     "dress": "Foreground dress-up (video edit)",
     "card": "Create card",
     "mesh": "Generate mesh",
@@ -198,14 +211,24 @@ def read_state(work: Path) -> dict:
 
 def normalize_state(state: dict) -> dict:
     """Drop stale approvals from older pipeline versions or skipped dependencies."""
+    raw = [step for step in state["approved"] if step in STEP_ORDER]
+    # Pre-trim pipelines approved dress without a fix-frames step — backfill it.
+    later = {"dress", "card", "mesh", "symbols", "compress"}
+    if (
+        "background" in raw
+        and "trim" not in raw
+        and any(step in later for step in raw)
+    ):
+        insert_at = raw.index("background") + 1
+        raw = [*raw[:insert_at], "trim", *raw[insert_at:]]
     approved: list[VideoFlowStep] = []
     for step in STEP_ORDER:
-        if step not in state["approved"]:
+        if step not in raw:
             continue
         if all(dep in approved for dep in STEP_DEPS[step]):
             approved.append(step)
     if approved != state["approved"]:
-        state = {"approved": approved}
+        state = {**state, "approved": approved}
     return state
 
 
@@ -259,8 +282,13 @@ def artifact_paths(
         dress_preview = str(foreground_dressed.relative_to(ROOT))
     elif video_ok(card_fg) and "dress" in approved:
         dress_preview = str(card_fg.relative_to(ROOT))
+    trim_report = work / "trim-report.json"
+    trim_preview = ""
+    if trim_report.exists() and background_preview:
+        trim_preview = background_preview
     return {
         "background": [background_preview],
+        "trim": [trim_preview],
         "dress": [dress_preview],
         "card": [
             str(card_bg.relative_to(ROOT)) if video_ok(card_bg) else "",
@@ -314,6 +342,11 @@ def step_artifact_ready(
         report = work / "compress-report.json"
         video_ok = output_video_ready if probe_videos else video_file_present
         return video_ok(card_bg) and video_ok(card_fg) and report.exists()
+    if step == "trim":
+        report = work / "trim-report.json"
+        background_clip = _work_background_clip(work)
+        video_ok = output_video_ready if probe_videos else video_file_present
+        return bool(report.exists() and background_clip and video_ok(background_clip))
     paths = preview_paths(work, card_id, state, probe_videos=probe_videos)[step]
     if not paths:
         return False
@@ -395,7 +428,13 @@ def downstream_steps(step: VideoFlowStep) -> list[VideoFlowStep]:
 def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
     paths = _paths(work)
     files_by_step: dict[VideoFlowStep, list[Path]] = {
-        "background": [paths["background_raw"]],
+        "background": [
+            paths["background_raw"],
+            paths["background_source"],
+            paths["trim_report"],
+            work / "background-raw-grok-compatible.mp4",
+        ],
+        "trim": [paths["trim_report"]],
         "dress": [paths["foreground_dressed"]],
         "compress": [
             work / "foreground-aligned-for-compress.mp4",
@@ -410,6 +449,10 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
     for rel_path in files_by_step.get(step, []):
         rel_path.unlink(missing_ok=True)
         request_id_sidecar(rel_path).unlink(missing_ok=True)
+
+    if step == "trim" and output_video_ready(paths["background_source"]):
+        # Restore the pristine Grok clip so dress always sees the untrimmed source after reject.
+        shutil.copy2(paths["background_source"], paths["background_raw"])
 
     if step == "card":
         # Keep published card videos on disk so a failed remake (or dress remake)
@@ -481,6 +524,15 @@ def approve_flow_step(
     if step not in state["approved"]:
         state["approved"].append(step)
         if step == "background" and "dress" not in state["approved"]:
+            dressed = work / "foreground-dressed.mp4"
+            dressed.unlink(missing_ok=True)
+            request_id_sidecar(dressed).unlink(missing_ok=True)
+            # New bikini clip — drop prior fix-frames marker without restoring over the new raw.
+            paths = _paths(work)
+            paths["trim_report"].unlink(missing_ok=True)
+            if "trim" in state["approved"]:
+                state["approved"].remove("trim")
+        if step == "trim" and "dress" not in state["approved"]:
             dressed = work / "foreground-dressed.mp4"
             dressed.unlink(missing_ok=True)
             request_id_sidecar(dressed).unlink(missing_ok=True)
@@ -617,7 +669,20 @@ def import_manual_clips(
     )
 
     state = read_state(work)
-    state["approved"] = ["background", "dress", "card"]
+    # Manual imports already skipped white-frame cleanup — mark trim done.
+    _ensure_background_source(work, paths)
+    _write_trim_report(
+        work,
+        {
+            "drop_start": 0,
+            "drop_end": 0,
+            "auto": False,
+            "manual_import": True,
+            "frames_before": None,
+            "frames_after": None,
+        },
+    )
+    state["approved"] = ["background", "trim", "dress", "card"]
     # Keep mesh/symbols if those artifacts already exist for this card.
     mesh_out = MESH_DIR / f"{card_id}.json"
     if mesh_out.exists():
@@ -627,7 +692,7 @@ def import_manual_clips(
     write_state(work, state)
     print(
         f"Imported manual clips for {card_id} — "
-        "background, dress, and card marked approved."
+        "background, trim, dress, and card marked approved."
     )
     return flow_state(card_id)
 
@@ -724,10 +789,14 @@ def recover_stale_approvals(
     # Published card implies background + dress + card were done, even if the
     # work-dir dress clip was cleaned up or only a grok-compatible bg remains.
     if published:
-        restored: list[VideoFlowStep] = ["background", "dress", "card"]
+        restored: list[VideoFlowStep] = ["background", "trim", "dress", "card"]
     elif background_clip and video_ok(background_clip):
         restored = ["background"]
+        if (work / "trim-report.json").exists():
+            restored.append("trim")
         if video_ok(paths["foreground_dressed"]):
+            if "trim" not in restored:
+                restored.append("trim")
             restored.append("dress")
     else:
         return False
@@ -931,8 +1000,13 @@ def _source_image_newer_than_background(
 
 
 def _clear_background_clip(paths: dict[str, Path]) -> None:
-    paths["background_raw"].unlink(missing_ok=True)
-    request_id_sidecar(paths["background_raw"]).unlink(missing_ok=True)
+    for key in ("background_raw", "background_source", "trim_report"):
+        path = paths[key]
+        path.unlink(missing_ok=True)
+        request_id_sidecar(path).unlink(missing_ok=True)
+    compat = paths["background_raw"].with_name("background-raw-grok-compatible.mp4")
+    compat.unlink(missing_ok=True)
+    request_id_sidecar(compat).unlink(missing_ok=True)
 
 
 def invalidate_after_source_image_change(card_id: str) -> dict:
@@ -1103,8 +1177,156 @@ def list_flows() -> list[dict]:
 def _paths(work: Path) -> dict[str, Path]:
     return {
         "background_raw": work / "background-raw.mp4",
+        "background_source": work / "background-source.mp4",
+        "trim_report": work / "trim-report.json",
         "foreground_dressed": work / "foreground-dressed.mp4",
     }
+
+
+def _ensure_background_source(work: Path, paths: dict[str, Path] | None = None) -> Path:
+    """Keep a pristine copy of the Grok output for re-trimming / reset."""
+    paths = paths or _paths(work)
+    raw = paths["background_raw"]
+    source = paths["background_source"]
+    if not output_video_ready(raw):
+        card_bg = CARDS_DIR / work.name / "background.mp4"
+        if output_video_ready(card_bg):
+            shutil.copy2(card_bg, raw)
+        else:
+            raise RuntimeError("Background clip missing — run the bikini step first.")
+    if not output_video_ready(source):
+        shutil.copy2(raw, source)
+        print(f"Saved pristine background source: {source.name}")
+    return source
+
+
+def _write_trim_report(work: Path, report: dict) -> Path:
+    path = _paths(work)["trim_report"]
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_trim_report(work: Path) -> dict | None:
+    path = _paths(work)["trim_report"]
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def trim_step_info(card_id: str) -> dict:
+    """Detection + current trim state for the Fix frames dashboard step."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    paths = _paths(work)
+    source = _ensure_background_source(work, paths)
+    detection = detect_white_edge_frames(source)
+    applied = _read_trim_report(work)
+    clip = _work_background_clip(work)
+    revised_at = 0
+    if clip and clip.exists():
+        revised_at = int(clip.stat().st_mtime_ns // 1_000_000)
+    return {
+        "source": str(source.relative_to(ROOT)),
+        "clip": str(clip.relative_to(ROOT)) if clip else "",
+        "detection": detection,
+        "applied": applied,
+        "status": step_status(work, card_id, "trim", state),
+        "revised_at": revised_at,
+    }
+
+
+def apply_trim_step(
+    card_id: str,
+    *,
+    drop_start: int | None = None,
+    drop_end: int | None = None,
+    auto: bool = False,
+) -> dict:
+    """Apply (or re-apply) a white-frame trim to the bikini clip."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    if not step_unlocked(state, "trim"):
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    paths = _paths(work)
+    source = _ensure_background_source(work, paths)
+    detection = detect_white_edge_frames(source)
+    if auto or drop_start is None or drop_end is None:
+        start = int(detection["drop_start"])
+        end = int(detection["drop_end"])
+        auto = True
+    else:
+        start = int(drop_start)
+        end = int(drop_end)
+    result = trim_video_frames(
+        source,
+        paths["background_raw"],
+        drop_start=start,
+        drop_end=end,
+    )
+    report = {
+        **results_to_json(result),
+        "auto": auto,
+        "detected_start": int(detection["drop_start"]),
+        "detected_end": int(detection["drop_end"]),
+    }
+    _write_trim_report(work, report)
+    # Re-applying invalidates dress and later steps.
+    if "trim" in state["approved"]:
+        state["approved"].remove("trim")
+    for downstream in downstream_steps("trim"):
+        if downstream == "trim":
+            continue
+        if downstream in state["approved"]:
+            state["approved"].remove(downstream)
+        clear_step_outputs(work, card_id, downstream)
+    write_state(work, state)
+    print(
+        f"Trim applied: drop_start={start}, drop_end={end} "
+        f"({result['frames_before']} → {result['frames_after']} frames)"
+    )
+    flow = flow_state(card_id)
+    flow["trim"] = trim_step_info(card_id)
+    return flow
+
+
+def results_to_json(result: dict) -> dict:
+    return {
+        "drop_start": int(result["drop_start"]),
+        "drop_end": int(result["drop_end"]),
+        "frames_before": int(result["frames_before"]),
+        "frames_after": int(result["frames_after"]),
+        "fps": float(result["fps"]),
+        "duration_after": float(result["duration_after"]),
+    }
+
+
+def reset_trim_step(card_id: str) -> dict:
+    """Restore the pristine Grok clip and clear the trim artifact."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    clear_step_outputs(work, card_id, "trim")
+    for downstream in downstream_steps("trim"):
+        if downstream == "trim":
+            continue
+        if downstream in state["approved"]:
+            state["approved"].remove(downstream)
+        clear_step_outputs(work, card_id, downstream)
+    if "trim" in state["approved"]:
+        state["approved"].remove("trim")
+    write_state(work, state)
+    flow = flow_state(card_id)
+    flow["trim"] = trim_step_info(card_id)
+    return flow
 
 
 def run_mesh_candidate_generation(
@@ -1265,6 +1487,12 @@ def run_video_flow_step(
             background_video_model=bg_video_model,
             enhance_motion_prompt=True,
         )
+        # Always refresh the pristine source so Fix frames can reset / re-trim.
+        shutil.copy2(paths["background_raw"], paths["background_source"])
+        paths["trim_report"].unlink(missing_ok=True)
+        print(f"Saved pristine background source: {paths['background_source'].name}")
+    elif step == "trim":
+        apply_trim_step(card_id, auto=True)
     elif step == "dress":
         if not output_video_ready(paths["background_raw"]):
             # Work-dir raw is often cleaned up after publish; restore from the card.
@@ -1274,7 +1502,8 @@ def run_video_flow_step(
                 print(f"Restored background clip from published card: {card_bg}")
             else:
                 raise RuntimeError("Background clip missing — run the bikini step first.")
-        print("Dress edit uses the approved background clip as input (same motion and scenery).")
+        _ensure_background_source(work, paths)
+        print("Dress edit uses the approved (trimmed) background clip as input.")
         if dress_model == "wan-2.2-video-edit":
             print("Dress video: WaveSpeed WAN 2.2 Video Edit")
         else:
