@@ -738,12 +738,16 @@ const CHEST_SMOOTH = 0.08;
 const HARD_SEEK_DRIFT = 0.45;
 
 // Smaller but persistent drift (a startup offset between the two play() calls,
-// a decode stall, tab-suspend catch-up) is closed with a rare one-shot seek
-// instead: the drift must hold past SOFT_SEEK_DRIFT for SOFT_SEEK_CONFIRM_MS
-// before we act, and corrections are spaced by SOFT_SEEK_COOLDOWN_MS, so a
-// single coarse/stale currentTime reading can never trigger a seek storm.
-const SOFT_SEEK_DRIFT = 0.09;
-const SOFT_SEEK_CONFIRM_MS = 400;
+// a decode stall, tab-suspend catch-up) is closed with a rare one-shot seek:
+// drift must hold past SOFT_SEEK_DRIFT for SOFT_SEEK_CONFIRM_MS before we act,
+// and corrections are spaced by SOFT_SEEK_COOLDOWN_MS so a single stale
+// currentTime reading (Safari updates at ~4 Hz) can't cause a seek storm.
+// 0.05s catches a 2-frame offset at 24fps (2×0.042=0.083s) and at 30fps
+// (2×0.033=0.067s), which 0.09s would silently ignore.
+// 150ms confirm is long enough to outlast one Safari polling interval (~250ms)
+// while still snapping within the first visible loop.
+const SOFT_SEEK_DRIFT = 0.05;
+const SOFT_SEEK_CONFIRM_MS = 150;
 const SOFT_SEEK_COOLDOWN_MS = 2000;
 
 const videoSyncState = new WeakMap<
@@ -1256,7 +1260,7 @@ export function ScratchPrototype() {
         bottomVideo &&
         foregroundVideo &&
         bottomVideo.readyState >= 2 &&
-        foregroundVideo.readyState >= 1
+        foregroundVideo.readyState >= 2
       ) {
         syncVideoTime(bottomVideo, foregroundVideo);
       }
@@ -1571,6 +1575,10 @@ export function ScratchPrototype() {
     foregroundVideo.currentTime = 0;
 
     const kickPlayback = () => {
+      // Wait until BOTH videos have at least HAVE_CURRENT_DATA so their first
+      // decoded frame is ready. Firing play() on one while the other is still
+      // buffering creates a startup offset that the soft-seek must then chase.
+      if (bottomVideo.readyState < 2 || foregroundVideo.readyState < 2) return;
       const nextDuration = bottomVideo.duration || uiStateRef.current.duration;
       uiStateRef.current = {
         ...uiStateRef.current,
@@ -1578,15 +1586,18 @@ export function ScratchPrototype() {
         isPaused: false,
       };
       setDuration(nextDuration);
-      void bottomVideo.play().catch(() => undefined);
-      void foregroundVideo.play().catch(() => undefined);
+      // Start both in the same microtask so the browser schedules their decode
+      // pipelines as close together as possible.
+      void Promise.all([
+        bottomVideo.play(),
+        foregroundVideo.play(),
+      ]).catch(() => undefined);
     };
 
     bottomVideo.addEventListener("canplay", kickPlayback);
     foregroundVideo.addEventListener("canplay", kickPlayback);
-    if (bottomVideo.readyState >= 2 || foregroundVideo.readyState >= 2) {
-      kickPlayback();
-    }
+    // Fire immediately if both are already ready (e.g. cached from a prior card).
+    kickPlayback();
 
     return () => {
       bottomVideo.removeEventListener("canplay", kickPlayback);

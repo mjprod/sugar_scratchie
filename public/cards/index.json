@@ -60,6 +60,16 @@
       "model_id": "asia"
     },
     {
+      "id": "asia_gym2",
+      "label": "Asia gym2",
+      "bottom": "/cards/asia_gym2/background.mp4",
+      "foreground": "/cards/asia_gym2/foreground.mp4",
+      "mesh": "asia_gym2.json",
+      "chroma_key": false,
+      "sort_order": 6,
+      "model_id": "asia"
+    },
+    {
       "id": "girl_1",
       "label": "Girl 1",
       "bottom": "/cards/girl_1/background.mp4",
