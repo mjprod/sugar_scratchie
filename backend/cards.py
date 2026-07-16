@@ -34,6 +34,8 @@ class CardInfo(BaseModel):
     model_id: str | None = None
     sort_order: int = 0
     photos: list[PhotoInfo] = Field(default_factory=list)
+    # Slots with any approved or pending photo-scratch layer.
+    photo_scratch_count: int = 0
 
 
 class CreateCardRequest(BaseModel):
@@ -222,6 +224,7 @@ def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
                 model_id=read_card_model_id(directory),
                 sort_order=read_card_sort_order(directory),
                 photos=read_card_photos(directory, card_id),
+                photo_scratch_count=count_filled_photo_scratch_slots(cards_dir, card_id),
             )
         )
     discovered.sort(key=lambda card: (card.model_id or "", card.sort_order, card.id))
@@ -355,6 +358,7 @@ def create_card(root: Path, cards_dir: Path, mesh_dir: Path, request: CreateCard
         model_id=request.model_id,
         sort_order=sort_order,
         photos=[],
+        photo_scratch_count=count_filled_photo_scratch_slots(cards_dir, card_id),
     )
 
 
@@ -396,6 +400,7 @@ def update_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str, reque
         model_id=read_card_model_id(card_dir),
         sort_order=read_card_sort_order(card_dir),
         photos=read_card_photos(card_dir, card.id),
+        photo_scratch_count=count_filled_photo_scratch_slots(cards_dir, card.id),
     )
 
 
@@ -489,6 +494,27 @@ def _read_photo_scratch_index(cards_dir: Path, card_id: str) -> list[dict]:
     except Exception:
         pass
     return []
+
+
+_PHOTO_SCRATCH_LAYER_KEYS = (
+    "background",
+    "bikini",
+    "clothes",
+    "pending_bg",
+    "pending_bikini",
+    "pending_clothes",
+)
+
+
+def count_filled_photo_scratch_slots(cards_dir: Path, card_id: str) -> int:
+    """Count slots that have any approved or pending layer (drafts included)."""
+    total = 0
+    for entry in _read_photo_scratch_index(cards_dir, card_id):
+        if not isinstance(entry, dict):
+            continue
+        if any(entry.get(key) for key in _PHOTO_SCRATCH_LAYER_KEYS):
+            total += 1
+    return total
 
 
 def _write_photo_scratch_index(cards_dir: Path, card_id: str, slots: list[dict]) -> None:

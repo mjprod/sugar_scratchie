@@ -39,11 +39,13 @@ import {
   createMotionCardDraft,
   deleteModel,
   fetchModels,
+  fetchPhotoScratchSlots,
   reorderModelCards,
   updateModel,
   uploadModelAvatar,
   type ModelInfo,
   type PhotoInfo,
+  type PhotoScratchSlot,
 } from "./shared/models";
 import {
   labelFromProjectId,
@@ -58,11 +60,27 @@ type CardInfo = {
   model_id?: string | null;
   sort_order?: number;
   photos?: PhotoInfo[];
+  /** Slots with any approved or pending photo-scratch layer. */
+  photo_scratch_count?: number;
   /** True when this row is a Video Flow draft that has not been published as a card yet. */
   draft?: boolean;
   /** Theme from the card's Video Flow draft (scenery + costume), when one exists. */
   theme?: string;
 };
+
+function filledPhotoScratchCount(slots: PhotoScratchSlot[]): number {
+  return slots.filter(
+    (slot) =>
+      Boolean(
+        slot.background ||
+          slot.bikini ||
+          slot.clothes ||
+          slot.pending_bg ||
+          slot.pending_bikini ||
+          slot.pending_clothes,
+      ),
+  ).length;
+}
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 
@@ -101,10 +119,25 @@ function draftCardsFromFlows(flows: VideoFlowProject[], publishedIds: Set<string
       model_id: modelId,
       draft: true,
       photos: [],
+      photo_scratch_count: 0,
       theme: flow.draft?.theme?.trim() || undefined,
     });
   }
   return drafts;
+}
+
+async function enrichDraftPhotoScratchCounts(drafts: CardInfo[]): Promise<CardInfo[]> {
+  if (drafts.length === 0) return drafts;
+  return Promise.all(
+    drafts.map(async (card) => {
+      try {
+        const slots = await fetchPhotoScratchSlots(card.id, card.theme ?? "");
+        return { ...card, photo_scratch_count: filledPhotoScratchCount(slots) };
+      } catch {
+        return card;
+      }
+    }),
+  );
 }
 
 function themesByCardId(flows: VideoFlowProject[]): Map<string, string> {
@@ -143,10 +176,14 @@ export function ModelsPage() {
     const published = assets.cards.map((card) => ({
       ...card,
       theme: card.theme ?? themes.get(card.id),
+      photo_scratch_count: card.photo_scratch_count ?? 0,
     }));
+    const drafts = await enrichDraftPhotoScratchCounts(
+      draftCardsFromFlows(flowData.flows, new Set(published.map((card) => card.id))),
+    );
     setModels(nextModels);
     setCards(published);
-    setDraftCards(draftCardsFromFlows(flowData.flows, new Set(published.map((card) => card.id))));
+    setDraftCards(drafts);
   }
 
   useEffect(() => {
@@ -752,7 +789,7 @@ export function ModelsPage() {
                                 </Badge>
                               ) : null}
                             </Table.Cell>
-                            <Table.Cell>{card.draft ? "—" : (card.photos?.length ?? 0)}</Table.Cell>
+                            <Table.Cell>{card.photo_scratch_count ?? 0}</Table.Cell>
                             <Table.Cell align="right">
                               <Flex align="center" gap="1" justify="end">
                                 {card.draft ? null : (
