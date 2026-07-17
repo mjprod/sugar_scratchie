@@ -139,6 +139,8 @@ export async function deleteCardPhoto(cardId: string, photoId: string): Promise<
   });
 }
 
+export type PhotoScratchLayerType = "background" | "bikini" | "clothes";
+
 export type PhotoScratchSlot = {
   id: string;
   label: string;
@@ -148,9 +150,42 @@ export type PhotoScratchSlot = {
   pending_bg?: string;
   pending_bikini?: string;
   pending_clothes?: string;
+  /** Optional per-slot prompts for each layer. */
+  prompt_background?: string;
+  prompt_bikini?: string;
+  prompt_clothes?: string;
+  /** Per-slot static photo mesh URL (not the motion-card video mesh). */
+  mesh?: string;
+  has_symbols?: boolean;
+  /** Bikini + clothes are RGBA cutouts (girl without background). */
+  has_cutout?: boolean;
+  /** Derived cutout PNG URLs — originals stay on bikini/clothes. */
+  bikini_cutout?: string;
+  clothes_cutout?: string;
+  /** Top warped onto bikini pose (before cutout). */
+  has_match?: boolean;
+  clothes_matched?: string;
+  /** Difference blend (|bikini − matched|) for Match QA. */
+  match_overlay?: string;
+  /** 50/50 mixed blend of bikini + matched top. */
+  match_blend?: string;
+  match_pose_ok?: boolean;
+  match_iou?: number | null;
 };
 
-export type PhotoScratchLayerType = "background" | "bikini" | "clothes";
+const SLOT_PROMPT_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
+  background: "prompt_background",
+  bikini: "prompt_bikini",
+  clothes: "prompt_clothes",
+};
+
+export function slotLayerPrompt(
+  slot: PhotoScratchSlot,
+  layer: PhotoScratchLayerType,
+): string {
+  const value = slot[SLOT_PROMPT_KEY[layer]];
+  return typeof value === "string" ? value.trim() : "";
+}
 
 /** Default AI prompts (mirrors backend/services/grok.py). Theme is filled from the card theme. */
 export function defaultPhotoScratchPrompt(
@@ -189,8 +224,13 @@ export function defaultPhotoScratchPrompt(
     `Using this exact same woman, pose, framing, and background, change only her outfit ` +
     `to a fully clothed ${scenery} costume/dress suitable for a scratch-card top layer. ` +
     `Keep face, identity, hair, skin, hands, body pose, camera angle, and the entire ` +
-    `background identical. Only replace the bikini with clothing. ` +
-    "Photorealistic, 9:16 framing. Do not invent a different woman or move the camera."
+    `background identical. Lock every limb: same arm angles, elbow bends, hand positions, ` +
+    `hip stance, and leg placement as the reference — do not raise, lower, or shift either ` +
+    `arm. Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves. ` +
+    `Only replace the bikini with clothing; do not restage the body. ` +
+    `Keep her face sharp and in focus — clear eyes, natural skin detail, not soft or ` +
+    `airbrushed-blurry. Photorealistic, 9:16 framing. Do not invent a different woman ` +
+    "or move the camera."
   );
 }
 
@@ -299,6 +339,126 @@ export async function rejectPhotoScratchLayer(
   return api<PhotoScratchSlot>(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/reject-layer?${search}`,
     { method: "POST" },
+  );
+}
+
+export async function setPhotoScratchSlotPrompt(
+  cardId: string,
+  slotId: string,
+  layer: PhotoScratchLayerType,
+  prompt: string,
+  theme = "",
+): Promise<PhotoScratchSlot> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  return api<PhotoScratchSlot>(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/prompt${params}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ layer, prompt }),
+    },
+  );
+}
+
+export async function publishPhotoScratchGame(
+  cardId: string,
+  slotId = "",
+): Promise<{
+  published: number;
+  card_id: string;
+  first_id?: string | null;
+  slot_id?: string | null;
+}> {
+  const params = slotId.trim()
+    ? `?slot_id=${encodeURIComponent(slotId.trim())}`
+    : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/publish-game${params}`,
+    { method: "POST" },
+  );
+}
+
+export function photoScratchPlayHref(cardId: string, slotEntryId?: string | null): string {
+  const id = (slotEntryId || cardId).trim();
+  if (!id) return "/photo-scratch";
+  return `/photo-scratch?card=${encodeURIComponent(id)}`;
+}
+
+export function photoScratchSlotPlayHref(cardId: string, slotId: string): string {
+  return photoScratchPlayHref(`${cardId.trim()}_${slotId.trim()}`);
+}
+
+export function photoScratchSlotIsDone(slot: PhotoScratchSlot): boolean {
+  return Boolean(
+    slot.background &&
+      slot.bikini &&
+      slot.clothes &&
+      slot.has_match &&
+      slot.has_cutout &&
+      slot.mesh &&
+      slot.has_symbols,
+  );
+}
+
+export async function matchPhotoScratchSlot(
+  cardId: string,
+  slotId: string,
+  theme = "",
+  options?: { relock?: boolean },
+): Promise<{ id: string; status: string }> {
+  const params = new URLSearchParams();
+  if (theme.trim()) params.set("theme", theme.trim());
+  if (options?.relock) params.set("relock", "true");
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/match${q}`,
+    { method: "POST" },
+  );
+}
+
+export async function cutoutPhotoScratchSlot(
+  cardId: string,
+  slotId: string,
+  theme = "",
+): Promise<{ id: string; status: string }> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/cutout${params}`,
+    { method: "POST" },
+  );
+}
+
+export async function generatePhotoScratchSlotMesh(
+  cardId: string,
+  slotId: string,
+  theme = "",
+): Promise<{ id: string; status: string }> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/mesh${params}`,
+    { method: "POST" },
+  );
+}
+
+export async function fetchPhotoScratchSlotSymbols(
+  cardId: string,
+  slotId: string,
+): Promise<{ points: Array<{ u: number; v: number }>; required: number; complete: boolean }> {
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/symbol-points`,
+  );
+}
+
+export async function savePhotoScratchSlotSymbols(
+  cardId: string,
+  slotId: string,
+  points: Array<{ u: number; v: number }>,
+): Promise<PhotoScratchSlot> {
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/symbol-points`,
+    {
+      method: "POST",
+      body: JSON.stringify({ points }),
+    },
   );
 }
 

@@ -30,7 +30,13 @@ export const iconProps = {
 export function previewSource(value: string, cacheBust?: string | number) {
   const trimmed = value.trim();
   if (!trimmed) return "";
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("data:")) {
+  // Absolute http(s)/data URLs, or public site paths (/cards/..., /mesh/...).
+  const isPublicUrl =
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:") ||
+    (trimmed.startsWith("/") && !trimmed.startsWith("//"));
+  if (isPublicUrl) {
     const join = trimmed.includes("?") ? "&" : "?";
     return cacheBust != null && cacheBust !== "" ? `${trimmed}${join}v=${cacheBust}` : trimmed;
   }

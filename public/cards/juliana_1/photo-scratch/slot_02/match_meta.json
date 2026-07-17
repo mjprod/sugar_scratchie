@@ -1,0 +1,14 @@
+{
+  "iou": 0.891,
+  "peek": 0.0038,
+  "edge_mae": 1.59,
+  "pose_ok": true,
+  "pose_mismatch": false,
+  "method": "orb-similarity+face (clothes\u2192bikini)",
+  "inliers": 168,
+  "scale": 1.0159,
+  "tx": 0.28,
+  "ty": -36.28,
+  "face_pixels_locked": true,
+  "ai_relock": false
+}

@@ -58,7 +58,10 @@ export type MaskEditorProps = {
   meshFile: string;
   /** Relative repo path for save API (defaults to meshFile in public/mesh/). */
   meshSavePath?: string;
-  videoSrc: string;
+  /** Motion-card foreground video. Omit when using `imageSrc` (photo-scratch still). */
+  videoSrc?: string;
+  /** Still backdrop for photo-scratch Fix mesh (mutually preferred over video). */
+  imageSrc?: string;
   meshUrl?: string;
   onError: (message: string) => void;
   onSaved?: () => void;
@@ -68,13 +71,16 @@ export type MaskEditorProps = {
 export function MaskEditor({
   meshFile,
   meshSavePath,
-  videoSrc,
+  videoSrc = "",
+  imageSrc = "",
   meshUrl,
   onError,
   onSaved,
   title = "Mask Editor",
 }: MaskEditorProps) {
+  const stillMode = Boolean(imageSrc.trim());
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const garmentRef = useRef<Uint8Array | null>(null);
   const framesRef = useRef<TrackedMeshFrame[]>([]);
@@ -167,7 +173,8 @@ export function MaskEditor({
   useEffect(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !meshReady) return undefined;
+    if (!canvas || !meshReady) return undefined;
+    if (!stillMode && !video) return undefined;
     const { cols, rows, width, height } = dimsRef.current;
     canvas.width = width;
     canvas.height = height;
@@ -180,7 +187,9 @@ export function MaskEditor({
       const frames = framesRef.current;
       const garment = garmentRef.current;
       ctx.clearRect(0, 0, width, height);
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
+      // Still mode: the <img> underneath is already object-fit:cover — only paint
+      // the mesh overlay so we don't get a double / ghosted figure.
+      if (!stillMode && video && video.videoWidth > 0 && video.videoHeight > 0) {
         const fit = coverFit(video.videoWidth, video.videoHeight, width, height);
         try {
           ctx.drawImage(video, fit.dx, fit.dy, fit.dw, fit.dh);
@@ -188,7 +197,8 @@ export function MaskEditor({
           /* frame not ready */
         }
       }
-      const frame = frameForTime(frames, video.currentTime);
+      const frameTime = stillMode ? 0 : (video?.currentTime ?? 0);
+      const frame = frameForTime(frames, frameTime);
       if (frame && garment) {
         const on = (index: number) => garment[index] === 1;
         ctx.fillStyle = "rgba(34, 220, 130, 0.30)";
@@ -268,7 +278,7 @@ export function MaskEditor({
 
     draw();
     return () => window.cancelAnimationFrame(raf);
-  }, [meshReady]);
+  }, [meshReady, stillMode]);
 
   function toMeshPoint(clientX: number, clientY: number) {
     const canvas = canvasRef.current;
@@ -288,9 +298,9 @@ export function MaskEditor({
     cursorRef.current = point;
     if (!drawingRef.current) return;
     const garment = garmentRef.current;
-    const video = videoRef.current;
-    if (!garment || !video) return;
-    const frame = frameForTime(framesRef.current, video.currentTime);
+    if (!garment) return;
+    const frameTime = stillMode ? 0 : (videoRef.current?.currentTime ?? 0);
+    const frame = frameForTime(framesRef.current, frameTime);
     if (!frame) return;
     const radius = brushRef.current.radius;
     const r2 = radius * radius;
@@ -440,21 +450,32 @@ export function MaskEditor({
           <Badge color={dirty ? "orange" : "gray"}>{dirty ? "Unsaved" : "Saved"}</Badge>
         </Flex>
         <Text color="gray" size="2">
-          <strong>Auto detect</strong> builds a clothes/arms/legs mask from the foreground video.
-          Then use <strong>Grow</strong> / <strong>Erase</strong> to cover more of the outfit or
-          clear hair/face bleed, and <strong>Save mask</strong>.
+          {stillMode ? (
+            <>
+              Paint the scratchable clothes region on this photo card. Use{" "}
+              <strong>Add</strong> / <strong>Erase</strong>, then <strong>Save mask</strong>.
+            </>
+          ) : (
+            <>
+              <strong>Auto detect</strong> builds a clothes/arms/legs mask from the foreground
+              video. Then use <strong>Grow</strong> / <strong>Erase</strong> to cover more of the
+              outfit or clear hair/face bleed, and <strong>Save mask</strong>.
+            </>
+          )}
         </Text>
 
-        <Field label="Auto">
-          <Flex gap="2" wrap="wrap">
-            <Button
-              disabled={!meshReady || autoRunning || saving}
-              onClick={() => void autoDetect()}
-            >
-              {autoRunning ? "Detecting…" : "Auto detect body/clothes"}
-            </Button>
-          </Flex>
-        </Field>
+        {stillMode ? null : (
+          <Field label="Auto">
+            <Flex gap="2" wrap="wrap">
+              <Button
+                disabled={!meshReady || autoRunning || saving}
+                onClick={() => void autoDetect()}
+              >
+                {autoRunning ? "Detecting…" : "Auto detect body/clothes"}
+              </Button>
+            </Flex>
+          </Field>
+        )}
 
         <Field label="Brush">
           <Flex gap="2" wrap="wrap">
@@ -485,20 +506,22 @@ export function MaskEditor({
           />
         </Field>
 
-        <Field label="Playback">
-          <Flex gap="2" wrap="wrap">
-            <Button color="gray" variant="soft" onClick={togglePlay}>
-              {playing ? <Square {...iconProps} /> : <Play {...iconProps} />}
-              {playing ? "Pause" : "Play"}
-            </Button>
-            <Button color="gray" variant="soft" onClick={() => step(-0.1)}>
-              -0.1s
-            </Button>
-            <Button color="gray" variant="soft" onClick={() => step(0.1)}>
-              +0.1s
-            </Button>
-          </Flex>
-        </Field>
+        {stillMode ? null : (
+          <Field label="Playback">
+            <Flex gap="2" wrap="wrap">
+              <Button color="gray" variant="soft" onClick={togglePlay}>
+                {playing ? <Square {...iconProps} /> : <Play {...iconProps} />}
+                {playing ? "Pause" : "Play"}
+              </Button>
+              <Button color="gray" variant="soft" onClick={() => step(-0.1)}>
+                -0.1s
+              </Button>
+              <Button color="gray" variant="soft" onClick={() => step(0.1)}>
+                +0.1s
+              </Button>
+            </Flex>
+          </Field>
+        )}
 
         <Field label="Whole mask">
           <Flex gap="2" wrap="wrap">
@@ -552,15 +575,24 @@ export function MaskEditor({
         <Heading size="3">Canvas</Heading>
         <Separator size="4" />
         <Box className="mask-editor-stage">
-          <video
-            ref={videoRef}
-            className="mask-editor-video"
-            loop
-            muted
-            playsInline
-            preload="auto"
-            src={videoSrc}
-          />
+          {stillMode ? (
+            <img
+              ref={imageRef}
+              alt="Photo scratch layer"
+              className="mask-editor-video"
+              src={imageSrc}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              className="mask-editor-video"
+              loop
+              muted
+              playsInline
+              preload="auto"
+              src={videoSrc}
+            />
+          )}
           <canvas
             ref={canvasRef}
             className="mask-editor-canvas"
@@ -582,8 +614,8 @@ export function MaskEditor({
           />
         </Box>
         <Text color="gray" size="1">
-          Green dots/cells are scratchable. Red dots are off. The video is shown cover-fit to match how the
-          prototype renders it, so what you paint lines up with the live scratch area.
+          Green cells are scratchable. Red are off. Backdrop is cover-fit so painting matches the
+          live scratch area.
         </Text>
       </Flex>
     </Grid>

@@ -180,6 +180,46 @@ def edit_image_scenery(
     )
 
 
+def edit_clothes_layer(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Generate the TOP (clothes) layer from the bikini using Flux Kontext Pro.
+
+    Kontext keeps every pixel that the prompt doesn't ask to change — pose, framing,
+    background, and face are locked by construction, so no Match alignment is needed.
+    Falls back to Grok edit when WaveSpeed key is unavailable.
+    """
+    route = source_image_route(provider, image_model)
+    if route in ("wavespeed", "seedream-v5-lite"):
+        return wavespeed.edit_clothes_layer_kontext(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+        )
+    # x.ai / Grok fallback — use standard single-image edit
+    if provider == "xai" and xai_key_available():
+        from backend.services import grok as grok_mod
+        return grok_mod.edit_photo_scratch_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+        )
+    return wavespeed.edit_clothes_layer_kontext(
+        prompt=prompt,
+        out=out,
+        source_image=source_image,
+        aspect_ratio=aspect_ratio,
+    )
+
+
 def edit_photo_scratch_layer(
     *,
     provider: AiProvider,

@@ -715,42 +715,60 @@ def photo_scratch_bikini_prompt(
     *,
     with_background: bool = False,
 ) -> str:
-    """Identity-locked bikini. With a bg plate: new pose in that scene (do not clone source pose/wall)."""
+    """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene."""
     scenery = (theme or "").strip() or "stylish"
     pose = (variation or "").strip() or PHOTO_SCRATCH_POSE_VARIATIONS[0]
     if with_background:
         return (
-            f"Composite edit with two references: (1) the ENVIRONMENT / room to keep, "
-            f"(2) the WOMAN whose identity to keep. "
-            f"Put the exact same woman from reference 2 into the full scene from reference 1. "
-            f"Completely replace her original plain wall / studio backdrop — none of her "
-            f"source background may remain. She wears a flattering {scenery} bikini/swimwear. "
-            f"Pose and framing for this card: {pose}. "
-            f"Keep only face, identity, hair colour/style, skin tone, and body proportions "
-            f"from reference 2 — do NOT copy her source pose or camera crop. "
-            f"Match lighting to the environment. Full body visible, photorealistic, 9:16. "
-            f"Do not invent a different woman or ignore the environment reference."
+            f"Two references: reference 1 = ENVIRONMENT (the full room/scene), "
+            f"reference 2 = WOMAN (her face and body only). "
+            f"Place the woman from reference 2 standing naturally INSIDE the scene from reference 1. "
+            f"Rules: "
+            f"(1) Her feet must rest on the floor of the scene — correct perspective and scale for the room. "
+            f"(2) Full body from head to toe clearly visible. She must fill the 9:16 frame — "
+            f"head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
+            f"Do NOT zoom out or leave large empty space above/below her. "
+            f"(3) She wears a flattering {scenery} bikini/swimwear. "
+            f"(4) Pose: {pose}. "
+            f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
+            f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
+            f"(7) Keep face, hair colour, skin tone, and body proportions exactly from reference 2. "
+            f"(8) Do not invent a different woman. Photorealistic."
         )
     return (
         f"Using this exact same woman from the reference image, change her outfit to a "
         f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
         f"Keep face, identity, hair, skin tone, and body proportions. "
-        f"Do not keep the exact same pose or framing as the reference. "
-        f"Clean studio / transparent-friendly backdrop (no busy scene). "
-        f"Full body, photorealistic, 9:16. Do not invent a different woman."
+        f"Clean studio backdrop (no busy scene). "
+        f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
     )
 
 
 def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
-    """Top layer must match bikini pose/framing for scratch alignment — only the outfit changes."""
+    """Top layer must fully cover the bikini body — only the outfit fabric changes."""
     scenery = (theme or "").strip() or "stylish"
     hint = f" Outfit detail: {variation.strip()}." if variation.strip() else ""
     return (
-        f"Using this exact same woman, pose, framing, and background, change only her outfit "
-        f"to a fully clothed {scenery} costume/dress suitable for a scratch-card top layer. "
-        f"Keep face, identity, hair, skin, hands, body pose, camera angle, and the entire "
-        f"background identical. Only replace the bikini with clothing.{hint} "
-        "Photorealistic, 9:16 framing. Do not invent a different woman or move the camera."
+        f"Change ONLY the bikini fabric to a fully clothed {scenery} costume — nothing else. "
+        f"The body underneath does NOT change: every curve, the bust size and projection, "
+        f"waist, and hips stay exactly as they appear in the reference. "
+        f"The costume fabric wraps tightly over the same body — do not flatten, reduce, "
+        f"or reshape the chest or any other curve. "
+        f"CRITICAL — the following must also be completely identical to the reference: "
+        f"camera zoom level, focal length, crop, frame edges, body scale in frame, "
+        f"head position in frame, feet position in frame, "
+        f"body pose, arm angles, elbow bends, hand positions, hip stance, leg placement, "
+        f"face, identity, hair, skin tone, background, room, lighting, shadow direction, "
+        f"and BODY SHAPE — bust size, waist curve, hip width must be identical to the reference. "
+        f"The costume fabric must cling tightly to the same body silhouette as the bikini — "
+        f"do not flatten or reduce the chest, waist, or hips. "
+        f"The outfit MUST cover the entire body that was covered by the bikini — "
+        f"no skin or bikini fabric may show at the sides, top, or bottom. "
+        f"Do NOT zoom out, widen the shot, or move the camera — the girl must fill "
+        f"the same area of the 9:16 frame as in the reference. "
+        f"Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves.{hint} "
+        f"Face sharp and in focus — clear eyes, natural skin, not airbrushed. "
+        f"Photorealistic. Do not invent a different woman."
     )
 
 

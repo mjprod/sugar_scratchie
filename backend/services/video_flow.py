@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths, create_card, update_card
 from backend.services.ai_provider import (
+    edit_clothes_layer,
     edit_image_scenery,
     edit_photo_scratch_layer,
     edit_video,
@@ -1264,6 +1265,7 @@ def run_generate_photo_scratch_layer(
         list_photo_scratch_slots,
         public_url,
         set_photo_scratch_pending_layer,
+        slot_layer_prompt,
     )
 
     if layer_type not in PHOTO_SCRATCH_LAYER_NAMES:
@@ -1330,7 +1332,8 @@ def run_generate_photo_scratch_layer(
         filename = f"{slot.id}_{layer_type}.jpg"
         out = pending_dir / filename
         out.unlink(missing_ok=True)
-        custom = (prompt or "").strip()
+        # Prefer per-slot, per-layer stored prompt; fall back to request-time override.
+        custom = slot_layer_prompt(slot, layer_type) or (prompt or "").strip()
         try:
             if layer_type == "bikini":
                 assert girl_path is not None
@@ -1397,18 +1400,14 @@ def run_generate_photo_scratch_layer(
                     if custom
                     else photo_scratch_clothes_prompt(theme_str, scene_hint)
                 )
-                if bg_ref is not None:
-                    patched = photo_scratch_prompt_with_background(
-                        final_prompt, has_background=True, pose=""
-                    )
-                    final_prompt = patched or final_prompt
-                edit_photo_scratch_layer(
+                # Flux Kontext keeps pose/frame/bg locked by construction — best for
+                # scratch alignment.  bg_ref is ignored (Kontext uses bikini as sole ref).
+                edit_clothes_layer(
                     provider=ai_provider,
                     image_model=source_image_model,
                     prompt=final_prompt,
                     out=out,
                     source_image=edit_src,
-                    background_image=bg_ref,
                     aspect_ratio="9:16",
                 )
             else:  # background — empty scene plate only

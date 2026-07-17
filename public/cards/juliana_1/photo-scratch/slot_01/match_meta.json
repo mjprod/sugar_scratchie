@@ -1,0 +1,17 @@
+{
+  "iou": 0.81,
+  "peek": 0.0051,
+  "edge_mae": 1.48,
+  "pose_ok": true,
+  "pose_mismatch": false,
+  "method": "orb-person+dress-transfer (clothes\u2192bikini)",
+  "inliers": 138,
+  "scale": 1.0573,
+  "tx": -36.01,
+  "ty": -49.48,
+  "dress_transfer": true,
+  "garment_px": 561144,
+  "neck_y": 808,
+  "orphans_cleared": 9468,
+  "ai_relock": false
+}

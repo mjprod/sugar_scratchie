@@ -31,6 +31,7 @@ from backend.services.grok import (
 
 IMAGE_T2I_PATH = "/x-ai/grok-imagine-image-quality/text-to-image"
 IMAGE_EDIT_PATH = "/x-ai/grok-imagine-image-quality/edit"
+FLUX_KONTEXT_EDIT_PATH = "/wavespeed-ai/flux-kontext-pro"
 IMAGE_FACE_SWAP_PATH = "/wavespeed-ai/image-face-swap"
 SEEDREAM_T2I_PATH = "/bytedance/seedream-v5.0-lite"
 SEEDREAM_EDIT_PATH = "/bytedance/seedream-v5.0-lite/edit"
@@ -297,7 +298,7 @@ def generate_portrait_image(
             "prompt": final_prompt,
             "image": media_url(face_image, "image/png"),
             "aspect_ratio": aspect_ratio,
-            "resolution": "1k",
+            "resolution": "2k",
             "num_images": 1,
             "output_format": "png",
         }
@@ -306,7 +307,7 @@ def generate_portrait_image(
         payload = {
             "prompt": text,
             "aspect_ratio": aspect_ratio,
-            "resolution": "1k",
+            "resolution": "2k",
             "num_images": 1,
             "output_format": "png",
         }
@@ -372,7 +373,7 @@ def edit_image_scenery(
         "prompt": scenery_edit_prompt(theme),
         "image": media_url(image, "image/png"),
         "aspect_ratio": aspect_ratio,
-        "resolution": "1k",
+        "resolution": "2k",
         "num_images": 1,
         "output_format": "png",
     }
@@ -392,11 +393,37 @@ def edit_photo_scratch_layer(
         "prompt": prompt,
         "image": media_url(source_image, "image/png"),
         "aspect_ratio": aspect_ratio,
-        "resolution": "1k",
+        "resolution": "2k",
         "num_images": 1,
         "output_format": "png",
     }
     run_image_task(IMAGE_EDIT_PATH, payload, out, label="photo-scratch layer edit")
+    return out
+
+
+def edit_clothes_layer_kontext(
+    *,
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    aspect_ratio: str = "9:16",
+    guidance_scale: float = 2.5,
+) -> Path:
+    """Outfit-only edit via Flux Kontext Pro.
+
+    Kontext keeps everything pixel-identical that the prompt does not ask to
+    change.  guidance_scale=2.5 (low) keeps it very close to the source so
+    body shape / bust / curves don't drift — higher values let the model be
+    more creative and tend to flatten the silhouette.
+    """
+    payload = {
+        "prompt": prompt,
+        "image": media_url(source_image, "image/jpeg"),
+        "guidance_scale": guidance_scale,
+        "aspect_ratio": aspect_ratio,
+        "enable_sync_mode": False,
+    }
+    run_image_task(FLUX_KONTEXT_EDIT_PATH, payload, out, label="flux-kontext clothes edit")
     return out
 
 

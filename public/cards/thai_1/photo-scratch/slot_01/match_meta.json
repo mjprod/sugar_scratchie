@@ -1,0 +1,9 @@
+{
+  "iou": 0.917,
+  "peek": 0.0095,
+  "edge_mae": 4.02,
+  "pose_ok": true,
+  "pose_mismatch": false,
+  "method": "passthrough (same canvas)",
+  "ai_relock": false
+}

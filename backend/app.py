@@ -35,13 +35,20 @@ from backend.cards import (
     delete_photo_scratch_layer,
     list_cards,
     list_photo_scratch_slots,
+    cutout_photo_scratch_slot,
+    generate_photo_scratch_slot_mesh,
+    match_photo_scratch_slot,
+    publish_photo_scratch_game,
+    read_photo_scratch_slot_symbols,
     reject_photo_scratch_bg,
     reject_photo_scratch_layer,
     reorder_model_cards,
+    set_photo_scratch_slot_prompt,
     update_card,
     upload_card_photo,
     upload_photo_scratch_layer,
     write_cards_index,
+    write_photo_scratch_slot_symbols,
 )
 from backend.models_store import (
     CreateModelRequest,
@@ -307,7 +314,7 @@ class AutoGarmentMaskRequest(BaseModel):
     mask_source: Literal["garment", "body"] = "garment"
     threshold: float = Field(default=0.22, ge=0.05, le=0.9)
     pixel_dilate: int = Field(default=3, ge=0, le=8)
-    grid_dilate: int = Field(default=2, ge=0, le=5)
+    grid_dilate: int = Field(default=3, ge=0, le=5)
 
 
 def resolve_mesh_json_path(file: str) -> Path:
@@ -588,10 +595,133 @@ class GeneratePhotoScratchRequest(BaseModel):
     prompt: str = ""  # Optional override; empty = built-in default for the layer
 
 
+class SetSlotPromptRequest(BaseModel):
+    layer: Literal["background", "bikini", "clothes"]
+    prompt: str = ""
+
+
 @app.get("/api/cards/{card_id}/photo-scratch")
 def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
     return {"slots": [slot.dict() for slot in slots]}
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/publish-game")
+def publish_photo_scratch_game_endpoint(card_id: str, slot_id: str = "") -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    return publish_photo_scratch_game(
+        ROOT, CARDS_DIR, card_id, MESH_DIR, slot_id=slot_id or None
+    )
+
+
+class PhotoScratchSymbolPointsRequest(BaseModel):
+    points: list[dict[str, float]] = Field(min_length=SYMBOL_POINT_COUNT, max_length=SYMBOL_POINT_COUNT)
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/match")
+def create_photo_scratch_slot_match(
+    card_id: str,
+    slot_id: str,
+    theme: str = "",
+    relock: bool = False,
+) -> dict:
+    """Register bikini + top on the game canvas (optional AI re-dress if pose drifted)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+
+    def _run_match() -> None:
+        match_photo_scratch_slot(
+            ROOT, CARDS_DIR, card_id, slot_id, theme, relock=relock
+        )
+
+    job = enqueue(
+        "photo-scratch-match",
+        ["photo-scratch-match", card_id, slot_id, "relock" if relock else "pass"],
+        _run_match,
+    )
+    return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/cutout")
+def create_photo_scratch_slot_cutout(card_id: str, slot_id: str, theme: str = "") -> dict:
+    """Cut bikini + top to RGBA (girl without background) for the playable game."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+
+    def _run_cutout() -> None:
+        cutout_photo_scratch_slot(ROOT, CARDS_DIR, card_id, slot_id, theme)
+
+    job = enqueue(
+        "photo-scratch-cutout",
+        ["photo-scratch-cutout", card_id, slot_id],
+        _run_cutout,
+    )
+    return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/mesh")
+def create_photo_scratch_slot_mesh(card_id: str, slot_id: str, theme: str = "") -> dict:
+    """Generate a static photo-scratch mesh for one slot (from TOP/bikini still)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    def _run_mesh() -> None:
+        generate_photo_scratch_slot_mesh(ROOT, CARDS_DIR, card_id, slot_id, theme)
+
+    job = enqueue(
+        "photo-scratch-mesh",
+        ["photo-scratch-mesh", card_id, slot_id],
+        _run_mesh,
+    )
+    return job.public()
+
+
+@app.get("/api/cards/{card_id}/photo-scratch/{slot_id}/symbol-points")
+def get_photo_scratch_slot_symbols(card_id: str, slot_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    points = read_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id)
+    return {
+        "points": points,
+        "required": SYMBOL_POINT_COUNT,
+        "complete": len(points) == SYMBOL_POINT_COUNT,
+    }
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/symbol-points")
+def save_photo_scratch_slot_symbols(
+    card_id: str, slot_id: str, request: PhotoScratchSymbolPointsRequest
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    slot = write_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id, request.points)
+    return slot.dict()
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/prompt")
+def patch_photo_scratch_slot_prompt(
+    card_id: str, slot_id: str, request: SetSlotPromptRequest, theme: str = ""
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    slot = set_photo_scratch_slot_prompt(
+        CARDS_DIR, card_id, slot_id, request.layer, request.prompt, theme
+    )
+    return slot.dict()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/generate")
@@ -804,6 +934,11 @@ def save_garment_mask(request: SaveGarmentRequest) -> dict:
     data["garment"] = [1 if int(flag) else 0 for flag in request.garment]
     data["garmentSource"] = "dashboard-editor"
     data["garmentEditedAt"] = now()
+    # Static photo meshes store vis = garment so Fix mesh updates the drawn lattice.
+    if data.get("generator") == "photo-scratch-static":
+        for frame in data.get("frames") or []:
+            if isinstance(frame, dict):
+                frame["vis"] = list(data["garment"])
     path.write_text(json.dumps(data, separators=(",", ":")) + "\n")
     return {
         "ok": True,

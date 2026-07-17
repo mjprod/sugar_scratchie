@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ImagePlus, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, Gamepad2, ImagePlus, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import {
   Badge,
   Box,
@@ -26,6 +26,8 @@ import {
   fetchPhotoScratchSlots,
   generatePhotoScratchLayer,
   rejectPhotoScratchLayer,
+  setPhotoScratchSlotPrompt,
+  slotLayerPrompt,
   uploadPhotoScratchLayer,
   type PhotoScratchLayerType,
   type PhotoScratchSlot,
@@ -816,11 +818,13 @@ function SlotLayerUpload({
   aiProvider,
   sourceImageModel,
   prompt,
+  slotPrompt,
   aiBlockedReason,
   busy,
   onUpdate,
   onError,
   onSlotAiDone,
+  onSlotPromptBlur,
 }: {
   cardId: string;
   slotId: string;
@@ -831,12 +835,15 @@ function SlotLayerUpload({
   aiProvider: string;
   sourceImageModel: string;
   prompt: string;
+  /** Saved per-slot override for this layer (empty = use shared layer default). */
+  slotPrompt: string;
   /** Non-empty when AI generate should be disabled (e.g. missing bikini for top). */
   aiBlockedReason?: string;
   busy: boolean;
   onUpdate: (slot: PhotoScratchSlot) => void;
   onError: (msg: string) => void;
   onSlotAiDone: () => void;
+  onSlotPromptBlur: (slotId: string, layer: PhotoScratchLayerType, value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const meta = LAYER_META[layer];
@@ -1018,6 +1025,17 @@ function SlotLayerUpload({
         <Text as="div" color="gray" size="1">
           {meta.sub}
         </Text>
+        <TextArea
+          defaultValue={slotPrompt}
+          disabled={disabled}
+          key={`${slotId}-${layer}-prompt-${slotPrompt}`}
+          mt="1"
+          placeholder={`Optional ${meta.label.toLowerCase()} prompt for this card`}
+          rows={2}
+          size="1"
+          style={{ width: "100%" }}
+          onBlur={(event) => onSlotPromptBlur(slotId, layer, event.target.value)}
+        />
       </Box>
       <input
         ref={inputRef}
@@ -1265,6 +1283,30 @@ function CardPhotosPanel({
     setSlots((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   }
 
+  async function handleSlotPromptBlur(
+    slotId: string,
+    layer: PhotoScratchLayerType,
+    value: string,
+  ) {
+    const current = slots.find((s) => s.id === slotId);
+    const next = value.trim();
+    const prev = current ? slotLayerPrompt(current, layer) : "";
+    if (next === prev) return;
+    setPanelError("");
+    try {
+      const updated = await setPhotoScratchSlotPrompt(
+        cardId.trim(),
+        slotId,
+        layer,
+        next,
+        theme,
+      );
+      handleSlotUpdate(updated);
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
   const pendingByLayer = (layer: PhotoScratchLayerType) =>
     slots.filter((s) => Boolean(s[PENDING_KEY[layer]]));
 
@@ -1274,8 +1316,14 @@ function CardPhotosPanel({
     pendingByLayer("clothes").length > 0;
   const hasApprovedBikini = slots.some((s) => s.bikini);
   const hasAnyLayer = slots.some((s) => s.background || s.bikini || s.clothes);
+  const layersCompleteCount = slots.filter(
+    (s) => Boolean(s.background && s.bikini && s.clothes),
+  ).length;
   const anyGenBusy = Object.keys(genJobs).length > 0;
   const hasSourceImage = Boolean(image.trim());
+  const pictureFlowHref = cardId.trim()
+    ? `/dashboard/picture-flow?card=${encodeURIComponent(cardId.trim())}`
+    : "/dashboard/picture-flow";
 
   function generateButton(layer: PhotoScratchLayerType, label: string) {
     const busy = Boolean(genJobs[layer]);
@@ -1443,6 +1491,15 @@ function CardPhotosPanel({
             Order: Background → Bikini → Top. Bikini puts the girl into each card&apos;s background
             with a different pose; Top keeps that same pose (needed for scratch alignment).
           </Text>
+          <Flex align="center" gap="2" mt="2" wrap="wrap">
+            <Badge color={layersCompleteCount > 0 ? "green" : "gray"} variant="soft">
+              Ready: {layersCompleteCount}/10
+            </Badge>
+            <Text color="gray" size="1">
+              Upload 3 layers per card, then Create game → Picture Flow (cutout / mesh /
+              symbols).
+            </Text>
+          </Flex>
         </Box>
         <Flex gap="2" wrap="wrap">
           {generateButton("background", "backgrounds")}
@@ -1461,6 +1518,14 @@ function CardPhotosPanel({
             />
             {showPrompts ? "Hide prompts" : "Show prompts"}
           </Button>
+          {layersCompleteCount > 0 ? (
+            <Button asChild color="green" size="2">
+              <a href={pictureFlowHref}>
+                <Gamepad2 {...iconProps} />
+                Create game ({layersCompleteCount})
+              </a>
+            </Button>
+          ) : null}
         </Flex>
       </Flex>
 
@@ -1616,9 +1681,33 @@ function CardPhotosPanel({
                     background: "var(--gray-1)",
                   }}
                 >
-                  <Text size="2" weight="bold" mb="2">
-                    {index + 1}. {slot.label}
-                  </Text>
+                  <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+                    <Text size="2" weight="bold">
+                      {index + 1}. {slot.label}
+                    </Text>
+                    <Flex align="center" gap="2" wrap="wrap">
+                      <Badge
+                        color={
+                          slot.background && slot.bikini && slot.clothes ? "green" : "gray"
+                        }
+                        variant="soft"
+                      >
+                        {slot.background && slot.bikini && slot.clothes
+                          ? "3 layers ready"
+                          : "Needs 3 layers"}
+                      </Badge>
+                      {slot.background && slot.bikini && slot.clothes ? (
+                        <Button asChild color="green" size="1">
+                          <a
+                            href={`${pictureFlowHref}&slot=${encodeURIComponent(slot.id)}`}
+                          >
+                            <Gamepad2 {...iconProps} />
+                            Create game
+                          </a>
+                        </Button>
+                      ) : null}
+                    </Flex>
+                  </Flex>
                   <Grid columns="3" gap="2">
                     {PHOTO_SCRATCH_LAYER_ORDER.map((layer) => {
                       let aiBlockedReason = "";
@@ -1638,7 +1727,8 @@ function CardPhotosPanel({
                           sourceImage={image.trim()}
                           aiProvider={psProvider}
                           sourceImageModel={psImageModel}
-                          prompt={prompts[layer]}
+                          prompt={slotLayerPrompt(slot, layer) || prompts[layer]}
+                          slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
                           busy={layerBusy}
                           onUpdate={handleSlotUpdate}
@@ -1647,6 +1737,9 @@ function CardPhotosPanel({
                             onError(msg);
                           }}
                           onSlotAiDone={() => void refreshSlots(true)}
+                          onSlotPromptBlur={(id, layerType, value) =>
+                            void handleSlotPromptBlur(id, layerType, value)
+                          }
                         />
                       );
                     })}
