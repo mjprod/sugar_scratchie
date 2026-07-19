@@ -1492,10 +1492,14 @@ export function PhotoScratchTest() {
   useEffect(() => () => clearGameResultTimer(), []);
 
   useEffect(() => {
-    localStorage.setItem(
-      SOUND_STORAGE_KEY,
-      JSON.stringify({ enabled: soundEnabled }),
-    );
+    try {
+      localStorage.setItem(
+        SOUND_STORAGE_KEY,
+        JSON.stringify({ enabled: soundEnabled }),
+      );
+    } catch {
+      // Ignore storage write failures (e.g. private mode / quota).
+    }
   }, [soundEnabled]);
 
   useEffect(() => {
