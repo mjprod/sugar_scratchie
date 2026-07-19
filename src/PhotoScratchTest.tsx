@@ -191,7 +191,7 @@ function loadAutoScratchSettings(): AutoScratchSettings {
     if (!raw) return AUTO_SCRATCH_DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<AutoScratchSettings>;
     return {
-      enabled: false,
+      enabled: parsed.enabled ?? AUTO_SCRATCH_DEFAULTS.enabled,
       speed: clamp(
         Number(parsed.speed) || AUTO_SCRATCH_DEFAULTS.speed,
         1,
