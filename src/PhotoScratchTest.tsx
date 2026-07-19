@@ -1,4 +1,5 @@
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   GarmentGLRenderer,
@@ -51,6 +52,19 @@ async function fetchPhotoScratchIndex(): Promise<PhotoScratchCardEntry[]> {
 const SCRATCH_RADIUS = 0.045;
 const MANUAL_SCRATCH_PATH_STEP = SCRATCH_RADIUS * 0.65 * CANVAS_HEIGHT;
 const MANUAL_SCRATCH_MAX_POINTS = 40;
+const AUTO_SCRATCH_STORAGE_KEY = "sugar-scratchie:auto-scratch";
+const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
+const AUTO_SCRATCH_RADIUS = 0.092;
+const AUTO_SCRATCH_DIAGONAL_LINES = 18;
+const AUTO_SCRATCH_PATH_STEP_UV = AUTO_SCRATCH_RADIUS * 0.72;
+const AUTO_SCRATCH_FILL_BATCH = 36;
+const AUTO_SCRATCH_MAX_PER_FRAME = 32;
+const SYMBOL_NOTE_BASE_HZ = 523.25;
+const SYMBOL_NOTE_DURATION_S = 0.32;
+const WIN_MATCH_COUNT = 3;
+const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
+const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
+const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const FOREGROUND_CHROMA = false;
 // Room bg needs extra overscan beyond PRESENT_ZOOM so tilt + finger parallax
 // never reveals the stage letterboxing.
@@ -97,10 +111,387 @@ const SYMBOL_TYPES: { src: string; label: string }[] = [
 ];
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 
+function clamp(value: number, lo: number, hi: number) {
+  return value < lo ? lo : value > hi ? hi : value;
+}
+
+type AutoScratchSettings = {
+  enabled: boolean;
+  speed: number;
+};
+
+const AUTO_SCRATCH_DEFAULTS: AutoScratchSettings = {
+  enabled: false,
+  speed: 58,
+};
+
+type SymbolAudioState = {
+  ctx: AudioContext | null;
+};
+
+type GameResult = "win" | "lose";
+
+function evaluateSessionWin(symbolIds: number[]) {
+  const counts = new Array(SYMBOL_TYPES.length).fill(0);
+  for (const id of symbolIds) {
+    counts[id] += 1;
+    if (counts[id] >= WIN_MATCH_COUNT) return true;
+  }
+  return false;
+}
+
+function isGarmentFullyRevealed(
+  revealedCount: number,
+  sampleCount: number,
+  autoMode: boolean,
+) {
+  if (sampleCount === 0) return false;
+  if (autoMode) return revealedCount >= sampleCount;
+  return (
+    revealedCount >= Math.ceil(sampleCount * FULL_REVEAL_MANUAL_THRESHOLD)
+  );
+}
+
+/** asian_2_slot_01 → asian_2; bare ids pass through. */
+function parentMotionCardId(entryId: string): string {
+  const match = entryId.trim().match(/^(.*)_slot_\d+$/i);
+  return match ? match[1] : entryId.trim();
+}
+
+function playlistForParent(
+  cards: PhotoScratchCardEntry[],
+  parentId: string,
+): PhotoScratchCardEntry[] {
+  const parent = parentId.trim();
+  if (!parent) return [];
+  const prefix = `${parent}_slot_`;
+  return cards
+    .filter((card) => card.id === parent || card.id.startsWith(prefix))
+    .sort((a, b) =>
+      a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }),
+    );
+}
+
+function loadSoundEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(SOUND_STORAGE_KEY);
+    if (!raw) return true;
+    const parsed = JSON.parse(raw) as { enabled?: boolean };
+    return parsed.enabled ?? true;
+  } catch {
+    return true;
+  }
+}
+
+function loadAutoScratchSettings(): AutoScratchSettings {
+  if (typeof window === "undefined") return AUTO_SCRATCH_DEFAULTS;
+  try {
+    const raw = localStorage.getItem(AUTO_SCRATCH_STORAGE_KEY);
+    if (!raw) return AUTO_SCRATCH_DEFAULTS;
+    const parsed = JSON.parse(raw) as Partial<AutoScratchSettings>;
+    return {
+      enabled: false,
+      speed: clamp(
+        Number(parsed.speed) || AUTO_SCRATCH_DEFAULTS.speed,
+        1,
+        120,
+      ),
+    };
+  } catch {
+    return AUTO_SCRATCH_DEFAULTS;
+  }
+}
+
+function ensureSymbolAudio(state: SymbolAudioState) {
+  if (typeof window === "undefined") return null;
+  if (!state.ctx) {
+    const AudioCtor =
+      window.AudioContext ??
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtor) return null;
+    state.ctx = new AudioCtor();
+  }
+  if (state.ctx.state === "suspended") void state.ctx.resume();
+  return state.ctx;
+}
+
+function symbolSlotFrequency(slotIndex: number) {
+  return SYMBOL_NOTE_BASE_HZ * 2 ** (slotIndex / SYMBOL_POINT_COUNT);
+}
+
+function playSymbolSlotNote(state: SymbolAudioState, slotIndex: number) {
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx || slotIndex < 0 || slotIndex >= SYMBOL_POINT_COUNT) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(symbolSlotFrequency(slotIndex), now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + SYMBOL_NOTE_DURATION_S);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + SYMBOL_NOTE_DURATION_S + 0.02);
+}
+
+function playNewSymbolNotes(
+  state: SymbolAudioState,
+  prevCount: number,
+  nextCount: number,
+  enabled: boolean,
+) {
+  if (!enabled) return;
+  for (let slot = prevCount; slot < nextCount; slot += 1) {
+    playSymbolSlotNote(state, slot);
+  }
+}
+
+function scheduleTone(
+  ctx: AudioContext,
+  startAt: number,
+  frequency: number,
+  durationS: number,
+  volume: number,
+  type: OscillatorType = "triangle",
+) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(frequency, startAt);
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + durationS);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + durationS + 0.02);
+}
+
+function scheduleSlide(
+  ctx: AudioContext,
+  startAt: number,
+  fromHz: number,
+  toHz: number,
+  durationS: number,
+  volume: number,
+  type: OscillatorType = "triangle",
+) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(fromHz, startAt);
+  osc.frequency.exponentialRampToValueAtTime(
+    Math.max(toHz, 1),
+    startAt + durationS,
+  );
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + durationS);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + durationS + 0.02);
+}
+
+function playGameOutcomeSound(
+  state: SymbolAudioState,
+  outcome: GameResult,
+  enabled: boolean,
+): number {
+  if (!enabled) return GAME_OUTCOME_SILENT_DELAY_MS;
+
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return 1800;
+
+  const now = ctx.currentTime;
+
+  if (outcome === "win") {
+    const sparkle = [
+      523.25, 587.33, 659.25, 698.46, 783.99, 880, 987.77, 1174.66, 1318.51,
+      1567.98, 1760, 2093,
+    ];
+    const sparkleStep = 0.048;
+    sparkle.forEach((freq, index) => {
+      scheduleTone(ctx, now + index * sparkleStep, freq, 0.09, 0.17, "sine");
+      if (index % 2 === 0) {
+        scheduleTone(
+          ctx,
+          now + index * sparkleStep + 0.012,
+          freq * 2,
+          0.055,
+          0.09,
+          "triangle",
+        );
+      }
+    });
+
+    const fanfareStart = now + sparkle.length * sparkleStep + 0.06;
+    const fanfare = [523.25, 659.25, 783.99, 987.77, 1174.66];
+    fanfare.forEach((freq, index) => {
+      const t = fanfareStart + index * 0.1;
+      scheduleTone(ctx, t, freq, 0.15, 0.3, "square");
+      scheduleTone(ctx, t, freq * 0.5, 0.15, 0.14, "sawtooth");
+      scheduleTone(ctx, t + 0.04, freq * 1.5, 0.08, 0.08, "triangle");
+    });
+
+    const chordAt = fanfareStart + fanfare.length * 0.1 + 0.1;
+    const chord = [261.63, 392, 523.25, 659.25, 783.99, 1046.5, 1318.51];
+    chord.forEach((freq, index) => {
+      const type: OscillatorType = index < 2 ? "sawtooth" : "triangle";
+      scheduleTone(ctx, chordAt, freq, 0.78, index < 2 ? 0.11 : 0.13, type);
+    });
+
+    const glitterStart = chordAt + 0.12;
+    const glitter = [2093, 2349, 2637, 2793, 3136, 3520];
+    glitter.forEach((freq, index) => {
+      scheduleTone(ctx, glitterStart + index * 0.045, freq, 0.11, 0.11, "sine");
+    });
+
+    const shimmerStart = glitterStart + glitter.length * 0.045 + 0.08;
+    for (let i = 0; i < 6; i += 1) {
+      scheduleTone(
+        ctx,
+        shimmerStart + i * 0.06,
+        1760 + i * 110,
+        0.07,
+        0.09,
+        "sine",
+      );
+    }
+
+    const endTime = shimmerStart + 6 * 0.06 + 0.35;
+    return (endTime - now) * 1000 + GAME_OUTCOME_OVERLAY_PAD_MS;
+  }
+
+  scheduleSlide(ctx, now, 340, 190, 0.52, 0.2, "sawtooth");
+  scheduleSlide(ctx, now + 0.62, 290, 130, 0.58, 0.18, "sawtooth");
+  scheduleSlide(ctx, now + 1.28, 220, 95, 0.72, 0.16, "triangle");
+  return 2.05 * 1000 + GAME_OUTCOME_OVERLAY_PAD_MS;
+}
+
 function buildSessionSymbols(): number[] {
   return Array.from({ length: SYMBOL_POINT_COUNT }, () =>
     Math.floor(Math.random() * SYMBOL_TYPES.length),
   );
+}
+
+function buildRevealSamples(mesh: TrackedMesh | null): Vec2[] {
+  const samplesAcross = 13;
+  const samplesDown = 18;
+  const garment = mesh?.garment ?? null;
+  const cols = mesh?.cols ?? 0;
+  const rows = mesh?.rows ?? 0;
+  const points: Vec2[] = [];
+
+  for (let yIndex = 0; yIndex <= samplesDown; yIndex += 1) {
+    for (let xIndex = 0; xIndex <= samplesAcross; xIndex += 1) {
+      const u = xIndex / samplesAcross;
+      const v = yIndex / samplesDown;
+      if (garment && cols > 0 && rows > 0) {
+        const col = Math.round(u * (cols - 1));
+        const row = Math.round(v * (rows - 1));
+        if (!garment[row * cols + col]) continue;
+      }
+      points.push({ x: u, y: v });
+    }
+  }
+
+  return points;
+}
+
+function densifyScratchPath(points: Vec2[], maxStep: number): Vec2[] {
+  if (points.length === 0) return [];
+  const out: Vec2[] = [{ x: points[0].x, y: points[0].y }];
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= maxStep) {
+      out.push(b);
+      continue;
+    }
+    const steps = Math.ceil(dist / maxStep);
+    for (let s = 1; s <= steps; s += 1) {
+      const t = s / steps;
+      out.push({ x: a.x + dx * t, y: a.y + dy * t });
+    }
+  }
+  return out;
+}
+
+function isGarmentUv(mesh: TrackedMesh | null, u: number, v: number) {
+  const garment = mesh?.garment ?? null;
+  const cols = mesh?.cols ?? 0;
+  const rows = mesh?.rows ?? 0;
+  if (!garment || cols <= 0 || rows <= 0) return true;
+  const col = Math.round(clamp(u, 0, 1) * (cols - 1));
+  const row = Math.round(clamp(v, 0, 1) * (rows - 1));
+  return Boolean(garment[row * cols + col]);
+}
+
+// Parallel ↙ strokes (u+v = const): top → bottom on each line; lines sweep top-left → bottom-right.
+function buildAutoScratchPath(mesh: TrackedMesh | null): Vec2[] {
+  const lineCount = AUTO_SCRATCH_DIAGONAL_LINES;
+  const lines: { startU: number; startV: number; points: Vec2[] }[] = [];
+
+  for (let i = 0; i <= lineCount; i += 1) {
+    const s = (i / lineCount) * 2;
+    let startU: number;
+    let startV: number;
+    let endU: number;
+    let endV: number;
+    if (s <= 1) {
+      startU = s;
+      startV = 0;
+      endU = 0;
+      endV = s;
+    } else {
+      const t = s - 1;
+      startU = 1;
+      startV = 1 - t;
+      endU = 1 - t;
+      endV = 1;
+    }
+
+    const span = Math.hypot(endU - startU, endV - startV);
+    if (span < 1e-6) continue;
+
+    const linePoints: Vec2[] = [];
+    const stepsAlong = Math.max(
+      2,
+      Math.ceil(span / (AUTO_SCRATCH_PATH_STEP_UV * 1.8)),
+    );
+    for (let j = 0; j <= stepsAlong; j += 1) {
+      const f = j / stepsAlong;
+      const u = startU + (endU - startU) * f;
+      const v = startV + (endV - startV) * f;
+      if (!isGarmentUv(mesh, u, v)) continue;
+      linePoints.push({ x: u, y: v });
+    }
+    if (linePoints.length === 0) continue;
+    lines.push({
+      startU: linePoints[0].x,
+      startV: linePoints[0].y,
+      points: linePoints,
+    });
+  }
+
+  lines.sort((a, b) => {
+    if (Math.abs(a.startV - b.startV) > 1e-4) return a.startV - b.startV;
+    return a.startU - b.startU;
+  });
+
+  const sparse: Vec2[] = [];
+  for (const line of lines) {
+    sparse.push(...densifyScratchPath(line.points, AUTO_SCRATCH_PATH_STEP_UV));
+  }
+  return sparse;
 }
 
 function GameSymbolIcon({
@@ -144,10 +535,6 @@ function worldPointToStage(
   const clientY =
     canvasRect.top + (presentY / CANVAS_HEIGHT) * canvasRect.height;
   return { x: clientX - stageRect.left, y: clientY - stageRect.top };
-}
-
-function clamp(value: number, lo: number, hi: number) {
-  return value < lo ? lo : value > hi ? hi : value;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -339,6 +726,23 @@ export function PhotoScratchTest() {
   const bgBrightnessRef = useRef(1);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
+  const revealSamplesRef = useRef<Vec2[]>([]);
+  const revealedRef = useRef<boolean[]>([]);
+  const revealedCountRef = useRef(0);
+  const autoPathRef = useRef<Vec2[]>([]);
+  const autoPathIndexRef = useRef(0);
+  const autoPathProgressRef = useRef(0);
+  const lastFrameTimeRef = useRef(0);
+  const symbolAudioRef = useRef<SymbolAudioState>({ ctx: null });
+  const claimedRef = useRef(false);
+  const gameResultPendingRef = useRef<GameResult | null>(null);
+  const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tryResolveGameRef = useRef<() => void>(() => undefined);
+  const advanceAfterScratchRef = useRef<() => void>(() => undefined);
+  const completedCardIdsRef = useRef<string[]>([]);
+  const applyScratchAtUvRef = useRef<
+    (u: number, v: number, radius: number) => void
+  >(() => {});
   const parallaxStateRef = useRef<ParallaxState | null>({
     fg: { x: 0, y: 0 },
     bg: { x: 0, y: 0 },
@@ -385,8 +789,28 @@ export function PhotoScratchTest() {
   };
   const [sessionSymbols, setSessionSymbols] =
     useState<number[]>(buildSessionSymbols);
+  const sessionSymbolsRef = useRef(sessionSymbols);
+  sessionSymbolsRef.current = sessionSymbols;
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
+  const soundEnabledRef = useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
+  const [autoScratch, setAutoScratch] = useState<AutoScratchSettings>(
+    loadAutoScratchSettings,
+  );
+  const autoScratchRef = useRef(autoScratch);
+  autoScratchRef.current = autoScratch;
+  const revealedSymbolsRef = useRef(0);
+  revealedSymbolsRef.current = revealedSymbols;
+  const hasBodySymbolsRef = useRef(false);
+  hasBodySymbolsRef.current = hasBodySymbols;
+  const [claimed, setClaimed] = useState(false);
+  const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const [playlist, setPlaylist] = useState<PhotoScratchCardEntry[]>([]);
+  const [selectedCardId, setSelectedCardId] = useState("");
+  const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
+  completedCardIdsRef.current = completedCardIds;
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -402,6 +826,19 @@ export function PhotoScratchTest() {
     return loadImage(trackObjectUrl(URL.createObjectURL(file)));
   }
 
+  function clearGameResultTimer() {
+    if (gameResultTimerRef.current !== null) {
+      window.clearTimeout(gameResultTimerRef.current);
+      gameResultTimerRef.current = null;
+    }
+  }
+
+  function resetGameOutcome() {
+    clearGameResultTimer();
+    gameResultPendingRef.current = null;
+    setGameResult(null);
+  }
+
   function applyMesh(mesh: TrackedMesh) {
     trackedMeshRef.current = mesh;
     trackedSampleRef.current = sampleTrackedMesh(mesh, 0);
@@ -409,28 +846,84 @@ export function PhotoScratchTest() {
       { length: SYMBOL_POINT_COUNT },
       () => false,
     );
+    revealSamplesRef.current = buildRevealSamples(mesh);
+    revealedRef.current = new Array(revealSamplesRef.current.length).fill(
+      false,
+    );
+    revealedCountRef.current = 0;
+    autoPathRef.current = buildAutoScratchPath(mesh);
+    autoPathIndexRef.current = 0;
+    autoPathProgressRef.current = 0;
+    claimedRef.current = false;
+    setClaimed(false);
+    resetGameOutcome();
     setSessionSymbols(buildSessionSymbols());
     setRevealedSymbols(0);
     setHasBodySymbols(mesh.symbolPoints?.length === SYMBOL_POINT_COUNT);
+    setAutoScratch((current) =>
+      current.enabled ? { ...current, enabled: false } : current,
+    );
+  }
+
+  async function applyLoadedAssets(assets: {
+    back: HTMLImageElement;
+    mid: HTMLImageElement;
+    front: HTMLImageElement;
+    mesh: TrackedMesh;
+    label: string;
+  }) {
+    backImageRef.current = assets.back;
+    midImageRef.current = assets.mid;
+    frontImageRef.current = assets.front;
+    applyMesh(assets.mesh);
+    marksRef.current = [];
+    lastScratchWorldRef.current = null;
+    scratchStartedRef.current = false;
+    fgRendererRef.current?.clearScratch();
+    setScratchCount(0);
+    setBackSrc(assets.back.src);
+    setMidSrc(assets.mid.src);
+    setFrontSrc(assets.front.src);
+    setUploadLabel(assets.label);
+    setReady(true);
+    setLoadError(null);
   }
 
   async function loadAssetsFromSample() {
     revokeObjectUrls();
     const cardId = readCardIdFromLocation();
-    const { back, mid, front, mesh, label } = cardId
-      ? await loadCardAssetsWithFallback(cardId)
-      : await loadSampleAssets();
-    backImageRef.current = back;
-    midImageRef.current = mid;
-    frontImageRef.current = front;
-    applyMesh(mesh);
-    setBackSrc(back.src);
-    setMidSrc(mid.src);
-    setFrontSrc(front.src);
-    setUsingSample(!cardId);
-    setUploadLabel(label);
-    setReady(true);
-    setLoadError(null);
+    if (!cardId) {
+      const assets = await loadSampleAssets();
+      setPlaylist([]);
+      setSelectedCardId("");
+      setCompletedCardIds([]);
+      setUsingSample(true);
+      await applyLoadedAssets(assets);
+      return;
+    }
+
+    const index = await fetchPhotoScratchIndex();
+    const entry = resolvePublishedEntry(index, cardId);
+    const parentId = parentMotionCardId(entry?.id ?? cardId);
+    const siblings = playlistForParent(index, parentId);
+    setPlaylist(siblings);
+    setCompletedCardIds([]);
+
+    if (entry) {
+      setSelectedCardId(entry.id);
+      const url = new URL(window.location.href);
+      url.searchParams.set("card", entry.id);
+      window.history.replaceState({}, "", url.toString());
+      const assets = await loadCardAssets(entry.id);
+      setUsingSample(false);
+      await applyLoadedAssets(assets);
+      return;
+    }
+
+    const assets = await loadCardAssetsWithFallback(cardId);
+    setSelectedCardId(cardId);
+    setUsingSample(false);
+    await applyLoadedAssets(assets);
   }
 
   async function applyUploadedLayer(
@@ -550,7 +1043,15 @@ export function PhotoScratchTest() {
     }
 
     let frameId = 0;
+    lastFrameTimeRef.current = performance.now();
     const render = () => {
+      const now = performance.now();
+      const dt = Math.min(
+        0.05,
+        Math.max(0, (now - lastFrameTimeRef.current) / 1000),
+      );
+      lastFrameTimeRef.current = now;
+
       const sample = trackedSampleRef.current;
       const rect = fgCanvas.getBoundingClientRect();
       const cameras = groupCamerasFromParallax(
@@ -559,9 +1060,59 @@ export function PhotoScratchTest() {
         rect.height || CANVAS_HEIGHT,
       );
 
+      const autoSettings = autoScratchRef.current;
+      const huntComplete =
+        !hasBodySymbolsRef.current ||
+        revealedSymbolsRef.current >= SYMBOL_POINT_COUNT;
+      if (
+        autoSettings.enabled &&
+        huntComplete &&
+        sample &&
+        gameResultPendingRef.current === null &&
+        !claimedRef.current
+      ) {
+        const path = autoPathRef.current;
+        if (path.length > 0 && autoPathIndexRef.current < path.length) {
+          autoPathProgressRef.current += autoSettings.speed * dt;
+          let scratched = 0;
+          while (
+            autoPathProgressRef.current >= 1 &&
+            autoPathIndexRef.current < path.length &&
+            scratched < AUTO_SCRATCH_MAX_PER_FRAME
+          ) {
+            autoPathProgressRef.current -= 1;
+            const pt = path[autoPathIndexRef.current];
+            applyScratchAtUvRef.current(pt.x, pt.y, AUTO_SCRATCH_RADIUS);
+            autoPathIndexRef.current += 1;
+            scratched += 1;
+          }
+        }
+
+        const pathDone =
+          path.length === 0 || autoPathIndexRef.current >= path.length;
+        const sampleCount = revealSamplesRef.current.length;
+        const garmentComplete =
+          sampleCount > 0 && revealedCountRef.current >= sampleCount;
+        if (!garmentComplete && sampleCount > 0 && pathDone) {
+          const samples = revealSamplesRef.current;
+          const revealed = revealedRef.current;
+          let filled = 0;
+          for (
+            let i = 0;
+            i < samples.length && filled < AUTO_SCRATCH_FILL_BATCH;
+            i += 1
+          ) {
+            if (revealed[i]) continue;
+            const pt = samples[i];
+            applyScratchAtUvRef.current(pt.x, pt.y, AUTO_SCRATCH_RADIUS);
+            filled += 1;
+          }
+        }
+      }
+
       // Synced bikini + clothes idle sway (up/down + diagonal to the right).
       // Active whenever the finger is up — same gentle motion as after load.
-      const phase = (performance.now() / IDLE_SWAY_PERIOD_MS) * Math.PI * 2;
+      const phase = (now / IDLE_SWAY_PERIOD_MS) * Math.PI * 2;
       const wantIdle = !isScratchingRef.current;
       const wave = Math.sin(phase);
       // Same phase on X/Y → diagonal; bias X positive so the drift leans right.
@@ -603,10 +1154,29 @@ export function PhotoScratchTest() {
         );
       }
 
+      const sampleCount = revealSamplesRef.current.length;
+      const autoMode = autoScratchRef.current.enabled;
+      const canClaim =
+        !hasBodySymbolsRef.current ||
+        revealedSymbolsRef.current >= SYMBOL_POINT_COUNT;
+      const hideClothes =
+        claimedRef.current ||
+        (canClaim &&
+          isGarmentFullyRevealed(
+            revealedCountRef.current,
+            sampleCount,
+            autoMode,
+          ));
+      if (hideClothes && !claimedRef.current) {
+        claimedRef.current = true;
+        setClaimed(true);
+        tryResolveGameRef.current();
+      }
+
       const layers = showLayersRef.current;
       fgRenderer.renderPhotoForeground(
         layers.mid ? midImageRef.current : null,
-        layers.clothes ? frontImageRef.current : null,
+        layers.clothes && !hideClothes ? frontImageRef.current : null,
         sample
           ? toGlSample(sample, trackedMeshRef.current?.garment ?? null)
           : null,
@@ -691,28 +1261,76 @@ export function PhotoScratchTest() {
   }
 
   function applyScratchAtUv(u: number, v: number, radius: number) {
+    if (gameResultPendingRef.current !== null || claimedRef.current) return;
+
     marksRef.current = [...marksRef.current, { u, v, radius }].slice(-180);
     fgRendererRef.current?.paintScratch(u, v, radius);
     setScratchCount(marksRef.current.length);
 
-    const bodyPoints = trackedMeshRef.current?.symbolPoints;
-    if (!bodyPoints || bodyPoints.length !== SYMBOL_POINT_COUNT) return;
-    let changed = false;
-    for (let index = 0; index < bodyPoints.length; index += 1) {
-      if (revealedPointsRef.current[index]) continue;
+    const samples = revealSamplesRef.current;
+    const revealed = revealedRef.current;
+    for (let i = 0; i < samples.length; i += 1) {
+      if (revealed[i]) continue;
       const distance = Math.hypot(
-        u - bodyPoints[index].u,
-        v - bodyPoints[index].v,
+        (u - samples[i].x) / radius,
+        (v - samples[i].y) / radius,
       );
-      if (distance <= SYMBOL_REVEAL_UV_RADIUS) {
-        revealedPointsRef.current[index] = true;
-        changed = true;
+      if (distance <= 1) {
+        revealed[i] = true;
+        revealedCountRef.current += 1;
       }
     }
-    if (changed) {
-      setRevealedSymbols(revealedPointsRef.current.filter(Boolean).length);
+
+    const bodyPoints = trackedMeshRef.current?.symbolPoints;
+    if (bodyPoints && bodyPoints.length === SYMBOL_POINT_COUNT) {
+      let changed = false;
+      for (let index = 0; index < bodyPoints.length; index += 1) {
+        if (revealedPointsRef.current[index]) continue;
+        const distance = Math.hypot(
+          u - bodyPoints[index].u,
+          v - bodyPoints[index].v,
+        );
+        if (distance <= SYMBOL_REVEAL_UV_RADIUS) {
+          revealedPointsRef.current[index] = true;
+          changed = true;
+        }
+      }
+      if (changed) {
+        const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
+        const prevCount = revealedSymbolsRef.current;
+        revealedSymbolsRef.current = nextSymbolCount;
+        setRevealedSymbols(nextSymbolCount);
+        playNewSymbolNotes(
+          symbolAudioRef.current,
+          prevCount,
+          nextSymbolCount,
+          soundEnabledRef.current,
+        );
+        if (nextSymbolCount >= SYMBOL_POINT_COUNT) {
+          beginFinishAutoScratch();
+        }
+      }
+    }
+
+    const canClaim =
+      !hasBodySymbolsRef.current ||
+      revealedSymbolsRef.current >= SYMBOL_POINT_COUNT;
+    if (
+      canClaim &&
+      isGarmentFullyRevealed(
+        revealedCountRef.current,
+        samples.length,
+        autoScratchRef.current.enabled,
+      )
+    ) {
+      if (!claimedRef.current) {
+        claimedRef.current = true;
+        setClaimed(true);
+      }
+      tryResolveGameRef.current();
     }
   }
+  applyScratchAtUvRef.current = applyScratchAtUv;
 
   function addScratch(clientX: number, clientY: number) {
     const point = getCanvasPoint(clientX, clientY);
@@ -740,6 +1358,112 @@ export function PhotoScratchTest() {
     if (applied) lastScratchWorldRef.current = point;
   }
 
+  function updateSoundEnabled(enabled: boolean) {
+    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    setSoundEnabled(enabled);
+  }
+
+  function updateAutoScratch(patch: Partial<AutoScratchSettings>) {
+    if (
+      patch.enabled &&
+      hasBodySymbolsRef.current &&
+      revealedSymbolsRef.current < SYMBOL_POINT_COUNT
+    ) {
+      return;
+    }
+    if (patch.enabled && soundEnabledRef.current) {
+      ensureSymbolAudio(symbolAudioRef.current);
+    }
+    setAutoScratch((current) => ({ ...current, ...patch }));
+  }
+
+  function beginFinishAutoScratch() {
+    autoPathIndexRef.current = 0;
+    autoPathProgressRef.current = 0;
+    if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
+    autoScratchRef.current = { ...autoScratchRef.current, enabled: true };
+    setAutoScratch((current) =>
+      current.enabled ? current : { ...current, enabled: true },
+    );
+  }
+
+  function tryResolveGame() {
+    if (gameResultPendingRef.current !== null) return;
+    const sampleCount = revealSamplesRef.current.length;
+    if (
+      !isGarmentFullyRevealed(
+        revealedCountRef.current,
+        sampleCount,
+        autoScratchRef.current.enabled,
+      )
+    ) {
+      return;
+    }
+    if (
+      hasBodySymbolsRef.current &&
+      revealedSymbolsRef.current < SYMBOL_POINT_COUNT
+    ) {
+      return;
+    }
+    const outcome: GameResult = evaluateSessionWin(sessionSymbolsRef.current)
+      ? "win"
+      : "lose";
+    gameResultPendingRef.current = outcome;
+    setAutoScratch((current) =>
+      current.enabled ? { ...current, enabled: false } : current,
+    );
+    const overlayDelayMs = playGameOutcomeSound(
+      symbolAudioRef.current,
+      outcome,
+      soundEnabledRef.current,
+    );
+    clearGameResultTimer();
+    gameResultTimerRef.current = window.setTimeout(() => {
+      gameResultTimerRef.current = null;
+      setGameResult(outcome);
+    }, overlayDelayMs);
+  }
+  tryResolveGameRef.current = tryResolveGame;
+
+  function advanceAfterScratch() {
+    const finishedId = selectedCardId;
+    if (!finishedId) {
+      resetScratches();
+      return;
+    }
+    if (!completedCardIdsRef.current.includes(finishedId)) {
+      const nextCompleted = [...completedCardIdsRef.current, finishedId];
+      completedCardIdsRef.current = nextCompleted;
+      setCompletedCardIds(nextCompleted);
+    }
+    const done = completedCardIdsRef.current;
+    const nextCard = playlist.find(
+      (entry) => entry.id !== finishedId && !done.includes(entry.id),
+    );
+    resetGameOutcome();
+    claimedRef.current = false;
+    setClaimed(false);
+    if (!nextCard) {
+      setSelectedCardId("");
+      return;
+    }
+    setSelectedCardId(nextCard.id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("card", nextCard.id);
+    window.history.replaceState({}, "", url.toString());
+    void loadCardAssets(nextCard.id)
+      .then((assets) => {
+        revokeObjectUrls();
+        return applyLoadedAssets(assets);
+      })
+      .catch((error) => {
+        setLoadError(
+          error instanceof Error ? error.message : "Failed to load next card",
+        );
+      });
+  }
+  advanceAfterScratchRef.current = advanceAfterScratch;
+
   function resetScratches() {
     marksRef.current = [];
     lastScratchWorldRef.current = null;
@@ -751,9 +1475,32 @@ export function PhotoScratchTest() {
       { length: SYMBOL_POINT_COUNT },
       () => false,
     );
+    revealedRef.current = new Array(revealSamplesRef.current.length).fill(
+      false,
+    );
+    revealedCountRef.current = 0;
+    autoPathIndexRef.current = 0;
+    autoPathProgressRef.current = 0;
+    claimedRef.current = false;
+    setClaimed(false);
+    resetGameOutcome();
     setSessionSymbols(buildSessionSymbols());
     setRevealedSymbols(0);
+    setAutoScratch((current) => ({ ...current, enabled: false }));
   }
+
+  useEffect(() => () => clearGameResultTimer(), []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SOUND_STORAGE_KEY,
+      JSON.stringify({ enabled: soundEnabled }),
+    );
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_SCRATCH_STORAGE_KEY, JSON.stringify(autoScratch));
+  }, [autoScratch]);
 
   async function enableMotion() {
     const ok = await parallax.requestPermission();
@@ -782,6 +1529,7 @@ export function PhotoScratchTest() {
   }
 
   function onPointerDown(clientX: number, clientY: number) {
+    if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
     isScratchingRef.current = true;
     scratchStartedRef.current = true;
     setIsScratching(true);
@@ -805,6 +1553,14 @@ export function PhotoScratchTest() {
   }
 
   const parallaxState = parallaxStateRef.current;
+  const symbolsHuntComplete =
+    hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
+  const autoScratchLocked = hasBodySymbols && !symbolsHuntComplete;
+  const remainingCards = playlist.filter(
+    (entry) => !completedCardIds.includes(entry.id),
+  );
+  const activePlaylistLabel =
+    playlist.find((entry) => entry.id === selectedCardId)?.label ?? uploadLabel;
 
   return (
     <main className="app-shell photo-scratch-page">
@@ -813,8 +1569,9 @@ export function PhotoScratchTest() {
           <header className="photo-scratch-header">
             <h1>Photo scratch test</h1>
             <p>
-              Upload pictures, scratch the clothes layer, and drag or tilt to
-              move the scene.
+              {playlist.length > 0
+                ? `${activePlaylistLabel} · ${remainingCards.length}/${playlist.length} left`
+                : "Upload pictures, scratch the clothes layer, and drag or tilt to move the scene."}
             </p>
           </header>
 
@@ -1068,7 +1825,62 @@ export function PhotoScratchTest() {
                 Symbols: {revealedSymbols}/{SYMBOL_POINT_COUNT}
               </span>
             ) : null}
+            {playlist.length > 0 ? (
+              <span className="photo-scratch-count">
+                Left {remainingCards.length}/{playlist.length}
+                {claimed ? " · claimed" : ""}
+              </span>
+            ) : null}
           </div>
+
+          <fieldset className="photo-scratch-settings">
+            <legend>Sound</legend>
+            <label className="checkbox-label">
+              <input
+                checked={soundEnabled}
+                onChange={(event) =>
+                  updateSoundEnabled(event.currentTarget.checked)
+                }
+                type="checkbox"
+              />
+              Game sounds
+            </label>
+          </fieldset>
+
+          <fieldset className="photo-scratch-settings">
+            <legend>Auto scratch</legend>
+            {autoScratchLocked ? (
+              <p className="auto-scratch-hint">
+                Find all {SYMBOL_POINT_COUNT} symbols on the dress first — auto
+                scratch finishes the reveal.
+              </p>
+            ) : null}
+            <label className="checkbox-label">
+              <input
+                checked={autoScratch.enabled}
+                disabled={autoScratchLocked}
+                onChange={(event) =>
+                  updateAutoScratch({ enabled: event.currentTarget.checked })
+                }
+                type="checkbox"
+              />
+              Enable auto scratch
+            </label>
+            <label>
+              Speed ({autoScratch.speed.toFixed(0)} pts/s)
+              <input
+                disabled={!autoScratch.enabled}
+                max={120}
+                min={1}
+                onChange={(event) =>
+                  updateAutoScratch({ speed: Number(event.currentTarget.value) })
+                }
+                step={1}
+                type="range"
+                value={autoScratch.speed}
+              />
+            </label>
+          </fieldset>
 
           {loadError ? (
             <p className="photo-scratch-error">{loadError}</p>
@@ -1101,7 +1913,7 @@ export function PhotoScratchTest() {
 
         <div
           ref={stageRef}
-          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}`}
+          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}`}
         >
           <div
             className={`bg-drag-scale${isScratching ? " is-bg-blurred" : ""}`}
@@ -1154,6 +1966,44 @@ export function PhotoScratchTest() {
                 ))
               : null}
           </div>
+          <div className="mobile-sound-wrap">
+            <button
+              type="button"
+              className={`mobile-reset mobile-sound-toggle${soundEnabled ? "" : " is-muted"}`}
+              aria-label={soundEnabled ? "Mute sounds" : "Unmute sounds"}
+              aria-pressed={soundEnabled}
+              onClick={() => updateSoundEnabled(!soundEnabled)}
+            >
+              {soundEnabled ? (
+                <Volume2 aria-hidden="true" size={20} strokeWidth={2.2} />
+              ) : (
+                <VolumeX aria-hidden="true" size={20} strokeWidth={2.2} />
+              )}
+            </button>
+          </div>
+          {gameResult ? (
+            <div
+              className={`game-result game-result--${gameResult}`}
+              role="status"
+              aria-live="polite"
+            >
+              <p className="game-result-title">
+                {gameResult === "win" ? "You win!" : "No luck this time"}
+              </p>
+              <p className="game-result-detail">
+                {gameResult === "win"
+                  ? "Three matching symbols — nice!"
+                  : "No three-of-a-kind — try again."}
+              </p>
+              <button
+                type="button"
+                className="game-result-button"
+                onClick={() => advanceAfterScratchRef.current()}
+              >
+                {remainingCards.length > 1 ? "Next card" : "Done"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
     </main>
