@@ -1503,7 +1503,14 @@ export function PhotoScratchTest() {
   }, [soundEnabled]);
 
   useEffect(() => {
-    localStorage.setItem(AUTO_SCRATCH_STORAGE_KEY, JSON.stringify(autoScratch));
+    try {
+      localStorage.setItem(
+        AUTO_SCRATCH_STORAGE_KEY,
+        JSON.stringify(autoScratch),
+      );
+    } catch {
+      // Ignore storage write failures (e.g. private mode / quota).
+    }
   }, [autoScratch]);
 
   async function enableMotion() {
