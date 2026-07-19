@@ -35,6 +35,7 @@ from backend.cards import (
     delete_photo_scratch_layer,
     list_cards,
     list_photo_scratch_slots,
+    confirm_photo_scratch_slot_adjust,
     cutout_photo_scratch_slot,
     generate_photo_scratch_slot_mesh,
     match_photo_scratch_slot,
@@ -627,16 +628,33 @@ def create_photo_scratch_slot_match(
     slot_id: str,
     theme: str = "",
     relock: bool = False,
+    scale: float = 1.0,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    confirm_adjust: bool = False,
 ) -> dict:
-    """Register bikini + top on the game canvas (optional AI re-dress if pose drifted)."""
+    """Register bikini + top on the game canvas (optional AI re-dress / manual nudge)."""
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
         raise HTTPException(status_code=400, detail="Invalid card id")
     if not re.fullmatch(r"slot_\d{2}", slot_id):
         raise HTTPException(status_code=400, detail="Invalid slot_id")
+    if scale <= 0.1 or scale > 3.0:
+        raise HTTPException(status_code=400, detail="scale must be between 0.1 and 3.0")
+    if abs(tx) > 500 or abs(ty) > 500:
+        raise HTTPException(status_code=400, detail="tx/ty must be within ±500 px")
 
     def _run_match() -> None:
         match_photo_scratch_slot(
-            ROOT, CARDS_DIR, card_id, slot_id, theme, relock=relock
+            ROOT,
+            CARDS_DIR,
+            card_id,
+            slot_id,
+            theme,
+            relock=relock,
+            nudge_scale=scale,
+            nudge_tx=tx,
+            nudge_ty=ty,
+            confirm_adjust=confirm_adjust,
         )
 
     job = enqueue(
@@ -645,6 +663,18 @@ def create_photo_scratch_slot_match(
         _run_match,
     )
     return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/confirm-adjust")
+def confirm_photo_scratch_adjust(
+    card_id: str, slot_id: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Mark Match alignment as good (Picture Flow Adjust step → Cutout)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    return confirm_photo_scratch_slot_adjust(CARDS_DIR, card_id, slot_id, theme)
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/cutout")

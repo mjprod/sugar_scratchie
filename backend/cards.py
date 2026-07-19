@@ -503,6 +503,12 @@ class PhotoScratchSlot(BaseModel):
     match_blend: str | None = None
     match_pose_ok: bool = False
     match_iou: float | None = None
+    # Picture Flow Adjust step confirmed (or cutout already exists — legacy).
+    has_adjust: bool = False
+    # Last manual nudge applied during match (from match_meta.json).
+    match_nudge_scale: float | None = None
+    match_nudge_tx: float | None = None
+    match_nudge_ty: float | None = None
 
 
 PHOTO_SCRATCH_PROMPT_FIELDS = {
@@ -647,6 +653,41 @@ def _read_match_meta(cards_dir: Path, card_id: str, slot_id: str) -> dict:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _write_match_meta(cards_dir: Path, card_id: str, slot_id: str, meta: dict) -> None:
+    path = photo_scratch_slot_match_meta_path(cards_dir, card_id, slot_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def photo_scratch_slot_has_adjust(cards_dir: Path, card_id: str, slot_id: str) -> bool:
+    """Adjust step done when confirmed, or cutout already exists (legacy slots)."""
+    if photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id):
+        return True
+    if not photo_scratch_slot_has_match(cards_dir, card_id, slot_id):
+        return False
+    return bool(_read_match_meta(cards_dir, card_id, slot_id).get("adjust_ok"))
+
+
+def confirm_photo_scratch_slot_adjust(
+    cards_dir: Path, card_id: str, slot_id: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Mark Match alignment as good enough to proceed to Cutout."""
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot adjust the original card")
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    if not photo_scratch_slot_has_match(cards_dir, card_id, slot_id):
+        raise HTTPException(status_code=400, detail="Match bikini + top first")
+    meta = _read_match_meta(cards_dir, card_id, slot_id)
+    meta["adjust_ok"] = True
+    _write_match_meta(cards_dir, card_id, slot_id, meta)
+    return next(
+        s for s in list_photo_scratch_slots(cards_dir, card_id, theme) if s.id == slot_id
+    )
 
 
 def photo_scratch_slot_cutout_path(
@@ -820,6 +861,22 @@ def list_photo_scratch_slots(
                     if isinstance(match_meta.get("iou"), (int, float))
                     else None
                 ),
+                has_adjust=has_cutout or bool(match_meta.get("adjust_ok")),
+                match_nudge_scale=(
+                    float(match_meta["nudge_scale"])
+                    if isinstance(match_meta.get("nudge_scale"), (int, float))
+                    else None
+                ),
+                match_nudge_tx=(
+                    float(match_meta["nudge_tx"])
+                    if isinstance(match_meta.get("nudge_tx"), (int, float))
+                    else None
+                ),
+                match_nudge_ty=(
+                    float(match_meta["nudge_ty"])
+                    if isinstance(match_meta.get("nudge_ty"), (int, float))
+                    else None
+                ),
             )
         )
     return slots
@@ -841,6 +898,10 @@ def _save_photo_scratch_slots(
         "match_blend",
         "match_pose_ok",
         "match_iou",
+        "has_adjust",
+        "match_nudge_scale",
+        "match_nudge_tx",
+        "match_nudge_ty",
     }
     data = [
         {k: v for k, v in slot.dict().items() if v is not None and k not in skip}
@@ -1030,11 +1091,17 @@ def match_photo_scratch_slot(
     theme: str = "",
     *,
     relock: bool = False,
+    nudge_scale: float = 1.0,
+    nudge_tx: float = 0.0,
+    nudge_ty: float = 0.0,
+    confirm_adjust: bool = False,
 ) -> PhotoScratchSlot:
     """Register bikini + top on the game canvas for cutout.
 
     Default: ORB similarity + face polish (AI tops still drift scale/framing).
     ``relock=True``: optional AI re-dress when limbs clearly drifted pose.
+    Optional ``nudge_*`` applies a final manual affine to every match.
+    ``confirm_adjust=True`` marks the Adjust step done (Picture Flow).
     """
     import shutil
 
@@ -1114,10 +1181,15 @@ def match_photo_scratch_slot(
             bikini_matched_path=bikini_matched,
             blend_path=blend,
             mode="register",
+            nudge_scale=nudge_scale,
+            nudge_tx=nudge_tx,
+            nudge_ty=nudge_ty,
         )
         stats["ai_relock"] = ai_relock
         if ai_relock:
             stats["method"] = f"ai-relock + {stats.get('method', 'geom')}"
+        # Match step clears Adjust; Adjust step re-confirms after a nudge.
+        stats["adjust_ok"] = bool(confirm_adjust)
         meta_path.write_text(json.dumps(stats, indent=2) + "\n")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

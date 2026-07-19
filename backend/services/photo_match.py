@@ -34,6 +34,12 @@ FACE_BAND_BOTTOM = 0.38
 ORB_FEATURES = 4000
 ORB_MATCH_KEEP = 240
 MIN_ORB_INLIERS = 24
+# After ORB lock, grow the top slightly about the person centroid so fabric
+# covers thin bikini / skin rims the AI often leaves around sleeves and hems.
+CLOTHES_OVERSCALE = 1.035
+# If person heights still differ after ORB, snap clothes height to bikini and
+# reapply the cover overscale so there is always a 3.5 % safety margin.
+HEIGHT_NORM_TOLERANCE = 0.01  # skip if within 1 %
 
 
 def relock_clothes_from_bikini(
@@ -55,7 +61,12 @@ def relock_clothes_from_bikini(
         normalize_provider,
         normalize_source_image_model,
     )
-    from backend.services.grok import api_key, describe_outfit, photo_scratch_clothes_prompt
+    from backend.services.grok import (
+        api_key,
+        describe_outfit,
+        photo_scratch_clothes_pose_locks,
+        photo_scratch_clothes_prompt,
+    )
 
     outfit = ""
     try:
@@ -69,9 +80,10 @@ def relock_clothes_from_bikini(
             "background, change ONLY her outfit to: "
             f"{outfit.strip()}. "
             "Keep face, identity, hair, skin tone, body pose, and limb positions "
-            "identical — do not move her arms or legs. Exactly one left arm and one "
-            "right arm in the same places as the reference — no ghost limbs, no "
-            "duplicate sleeves, no extra hands. Only replace the clothing fabric. "
+            f"identical — do not move her arms or legs. {photo_scratch_clothes_pose_locks()} "
+            "FACE LOCK — keep her face identical to the reference: no horizontal seams, "
+            "smears, double mouths, or sliced nose. "
+            "Only replace the clothing fabric. "
             "Photorealistic, 9:16. Do not invent a different woman."
         )
     else:
@@ -109,6 +121,9 @@ def match_clothes_to_bikini(
     blend_path: Path | None = None,
     *,
     mode: str = "register",
+    nudge_scale: float = 1.0,
+    nudge_tx: float = 0.0,
+    nudge_ty: float = 0.0,
 ) -> dict:
     """Register bikini + top on the same canvas for cutout.
 
@@ -117,6 +132,9 @@ def match_clothes_to_bikini(
     leaves a doubled face in the overlay.
 
     ``passthrough``: cover-crop only. ``full``: non-rigid warp after register.
+
+    Optional ``nudge_scale`` / ``nudge_tx`` / ``nudge_ty`` apply a final manual
+    affine on the matched clothes (scale about person centroid, then translate).
     """
     if not bikini_path.is_file():
         raise FileNotFoundError(f"Bikini image not found: {bikini_path}")
@@ -153,6 +171,8 @@ def match_clothes_to_bikini(
         registered, register_info = _register_similarity(
             clothes_rgb, bikini_rgb, bikini_mask, clothes_mask
         )
+        registered = _overscale_about_person(registered, bikini_mask, CLOTHES_OVERSCALE)
+        register_info["overscale"] = CLOTHES_OVERSCALE
         registered_mask = _person_mask_keep_holes(registered, gen)
         warped = _align_clothes_to_bikini(
             registered, registered_mask, bikini_rgb, bikini_mask
@@ -174,8 +194,39 @@ def match_clothes_to_bikini(
         registered, register_info = _register_similarity(
             clothes_rgb, bikini_rgb, bikini_mask, clothes_mask
         )
-        aligned_clothes = registered
+        # After ORB, check person heights and apply a corrective scale so that
+        # the clothes character's bounding-box height matches the bikini's.
+        # ORB matches faces but the original images can have different framing
+        # (one tighter, one wider), so the bodies end up at different scales.
+        reg_mask = _person_mask_keep_holes(registered, gen)
+        b_h = _person_height_px(bikini_mask)
+        c_h = _person_height_px(reg_mask)
+        height_scale = CLOTHES_OVERSCALE
+        if b_h > 50 and c_h > 50:
+            # Scale clothes so its person height equals bikini person height,
+            # then apply the normal overscale margin on top.
+            raw_ratio = b_h / c_h
+            height_scale = raw_ratio * CLOTHES_OVERSCALE
+            if abs(raw_ratio - 1.0) > HEIGHT_NORM_TOLERANCE:
+                print(
+                    f"Height-norm: bikini={b_h:.0f}px clothes={c_h:.0f}px "
+                    f"ratio={raw_ratio:.4f} → height_scale={height_scale:.4f}",
+                    flush=True,
+                )
+        aligned_clothes = _overscale_about_person(
+            registered, bikini_mask, height_scale
+        )
+        register_info["overscale"] = round(height_scale, 4)
         method = "orb-person (clothes→bikini)"
+
+    aligned_clothes, nudge_info = _apply_manual_nudge(
+        aligned_clothes,
+        bikini_mask,
+        scale=nudge_scale,
+        tx=nudge_tx,
+        ty=nudge_ty,
+    )
+    register_info.update(nudge_info)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(aligned_clothes, mode="RGB").save(
@@ -225,6 +276,65 @@ def match_clothes_to_bikini(
         flush=True,
     )
     return stats
+
+
+def _person_height_px(mask: np.ndarray) -> float:
+    """Vertical extent of the person bounding box in pixels."""
+    ys = np.where(mask.any(axis=1))[0]
+    return float(ys.max() - ys.min()) if ys.size >= 2 else 0.0
+
+
+def _overscale_about_person(
+    rgb: np.ndarray, person_mask: np.ndarray, scale: float
+) -> np.ndarray:
+    """Uniform scale about the person centroid (grow or shrink fabric)."""
+    if abs(scale - 1.0) < 1e-4:
+        return rgb
+    h, w = rgb.shape[:2]
+    ys, xs = np.where(person_mask)
+    if ys.size < 50:
+        cx, cy = w * 0.5, h * 0.5
+    else:
+        cx, cy = float(xs.mean()), float(ys.mean())
+    matrix = cv2.getRotationMatrix2D((cx, cy), 0.0, float(scale))
+    return cv2.warpAffine(
+        rgb,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def _apply_manual_nudge(
+    rgb: np.ndarray,
+    person_mask: np.ndarray,
+    *,
+    scale: float = 1.0,
+    tx: float = 0.0,
+    ty: float = 0.0,
+) -> tuple[np.ndarray, dict]:
+    """Optional final scale + translation after automatic registration."""
+    info: dict = {}
+    out = rgb
+    if abs(scale - 1.0) >= 1e-4:
+        out = _overscale_about_person(out, person_mask, scale)
+        info["nudge_scale"] = round(float(scale), 4)
+    if abs(tx) >= 1e-3 or abs(ty) >= 1e-3:
+        h, w = out.shape[:2]
+        matrix = np.array(
+            [[1.0, 0.0, float(tx)], [0.0, 1.0, float(ty)]], dtype=np.float32
+        )
+        out = cv2.warpAffine(
+            out,
+            matrix,
+            (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        info["nudge_tx"] = round(float(tx), 2)
+        info["nudge_ty"] = round(float(ty), 2)
+    return out, info
 
 
 def _register_similarity(

@@ -171,6 +171,12 @@ export type PhotoScratchSlot = {
   match_blend?: string;
   match_pose_ok?: boolean;
   match_iou?: number | null;
+  /** Adjust step confirmed (or cutout already exists). */
+  has_adjust?: boolean;
+  /** Last manual nudge from match_meta. */
+  match_nudge_scale?: number | null;
+  match_nudge_tx?: number | null;
+  match_nudge_ty?: number | null;
 };
 
 const SLOT_PROMPT_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
@@ -223,12 +229,22 @@ export function defaultPhotoScratchPrompt(
   return (
     `Using this exact same woman, pose, framing, and background, change only her outfit ` +
     `to a fully clothed ${scenery} costume/dress suitable for a scratch-card top layer. ` +
+    `Make the costume a little bigger / fuller than skintight: slightly looser sleeves, ` +
+    `bodice, and skirt so fabric covers a bit past the bikini silhouette. OPAQUE full ` +
+    `coverage — no sheer fabric, no open zipper, no see-through panels. The bikini must ` +
+    `be completely hidden; no bikini print or skin where clothing should be. ` +
     `Keep face, identity, hair, skin, hands, body pose, camera angle, and the entire ` +
     `background identical. Lock every limb: same arm angles, elbow bends, hand positions, ` +
     `hip stance, and leg placement as the reference — do not raise, lower, or shift either ` +
-    `arm. Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves. ` +
+    `arm. FRONT VIEW ONLY — she faces the camera as in the reference. Do NOT show her ` +
+    `back, rear shoulder, spine, or buttocks, and do NOT twist the torso so one side ` +
+    `looks like a back view. If an arm is raised (hand in hair), keep that exact raised ` +
+    `arm silhouette — only change fabric; no second sleeve or back-of-body fill in the ` +
+    `armpit. Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves. ` +
     `Only replace the bikini with clothing; do not restage the body. ` +
-    `Keep her face sharp and in focus — clear eyes, natural skin detail, not soft or ` +
+    `FACE LOCK — keep her face identical to the reference: same eyes, nose, mouth, and ` +
+    `expression. No horizontal seams, smears, double mouths, or sliced nose. Keep her ` +
+    `face sharp and in focus — clear eyes, natural skin detail, not soft or ` +
     `airbrushed-blurry. Photorealistic, 9:16 framing. Do not invent a different woman ` +
     "or move the camera."
   );
@@ -393,6 +409,7 @@ export function photoScratchSlotIsDone(slot: PhotoScratchSlot): boolean {
       slot.bikini &&
       slot.clothes &&
       slot.has_match &&
+      slot.has_adjust &&
       slot.has_cutout &&
       slot.mesh &&
       slot.has_symbols,
@@ -403,14 +420,36 @@ export async function matchPhotoScratchSlot(
   cardId: string,
   slotId: string,
   theme = "",
-  options?: { relock?: boolean },
+  options?: {
+    relock?: boolean;
+    scale?: number;
+    tx?: number;
+    ty?: number;
+    confirmAdjust?: boolean;
+  },
 ): Promise<{ id: string; status: string }> {
   const params = new URLSearchParams();
   if (theme.trim()) params.set("theme", theme.trim());
   if (options?.relock) params.set("relock", "true");
+  if (options?.scale != null) params.set("scale", String(options.scale));
+  if (options?.tx != null) params.set("tx", String(options.tx));
+  if (options?.ty != null) params.set("ty", String(options.ty));
+  if (options?.confirmAdjust) params.set("confirm_adjust", "true");
   const q = params.toString() ? `?${params.toString()}` : "";
   return api(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/match${q}`,
+    { method: "POST" },
+  );
+}
+
+export async function confirmPhotoScratchSlotAdjust(
+  cardId: string,
+  slotId: string,
+  theme = "",
+): Promise<PhotoScratchSlot> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/confirm-adjust${params}`,
     { method: "POST" },
   );
 }

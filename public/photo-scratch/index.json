@@ -116,6 +116,15 @@
       "bikini": "/cards/asia_gym/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_01/clothes.png",
       "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json"
+    },
+    {
+      "id": "asia_gym_slot_04",
+      "label": "Nurse \u2013 4",
+      "model_id": "asia",
+      "background": "/cards/asia_gym/photo-scratch/pending/slot_04_background.jpg",
+      "bikini": "/cards/asia_gym/photo-scratch/slot_04/bikini.png",
+      "clothes": "/cards/asia_gym/photo-scratch/slot_04/clothes.png",
+      "mesh": "/cards/asia_gym/photo-scratch/slot_04/mesh.json"
     }
   ]
 }

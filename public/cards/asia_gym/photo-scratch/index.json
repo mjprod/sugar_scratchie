@@ -10,13 +10,13 @@
     "id": "slot_02",
     "label": "Nurse \u2013 2",
     "background": "/cards/asia_gym/photo-scratch/pending/slot_02_background.jpg",
-    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_02_bikini.jpg",
-    "clothes": "/cards/asia_gym/photo-scratch/pending/slot_02_clothes.jpg"
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_02_bikini.jpg"
   },
   {
     "id": "slot_03",
     "label": "Nurse \u2013 3",
-    "background": "/cards/asia_gym/photo-scratch/pending/slot_03_background.jpg"
+    "background": "/cards/asia_gym/photo-scratch/pending/slot_03_background.jpg",
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_03_bikini.jpg"
   },
   {
     "id": "slot_04",
@@ -28,17 +28,21 @@
   {
     "id": "slot_05",
     "label": "Nurse \u2013 5",
-    "background": "/cards/asia_gym/photo-scratch/pending/slot_05_background.jpg"
+    "background": "/cards/asia_gym/photo-scratch/pending/slot_05_background.jpg",
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_05_bikini.jpg",
+    "clothes": "/cards/asia_gym/photo-scratch/pending/slot_05_clothes.jpg"
   },
   {
     "id": "slot_06",
     "label": "Nurse \u2013 6",
-    "background": "/cards/asia_gym/photo-scratch/pending/slot_06_background.jpg"
+    "background": "/cards/asia_gym/photo-scratch/pending/slot_06_background.jpg",
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_06_bikini.jpg"
   },
   {
     "id": "slot_07",
     "label": "Nurse \u2013 7",
-    "background": "/cards/asia_gym/photo-scratch/pending/slot_07_background.jpg"
+    "background": "/cards/asia_gym/photo-scratch/pending/slot_07_background.jpg",
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_07_bikini.jpg"
   },
   {
     "id": "slot_08",

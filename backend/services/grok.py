@@ -744,6 +744,21 @@ def photo_scratch_bikini_prompt(
     )
 
 
+def photo_scratch_clothes_pose_locks() -> str:
+    """Shared limb / orientation locks for top-layer edits (raised-arm poses fail often)."""
+    return (
+        "FRONT VIEW ONLY — she faces the camera exactly as in the reference. "
+        "Do NOT show her back, rear shoulder blade, spine, or buttocks. "
+        "Do NOT twist the torso so one side looks like a back view. "
+        "If an arm is raised (hand in hair / behind head), keep that exact raised-arm "
+        "silhouette: same elbow height, same underarm opening, same hand in the hair — "
+        "only change fabric on that arm. Do not invent a second sleeve, a flat blue "
+        "panel, or a back-of-body fill in the armpit gap. "
+        "Exactly one left arm and one right arm in the same places as the reference — "
+        "no ghost limbs, no duplicate sleeves, no extra hands."
+    )
+
+
 def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
     """Top layer must fully cover the bikini body — only the outfit fabric changes."""
     scenery = (theme or "").strip() or "stylish"
@@ -752,22 +767,26 @@ def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
         f"Change ONLY the bikini fabric to a fully clothed {scenery} costume — nothing else. "
         f"The body underneath does NOT change: every curve, the bust size and projection, "
         f"waist, and hips stay exactly as they appear in the reference. "
-        f"The costume fabric wraps tightly over the same body — do not flatten, reduce, "
-        f"or reshape the chest or any other curve. "
+        f"Make the costume a little bigger / fuller than a skintight wrap: slightly looser "
+        f"sleeves, bodice, and skirt so fabric covers a bit past the bikini silhouette. "
+        f"OPAQUE full coverage — no sheer fabric, no open zipper, no see-through panels. "
+        f"The bikini must be completely hidden; no bikini print or skin where clothing "
+        f"should be (sides, underarms, chest, hem). "
+        f"Do not flatten, reduce, or reshape the chest or any other curve. "
         f"CRITICAL — the following must also be completely identical to the reference: "
         f"camera zoom level, focal length, crop, frame edges, body scale in frame, "
         f"head position in frame, feet position in frame, "
         f"body pose, arm angles, elbow bends, hand positions, hip stance, leg placement, "
         f"face, identity, hair, skin tone, background, room, lighting, shadow direction, "
         f"and BODY SHAPE — bust size, waist curve, hip width must be identical to the reference. "
-        f"The costume fabric must cling tightly to the same body silhouette as the bikini — "
-        f"do not flatten or reduce the chest, waist, or hips. "
-        f"The outfit MUST cover the entire body that was covered by the bikini — "
-        f"no skin or bikini fabric may show at the sides, top, or bottom. "
+        f"{photo_scratch_clothes_pose_locks()} "
+        f"The outfit MUST fully cover the bikini body with a little extra fabric volume — "
+        f"not skintight-shrunk. "
         f"Do NOT zoom out, widen the shot, or move the camera — the girl must fill "
-        f"the same area of the 9:16 frame as in the reference. "
-        f"Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves.{hint} "
-        f"Face sharp and in focus — clear eyes, natural skin, not airbrushed. "
+        f"the same area of the 9:16 frame as in the reference.{hint} "
+        f"FACE LOCK — keep her face identical to the reference: same eyes, nose, mouth, "
+        f"and expression. No horizontal seams, smears, double mouths, or sliced nose "
+        f"across the face. Sharp, natural skin — not airbrushed. "
         f"Photorealistic. Do not invent a different woman."
     )
 

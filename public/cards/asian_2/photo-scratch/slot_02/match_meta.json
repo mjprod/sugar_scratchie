@@ -1,9 +1,13 @@
 {
-  "iou": 0.896,
-  "peek": 0.0119,
-  "edge_mae": 4.3,
+  "iou": 0.867,
+  "peek": 0.008,
+  "edge_mae": 2.88,
   "pose_ok": true,
   "pose_mismatch": false,
-  "method": "passthrough (same canvas)",
+  "method": "orb-person (clothes\u2192bikini)",
+  "inliers": 193,
+  "scale": 1.0029,
+  "tx": -4.78,
+  "ty": 1.93,
   "ai_relock": false
 }

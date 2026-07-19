@@ -1,0 +1,14 @@
+{
+  "iou": 0.865,
+  "peek": 0.0019,
+  "edge_mae": 0.64,
+  "pose_ok": true,
+  "pose_mismatch": false,
+  "method": "orb-person (clothes\u2192bikini)",
+  "inliers": 237,
+  "scale": 1.0,
+  "tx": 0.13,
+  "ty": -0.09,
+  "ai_relock": false,
+  "adjust_ok": true
+}

@@ -353,81 +353,86 @@ def _erase_background_pockets(
     return out
 
 
-def _body_hull(person: np.ndarray) -> np.ndarray:
-    """Convex hull of the person silhouette (fallback: large close + fill)."""
-    if not person.any():
-        return person
-    try:
-        from skimage.morphology import convex_hull_image
-
-        return convex_hull_image(person)
-    except Exception:  # noqa: BLE001
-        k = max(31, int(min(person.shape) * 0.08) | 1)
-        closed = ndimage.binary_closing(
-            person, structure=np.ones((k, k), dtype=bool), iterations=2
-        )
-        return ndimage.binary_fill_holes(closed)
-
-
 def _erase_arm_wall_gaps(source_rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     """Mask pink/beige wall between the arms, then make it transparent.
 
-    SegFormer often labels wallpaper in hands-on-hips triangles as skin/body, so
-    the protect-based pocket erase skips them. Recipe:
-      1. Paint a selection = wall-colored pixels inside the body hull (arm bays)
-      2. Remove / zero alpha there ("remove the pink/beige wall between the arms")
-      3. Clean edges — small choke on the punched rim (no halo artifacts)
+    Recipe (same as manual cleanup):
+      1. Paint a selection on the arm-bay wall (not the body)
+      2. Remove / zero alpha — "remove the pink/beige wall background between the arms"
+      3. Clean edges, no artifacts — thin rim choke on the punched hole
+
+    Skin and wall are close in this theme, so we protect a torso skin core, require
+    mild wallpaper texture, flood from the frame border, and refuse oversized
+    selections (those would eat arms/waist).
     """
     hard = alpha >= 0.35
     if not hard.any():
         return alpha
 
-    bg_color, bg_mad = _sample_wall_color(source_rgb, hard, margin=10)
-    # Tight wall match. Skin is usually farther from the exterior wall median.
-    wall_thresh = max(34.0, min(46.0, bg_mad * 2.2))
-    wall = _wall_color_mask(source_rgb, bg_color, wall_thresh)
+    bg_color, _bg_mad = _sample_wall_color(source_rgb, hard, margin=10)
+    diff_bg = np.linalg.norm(source_rgb.astype(np.float32) - bg_color, axis=2)
 
-    # True body = opaque pixels that are clearly NOT the wall.
-    person = hard & ~wall
-    if int(person.sum()) < 200:
+    ys, xs = np.where(hard)
+    cy = int(np.median(ys))
+    cx = int(np.median(xs))
+    y0, y1 = max(0, cy - 40), min(hard.shape[0], cy + 40)
+    x0, x1 = max(0, cx - 30), min(hard.shape[1], cx + 30)
+    skin_patch = source_rgb[y0:y1, x0:x1].reshape(-1, 3).astype(np.float32)
+    if skin_patch.size == 0:
         return alpha
+    skin_color = np.median(skin_patch, axis=0)
+    diff_skin = np.linalg.norm(source_rgb.astype(np.float32) - skin_color, axis=2)
 
-    # Arm/thigh bays = wall paint BiRefNet left inside the body hull.
-    hull = _body_hull(person)
-    selection = hard & wall & hull
+    # Confident torso skin — never punch these (or a dilated halo around them).
+    skin_protect = ndimage.binary_dilation(
+        hard & (diff_skin < 32.0), iterations=5
+    )
+
+    # Mild local variance — wallpaper icons vs smooth skin.
+    gray = source_rgb.astype(np.float32).mean(axis=2)
+    mean = ndimage.uniform_filter(gray, size=7)
+    var = np.clip(ndimage.uniform_filter(gray * gray, size=7) - mean * mean, 0, None)
+
+    wall = (diff_bg < 48.0) & ~skin_protect & (var > 18.0)
+    selection = hard & wall & _flood_from_border((diff_bg < 48.0) | ~hard)
     if not selection.any():
         return alpha
 
-    # Prefer pockets that still touch the exterior wall (open arm triangles).
-    passable = wall | ~hard
-    exterior = _flood_from_border(passable)
-    if (selection & exterior).any():
-        selection = selection & exterior
-
-    # Drop speckles; keep arm-bay / thigh-gap sized blobs only.
     labels, count = ndimage.label(selection)
-    if count > 0:
-        counts = np.bincount(labels.ravel())
-        min_px = max(60, int(hard.size * 0.00035))
-        max_px = int(hard.size * 0.045)
-        keep = np.zeros(count + 1, dtype=bool)
-        keep[1:] = (counts[1:] >= min_px) & (counts[1:] <= max_px)
-        selection = keep[labels]
-
+    if count == 0:
+        return alpha
+    counts = np.bincount(labels.ravel())
+    min_px = max(100, int(hard.sum() * 0.0008))
+    max_px = max(min_px + 1, int(hard.sum() * 0.025))
+    keep = np.zeros(count + 1, dtype=bool)
+    keep[1:] = (counts[1:] >= min_px) & (counts[1:] <= max_px)
+    selection = keep[labels]
     if not selection.any():
+        return alpha
+
+    # Abort if the selection is suspiciously large (would carve the body).
+    if float(selection.sum()) > hard.sum() * 0.04:
+        print(
+            f"Arm-wall gap erase skipped: selection too large "
+            f"({int(selection.sum())} px / {int(hard.sum())} hard)",
+            flush=True,
+        )
         return alpha
 
     out = alpha.copy()
     out[selection] = 0.0
-
-    # Clean edges: choke a thin rim of remaining wall-tinted matte at the hole.
-    rim = ndimage.binary_dilation(selection, iterations=2) & (out >= 0.35) & wall
+    rim = (
+        ndimage.binary_dilation(selection, iterations=2)
+        & (out >= 0.35)
+        & (diff_bg < 54.0)
+        & ~skin_protect
+    )
     out[rim] = 0.0
 
     print(
         f"Arm-wall gap erase: wall={bg_color.astype(int).tolist()}, "
-        f"thresh={wall_thresh:.1f}, erased={int(selection.sum())} px "
-        f"(+{int(rim.sum())} rim) — clean edges, no artifacts",
+        f"erased={int(selection.sum())} px (+{int(rim.sum())} rim) — "
+        f"clean edges, no artifacts",
         flush=True,
     )
     return out
@@ -493,44 +498,93 @@ def sync_pose_matched_cutout_holes(
 ) -> None:
     """Punch clothes pixels that sit in the bikini's arm–hip bays.
 
-    The top AI edit often paints fabric into hands-on-hips triangles. Those bays
-    are transparent on the bikini cutout but may open to the exterior (so a tiny
-    close kernel finds no topological hole). Seal the bikini silhouette with a
-    larger close, take the filled envelope minus opaque bikini, and clear only
-    the clothes matte there — do not re-punch the bikini (arms stay intact).
+    Prefer open-bay transfer: clothes still opaque where bikini is already clear
+    (pink/beige wall the top edit left between the arms). Envelope close is a
+    fallback when layers align but bays are only topological holes.
     """
+    del close_px  # kept for call-site compatibility
     if not bikini_path.is_file() or not clothes_path.is_file():
         return
     bikini_a = np.asarray(Image.open(bikini_path).convert("RGBA"))[..., 3]
-    hard = bikini_a >= 128
-    if not hard.any():
-        return
+    clothes_a = np.asarray(Image.open(clothes_path).convert("RGBA"))[..., 3]
+    if bikini_a.shape != clothes_a.shape:
+        bikini_a = np.asarray(
+            Image.fromarray(bikini_a).resize(
+                (clothes_a.shape[1], clothes_a.shape[0]), Image.Resampling.NEAREST
+            )
+        )
 
-    k = max(3, int(close_px) | 1)
-    closed = ndimage.binary_closing(
-        hard, structure=np.ones((k, k), dtype=bool), iterations=1
-    )
-    envelope = ndimage.binary_fill_holes(closed)
-    # Inside the sealed bikini body, but transparent on the bikini cutout.
-    gaps = envelope & (bikini_a < 48)
-    if not gaps.any():
-        print("Hole sync: no arm-gap bays found on bikini cutout", flush=True)
-        return
+    clothes_rgba = np.asarray(Image.open(clothes_path).convert("RGBA"))
+    clothes_rgb = clothes_rgba[..., :3]
+
+    # 1) Direct: remove pink/beige wall on clothes where bikini already shows through.
+    #    Arm-height band only — never punch the skirt / thigh crotch.
+    gaps = (bikini_a < 90) & (clothes_a >= 128)
+    h = gaps.shape[0]
+    band = np.zeros_like(gaps)
+    band[int(h * 0.20) : int(h * 0.58), :] = True
+    gaps &= band
+
+    # Skip open-bay when candidates are saturated outfit fabric (pose drift),
+    # not pink/beige wall. Low-chroma warm neutrals are the wall leftovers.
+    if gaps.any():
+        chroma = clothes_rgb.astype(np.float32).max(axis=2) - clothes_rgb.astype(
+            np.float32
+        ).min(axis=2)
+        if float(np.median(chroma[gaps])) > 48.0:
+            gaps = np.zeros_like(gaps)
+        else:
+            wall_color = np.median(clothes_rgb[gaps].astype(np.float32), axis=0)
+            wallish = (
+                np.linalg.norm(clothes_rgb.astype(np.float32) - wall_color, axis=2)
+                < 50.0
+            )
+            gaps &= wallish & (chroma < 55.0)
 
     labels, count = ndimage.label(gaps)
     if count > 0:
         counts = np.bincount(labels.ravel())
-        min_px = max(40, int(hard.size * 0.0004))
-        # Cap so a failed close that swallows half the frame can't wipe the top.
-        max_px = int(hard.size * 0.04)
+        min_px = max(30, int(gaps.size * 0.0002))
+        max_px = int(gaps.size * 0.035)
         keep = np.zeros(count + 1, dtype=bool)
         keep[1:] = (counts[1:] >= min_px) & (counts[1:] <= max_px)
         gaps = keep[labels]
 
-    # Slight grow for fringe; stay inside the envelope.
-    gaps = ndimage.binary_dilation(gaps, iterations=1) & envelope
+    method = "open-bay"
+    if not gaps.any():
+        # 2) Fallback: seal bikini silhouette, take interior transparent bays.
+        hard = bikini_a >= 128
+        if not hard.any():
+            print("Hole sync: no arm-gap bays found on bikini cutout", flush=True)
+            return
+        k = 21
+        closed = ndimage.binary_closing(
+            hard, structure=np.ones((k, k), dtype=bool), iterations=1
+        )
+        envelope = ndimage.binary_fill_holes(closed)
+        gaps = envelope & (bikini_a < 48) & band
+        labels, count = ndimage.label(gaps)
+        if count > 0:
+            counts = np.bincount(labels.ravel())
+            min_px = max(40, int(hard.size * 0.0004))
+            max_px = int(hard.size * 0.04)
+            keep = np.zeros(count + 1, dtype=bool)
+            keep[1:] = (counts[1:] >= min_px) & (counts[1:] <= max_px)
+            gaps = keep[labels]
+        gaps = ndimage.binary_dilation(gaps, iterations=1) & envelope
+        method = "envelope"
+        if not gaps.any():
+            print("Hole sync: no arm-gap bays found on bikini cutout", flush=True)
+            return
+    else:
+        # Clean edges on the punched rim — one px only so skirt hems stay intact.
+        gaps = ndimage.binary_dilation(gaps, iterations=1)
+
     n_c = apply_cutout_holes(clothes_path, gaps)
-    print(f"Hole sync: clothes punched {n_c} px (bikini unchanged)", flush=True)
+    print(
+        f"Hole sync: clothes punched {n_c} px ({method}, bikini unchanged)",
+        flush=True,
+    )
 
 
 def transfer_cutout_holes(
