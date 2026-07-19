@@ -2,7 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
 import { labelFromProjectId } from "./projects";
 import type { VideoFlowProject } from "./projects";
-import { DEFAULT_VIDEO_FLOW_JSON, parseVideoFlowJson, stringifyVideoFlowJson, type VideoFlowJson } from "./schema";
+import {
+  backgroundMotionPromptForTheme,
+  DEFAULT_THEME,
+  DEFAULT_VIDEO_FLOW_JSON,
+  dressPromptForTheme,
+  dressPromptForThemeWithReference,
+  isStockBackgroundMotionPromptText,
+  isStockDressPromptText,
+  normalizeTheme,
+  parseVideoFlowJson,
+  stringifyVideoFlowJson,
+  type VideoFlowJson,
+} from "./schema";
 import {
   DEFAULT_DRESS_VIDEO_MODEL,
   DEFAULT_PORTRAIT_PROMPT,
@@ -43,13 +55,21 @@ type HealthResponse = {
   wavespeed_key_loaded: boolean;
 };
 
+function looksLikeWorkspaceRootPath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/" || trimmed === ".") return true;
+  return /(?:^|\/)sugar_scratchie\/?$/.test(trimmed);
+}
+
 function draftPayload(
   draft: StoredVideoFlowDraft,
   flow: VideoFlowJson,
   enhancePrompt: boolean,
 ): Record<string, unknown> {
   return {
-    image: draft.image,
+    // Never persist the workspace root as the source image (corrupt save).
+    image: looksLikeWorkspaceRootPath(draft.image) ? "" : draft.image,
+    theme: draft.theme || DEFAULT_THEME,
     background_motion_prompt:
       draft.backgroundMotionPrompt || flow.defaults.background_motion_prompt,
     foreground_motion_prompt:
@@ -106,6 +126,9 @@ export function useVideoFlowState() {
     Boolean(storedDraft?.cardId) && (!bootCardId || storedDraft?.cardId === bootCardId);
 
   const [image, setImage] = useState(hydrateFromStored ? (storedDraft?.image ?? "") : "");
+  const [theme, setTheme] = useState(
+    hydrateFromStored ? (storedDraft?.theme?.trim() || DEFAULT_THEME) : DEFAULT_THEME,
+  );
   const [backgroundMotionPrompt, setBackgroundMotionPrompt] = useState(
     hydrateFromStored
       ? (storedDraft?.backgroundMotionPrompt ?? flow.defaults.background_motion_prompt)
@@ -192,10 +215,61 @@ export function useVideoFlowState() {
   const applyVideoFlowDraft = useCallback((draft: StoredVideoFlowDraft) => {
     // Never apply a draft for a card the user is no longer on.
     if (desiredCardIdRef.current && draft.cardId !== desiredCardIdRef.current) return;
-    setImage(draft.image);
-    setBackgroundMotionPrompt(draft.backgroundMotionPrompt || draft.foregroundMotionPrompt);
-    setDressPrompt(draft.dressPrompt);
-    setDressReferenceImage(draft.dressReferenceImage);
+    // Prefer newer local theme / dress reference when the server draft is still default/empty
+    // (debounce save can race with selectProject and wipe in-progress UI edits).
+    const local = readStoredVideoFlowDraft();
+    const sameCard = local?.cardId === draft.cardId;
+    const serverTheme = (draft.theme ?? "").trim();
+    const localTheme = sameCard ? (local.theme ?? "").trim() : "";
+    const themeToApply =
+      localTheme &&
+      localTheme !== serverTheme &&
+      (!serverTheme || serverTheme === DEFAULT_THEME)
+        ? localTheme
+        : serverTheme || DEFAULT_THEME;
+    const serverRef = (draft.dressReferenceImage ?? "").trim();
+    const localRef = sameCard ? (local.dressReferenceImage ?? "").trim() : "";
+    const dressRefToApply = serverRef || localRef;
+    const localImage = sameCard ? (local.image ?? "").trim() : "";
+    const serverImage = (draft.image ?? "").trim();
+    // Never keep a path that is the workspace root (debounce/save race bug).
+    const imageLooksLikeRoot =
+      serverImage === "/" ||
+      serverImage.endsWith("/sugar_scratchie") ||
+      serverImage === ".";
+    const imageToApply =
+      serverImage && !imageLooksLikeRoot
+        ? serverImage
+        : localImage && !localImage.endsWith("/sugar_scratchie")
+          ? localImage
+          : serverImage;
+
+    let motion =
+      draft.backgroundMotionPrompt || draft.foregroundMotionPrompt || "";
+    let dress = draft.dressPrompt || "";
+    // If we kept a local theme the server lacked, rewrite stock prompts to match.
+    if (
+      themeToApply !== serverTheme &&
+      themeToApply &&
+      themeToApply !== DEFAULT_THEME
+    ) {
+      if (isStockBackgroundMotionPromptText(motion, serverTheme || DEFAULT_THEME)) {
+        motion = backgroundMotionPromptForTheme(themeToApply);
+      }
+      if (isStockDressPromptText(dress, serverTheme || DEFAULT_THEME)) {
+        dress = dressRefToApply
+          ? dressPromptForThemeWithReference(themeToApply)
+          : dressPromptForTheme(themeToApply);
+      }
+    } else if (dressRefToApply && isStockDressPromptText(dress, themeToApply)) {
+      dress = dressPromptForThemeWithReference(themeToApply);
+    }
+
+    setImage(imageToApply);
+    setTheme(themeToApply);
+    setBackgroundMotionPrompt(motion);
+    setDressPrompt(dress);
+    setDressReferenceImage(dressRefToApply);
     setCardId(draft.cardId);
     setCardLabel(draft.cardLabel);
     setModelId(draft.modelId);
@@ -214,7 +288,15 @@ export function useVideoFlowState() {
     setSourceImageModel(draft.sourceImageModel);
     setBackgroundVideoModel(draft.backgroundVideoModel);
     setDressVideoModel(draft.dressVideoModel ?? DEFAULT_DRESS_VIDEO_MODEL);
-    writeStoredVideoFlowDraft(draft);
+    writeStoredVideoFlowDraft({
+      ...draft,
+      image: imageToApply,
+      theme: themeToApply,
+      backgroundMotionPrompt: motion,
+      foregroundMotionPrompt: motion,
+      dressPrompt: dress,
+      dressReferenceImage: dressRefToApply,
+    });
     writeActiveProjectId(draft.cardId);
     switchingCardRef.current = false;
   }, []);
@@ -290,6 +372,7 @@ export function useVideoFlowState() {
 
       applyIfCurrent({
         image: "",
+        theme: DEFAULT_THEME,
         backgroundMotionPrompt: flow.defaults.background_motion_prompt,
         foregroundMotionPrompt: flow.defaults.background_motion_prompt,
         dressPrompt: flow.defaults.dress_prompt,
@@ -316,12 +399,28 @@ export function useVideoFlowState() {
   );
 
   useEffect(() => {
-    refreshHealth().catch((caught) => setError(String(caught)));
+    // Health is fetched once, retried until the backend answers (it may still
+    // be starting up), and re-checked when the window regains focus.
+    let healthLoaded = false;
+    const loadHealth = () =>
+      refreshHealth()
+        .then(() => {
+          healthLoaded = true;
+        })
+        .catch(() => undefined);
+
+    loadHealth().catch(() => undefined);
     refreshJobs().catch(() => undefined);
     const timer = window.setInterval(() => {
       refreshJobs().catch(() => undefined);
+      if (!healthLoaded) void loadHealth();
     }, 3000);
-    return () => window.clearInterval(timer);
+    const onFocus = () => void loadHealth();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -368,8 +467,9 @@ export function useVideoFlowState() {
     // Skip while switching — otherwise we persist Shine 4's id with Shine 3's image.
     if (switchingCardRef.current) return;
     if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
-    writeStoredVideoFlowDraft({
+    const draft: StoredVideoFlowDraft = {
       image,
+      theme,
       backgroundMotionPrompt,
       foregroundMotionPrompt: backgroundMotionPrompt,
       dressPrompt,
@@ -390,10 +490,24 @@ export function useVideoFlowState() {
       sourceImageModel,
       backgroundVideoModel,
       dressVideoModel,
-    });
+    };
+    writeStoredVideoFlowDraft(draft);
     writeActiveProjectId(id);
+
+    // Persist theme (and other draft fields) to the server so reloads / Models
+    // don't wipe a typed theme that only lived in localStorage.
+    const timer = window.setTimeout(() => {
+      if (switchingCardRef.current) return;
+      if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
+      void api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
+        method: "POST",
+        body: JSON.stringify(draftPayload(draft, flow, enhancePrompt)),
+      }).catch(() => undefined);
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [
     image,
+    theme,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -413,7 +527,55 @@ export function useVideoFlowState() {
     sourceImageModel,
     backgroundVideoModel,
     dressVideoModel,
+    flow,
+    enhancePrompt,
   ]);
+
+  const updateTheme = useCallback(
+    (nextRaw: string) => {
+      const previousTheme = normalizeTheme(theme);
+      const themeForPrompts = normalizeTheme(nextRaw);
+      const dressTemplate = dressReferenceImage.trim()
+        ? dressPromptForThemeWithReference
+        : dressPromptForTheme;
+      setTheme(nextRaw);
+      setBackgroundMotionPrompt((current) =>
+        isStockBackgroundMotionPromptText(current, previousTheme)
+          ? backgroundMotionPromptForTheme(themeForPrompts)
+          : current,
+      );
+      setDressPrompt((current) =>
+        isStockDressPromptText(current, previousTheme)
+          ? dressTemplate(themeForPrompts)
+          : current,
+      );
+    },
+    [theme, dressReferenceImage],
+  );
+
+  const applyThemeToPrompts = useCallback(() => {
+    const themeForPrompts = normalizeTheme(theme);
+    setBackgroundMotionPrompt(backgroundMotionPromptForTheme(themeForPrompts));
+    setDressPrompt(
+      dressReferenceImage.trim()
+        ? dressPromptForThemeWithReference(themeForPrompts)
+        : dressPromptForTheme(themeForPrompts),
+    );
+  }, [theme, dressReferenceImage]);
+
+  const updateDressReferenceImage = useCallback(
+    (nextReference: string) => {
+      setDressReferenceImage(nextReference);
+      const themeForPrompts = normalizeTheme(theme);
+      setDressPrompt((current) => {
+        if (!isStockDressPromptText(current, themeForPrompts)) return current;
+        return nextReference.trim()
+          ? dressPromptForThemeWithReference(themeForPrompts)
+          : dressPromptForTheme(themeForPrompts);
+      });
+    },
+    [theme],
+  );
 
   function applyFlowDefinition(next: VideoFlowJson) {
     setFlow(next);
@@ -447,12 +609,15 @@ export function useVideoFlowState() {
     setEnhancePrompt,
     image,
     setImage,
+    theme,
+    updateTheme,
+    applyThemeToPrompts,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,
     setDressPrompt,
     dressReferenceImage,
-    setDressReferenceImage,
+    setDressReferenceImage: updateDressReferenceImage,
     cardId,
     setCardId,
     cardLabel,

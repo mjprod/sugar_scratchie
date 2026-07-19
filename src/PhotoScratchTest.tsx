@@ -155,7 +155,9 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(`Failed to load ${src}`));
-    img.src = src;
+    // Bust HTTP cache so rematched cutouts show up without a hard refresh war.
+    const join = src.includes("?") ? "&" : "?";
+    img.src = `${src}${join}t=${Date.now()}`;
   });
 }
 
@@ -192,15 +194,28 @@ async function loadSampleAssets() {
   return { back, mid, front, mesh, label: "Sample assets" };
 }
 
+function resolvePublishedEntry(
+  cards: PhotoScratchCardEntry[],
+  cardId: string,
+): PhotoScratchCardEntry | undefined {
+  const exact = cards.find((card) => card.id === cardId);
+  if (exact) return exact;
+  // Motion-card id → first published photo-scratch slot (asian_2 → asian_2_slot_01).
+  const prefix = `${cardId}_`;
+  return cards.find((card) => card.id.startsWith(prefix));
+}
+
 async function loadCardAssets(cardId: string) {
   const cards = await fetchPhotoScratchIndex();
-  const entry = cards.find((card) => card.id === cardId);
+  const entry = resolvePublishedEntry(cards, cardId);
   if (!entry) throw new Error(`Photo card not found: ${cardId}`);
-  const [back, mid, front, meshRes] = await Promise.all([
+    const [back, mid, front, meshRes] = await Promise.all([
     loadImage(entry.background),
     loadImage(entry.bikini),
     loadImage(entry.clothes),
-    fetch(entry.mesh),
+    fetch(`${entry.mesh}${entry.mesh.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+      cache: "no-store",
+    }),
   ]);
   if (!meshRes.ok) throw new Error(`Failed to load mesh (${meshRes.status})`);
   const meshData = await meshRes.json();

@@ -23,17 +23,33 @@ from backend.cards import (
     CardInfo,
     CreateCardRequest,
     PhotoInfo,
+    PhotoScratchSlot,
     ReorderCardsRequest,
     UpdateCardRequest,
+    approve_photo_scratch_bg,
+    approve_photo_scratch_layer,
     compress_card,
     create_card,
     delete_card,
     delete_card_photo,
+    delete_photo_scratch_layer,
     list_cards,
+    list_photo_scratch_slots,
+    confirm_photo_scratch_slot_adjust,
+    cutout_photo_scratch_slot,
+    generate_photo_scratch_slot_mesh,
+    match_photo_scratch_slot,
+    publish_photo_scratch_game,
+    read_photo_scratch_slot_symbols,
+    reject_photo_scratch_bg,
+    reject_photo_scratch_layer,
     reorder_model_cards,
+    set_photo_scratch_slot_prompt,
     update_card,
     upload_card_photo,
+    upload_photo_scratch_layer,
     write_cards_index,
+    write_photo_scratch_slot_symbols,
 )
 from backend.models_store import (
     CreateModelRequest,
@@ -59,6 +75,7 @@ from backend.services.mesh_tune import MeshTuneOptions, build_mesh_tracking_env,
 from backend.services.video_flow import (
     VideoFlowStep,
     STEP_ORDER,
+    apply_trim_step,
     approve_flow_step,
     flow_state,
     import_manual_clips,
@@ -66,10 +83,14 @@ from backend.services.video_flow import (
     patch_flow_draft_model,
     read_flow_draft,
     reject_flow_step,
+    reset_trim_step,
+    run_generate_photo_scratch_backgrounds,
+    run_generate_photo_scratch_layer,
     run_generate_source_image,
     run_mesh_candidate_generation,
     run_video_flow_step,
     save_flow_draft,
+    trim_step_info,
     validate_step_enqueue,
     video_flow as run_video_flow,
 )
@@ -193,6 +214,7 @@ class ImageDressFlowRequest(BaseModel):
 
 class VideoFlowRequest(BaseModel):
     image: str = ""
+    theme: str = ""
     background_motion_prompt: str = Field(min_length=1)
     foreground_motion_prompt: str = ""
     dress_prompt: str = Field(min_length=1)
@@ -217,7 +239,7 @@ class VideoFlowRequest(BaseModel):
     provider: AiProvider = "xai"
     image_model: SourceImageModel = "grok-imagine"
     background_video_model: BackgroundVideoModel = "grok-imagine"
-    dress_video_model: DressVideoModel = "wan-2.2-video-edit"
+    dress_video_model: DressVideoModel = "grok-imagine"
 
 
 class GenerateSourceImageRequest(BaseModel):
@@ -239,6 +261,12 @@ class VideoFlowStepRequest(VideoFlowRequest):
 class VideoFlowStepAction(BaseModel):
     step: VideoFlowStep
     mesh_tracker: Literal["bootstapir", "cotracker", "blend"] | None = None
+
+
+class VideoFlowTrimRequest(BaseModel):
+    drop_start: int | None = Field(default=None, ge=0, le=60)
+    drop_end: int | None = Field(default=None, ge=0, le=60)
+    auto: bool = False
 
 
 class VideoFlowImportClipsRequest(BaseModel):
@@ -287,7 +315,7 @@ class AutoGarmentMaskRequest(BaseModel):
     mask_source: Literal["garment", "body"] = "garment"
     threshold: float = Field(default=0.22, ge=0.05, le=0.9)
     pixel_dilate: int = Field(default=3, ge=0, le=8)
-    grid_dilate: int = Field(default=2, ge=0, le=5)
+    grid_dilate: int = Field(default=3, ge=0, le=5)
 
 
 def resolve_mesh_json_path(file: str) -> Path:
@@ -555,6 +583,266 @@ def remove_card_photo(card_id: str, photo_id: str) -> dict:
     return {"ok": True, "id": photo_id}
 
 
+# ── Photo-scratch slot endpoints ──────────────────────────────────────────────
+
+class GeneratePhotoScratchRequest(BaseModel):
+    theme: str = ""
+    count: int = Field(default=10, ge=1, le=10)
+    provider: str = "xai"
+    image_model: str = "grok-imagine"
+    layer: Literal["background", "bikini", "clothes"] = "background"
+    image: str = ""  # Flow source image path — required for bikini/clothes
+    slot_id: str = ""  # When set, generate only this one slot (one-by-one)
+    prompt: str = ""  # Optional override; empty = built-in default for the layer
+
+
+class SetSlotPromptRequest(BaseModel):
+    layer: Literal["background", "bikini", "clothes"]
+    prompt: str = ""
+
+
+@app.get("/api/cards/{card_id}/photo-scratch")
+def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
+    slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
+    return {"slots": [slot.dict() for slot in slots]}
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/publish-game")
+def publish_photo_scratch_game_endpoint(card_id: str, slot_id: str = "") -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    return publish_photo_scratch_game(
+        ROOT, CARDS_DIR, card_id, MESH_DIR, slot_id=slot_id or None
+    )
+
+
+class PhotoScratchSymbolPointsRequest(BaseModel):
+    points: list[dict[str, float]] = Field(min_length=SYMBOL_POINT_COUNT, max_length=SYMBOL_POINT_COUNT)
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/match")
+def create_photo_scratch_slot_match(
+    card_id: str,
+    slot_id: str,
+    theme: str = "",
+    relock: bool = False,
+    scale: float = 1.0,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    confirm_adjust: bool = False,
+) -> dict:
+    """Register bikini + top on the game canvas (optional AI re-dress / manual nudge)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    if scale <= 0.1 or scale > 3.0:
+        raise HTTPException(status_code=400, detail="scale must be between 0.1 and 3.0")
+    if abs(tx) > 500 or abs(ty) > 500:
+        raise HTTPException(status_code=400, detail="tx/ty must be within ±500 px")
+
+    def _run_match() -> None:
+        match_photo_scratch_slot(
+            ROOT,
+            CARDS_DIR,
+            card_id,
+            slot_id,
+            theme,
+            relock=relock,
+            nudge_scale=scale,
+            nudge_tx=tx,
+            nudge_ty=ty,
+            confirm_adjust=confirm_adjust,
+        )
+
+    job = enqueue(
+        "photo-scratch-match",
+        ["photo-scratch-match", card_id, slot_id, "relock" if relock else "pass"],
+        _run_match,
+    )
+    return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/confirm-adjust")
+def confirm_photo_scratch_adjust(
+    card_id: str, slot_id: str, theme: str = ""
+) -> PhotoScratchSlot:
+    """Mark Match alignment as good (Picture Flow Adjust step → Cutout)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    return confirm_photo_scratch_slot_adjust(CARDS_DIR, card_id, slot_id, theme)
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/cutout")
+def create_photo_scratch_slot_cutout(card_id: str, slot_id: str, theme: str = "") -> dict:
+    """Cut bikini + top to RGBA (girl without background) for the playable game."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+
+    def _run_cutout() -> None:
+        cutout_photo_scratch_slot(ROOT, CARDS_DIR, card_id, slot_id, theme)
+
+    job = enqueue(
+        "photo-scratch-cutout",
+        ["photo-scratch-cutout", card_id, slot_id],
+        _run_cutout,
+    )
+    return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/mesh")
+def create_photo_scratch_slot_mesh(card_id: str, slot_id: str, theme: str = "") -> dict:
+    """Generate a static photo-scratch mesh for one slot (from TOP/bikini still)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    def _run_mesh() -> None:
+        generate_photo_scratch_slot_mesh(ROOT, CARDS_DIR, card_id, slot_id, theme)
+
+    job = enqueue(
+        "photo-scratch-mesh",
+        ["photo-scratch-mesh", card_id, slot_id],
+        _run_mesh,
+    )
+    return job.public()
+
+
+@app.get("/api/cards/{card_id}/photo-scratch/{slot_id}/symbol-points")
+def get_photo_scratch_slot_symbols(card_id: str, slot_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    points = read_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id)
+    return {
+        "points": points,
+        "required": SYMBOL_POINT_COUNT,
+        "complete": len(points) == SYMBOL_POINT_COUNT,
+    }
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/symbol-points")
+def save_photo_scratch_slot_symbols(
+    card_id: str, slot_id: str, request: PhotoScratchSymbolPointsRequest
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    slot = write_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id, request.points)
+    return slot.dict()
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/prompt")
+def patch_photo_scratch_slot_prompt(
+    card_id: str, slot_id: str, request: SetSlotPromptRequest, theme: str = ""
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    slot = set_photo_scratch_slot_prompt(
+        CARDS_DIR, card_id, slot_id, request.layer, request.prompt, theme
+    )
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/generate")
+def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    layer = request.layer
+    source_image = request.image.strip()
+    slot_id = request.slot_id.strip()
+    if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    if layer in ("bikini", "clothes") and source_image:
+        if not source_image.startswith(("http://", "https://")):
+            # Validate early so the job queue doesn't silently fail.
+            workspace_path(source_image, must_exist=True)
+    custom_prompt = request.prompt.strip()
+    job = enqueue(
+        "generate-photo-scratch-layer",
+        ["generate-photo-scratch-layer", card_id, layer, slot_id or "all"],
+        lambda: run_generate_photo_scratch_layer(
+            card_id=card_id,
+            layer_type=layer,
+            theme=request.theme,
+            count=1 if slot_id else request.count,
+            provider=request.provider,
+            image_model=request.image_model,
+            source_image=source_image,
+            slot_id=slot_id,
+            prompt=custom_prompt,
+        ),
+    )
+    return job.public()
+
+
+# Static action routes MUST come before the dynamic {layer} route so FastAPI
+# does not swallow "approve-layer" / "reject-layer" as a layer parameter value.
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/approve-layer")
+def approve_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: Literal["background", "bikini", "clothes"] = "background",
+    theme: str = "",
+) -> dict:
+    slot = approve_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-layer")
+def reject_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: Literal["background", "bikini", "clothes"] = "background",
+    theme: str = "",
+) -> dict:
+    slot = reject_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
+
+
+# Keep old bg endpoints as aliases for backwards compatibility.
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/approve-bg")
+def approve_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
+    slot = approve_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-bg")
+def reject_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
+    slot = reject_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
+    return slot.dict()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
+async def upload_photo_scratch_layer_endpoint(
+    card_id: str,
+    slot_id: str,
+    layer: str,
+    theme: str = "",
+    file: UploadFile = File(...),
+) -> dict:
+    slot = await upload_photo_scratch_layer(ROOT, CARDS_DIR, card_id, slot_id, layer, file, theme)
+    return slot.dict()
+
+
+@app.delete("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
+def delete_photo_scratch_layer_endpoint(
+    card_id: str, slot_id: str, layer: str, theme: str = ""
+) -> dict:
+    slot = delete_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
+    return slot.dict()
+
+
 @app.get("/api/models")
 def get_models() -> dict:
     models = list_models(MODELS_DIR)
@@ -634,7 +922,14 @@ def preview_file(path: str) -> FileResponse:
     target = workspace_path(path, must_exist=True)
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    return FileResponse(target)
+    # Work-dir clips are rewritten in place during trim — never let the browser
+    # keep a stale first frame after Fix frames.
+    headers = (
+        {"Cache-Control": "no-store, max-age=0"}
+        if target.suffix.lower() in {".mp4", ".webm", ".mov"}
+        else None
+    )
+    return FileResponse(target, headers=headers)
 
 
 @app.post("/api/mesh/garment")
@@ -669,6 +964,11 @@ def save_garment_mask(request: SaveGarmentRequest) -> dict:
     data["garment"] = [1 if int(flag) else 0 for flag in request.garment]
     data["garmentSource"] = "dashboard-editor"
     data["garmentEditedAt"] = now()
+    # Static photo meshes store vis = garment so Fix mesh updates the drawn lattice.
+    if data.get("generator") == "photo-scratch-static":
+        for frame in data.get("frames") or []:
+            if isinstance(frame, dict):
+                frame["vis"] = list(data["garment"])
     path.write_text(json.dumps(data, separators=(",", ":")) + "\n")
     return {
         "ok": True,
@@ -803,6 +1103,7 @@ def image_dress_flow(request: ImageDressFlowRequest) -> dict:
 def video_flow_draft_kwargs(request: VideoFlowRequest, *, image: Path | str) -> dict:
     return {
         "image": image,
+        "theme": request.theme,
         "background_motion_prompt": request.background_motion_prompt,
         "foreground_motion_prompt": request.foreground_motion_prompt,
         "dress_prompt": request.dress_prompt,
@@ -951,6 +1252,45 @@ def reject_video_flow_step(card_id: str, request: VideoFlowStepAction) -> dict:
     return result
 
 
+@app.get("/api/video-flow/{card_id}/trim")
+def get_video_flow_trim(card_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        return trim_step_info(card_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/video-flow/{card_id}/trim")
+def post_video_flow_trim(card_id: str, request: VideoFlowTrimRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = apply_trim_step(
+            card_id,
+            drop_start=request.drop_start,
+            drop_end=request.drop_end,
+            auto=request.auto,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.post("/api/video-flow/{card_id}/trim/reset")
+def post_video_flow_trim_reset(card_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = reset_trim_step(card_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
 @app.get("/api/video-flow/{card_id}/symbol-points")
 def get_symbol_points(card_id: str) -> dict:
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
@@ -1014,6 +1354,7 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
         lambda image=image, dress_reference=dress_reference, request=request: run_video_flow_step(
             step=request.step,
             image=image,
+            theme=request.theme,
             background_motion_prompt=request.background_motion_prompt,
             foreground_motion_prompt=request.foreground_motion_prompt,
             dress_prompt=request.dress_prompt,

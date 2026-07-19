@@ -1,0 +1,56 @@
+[
+  {
+    "id": "slot_01",
+    "label": "Police \u2013 1",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_01_background.jpg",
+    "bikini": "/cards/juliana_1/photo-scratch/pending/slot_01_bikini.jpg",
+    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_01_clothes.jpg"
+  },
+  {
+    "id": "slot_02",
+    "label": "Police \u2013 2",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg",
+    "bikini": "/cards/juliana_1/photo-scratch/pending/slot_02_bikini.jpg",
+    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_02_clothes.jpg"
+  },
+  {
+    "id": "slot_03",
+    "label": "Police \u2013 3",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg"
+  },
+  {
+    "id": "slot_04",
+    "label": "Police \u2013 4",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg"
+  },
+  {
+    "id": "slot_05",
+    "label": "Police \u2013 5",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg"
+  },
+  {
+    "id": "slot_06",
+    "label": "Police \u2013 6",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_06_background.jpg"
+  },
+  {
+    "id": "slot_07",
+    "label": "Police \u2013 7",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_07_background.jpg"
+  },
+  {
+    "id": "slot_08",
+    "label": "Police \u2013 8",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_08_background.jpg"
+  },
+  {
+    "id": "slot_09",
+    "label": "Police \u2013 9",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_09_background.jpg"
+  },
+  {
+    "id": "slot_10",
+    "label": "Police \u2013 10",
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_10_background.jpg"
+  }
+]

@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Gamepad2,
   Home,
   Import,
   LoaderCircle,
@@ -39,11 +40,15 @@ import {
   createMotionCardDraft,
   deleteModel,
   fetchModels,
+  fetchPhotoScratchSlots,
+  photoScratchPlayHref,
+  publishPhotoScratchGame,
   reorderModelCards,
   updateModel,
   uploadModelAvatar,
   type ModelInfo,
   type PhotoInfo,
+  type PhotoScratchSlot,
 } from "./shared/models";
 import {
   labelFromProjectId,
@@ -58,9 +63,69 @@ type CardInfo = {
   model_id?: string | null;
   sort_order?: number;
   photos?: PhotoInfo[];
+  /** Slots with 3 layers + per-slot photo mesh + symbols. */
+  photo_scratch_done?: number;
+  /** Slots with any layer present but not fully done. */
+  photo_scratch_draft?: number;
+  /** Slots that have a photo-scratch mesh.json (not motion-card). */
+  photo_scratch_mesh_count?: number;
+  /** Slots that have 12 symbol points on their photo mesh. */
+  photo_scratch_symbols_count?: number;
   /** True when this row is a Video Flow draft that has not been published as a card yet. */
   draft?: boolean;
+  /** Theme from the card's Video Flow draft (scenery + costume), when one exists. */
+  theme?: string;
 };
+
+function slotLayersComplete(slot: PhotoScratchSlot): boolean {
+  return Boolean(slot.background && slot.bikini && slot.clothes);
+}
+
+function slotHasAnyLayer(slot: PhotoScratchSlot): boolean {
+  return Boolean(
+    slot.background ||
+      slot.bikini ||
+      slot.clothes ||
+      slot.pending_bg ||
+      slot.pending_bikini ||
+      slot.pending_clothes,
+  );
+}
+
+function slotIsDone(slot: PhotoScratchSlot): boolean {
+  return Boolean(
+    slotLayersComplete(slot) &&
+      slot.has_match &&
+      slot.has_cutout &&
+      slot.mesh &&
+      slot.has_symbols,
+  );
+}
+
+function photoScratchCountsFromSlots(slots: PhotoScratchSlot[]): {
+  photo_scratch_done: number;
+  photo_scratch_draft: number;
+  photo_scratch_mesh_count: number;
+  photo_scratch_symbols_count: number;
+} {
+  let done = 0;
+  let draft = 0;
+  let mesh = 0;
+  let symbols = 0;
+  for (const slot of slots) {
+    if (slot.mesh) mesh += 1;
+    if (slot.has_symbols) symbols += 1;
+    if (!slotHasAnyLayer(slot)) continue;
+    if (slotIsDone(slot)) done += 1;
+    else draft += 1;
+  }
+  return {
+    photo_scratch_done: done,
+    photo_scratch_draft: draft,
+    photo_scratch_mesh_count: mesh,
+    photo_scratch_symbols_count: symbols,
+  };
+}
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 
@@ -74,6 +139,10 @@ function playAllHref(modelId: string): string {
 
 function editCardHref(cardId: string): string {
   return `/dashboard/video-flow/run?card=${encodeURIComponent(cardId)}`;
+}
+
+function pictureFlowHref(cardId: string): string {
+  return `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
 }
 
 function sortModelCards(cards: CardInfo[]): CardInfo[] {
@@ -99,9 +168,40 @@ function draftCardsFromFlows(flows: VideoFlowProject[], publishedIds: Set<string
       model_id: modelId,
       draft: true,
       photos: [],
+      photo_scratch_done: 0,
+      photo_scratch_draft: 0,
+      photo_scratch_mesh_count: 0,
+      photo_scratch_symbols_count: 0,
+      theme: flow.draft?.theme?.trim() || undefined,
     });
   }
   return drafts;
+}
+
+async function enrichDraftPhotoScratchCounts(drafts: CardInfo[]): Promise<CardInfo[]> {
+  if (drafts.length === 0) return drafts;
+  return Promise.all(
+    drafts.map(async (card) => {
+      try {
+        const slots = await fetchPhotoScratchSlots(card.id, card.theme ?? "");
+        return {
+          ...card,
+          ...photoScratchCountsFromSlots(slots),
+        };
+      } catch {
+        return card;
+      }
+    }),
+  );
+}
+
+function themesByCardId(flows: VideoFlowProject[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const flow of flows) {
+    const theme = flow.draft?.theme?.trim();
+    if (theme) map.set(flow.card_id, theme);
+  }
+  return map;
 }
 
 export function ModelsPage() {
@@ -127,10 +227,21 @@ export function ModelsPage() {
       api<{ cards: CardInfo[] }>("/api/cards"),
       api<{ flows: VideoFlowProject[] }>("/api/video-flow").catch(() => ({ flows: [] as VideoFlowProject[] })),
     ]);
-    const published = assets.cards;
+    const themes = themesByCardId(flowData.flows);
+    const published = assets.cards.map((card) => ({
+      ...card,
+      theme: card.theme ?? themes.get(card.id),
+      photo_scratch_done: card.photo_scratch_done ?? 0,
+      photo_scratch_draft: card.photo_scratch_draft ?? 0,
+      photo_scratch_mesh_count: card.photo_scratch_mesh_count ?? 0,
+      photo_scratch_symbols_count: card.photo_scratch_symbols_count ?? 0,
+    }));
+    const drafts = await enrichDraftPhotoScratchCounts(
+      draftCardsFromFlows(flowData.flows, new Set(published.map((card) => card.id))),
+    );
     setModels(nextModels);
     setCards(published);
-    setDraftCards(draftCardsFromFlows(flowData.flows, new Set(published.map((card) => card.id))));
+    setDraftCards(drafts);
   }
 
   useEffect(() => {
@@ -230,6 +341,23 @@ export function ModelsPage() {
     try {
       await assignCardToModel(cardId, modelId);
       await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePublishGame(cardId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await publishPhotoScratchGame(cardId);
+      if (result.published === 0) {
+        setError("No fully done photo-scratch slots to publish.");
+        return;
+      }
+      window.open(photoScratchPlayHref(cardId, result.first_id), "_blank", "noopener,noreferrer");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -532,6 +660,11 @@ export function ModelsPage() {
                     <Table.Row key={card.id}>
                       <Table.Cell>
                         {card.label} <CodeInline>{card.id}</CodeInline>
+                        {card.theme ? (
+                          <Badge color="iris" ml="2" variant="soft" title="Theme">
+                            {card.theme}
+                          </Badge>
+                        ) : null}
                       </Table.Cell>
                       <Table.Cell>
                         <Flex align="center" gap="2" wrap="wrap">
@@ -704,11 +837,11 @@ export function ModelsPage() {
                   ) : null}
 
                   {modelCards.length > 0 ? (
-                    <Table.Root size="1" variant="surface">
+                      <Table.Root size="1" variant="surface">
                       <Table.Header>
                         <Table.Row>
                           <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Photos</Table.ColumnHeaderCell>
+                          <Table.ColumnHeaderCell>Photo Scratch</Table.ColumnHeaderCell>
                           <Table.ColumnHeaderCell />
                         </Table.Row>
                       </Table.Header>
@@ -725,8 +858,54 @@ export function ModelsPage() {
                                   draft
                                 </Badge>
                               ) : null}
+                              {card.theme ? (
+                                <Badge color="iris" ml="2" variant="soft" title="Theme">
+                                  {card.theme}
+                                </Badge>
+                              ) : null}
                             </Table.Cell>
-                            <Table.Cell>{card.draft ? "—" : (card.photos?.length ?? 0)}</Table.Cell>
+                            <Table.Cell>
+                              <Flex align="center" gap="1" wrap="wrap">
+                                {(card.photo_scratch_draft ?? 0) === 0 &&
+                                (card.photo_scratch_done ?? 0) === 0 ? (
+                                  <Text color="gray" size="2">
+                                    —
+                                  </Text>
+                                ) : null}
+                                {(card.photo_scratch_draft ?? 0) > 0 ? (
+                                  <Badge color="yellow" variant="soft">
+                                    {card.photo_scratch_draft} draft
+                                  </Badge>
+                                ) : null}
+                                {(card.photo_scratch_done ?? 0) > 0 ? (
+                                  <Badge color="green" variant="soft">
+                                    {card.photo_scratch_done} done
+                                  </Badge>
+                                ) : null}
+                                <Badge
+                                  color={
+                                    (card.photo_scratch_mesh_count ?? 0) > 0
+                                      ? "green"
+                                      : "gray"
+                                  }
+                                  variant="soft"
+                                  title="Photo-scratch meshes (per slot), not motion-card"
+                                >
+                                  Mesh {card.photo_scratch_mesh_count ?? 0}
+                                </Badge>
+                                <Badge
+                                  color={
+                                    (card.photo_scratch_symbols_count ?? 0) > 0
+                                      ? "green"
+                                      : "gray"
+                                  }
+                                  variant="soft"
+                                  title="Slots with 12 photo-scratch symbols"
+                                >
+                                  Symbols {card.photo_scratch_symbols_count ?? 0}
+                                </Badge>
+                              </Flex>
+                            </Table.Cell>
                             <Table.Cell align="right">
                               <Flex align="center" gap="1" justify="end">
                                 {card.draft ? null : (
@@ -766,6 +945,31 @@ export function ModelsPage() {
                                     </Button>
                                   </>
                                 )}
+                                {(card.photo_scratch_draft ?? 0) > 0 ||
+                                (card.photo_scratch_done ?? 0) > 0 ? (
+                                  <Button asChild color="green" size="1" variant="soft">
+                                    <a
+                                      href={pictureFlowHref(card.id)}
+                                      title="Open Picture Flow (cutout / mesh / symbols / game)"
+                                    >
+                                      <Gamepad2 {...iconProps} />
+                                      Picture
+                                    </a>
+                                  </Button>
+                                ) : null}
+                                {(card.photo_scratch_done ?? 0) > 0 ? (
+                                  <Button
+                                    color="green"
+                                    disabled={busy}
+                                    size="1"
+                                    title="Publish done photo-scratch slots as a playable game"
+                                    variant="soft"
+                                    onClick={() => void handlePublishGame(card.id)}
+                                  >
+                                    <Play {...iconProps} />
+                                    Game
+                                  </Button>
+                                ) : null}
                                 <Button asChild size="1" variant="soft">
                                   <a
                                     href={editCardHref(card.id)}

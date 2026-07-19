@@ -644,7 +644,7 @@ export class GarmentGLRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    // Bikini / mid — same present camera as clothes.
+    // Bikini / mid — same present camera + zoom as the clothes composite.
     if (midImage) {
       this.drawImageLayer(midImage, this.midTex, cam, false, true);
     }

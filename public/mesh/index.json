@@ -1,5 +1,7 @@
 {
   "files": [
+    "asia_gym.json",
+    "asia_gym2.json",
     "asian_1.json",
     "asian_2.json",
     "chinese_1.json",
@@ -11,10 +13,13 @@
     "juliana_1.json",
     "juliana_2.json",
     "juliana_3.json",
+    "julianaval_cop.json",
+    "julianaval_gym.json",
     "korean_tie.json",
     "shine_1.json",
     "shine_3.json",
     "shine_4.json",
+    "thai_1.json",
     "tracked-mesh.json"
   ]
 }

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ImagePlus, Loader2, Play, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Gamepad2, ImagePlus, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import {
   Badge,
   Box,
@@ -19,7 +19,19 @@ import {
 } from "@radix-ui/themes";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../shared/api";
-import { deleteCardPhoto, uploadCardPhoto, type PhotoInfo } from "../shared/models";
+import {
+  approvePhotoScratchLayer,
+  defaultPhotoScratchPrompt,
+  deletePhotoScratchLayer,
+  fetchPhotoScratchSlots,
+  generatePhotoScratchLayer,
+  rejectPhotoScratchLayer,
+  setPhotoScratchSlotPrompt,
+  slotLayerPrompt,
+  uploadPhotoScratchLayer,
+  type PhotoScratchLayerType,
+  type PhotoScratchSlot,
+} from "../shared/models";
 import { flowStepBadge, type FlowNodeRuntime } from "./flowCanvas";
 import {
   COMPRESS_PRESETS,
@@ -52,6 +64,21 @@ type VideoFlowStepState = {
   artifacts: string[];
 };
 
+type StepTiming = {
+  started_at?: number | null;
+  ended_at?: number | null;
+  approved_at?: number | null;
+  duration_seconds?: number | null;
+};
+
+type FlowTimings = {
+  steps: Partial<Record<VideoFlowStepKey, StepTiming>>;
+  flow_started_at?: number | null;
+  completed_at?: number | null;
+  total_duration_seconds?: number | null;
+  total_elapsed_seconds?: number | null;
+};
+
 type VideoFlowState = {
   card_id: string;
   approved: VideoFlowStepKey[];
@@ -59,8 +86,41 @@ type VideoFlowState = {
   complete: boolean;
   mesh_compare?: { path: string; tracker: string; active: boolean }[];
   compress_report?: CompressReport | null;
+  timings?: FlowTimings | null;
   recovered_approvals?: boolean;
 };
+
+function formatTimingDateTime(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatTimingDuration(seconds: number): string {
+  if (seconds < 1) return "<1s";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function stepTimingLabel(timing: StepTiming | undefined): string {
+  if (!timing) return "";
+  const stamp = timing.ended_at ?? timing.approved_at ?? timing.started_at;
+  if (typeof stamp !== "number") return "";
+  const when = formatTimingDateTime(stamp);
+  if (typeof timing.duration_seconds === "number") {
+    return `${when} · ${formatTimingDuration(timing.duration_seconds)}`;
+  }
+  if (timing.started_at && !timing.ended_at) return `${when} · running…`;
+  return when;
+}
 
 function CompressReportPanel({ report }: { report: CompressReport }) {
   const beforeBg = report.before?.background;
@@ -126,10 +186,270 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
 function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
   if (command[0] !== "video-flow-step") return null;
   const step = command[1];
-  if (step === "background" || step === "dress" || step === "compress" || step === "card" || step === "mesh" || step === "symbols") {
+  if (
+    step === "background" ||
+    step === "trim" ||
+    step === "dress" ||
+    step === "compress" ||
+    step === "card" ||
+    step === "mesh" ||
+    step === "symbols"
+  ) {
     return step;
   }
   return null;
+}
+
+type TrimDetection = {
+  frames: number;
+  fps: number;
+  duration: number;
+  drop_start: number;
+  drop_end: number;
+  suggested: boolean;
+};
+
+type TrimApplied = {
+  drop_start: number;
+  drop_end: number;
+  frames_before: number | null;
+  frames_after: number | null;
+  auto?: boolean;
+  detected_start?: number;
+  detected_end?: number;
+};
+
+type TrimStepInfo = {
+  source: string;
+  clip: string;
+  detection: TrimDetection;
+  applied: TrimApplied | null;
+  status: string;
+  revised_at?: number;
+};
+
+function TrimFramesPanel({
+  cardId,
+  busy,
+  onBusy,
+  onError,
+  onState,
+}: {
+  cardId: string;
+  busy: boolean;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string) => void;
+  onState: (state: VideoFlowState) => void;
+}) {
+  const [info, setInfo] = useState<TrimStepInfo | null>(null);
+  const [dropStart, setDropStart] = useState(0);
+  const [dropEnd, setDropEnd] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
+
+  async function refresh() {
+    if (!cardId) return;
+    setLoading(true);
+    onError("");
+    try {
+      const next = await api<TrimStepInfo>(`/api/video-flow/${encodeURIComponent(cardId)}/trim`);
+      setInfo(next);
+      if (next.applied) {
+        setDropStart(next.applied.drop_start);
+        setDropEnd(next.applied.drop_end);
+      } else {
+        setDropStart(next.detection.drop_start);
+        setDropEnd(next.detection.drop_end);
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when card changes
+  }, [cardId]);
+
+  async function apply(body: { drop_start?: number; drop_end?: number; auto?: boolean }) {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.applied?.drop_start ?? next.trim.detection.drop_start);
+        setDropEnd(next.trim.applied?.drop_end ?? next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  async function reset() {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim/reset`,
+        { method: "POST", body: "{}" },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.detection.drop_start);
+        setDropEnd(next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  const clip = info?.clip || info?.source || "";
+  const detection = info?.detection;
+
+  return (
+    <Flex direction="column" gap="4">
+      <Callout.Root color="blue">
+        <Callout.Text size="2">
+          Image-to-video often flashes a white frame at the start or end. Drop those frames here
+          before Video edit, or keep the clip as-is if it looks clean.
+        </Callout.Text>
+      </Callout.Root>
+
+      {clip ? (
+        <MediaPreview
+          key={`${clip}:${previewKey}:${info?.revised_at ?? 0}`}
+          label="Bikini clip (edit before dress-up)"
+          type="video"
+          value={clip}
+          cacheBust={info?.revised_at ?? previewKey}
+        />
+      ) : (
+        <Text color="gray" size="2">
+          {loading ? "Scanning frames…" : "No background clip yet — approve step 1 first."}
+        </Text>
+      )}
+
+      {detection ? (
+        <Callout.Root color={detection.suggested ? "amber" : "green"}>
+          <Callout.Text size="2">
+            {detection.suggested ? (
+              <>
+                Detected a bright flash: drop <strong>{detection.drop_start}</strong> frame
+                {detection.drop_start === 1 ? "" : "s"} from the start and{" "}
+                <strong>{detection.drop_end}</strong> from the end (
+                {detection.frames} frames · {detection.fps.toFixed(1)} fps). Click{" "}
+                <strong>Delete white frames</strong> to apply.
+              </>
+            ) : (
+              <>
+                No bright flash at the edges ({detection.frames} frames ·{" "}
+                {detection.fps.toFixed(1)} fps). You can still drop frames manually if the loop
+                looks wrong.
+              </>
+            )}
+          </Callout.Text>
+        </Callout.Root>
+      ) : null}
+
+      <Grid columns="2" gap="3">
+        <Field label="Drop start frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropStart)}
+            onChange={(event) => setDropStart(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+        <Field label="Drop end frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropEnd)}
+            onChange={(event) => setDropEnd(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+      </Grid>
+
+      <Flex gap="2" wrap="wrap" align="center">
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          onClick={() => void apply({ auto: true })}
+        >
+          Delete white frames
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: dropStart, drop_end: dropEnd, auto: false })}
+        >
+          Apply trim
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: 0, drop_end: 0, auto: false })}
+        >
+          Keep as-is
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="outline"
+          onClick={() => void reset()}
+        >
+          <RotateCcw {...iconProps} />
+          Reset to original
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="ghost"
+          onClick={() => void refresh()}
+        >
+          Re-scan
+        </Button>
+      </Flex>
+
+      {info?.applied ? (
+        <Text color="gray" size="2">
+          Applied: drop start {info.applied.drop_start}, end {info.applied.drop_end}
+          {typeof info.applied.frames_before === "number" &&
+          typeof info.applied.frames_after === "number"
+            ? ` · ${info.applied.frames_before} → ${info.applied.frames_after} frames`
+            : ""}
+          . Approve when the loop looks right.
+        </Text>
+      ) : (
+        <Text color="gray" size="2">
+          Apply a trim (or Keep as-is), preview the clip, then approve to unlock Video edit.
+        </Text>
+      )}
+    </Flex>
+  );
 }
 
 function nextPipelineStep(
@@ -179,7 +499,7 @@ function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | nu
     ) {
       return cleaned;
     }
-    return `${cleaned} Step 2 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to WaveSpeed WAN 2.2 Video Edit above.`;
+    return `${cleaned} Step 3 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to WaveSpeed WAN 2.2 Video Edit above.`;
   }
   return cleaned;
 }
@@ -434,6 +754,7 @@ type RunModeProps = {
   dressVideoModel: DressVideoModel;
   enhancePrompt: boolean;
   image: string;
+  theme: string;
   backgroundMotionPrompt: string;
   dressPrompt: string;
   dressReferenceImage: string;
@@ -450,6 +771,8 @@ type RunModeProps = {
   faceImage: string;
   baseImage: string;
   onImageChange: (value: string) => void;
+  onThemeChange: (value: string) => void;
+  onApplyThemeToPrompts: () => void;
   onBackgroundMotionPromptChange: (value: string) => void;
   onDressPromptChange: (value: string) => void;
   onDressReferenceImageChange: (value: string) => void;
@@ -475,129 +798,965 @@ type RunModeProps = {
   onError: (message: string) => void;
 };
 
-type CardApiEntry = {
-  id: string;
-  label: string;
-  photos?: PhotoInfo[];
+
+const LAYER_META: Record<"background" | "bikini" | "clothes", { label: string; sub: string; color: string }> = {
+  bikini: { label: "BIKINI", sub: "Mid / reveal", color: "var(--pink-9)" },
+  clothes: { label: "TOP", sub: "Top / scratch", color: "var(--indigo-9)" },
+  background: { label: "BACKGROUND", sub: "Room / scene", color: "var(--brown-9)" },
 };
+
+/** Slot grid columns and Generate-button order: Background → Bikini → Top. */
+const PHOTO_SCRATCH_LAYER_ORDER = ["background", "bikini", "clothes"] as const;
+
+function SlotLayerUpload({
+  cardId,
+  slotId,
+  layer,
+  src,
+  theme,
+  sourceImage,
+  aiProvider,
+  sourceImageModel,
+  prompt,
+  slotPrompt,
+  aiBlockedReason,
+  busy,
+  onUpdate,
+  onError,
+  onSlotAiDone,
+  onSlotPromptBlur,
+}: {
+  cardId: string;
+  slotId: string;
+  layer: "background" | "bikini" | "clothes";
+  src?: string;
+  theme: string;
+  sourceImage: string;
+  aiProvider: string;
+  sourceImageModel: string;
+  prompt: string;
+  /** Saved per-slot override for this layer (empty = use shared layer default). */
+  slotPrompt: string;
+  /** Non-empty when AI generate should be disabled (e.g. missing bikini for top). */
+  aiBlockedReason?: string;
+  busy: boolean;
+  onUpdate: (slot: PhotoScratchSlot) => void;
+  onError: (msg: string) => void;
+  onSlotAiDone: () => void;
+  onSlotPromptBlur: (slotId: string, layer: PhotoScratchLayerType, value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const meta = LAYER_META[layer];
+  const [aiBusy, setAiBusy] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  async function handleFile(file: File) {
+    onError("");
+    try {
+      const updated = await uploadPhotoScratchLayer(cardId, slotId, layer, file, theme);
+      onUpdate(updated);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function handleDelete() {
+    onError("");
+    try {
+      const updated = await deletePhotoScratchLayer(cardId, slotId, layer, theme);
+      onUpdate(updated);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function handleAiGenerate() {
+    if (aiBusy || aiBlockedReason) {
+      if (aiBlockedReason) onError(aiBlockedReason);
+      return;
+    }
+    onError("");
+    setAiBusy(true);
+    try {
+      const job = await generatePhotoScratchLayer(
+        cardId,
+        layer,
+        theme,
+        aiProvider,
+        sourceImageModel,
+        sourceImage,
+        slotId,
+        prompt,
+      );
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const next = await api<{ id: string; status: string; logs: string[] }>(
+              `/api/jobs/${encodeURIComponent(job.id)}`,
+            );
+            if (
+              next.status === "succeeded" ||
+              next.status === "failed" ||
+              next.status === "cancelled"
+            ) {
+              if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+              }
+              setAiBusy(false);
+              if (next.status === "succeeded") {
+                onSlotAiDone();
+              } else {
+                onError(
+                  `AI ${layer} failed: ${next.logs?.[next.logs.length - 1] ?? next.status}`,
+                );
+              }
+            }
+          } catch {
+            /* ignore transient poll errors */
+          }
+        })();
+      }, 2500);
+    } catch (caught) {
+      setAiBusy(false);
+      onError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  const disabled = busy || aiBusy;
+
+  return (
+    <Box
+      style={{
+        border: "1px solid var(--gray-5)",
+        borderRadius: 10,
+        overflow: "hidden",
+        minWidth: 0,
+      }}
+    >
+      {src ? (
+        <Box style={{ position: "relative" }}>
+          <img
+            alt={meta.label}
+            src={src}
+            style={{ width: "100%", display: "block", aspectRatio: "9/16", objectFit: "cover" }}
+          />
+          <Button
+            color="red"
+            disabled={disabled}
+            size="1"
+            style={{ position: "absolute", top: 6, right: 6 }}
+            type="button"
+            variant="solid"
+            onClick={() => void handleDelete()}
+          >
+            <X {...iconProps} />
+          </Button>
+          <Button
+            disabled={disabled || Boolean(aiBlockedReason)}
+            size="1"
+            style={{ position: "absolute", top: 6, left: 6 }}
+            title={aiBlockedReason || "Regenerate with AI"}
+            type="button"
+            variant="soft"
+            onClick={() => void handleAiGenerate()}
+          >
+            {aiBusy ? <Loader2 {...iconProps} className="spin" /> : <Sparkles {...iconProps} />}
+            AI
+          </Button>
+        </Box>
+      ) : (
+        <Flex
+          align="center"
+          direction="column"
+          gap="2"
+          justify="center"
+          style={{
+            aspectRatio: "9/16",
+            background: "var(--gray-2)",
+            padding: 8,
+          }}
+        >
+          {aiBusy ? (
+            <>
+              <Loader2 size={22} strokeWidth={1.5} className="spin" color="var(--accent-9)" />
+              <Text align="center" color="gray" size="1">
+                AI generating…
+              </Text>
+            </>
+          ) : (
+            <>
+              <Button
+                disabled={disabled || Boolean(aiBlockedReason)}
+                size="1"
+                title={aiBlockedReason || `Generate ${meta.label} with AI`}
+                type="button"
+                onClick={() => void handleAiGenerate()}
+              >
+                <Sparkles {...iconProps} />
+                AI
+              </Button>
+              <Button
+                color="gray"
+                disabled={disabled}
+                size="1"
+                type="button"
+                variant="soft"
+                onClick={() => inputRef.current?.click()}
+              >
+                <ImagePlus {...iconProps} />
+                Upload
+              </Button>
+            </>
+          )}
+        </Flex>
+      )}
+      <Box px="2" py="1" style={{ background: "var(--gray-1)" }}>
+        <Text size="1" weight="bold" style={{ color: meta.color, letterSpacing: "0.04em" }}>
+          {meta.label}
+        </Text>
+        <Text as="div" color="gray" size="1">
+          {meta.sub}
+        </Text>
+        <TextArea
+          defaultValue={slotPrompt}
+          disabled={disabled}
+          key={`${slotId}-${layer}-prompt-${slotPrompt}`}
+          mt="1"
+          placeholder={`Optional ${meta.label.toLowerCase()} prompt for this card`}
+          rows={2}
+          size="1"
+          style={{ width: "100%" }}
+          onBlur={(event) => onSlotPromptBlur(slotId, layer, event.target.value)}
+        />
+      </Box>
+      <input
+        ref={inputRef}
+        accept="image/jpeg,image/png,image/webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void handleFile(file);
+        }}
+      />
+    </Box>
+  );
+}
 
 function CardPhotosPanel({
   cardId,
+  theme,
+  image,
+  aiProvider,
+  sourceImageModel,
   onError,
 }: {
   cardId: string;
+  theme: string;
+  /** Flow Setup source image path — used so bikini/clothes match the same girl. */
+  image: string;
+  aiProvider: string;
+  sourceImageModel: string;
   onError: (message: string) => void;
 }) {
-  const [photos, setPhotos] = useState<PhotoInfo[]>([]);
+  const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [panelError, setPanelError] = useState("");
+  const [layerBusy] = useState(false);
+  const [showPrompts, setShowPrompts] = useState(true);
+  // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
+  const [psProvider, setPsProvider] = useState<AiProvider>(
+    () => (aiProvider === "wavespeed" ? "wavespeed" : "xai"),
+  );
+  const [psImageModel, setPsImageModel] = useState<SourceImageModel>(
+    () => (sourceImageModel === "seedream-v5-lite" ? "seedream-v5-lite" : "grok-imagine"),
+  );
+  const [prompts, setPrompts] = useState<Record<PhotoScratchLayerType, string>>(() => ({
+    bikini: defaultPhotoScratchPrompt("bikini", theme),
+    clothes: defaultPhotoScratchPrompt("clothes", theme),
+    background: defaultPhotoScratchPrompt("background", theme),
+  }));
+  const prevThemeRef = useRef(theme);
+  const prevHasBgRef = useRef(false);
 
-  const refreshPhotos = async () => {
-    if (!cardId.trim()) {
-      setPhotos([]);
+  // When theme changes, refresh prompts that still match the previous defaults.
+  useEffect(() => {
+    const prev = prevThemeRef.current;
+    if (prev === theme) return;
+    prevThemeRef.current = theme;
+    const withBg = prevHasBgRef.current;
+    setPrompts((current) => {
+      const next = { ...current };
+      for (const layer of ["bikini", "clothes", "background"] as const) {
+        const opts = layer === "bikini" ? { withBackground: withBg } : undefined;
+        if (current[layer] === defaultPhotoScratchPrompt(layer, prev, opts)) {
+          next[layer] = defaultPhotoScratchPrompt(layer, theme, opts);
+        }
+      }
+      return next;
+    });
+  }, [theme]);
+
+  // When a background is approved, switch bikini prompt to scene-composite (drop pose-lock / studio defaults).
+  useEffect(() => {
+    const withBg = slots.some((s) => Boolean(s.background));
+    if (withBg === prevHasBgRef.current) return;
+    const wasWithBg = prevHasBgRef.current;
+    prevHasBgRef.current = withBg;
+    setPrompts((current) => {
+      const oldDefault = defaultPhotoScratchPrompt("bikini", theme, {
+        withBackground: wasWithBg,
+      });
+      const locksPose =
+        /pose.*identical|body, pose|transparent-friendly|clean studio/i.test(current.bikini);
+      if (current.bikini !== oldDefault && !(withBg && locksPose)) return current;
+      return {
+        ...current,
+        bikini: defaultPhotoScratchPrompt("bikini", theme, { withBackground: withBg }),
+      };
+    });
+  }, [slots, theme]);
+
+  // Per-layer job tracking (independent generate buttons)
+  const [genJobs, setGenJobs] = useState<
+    Partial<Record<PhotoScratchLayerType, { id: string; logs: string[] }>>
+  >({});
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const PENDING_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
+    background: "pending_bg",
+    bikini: "pending_bikini",
+    clothes: "pending_clothes",
+  };
+
+  const LAYER_LABEL: Record<PhotoScratchLayerType, string> = {
+    bikini: "bikinis",
+    clothes: "tops",
+    background: "backgrounds",
+  };
+
+  const refreshSlots = async (silent = false) => {
+    const id = cardId.trim();
+    if (!id) {
+      setSlots([]);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
-      const data = await api<{ cards: CardApiEntry[] }>("/api/cards");
-      const card = data.cards.find((entry) => entry.id === cardId.trim());
-      setPhotos(card?.photos ?? []);
+      const next = await fetchPhotoScratchSlots(id, theme);
+      setSlots(next);
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : String(caught));
-      setPhotos([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    void refreshPhotos();
+    void refreshSlots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when card changes
   }, [cardId]);
 
-  async function handleUpload(file: File) {
-    if (!cardId.trim()) return;
-    setUploading(true);
-    onError("");
+  // Poll all active generation jobs.
+  useEffect(() => {
+    const activeIds = Object.values(genJobs)
+      .map((job) => job?.id)
+      .filter(Boolean) as string[];
+    if (activeIds.length === 0) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = setInterval(() => {
+      void (async () => {
+        let anyFinished = false;
+        for (const [layer, job] of Object.entries(genJobs) as [
+          PhotoScratchLayerType,
+          { id: string; logs: string[] } | undefined,
+        ][]) {
+          if (!job?.id) continue;
+          try {
+            const next = await api<{ id: string; status: string; logs: string[] }>(
+              `/api/jobs/${encodeURIComponent(job.id)}`,
+            );
+            setGenJobs((prev) => ({
+              ...prev,
+              [layer]: { id: job.id, logs: next.logs ?? [] },
+            }));
+            if (
+              next.status === "succeeded" ||
+              next.status === "failed" ||
+              next.status === "cancelled"
+            ) {
+              anyFinished = true;
+              setGenJobs((prev) => {
+                const copy = { ...prev };
+                delete copy[layer];
+                return copy;
+              });
+              if (next.status === "failed" || next.status === "cancelled") {
+                setPanelError(
+                  `Generate ${LAYER_LABEL[layer]} ${next.status}: ${next.logs?.[next.logs.length - 1] ?? "check Jobs tab"}`,
+                );
+              }
+            }
+          } catch {
+            /* ignore transient poll errors */
+          }
+        }
+        if (anyFinished) await refreshSlots();
+      })();
+    }, 3000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll when jobs change
+  }, [JSON.stringify(Object.keys(genJobs)), cardId]);
+
+  function reportError(caught: unknown) {
+    const msg = caught instanceof Error ? caught.message : String(caught);
+    setPanelError(msg);
+    onError(msg);
+  }
+
+  async function handleGenerate(layer: PhotoScratchLayerType) {
+    const id = cardId.trim();
+    if (!id || genJobs[layer]) return;
+    if ((layer === "bikini" || layer === "clothes") && !image.trim()) {
+      reportError("Set the Flow source image in Setup first — bikini/top must match that girl.");
+      return;
+    }
+    if (layer === "clothes" && !slots.some((s) => s.bikini)) {
+      reportError("Approve bikinis first so the top matches the same pose and girl.");
+      return;
+    }
+    setPanelError("");
     try {
-      await uploadCardPhoto(cardId.trim(), file);
-      await refreshPhotos();
+      const job = await generatePhotoScratchLayer(
+        id,
+        layer,
+        theme,
+        psProvider,
+        psImageModel,
+        image.trim(),
+        "",
+        prompts[layer],
+      );
+      setGenJobs((prev) => ({ ...prev, [layer]: { id: job.id, logs: [] } }));
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setUploading(false);
+      reportError(caught);
     }
   }
 
-  async function handleDelete(photoId: string) {
-    if (!cardId.trim()) return;
-    onError("");
+  async function handleApprove(slotId: string, layer: PhotoScratchLayerType) {
+    setPanelError("");
     try {
-      await deleteCardPhoto(cardId.trim(), photoId);
-      await refreshPhotos();
+      const updated = await approvePhotoScratchLayer(cardId.trim(), slotId, layer, theme);
+      setSlots((prev) => prev.map((s) => (s.id === slotId ? updated : s)));
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
+      reportError(caught);
     }
+  }
+
+  async function handleReject(slotId: string, layer: PhotoScratchLayerType) {
+    setPanelError("");
+    try {
+      const updated = await rejectPhotoScratchLayer(cardId.trim(), slotId, layer, theme);
+      setSlots((prev) => prev.map((s) => (s.id === slotId ? updated : s)));
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  function handleSlotUpdate(updated: PhotoScratchSlot) {
+    setSlots((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function handleSlotPromptBlur(
+    slotId: string,
+    layer: PhotoScratchLayerType,
+    value: string,
+  ) {
+    const current = slots.find((s) => s.id === slotId);
+    const next = value.trim();
+    const prev = current ? slotLayerPrompt(current, layer) : "";
+    if (next === prev) return;
+    setPanelError("");
+    try {
+      const updated = await setPhotoScratchSlotPrompt(
+        cardId.trim(),
+        slotId,
+        layer,
+        next,
+        theme,
+      );
+      handleSlotUpdate(updated);
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  const pendingByLayer = (layer: PhotoScratchLayerType) =>
+    slots.filter((s) => Boolean(s[PENDING_KEY[layer]]));
+
+  const hasAnyPending =
+    pendingByLayer("background").length > 0 ||
+    pendingByLayer("bikini").length > 0 ||
+    pendingByLayer("clothes").length > 0;
+  const hasApprovedBikini = slots.some((s) => s.bikini);
+  const hasAnyLayer = slots.some((s) => s.background || s.bikini || s.clothes);
+  const layersCompleteCount = slots.filter(
+    (s) => Boolean(s.background && s.bikini && s.clothes),
+  ).length;
+  const anyGenBusy = Object.keys(genJobs).length > 0;
+  const hasSourceImage = Boolean(image.trim());
+  const pictureFlowHref = cardId.trim()
+    ? `/dashboard/picture-flow?card=${encodeURIComponent(cardId.trim())}`
+    : "/dashboard/picture-flow";
+
+  function generateButton(layer: PhotoScratchLayerType, label: string) {
+    const busy = Boolean(genJobs[layer]);
+    const hasPending = pendingByLayer(layer).length > 0;
+    const needsSource = (layer === "bikini" || layer === "clothes") && !hasSourceImage;
+    const needsBikini = layer === "clothes" && !hasApprovedBikini;
+    const blocked = needsSource || needsBikini;
+    let title = "";
+    if (needsSource) title = "Set Flow source image in Setup first";
+    else if (needsBikini) title = "Approve bikinis first so top matches";
+    return (
+      <Button
+        key={layer}
+        disabled={!cardId.trim() || busy || blocked}
+        size="2"
+        type="button"
+        title={title || undefined}
+        variant={hasPending || busy || blocked ? "soft" : "solid"}
+        color={hasPending || busy || blocked ? "gray" : undefined}
+        onClick={() => void handleGenerate(layer)}
+      >
+        {busy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
+        {busy ? `Generating ${label}…` : hasPending ? `Regenerate ${label}` : `Generate 10 ${label}`}
+      </Button>
+    );
+  }
+
+  function reviewSection(layer: PhotoScratchLayerType, title: string) {
+    const pendingKey = PENDING_KEY[layer];
+    const approvedKey = layer as keyof PhotoScratchSlot;
+    const pendingSlots = slots.filter((s) => Boolean(s[pendingKey]));
+    if (pendingSlots.length === 0 && !genJobs[layer]) return null;
+
+    return (
+      <Flex key={layer} direction="column" gap="3">
+        {genJobs[layer] ? (
+          <Callout.Root color="blue">
+            <Callout.Text weight="bold">
+              Generating {LAYER_LABEL[layer]} — this can take a few minutes.
+            </Callout.Text>
+            {(genJobs[layer]?.logs.length ?? 0) > 0 ? (
+              <Box
+                asChild
+                mt="2"
+                style={{
+                  maxHeight: 120,
+                  overflow: "auto",
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 12,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <pre>{(genJobs[layer]?.logs ?? []).slice(-8).join("\n")}</pre>
+              </Box>
+            ) : null}
+          </Callout.Root>
+        ) : null}
+
+        {pendingSlots.length > 0 ? (
+          <>
+            <Callout.Root color="amber">
+              <Callout.Text weight="bold">
+                {title} — approve or skip each one.
+              </Callout.Text>
+            </Callout.Root>
+            <Grid columns={{ initial: "2", sm: "3", md: "5" }} gap="3">
+              {slots.map((slot) => {
+                const pendingSrc = slot[pendingKey] as string | undefined;
+                const approvedSrc = slot[approvedKey] as string | undefined;
+                if (pendingSrc) {
+                  return (
+                    <Box key={`${layer}-${slot.id}`}>
+                      <Box style={{ position: "relative", borderRadius: 8, overflow: "hidden" }}>
+                        <img
+                          alt={slot.label}
+                          src={pendingSrc}
+                          style={{
+                            width: "100%",
+                            display: "block",
+                            aspectRatio: "9/16",
+                            objectFit: "cover",
+                          }}
+                        />
+                      </Box>
+                      <Text as="div" size="1" color="gray" mt="1" mb="1">
+                        {slot.label}
+                      </Text>
+                      <Flex gap="1">
+                        <Button
+                          size="1"
+                          type="button"
+                          style={{ flex: 1 }}
+                          onClick={() => void handleApprove(slot.id, layer)}
+                        >
+                          <Check {...iconProps} />
+                          Use
+                        </Button>
+                        <Button
+                          color="red"
+                          size="1"
+                          type="button"
+                          variant="soft"
+                          style={{ flex: 1 }}
+                          onClick={() => void handleReject(slot.id, layer)}
+                        >
+                          <X {...iconProps} />
+                          Skip
+                        </Button>
+                      </Flex>
+                    </Box>
+                  );
+                }
+                if (approvedSrc) {
+                  return (
+                    <Box key={`${layer}-${slot.id}`}>
+                      <Box style={{ borderRadius: 8, overflow: "hidden", opacity: 0.4 }}>
+                        <img
+                          alt={slot.label}
+                          src={approvedSrc}
+                          style={{
+                            width: "100%",
+                            display: "block",
+                            aspectRatio: "9/16",
+                            objectFit: "cover",
+                          }}
+                        />
+                      </Box>
+                      <Text as="div" size="1" color="gray" mt="1">
+                        {slot.label} — approved
+                      </Text>
+                    </Box>
+                  );
+                }
+                return (
+                  <Box
+                    key={`${layer}-${slot.id}`}
+                    style={{
+                      borderRadius: 8,
+                      background: "var(--gray-3)",
+                      aspectRatio: "9/16",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text color="gray" size="1">
+                      {slot.label}
+                    </Text>
+                  </Box>
+                );
+              })}
+            </Grid>
+          </>
+        ) : null}
+      </Flex>
+    );
   }
 
   return (
     <Card size="3">
-      <Flex align="center" justify="between" mb="3">
+      <Flex align="start" justify="between" mb="4" wrap="wrap" gap="3">
         <Box>
-          <Heading size="3">PhotoScratch photos</Heading>
+          <Heading size="3">Photo Scratch cards</Heading>
           <Text color="gray" size="2">
-            Optional still images attached to this motion card. Scratch mechanics come later.
+            Order: Background → Bikini → Top. Bikini puts the girl into each card&apos;s background
+            with a different pose; Top keeps that same pose (needed for scratch alignment).
           </Text>
+          <Flex align="center" gap="2" mt="2" wrap="wrap">
+            <Badge color={layersCompleteCount > 0 ? "green" : "gray"} variant="soft">
+              Ready: {layersCompleteCount}/10
+            </Badge>
+            <Text color="gray" size="1">
+              Upload 3 layers per card, then Create game → Picture Flow (cutout / mesh /
+              symbols).
+            </Text>
+          </Flex>
         </Box>
-        <Button
-          disabled={!cardId.trim() || uploading}
-          type="button"
-          variant="soft"
-          onClick={() => inputRef.current?.click()}
-        >
-          <ImagePlus {...iconProps} />
-          Upload photo
-        </Button>
-        <input
-          ref={inputRef}
-          accept="image/jpeg,image/png,image/webp"
-          hidden
-          type="file"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (file) void handleUpload(file);
-          }}
-        />
+        <Flex gap="2" wrap="wrap">
+          {generateButton("background", "backgrounds")}
+          {generateButton("bikini", "bikinis")}
+          {generateButton("clothes", "tops")}
+          <Button
+            color="gray"
+            size="2"
+            type="button"
+            variant="soft"
+            onClick={() => setShowPrompts((value) => !value)}
+          >
+            <ChevronDown
+              {...iconProps}
+              style={{ transform: showPrompts ? "rotate(180deg)" : undefined }}
+            />
+            {showPrompts ? "Hide prompts" : "Show prompts"}
+          </Button>
+          {layersCompleteCount > 0 ? (
+            <Button asChild color="green" size="2">
+              <a href={pictureFlowHref}>
+                <Gamepad2 {...iconProps} />
+                Create game ({layersCompleteCount})
+              </a>
+            </Button>
+          ) : null}
+        </Flex>
       </Flex>
+
+      <Flex align="end" gap="3" mb="4" wrap="wrap">
+        <Box style={{ minWidth: 160 }}>
+          <Text as="div" size="1" weight="medium" mb="1">
+            AI provider
+          </Text>
+          <Select.Root
+            value={psProvider}
+            onValueChange={(value) => setPsProvider(value as AiProvider)}
+          >
+            <Select.Trigger />
+            <Select.Content>
+              <Select.Item value="xai">x.ai</Select.Item>
+              <Select.Item value="wavespeed">WaveSpeed</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </Box>
+        {psProvider === "wavespeed" ? (
+          <Box style={{ minWidth: 200 }}>
+            <Text as="div" size="1" weight="medium" mb="1">
+              Image model
+            </Text>
+            <Select.Root
+              value={psImageModel}
+              onValueChange={(value) => setPsImageModel(value as SourceImageModel)}
+            >
+              <Select.Trigger />
+              <Select.Content>
+                <Select.Item value="grok-imagine">Grok Imagine</Select.Item>
+                <Select.Item value="seedream-v5-lite">Seedream v5.0 Lite</Select.Item>
+              </Select.Content>
+            </Select.Root>
+          </Box>
+        ) : null}
+        <Text color="gray" size="1" style={{ maxWidth: 360 }}>
+          Bikini onto a background uses multi-image edit (x.ai, or Seedream when WaveSpeed is
+          selected). If x.ai blocks, switch to WaveSpeed.
+        </Text>
+      </Flex>
+
+      {showPrompts ? (
+        <Box
+          mb="4"
+          style={{
+            border: "1px solid var(--gray-5)",
+            borderRadius: 12,
+            padding: 14,
+            background: "var(--gray-2)",
+          }}
+        >
+          <Flex align="center" justify="between" mb="3" wrap="wrap" gap="2">
+            <Box>
+              <Text size="2" weight="bold">
+                AI prompts
+              </Text>
+              <Text as="div" color="gray" size="1">
+                Background = empty scene. Bikini = new pose in that scene (not the source wall).
+                Top matches bikini pose on purpose. Click Reset if prompts still say &quot;pose
+                identical&quot;.
+              </Text>
+            </Box>
+            <Button
+              color="gray"
+              size="1"
+              type="button"
+              variant="soft"
+              onClick={() => {
+                const withBg = slots.some((s) => Boolean(s.background));
+                setPrompts({
+                  background: defaultPhotoScratchPrompt("background", theme),
+                  bikini: defaultPhotoScratchPrompt("bikini", theme, {
+                    withBackground: withBg,
+                  }),
+                  clothes: defaultPhotoScratchPrompt("clothes", theme),
+                });
+              }}
+            >
+              Reset to defaults
+            </Button>
+          </Flex>
+          <Flex direction="column" gap="3">
+            {(
+              [
+                ["background", "Background (scene only — no people)"],
+                [
+                  "bikini",
+                  slots.some((s) => s.background)
+                    ? "Bikini (place girl onto approved background)"
+                    : "Bikini (studio; uses background once you approve one)",
+                ],
+                ["clothes", "Top (dress over bikini — keep same scene)"],
+              ] as const
+            ).map(([layer, label]) => (
+              <label key={layer}>
+                <Text as="div" size="1" weight="medium" mb="1">
+                  {label}
+                </Text>
+                <TextArea
+                  className="dashboard-textarea"
+                  rows={3}
+                  value={prompts[layer]}
+                  onChange={(event) =>
+                    setPrompts((prev) => ({ ...prev, [layer]: event.currentTarget.value }))
+                  }
+                />
+              </label>
+            ))}
+          </Flex>
+        </Box>
+      ) : null}
+
+      {!hasSourceImage ? (
+        <Callout.Root color="orange" mb="3">
+          <Callout.Text>
+            Bikini and top generations need the Flow <strong>source image</strong> from Setup so
+            the girl stays the same.
+          </Callout.Text>
+        </Callout.Root>
+      ) : null}
+
+      {panelError ? (
+        <Callout.Root color="red" mb="3">
+          <Callout.Text>{panelError}</Callout.Text>
+        </Callout.Root>
+      ) : null}
 
       {loading ? (
         <Text color="gray" size="2">
-          Loading photos…
-        </Text>
-      ) : photos.length === 0 ? (
-        <Text color="gray" size="2">
-          No photos yet. Upload images to build the PhotoScratch gallery for this card.
+          Loading…
         </Text>
       ) : (
-        <Grid columns={{ initial: "2", sm: "3", md: "4" }} gap="3">
-          {photos.map((photo) => (
-            <Box key={photo.id} className="video-flow-photo-thumb">
-              <img alt="" src={photo.src} style={{ width: "100%", borderRadius: 8, display: "block" }} />
-              <Button
-                color="red"
-                mt="2"
-                size="1"
-                type="button"
-                variant="soft"
-                onClick={() => void handleDelete(photo.id)}
-              >
-                <Trash2 {...iconProps} />
-                Remove
-              </Button>
-            </Box>
-          ))}
-        </Grid>
+        <Flex direction="column" gap="5">
+          {reviewSection("bikini", "Bikini review")}
+          {reviewSection("clothes", "Top review")}
+          {reviewSection("background", "Background review")}
+
+          {/* Keep approved slots visible even while another layer is generating / pending review. */}
+          {hasAnyLayer ? (
+            <Flex direction="column" gap="4">
+              <Text size="2" weight="bold">
+                Photo cards
+                {hasAnyPending || anyGenBusy ? " (approved layers stay here while you review)" : ""}
+              </Text>
+              {slots.map((slot, index) => (
+                <Box
+                  key={slot.id}
+                  style={{
+                    border: "1px solid var(--gray-4)",
+                    borderRadius: 12,
+                    padding: 14,
+                    background: "var(--gray-1)",
+                  }}
+                >
+                  <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+                    <Text size="2" weight="bold">
+                      {index + 1}. {slot.label}
+                    </Text>
+                    <Flex align="center" gap="2" wrap="wrap">
+                      <Badge
+                        color={
+                          slot.background && slot.bikini && slot.clothes ? "green" : "gray"
+                        }
+                        variant="soft"
+                      >
+                        {slot.background && slot.bikini && slot.clothes
+                          ? "3 layers ready"
+                          : "Needs 3 layers"}
+                      </Badge>
+                      {slot.background && slot.bikini && slot.clothes ? (
+                        <Button asChild color="green" size="1">
+                          <a
+                            href={`${pictureFlowHref}&slot=${encodeURIComponent(slot.id)}`}
+                          >
+                            <Gamepad2 {...iconProps} />
+                            Create game
+                          </a>
+                        </Button>
+                      ) : null}
+                    </Flex>
+                  </Flex>
+                  <Grid columns="3" gap="2">
+                    {PHOTO_SCRATCH_LAYER_ORDER.map((layer) => {
+                      let aiBlockedReason = "";
+                      if ((layer === "bikini" || layer === "clothes") && !image.trim()) {
+                        aiBlockedReason = "Set the Flow source image in Setup first";
+                      } else if (layer === "clothes" && !slot.bikini) {
+                        aiBlockedReason = "Generate/approve bikini on this card first";
+                      }
+                      return (
+                        <SlotLayerUpload
+                          key={layer}
+                          cardId={cardId.trim()}
+                          slotId={slot.id}
+                          layer={layer}
+                          src={slot[layer]}
+                          theme={theme}
+                          sourceImage={image.trim()}
+                          aiProvider={psProvider}
+                          sourceImageModel={psImageModel}
+                          prompt={slotLayerPrompt(slot, layer) || prompts[layer]}
+                          slotPrompt={slotLayerPrompt(slot, layer)}
+                          aiBlockedReason={aiBlockedReason}
+                          busy={layerBusy}
+                          onUpdate={handleSlotUpdate}
+                          onError={(msg) => {
+                            setPanelError(msg);
+                            onError(msg);
+                          }}
+                          onSlotAiDone={() => void refreshSlots(true)}
+                          onSlotPromptBlur={(id, layerType, value) =>
+                            void handleSlotPromptBlur(id, layerType, value)
+                          }
+                        />
+                      );
+                    })}
+                  </Grid>
+                </Box>
+              ))}
+            </Flex>
+          ) : null}
+
+          {!hasAnyPending && !anyGenBusy && !hasAnyLayer ? (
+            <Text color="gray" size="2">
+              Start with <strong>Generate 10 backgrounds</strong> (empty scene), approve, then{" "}
+              <strong>Generate 10 bikinis</strong> (girl onto that scene), then{" "}
+              <strong>Generate 10 tops</strong>.
+            </Text>
+          ) : null}
+        </Flex>
       )}
     </Card>
   );
@@ -616,6 +1775,7 @@ export function RunMode(props: RunModeProps) {
     dressVideoModel,
     enhancePrompt,
     image,
+    theme,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -632,6 +1792,8 @@ export function RunMode(props: RunModeProps) {
     faceImage,
     baseImage,
     onImageChange,
+    onThemeChange,
+    onApplyThemeToPrompts,
     onBackgroundMotionPromptChange,
     onDressPromptChange,
     onDressReferenceImageChange,
@@ -937,7 +2099,7 @@ export function RunMode(props: RunModeProps) {
     backgroundVideoModel === "wan-2.2-spicy" ? canUseWavespeed : canUseGrok;
   const canUseDressVideo =
     dressVideoModel === "wan-2.2-video-edit" ? canUseWavespeed : canUseGrok;
-  const actionIsInteractive = actionStep === "symbols";
+  const actionIsInteractive = actionStep === "symbols" || actionStep === "trim";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -973,6 +2135,7 @@ export function RunMode(props: RunModeProps) {
 
   const stepPayload = {
     image,
+    theme,
     background_motion_prompt: backgroundMotionPrompt,
     foreground_motion_prompt: backgroundMotionPrompt,
     dress_prompt: dressPrompt,
@@ -1041,8 +2204,10 @@ export function RunMode(props: RunModeProps) {
   }
 
   const cardApproved = Boolean(flowState?.approved?.includes("card"));
-  const needsSourceImage =
-    actionStep === "background" || actionStep === "dress" || actionStep === "card";
+  const cardArtifactsReady = Boolean(
+    flowState?.steps.card?.artifacts?.filter(Boolean).length === 2,
+  );
+  const needsSourceImage = actionStep === "background" || actionStep === "dress";
 
   const canRunActionStep = Boolean(
     actionStep &&
@@ -1249,6 +2414,7 @@ export function RunMode(props: RunModeProps) {
             const status = stepListStatus(step);
             const node = flow.nodes.find((entry) => entry.step === step);
             const badge = flowStepBadge(status);
+            const timingLabel = stepTimingLabel(flowState?.timings?.steps?.[step]);
             return (
               <button
                 key={step}
@@ -1268,6 +2434,9 @@ export function RunMode(props: RunModeProps) {
                 <span className="video-flow-run-step-body">
                   <strong>{node?.title ?? step}</strong>
                   <span>{node?.subtitle ?? step}</span>
+                  {timingLabel ? (
+                    <span className="video-flow-run-step-time">{timingLabel}</span>
+                  ) : null}
                 </span>
                 <Badge color={badge.color} size="1">
                   {badge.label}
@@ -1275,6 +2444,33 @@ export function RunMode(props: RunModeProps) {
               </button>
             );
           })}
+          {typeof flowState?.timings?.total_duration_seconds === "number" ? (
+            <div className="video-flow-run-total-time">
+              <Text size="1" color="gray" weight="medium">
+                {flowState.complete ? "Card created in" : "Time spent so far"}
+              </Text>
+              <Text size="2" weight="bold">
+                {formatTimingDuration(flowState.timings.total_duration_seconds)}
+                <Text size="1" color="gray" weight="regular">
+                  {" "}
+                  active step time
+                </Text>
+              </Text>
+              {typeof flowState.timings.flow_started_at === "number" ? (
+                <Text size="1" color="gray">
+                  Started {formatTimingDateTime(flowState.timings.flow_started_at)}
+                </Text>
+              ) : null}
+              {typeof flowState.timings.completed_at === "number" ? (
+                <Text size="1" color="gray">
+                  Finished {formatTimingDateTime(flowState.timings.completed_at)}
+                  {typeof flowState.timings.total_elapsed_seconds === "number"
+                    ? ` · ${formatTimingDuration(flowState.timings.total_elapsed_seconds)} start to finish`
+                    : ""}
+                </Text>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
 
         <section className="video-flow-run-detail">
@@ -1584,6 +2780,23 @@ export function RunMode(props: RunModeProps) {
                 />
               </Field>
             </Grid>
+            <Field label="Theme (scenery + dress-up costume)">
+              <TextField.Root
+                placeholder="warm beach, police, neon city night…"
+                value={theme}
+                onChange={(event) => onThemeChange(event.currentTarget.value)}
+              />
+            </Field>
+            <Flex gap="2" align="center" wrap="wrap">
+              <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
+                Apply theme to prompts
+              </Button>
+              <Text color="gray" size="2">
+                Rewrites background scenery + dress costume from the theme. With a dress
+                reference image attached, the dress prompt matches that reference. Hand-edited
+                prompts stay until you click Apply.
+              </Text>
+            </Flex>
           </Flex>
         ) : null}
 
@@ -1625,7 +2838,7 @@ export function RunMode(props: RunModeProps) {
                 </Select.Content>
               </Select.Root>
             </Field>
-            <Field label="Bikini background prompt (image to video — approve before dress-up)">
+            <Field label="Bikini background prompt (image to video — approve before fix frames)">
               <TextArea
                 className="dashboard-textarea"
                 value={backgroundMotionPrompt}
@@ -1633,34 +2846,44 @@ export function RunMode(props: RunModeProps) {
               />
             </Field>
             <Text color="gray" size="2">
-              Locked camera + stable skin: the backend upgrades legacy prompts and enhances the
-              motion text (when XAI_API_KEY is set) so framing, subject size, and skin tone stay
-              consistent with the source still — match the blue reference crop in your upload for
-              best results.
+              Theme scenery is baked into a still first (image edit), then animated — image-to-video
+              alone keeps city/balcony/outdoor backdrops. Locked camera + skin continuity are
+              enhanced when XAI_API_KEY is set. Click Apply theme on Setup if the prompt still looks
+              like the old blank-wall wording.
             </Text>
           </Flex>
+        ) : null}
+
+        {activeNode === "trim" ? (
+          <TrimFramesPanel
+            cardId={cardId.trim()}
+            busy={jobBusy}
+            onBusy={setFlowBusy}
+            onError={onError}
+            onState={setFlowState}
+          />
         ) : null}
 
         {activeNode === "dress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="orange">
               <Callout.Text size="2">
-                Step 2 edits your approved bikini clip in place. x.ai Grok scans every frame of
-                that video for moderation — a modest dress prompt can still fail. Use{" "}
+                Step 3 edits your approved (trimmed) bikini clip in place. x.ai Grok scans every
+                frame of that video for moderation — a modest dress prompt can still fail. Use{" "}
                 <strong>WaveSpeed WAN 2.2 Video Edit</strong> to avoid that scan.
               </Callout.Text>
             </Callout.Root>
-            <Field label="Step 2 video model">
+            <Field label="Step 3 video model">
               <Select.Root
                 value={dressVideoModel}
                 onValueChange={(value) => onDressVideoModelChange(value as DressVideoModel)}
               >
                 <Select.Trigger />
                 <Select.Content>
-                  <Select.Item value="wan-2.2-video-edit">
-                    WaveSpeed WAN 2.2 Video Edit (recommended)
-                  </Select.Item>
                   <Select.Item value="grok-imagine">x.ai Grok Imagine</Select.Item>
+                  <Select.Item value="wan-2.2-video-edit">
+                    WaveSpeed WAN 2.2 Video Edit
+                  </Select.Item>
                 </Select.Content>
               </Select.Root>
             </Field>
@@ -1678,7 +2901,10 @@ export function RunMode(props: RunModeProps) {
                 onChange={(event) => onDressPromptChange(event.currentTarget.value)}
               />
             </Field>
-            <Field label="Dress reference image (optional — Grok only; describe outfit in prompt for WAN)">
+            <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
+              Apply theme to dress prompt
+            </Button>
+            <Field label="Dress reference image (optional — captioned into prompt for WAN & Grok)">
               <FilePathPicker
                 accept="image/*"
                 placeholder="Pick a dress photo or paste a path/URL"
@@ -1690,6 +2916,12 @@ export function RunMode(props: RunModeProps) {
                 onError={onError}
               />
             </Field>
+            {dressReferenceImage.trim() ? (
+              <Text color="gray" size="2">
+                Reference is captioned and appended after prompt enhance so the outfit match
+                wins. Click Apply theme if the dress prompt still looks generic.
+              </Text>
+            ) : null}
             <label className="checkbox-label">
               <Checkbox
                 checked={enhancePrompt}
@@ -1798,7 +3030,9 @@ export function RunMode(props: RunModeProps) {
                 onClick={() => void importManualClips()}
               >
                 {importBusy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
-                {cardApproved ? "Replace clips & unlock mesh" : "Import clips & unlock mesh"}
+                {cardApproved && cardArtifactsReady
+                  ? "Replace clips & unlock mesh"
+                  : "Import clips & unlock mesh"}
               </Button>
               {!cardId.trim() || !cardLabel.trim() ? (
                 <Text color="gray" size="2">
@@ -1806,10 +3040,18 @@ export function RunMode(props: RunModeProps) {
                 </Text>
               ) : null}
             </Flex>
-            {cardApproved ? (
+            {cardApproved && cardArtifactsReady ? (
               <Text color="gray" size="2">
                 Card already published. Re-importing replaces both videos and keeps mesh ready.
               </Text>
+            ) : cardApproved && !cardArtifactsReady ? (
+              <Callout.Root color="amber">
+                <Callout.Text>
+                  Card is marked done but <Code>public/cards/{cardId || "<id>"}/</Code> is missing
+                  the videos. Click <strong>Run step</strong> to republish from the approved
+                  clips, or import both files above.
+                </Callout.Text>
+              </Callout.Root>
             ) : (
               <Text color="gray" size="2">
                 Or run the AI pipeline (Setup → image to video → dress → Create card) instead.
@@ -2128,7 +3370,14 @@ export function RunMode(props: RunModeProps) {
       </div>
 
       {cardId.trim() ? (
-        <CardPhotosPanel cardId={cardId.trim()} onError={onError} />
+        <CardPhotosPanel
+          cardId={cardId.trim()}
+          theme={theme}
+          image={image}
+          aiProvider={aiProvider}
+          sourceImageModel={sourceImageModel}
+          onError={onError}
+        />
       ) : null}
     </Flex>
   );

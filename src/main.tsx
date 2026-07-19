@@ -5,6 +5,7 @@ import { Dashboard } from "./Dashboard";
 import { ModelsPage } from "./ModelsPage";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
+import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
@@ -19,6 +20,7 @@ function pickApp(pathname: string) {
   const path = normalizePath(pathname);
   if (path === "/dashboard/video-flow/designer") return VideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return VideoFlowRunPage;
+  if (path === "/dashboard/picture-flow" || path === "/picture-flow") return PictureFlowPage;
   if (path === "/dashboard/models") return ModelsPage;
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
