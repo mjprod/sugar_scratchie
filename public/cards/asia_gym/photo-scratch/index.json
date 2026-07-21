@@ -10,13 +10,15 @@
     "id": "slot_02",
     "label": "Nurse \u2013 2",
     "background": "/cards/asia_gym/photo-scratch/pending/slot_02_background.jpg",
-    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_02_bikini.jpg"
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_02_bikini.jpg",
+    "clothes": "/cards/asia_gym/photo-scratch/pending/slot_02_clothes.jpg"
   },
   {
     "id": "slot_03",
     "label": "Nurse \u2013 3",
     "background": "/cards/asia_gym/photo-scratch/pending/slot_03_background.jpg",
-    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_03_bikini.jpg"
+    "bikini": "/cards/asia_gym/photo-scratch/pending/slot_03_bikini.jpg",
+    "clothes": "/cards/asia_gym/photo-scratch/pending/slot_03_clothes.jpg"
   },
   {
     "id": "slot_04",

@@ -19,7 +19,12 @@ from PIL import Image
 from scipy import ndimage
 
 from backend.services.photo_canvas import CANVAS_HEIGHT, CANVAS_WIDTH, cover_to_canvas
-from backend.services.photo_cutout import _load_generator, _person_mask_keep_holes
+from backend.services.photo_cutout import (
+    MAX_SEG_SIDE,
+    _load_generator,
+    _person_mask_keep_holes,
+    _resize_max_side,
+)
 
 MATCH_SCALE = 3
 MATCH_WIDTH = CANVAS_WIDTH * MATCH_SCALE
@@ -40,6 +45,19 @@ CLOTHES_OVERSCALE = 1.035
 # If person heights still differ after ORB, snap clothes height to bikini and
 # reapply the cover overscale so there is always a 3.5 % safety margin.
 HEIGHT_NORM_TOLERANCE = 0.01  # skip if within 1 %
+
+# SegFormer clothes labels (mattmdjaga/segformer_b2_clothes / ATR).
+# Upper-clothes, Skirt, Pants, Dress, Belt, Scarf — not skin/hair/face/arms.
+GARMENT_LABELS = frozenset({4, 5, 6, 7, 8, 17})
+# L2 RGB distance: below this, treat as "unchanged" and keep bikini pixels.
+GARMENT_DIFF_THRESHOLD = 14.0
+# Grow SegFormer garment a few px so hems/sleeves cover the bikini rim.
+GARMENT_DILATE = 4
+# Soft paste edge at match resolution (~3× canvas).
+GARMENT_FEATHER_SIGMA = 2.5
+# Extra high-diff ring around the garment (loose fabric the parser missed).
+GARMENT_NEAR_DILATE = 10
+GARMENT_NEAR_DIFF = 36.0
 
 
 def relock_clothes_from_bikini(
@@ -119,11 +137,13 @@ def match_clothes_to_bikini(
     overlay_path: Path | None = None,
     bikini_matched_path: Path | None = None,
     blend_path: Path | None = None,
+    garment_mask_path: Path | None = None,
     *,
     mode: str = "register",
     nudge_scale: float = 1.0,
     nudge_tx: float = 0.0,
     nudge_ty: float = 0.0,
+    garment_composite: bool = True,
 ) -> dict:
     """Register bikini + top on the same canvas for cutout.
 
@@ -135,6 +155,10 @@ def match_clothes_to_bikini(
 
     Optional ``nudge_scale`` / ``nudge_tx`` / ``nudge_ty`` apply a final manual
     affine on the matched clothes (scale about person centroid, then translate).
+
+    When ``garment_composite`` is True (default), the final clothes plate is the
+    bikini image with only SegFormer garment pixels from the aligned top pasted
+    in — face/hair/skin/background stay byte-identical between layers.
     """
     if not bikini_path.is_file():
         raise FileNotFoundError(f"Bikini image not found: {bikini_path}")
@@ -228,6 +252,16 @@ def match_clothes_to_bikini(
     )
     register_info.update(nudge_info)
 
+    garment_alpha: np.ndarray | None = None
+    if garment_composite:
+        aligned_clothes, garment_alpha = _garment_composite(
+            bikini_rgb, aligned_clothes, gen
+        )
+        if garment_alpha is not None:
+            register_info["garment_composite"] = True
+            register_info["garment_px"] = int((garment_alpha >= 0.5).sum())
+            method = f"{method}+garment-composite"
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(aligned_clothes, mode="RGB").save(
         output_path, format="JPEG", quality=95, optimize=True
@@ -238,6 +272,12 @@ def match_clothes_to_bikini(
     Image.fromarray(bikini_rgb, mode="RGB").save(
         bikini_matched_path, format="JPEG", quality=95, optimize=True
     )
+
+    if garment_mask_path is not None and garment_alpha is not None:
+        garment_mask_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(
+            (np.clip(garment_alpha, 0.0, 1.0) * 255.0).astype(np.uint8), mode="L"
+        ).save(garment_mask_path, format="PNG", optimize=True)
 
     if overlay_path is not None or blend_path is not None:
         _write_match_previews(
@@ -261,7 +301,18 @@ def match_clothes_to_bikini(
         "pose_ok": pose_ok,
         "pose_mismatch": pose_mismatch,
         "method": method,
-        **{k: register_info[k] for k in ("inliers", "scale", "tx", "ty") if k in register_info},
+        **{
+            k: register_info[k]
+            for k in (
+                "inliers",
+                "scale",
+                "tx",
+                "ty",
+                "garment_composite",
+                "garment_px",
+            )
+            if k in register_info
+        },
     }
     print(
         f"Matched top → bikini: {output_path} "
@@ -272,10 +323,103 @@ def match_clothes_to_bikini(
             if "scale" in stats
             else ""
         )
+        + (
+            f", garment_px={stats.get('garment_px')}"
+            if "garment_px" in stats
+            else ""
+        )
         + ")",
         flush=True,
     )
     return stats
+
+
+def _garment_seg_mask(rgb: np.ndarray, gen) -> np.ndarray:
+    """Binary SegFormer garment mask (fabric only) at full resolution."""
+    small, scale = _resize_max_side(rgb, MAX_SEG_SIDE)
+    seg = gen._segment(small)
+    mask = np.isin(seg, list(GARMENT_LABELS))
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3), bool), iterations=1)
+    labels, count = ndimage.label(mask)
+    if count == 0:
+        return np.zeros(rgb.shape[:2], dtype=bool)
+    counts = np.bincount(labels.ravel())
+    counts[0] = 0
+    # Keep every garment blob above a tiny area (skirt + top can be separate).
+    min_px = max(40, int(mask.size * 0.00015))
+    keep = np.zeros(count + 1, dtype=bool)
+    keep[1:] = counts[1:] >= min_px
+    mask = keep[labels]
+    if scale != 1.0:
+        h, w = rgb.shape[:2]
+        mask = (
+            np.asarray(
+                Image.fromarray(mask.astype(np.uint8) * 255).resize(
+                    (w, h), Image.Resampling.NEAREST
+                ),
+                dtype=np.uint8,
+            )
+            > 127
+        )
+    return mask
+
+
+def _garment_composite(
+    bikini_rgb: np.ndarray,
+    clothes_rgb: np.ndarray,
+    gen,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Bikini plate + feathered garment paste from the aligned top.
+
+    Returns ``(composite_rgb, garment_alpha)`` where alpha is float32 0..1.
+    Outside the garment, composite pixels are identical to ``bikini_rgb``.
+    """
+    gmask = _garment_seg_mask(clothes_rgb, gen)
+    if not gmask.any():
+        print(
+            "Garment composite: no SegFormer fabric labels — leaving registered top",
+            flush=True,
+        )
+        return clothes_rgb, None
+
+    diff = np.linalg.norm(
+        clothes_rgb.astype(np.float32) - bikini_rgb.astype(np.float32), axis=2
+    )
+    gmask_d = ndimage.binary_dilation(gmask, iterations=GARMENT_DILATE)
+    near = ndimage.binary_dilation(gmask, iterations=GARMENT_NEAR_DILATE)
+    # Fabric the parser found that actually changed, plus a high-diff ring for
+    # loose hems/sleeves SegFormer often under-segments.
+    paste = (gmask_d & (diff > GARMENT_DIFF_THRESHOLD)) | (
+        near & (diff > GARMENT_NEAR_DIFF)
+    )
+    if not paste.any():
+        # Fallback: trust the dilated garment labels even if colour is close
+        # (dark swimsuit → dark dress can sit under the threshold).
+        paste = gmask_d
+        print(
+            "Garment composite: low RGB diff — using SegFormer mask alone",
+            flush=True,
+        )
+
+    alpha = paste.astype(np.float32)
+    if GARMENT_FEATHER_SIGMA > 0:
+        alpha = ndimage.gaussian_filter(alpha, sigma=GARMENT_FEATHER_SIGMA)
+    alpha = np.clip(alpha, 0.0, 1.0)
+
+    out = (
+        bikini_rgb.astype(np.float32) * (1.0 - alpha[..., None])
+        + clothes_rgb.astype(np.float32) * alpha[..., None]
+    )
+    out_u8 = np.clip(out, 0, 255).astype(np.uint8)
+    # Exact identity outside the soft paste — kill float bleed on "untouched" px.
+    hard = alpha < 1e-4
+    out_u8[hard] = bikini_rgb[hard]
+    print(
+        f"Garment composite: pasted {(alpha >= 0.5).sum()} px "
+        f"(soft={(alpha > 1e-4).sum()})",
+        flush=True,
+    )
+    return out_u8, alpha
 
 
 def _person_height_px(mask: np.ndarray) -> float:

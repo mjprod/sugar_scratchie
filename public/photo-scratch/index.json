@@ -109,13 +109,13 @@
       "mesh": "/cards/asia_gym/photo-scratch/slot_02/mesh.json"
     },
     {
-      "id": "asia_gym_slot_01",
-      "label": "Nurse \u2013 1",
+      "id": "asia_gym_slot_03",
+      "label": "Nurse \u2013 3",
       "model_id": "asia",
-      "background": "/cards/asia_gym/photo-scratch/pending/slot_01_background.jpg",
-      "bikini": "/cards/asia_gym/photo-scratch/slot_01/bikini.png",
-      "clothes": "/cards/asia_gym/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json"
+      "background": "/cards/asia_gym/photo-scratch/pending/slot_03_background.jpg",
+      "bikini": "/cards/asia_gym/photo-scratch/slot_03/bikini.png",
+      "clothes": "/cards/asia_gym/photo-scratch/slot_03/clothes.png",
+      "mesh": "/cards/asia_gym/photo-scratch/slot_03/mesh.json"
     },
     {
       "id": "asia_gym_slot_04",
@@ -125,6 +125,15 @@
       "bikini": "/cards/asia_gym/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_04/clothes.png",
       "mesh": "/cards/asia_gym/photo-scratch/slot_04/mesh.json"
+    },
+    {
+      "id": "asia_gym_slot_01",
+      "label": "Nurse \u2013 1",
+      "model_id": "asia",
+      "background": "/cards/asia_gym/photo-scratch/pending/slot_01_background.jpg",
+      "bikini": "/cards/asia_gym/photo-scratch/slot_01/bikini.png",
+      "clothes": "/cards/asia_gym/photo-scratch/slot_01/clothes.png",
+      "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json"
     }
   ]
 }

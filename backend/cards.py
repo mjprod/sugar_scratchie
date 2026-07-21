@@ -640,6 +640,12 @@ def photo_scratch_slot_match_meta_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / "match_meta.json"
 
 
+def photo_scratch_slot_garment_mask_path(
+    cards_dir: Path, card_id: str, slot_id: str
+) -> Path:
+    return _photo_scratch_dir(cards_dir, card_id) / slot_id / "garment_mask.png"
+
+
 def photo_scratch_slot_has_match(cards_dir: Path, card_id: str, slot_id: str) -> bool:
     return photo_scratch_slot_matched_clothes_path(cards_dir, card_id, slot_id).is_file()
 
@@ -1171,6 +1177,7 @@ def match_photo_scratch_slot(
     bikini_matched = photo_scratch_slot_matched_bikini_path(cards_dir, card_id, slot_id)
     overlay = photo_scratch_slot_match_overlay_path(cards_dir, card_id, slot_id)
     blend = photo_scratch_slot_match_blend_path(cards_dir, card_id, slot_id)
+    garment_mask = photo_scratch_slot_garment_mask_path(cards_dir, card_id, slot_id)
     meta_path = photo_scratch_slot_match_meta_path(cards_dir, card_id, slot_id)
     try:
         stats = match_clothes_to_bikini(
@@ -1180,6 +1187,7 @@ def match_photo_scratch_slot(
             overlay,
             bikini_matched_path=bikini_matched,
             blend_path=blend,
+            garment_mask_path=garment_mask,
             mode="register",
             nudge_scale=nudge_scale,
             nudge_tx=nudge_tx,
@@ -1215,11 +1223,12 @@ def cutout_photo_scratch_slot(
     Keeps the approved original composites on the slot (bikini/clothes URLs
     unchanged). Cutouts live beside them as slot_XX/{bikini,clothes}.png and are
     detected via has_cutout / used at publish time.
+
+    Uses a shared BiRefNet matte from the bikini plate so hair/skin edges match
+    byte-for-byte; the top only extends alpha where the garment grows past the
+    bikini silhouette (skirts / loose sleeves).
     """
-    from backend.services.photo_cutout import (
-        cutout_person_rgba,
-        sync_pose_matched_cutout_holes,
-    )
+    from backend.services.photo_cutout import cutout_matched_pair
 
     if card_id == ORIGINAL_ID:
         raise HTTPException(status_code=400, detail="Cannot cut out the original card")
@@ -1248,18 +1257,13 @@ def cutout_photo_scratch_slot(
             detail="Match bikini + top first — cutout needs aligned layers",
         )
 
-    for layer, source in (
-        ("bikini", matched_bikini),
-        ("clothes", matched_clothes),
-    ):
-        out = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, layer)
-        cutout_person_rgba(source, out)
-
-    # Widen bikini arm–hip holes and copy that mask onto clothes (top AI often
-    # paints fabric into those triangles).
-    sync_pose_matched_cutout_holes(
+    garment_mask = photo_scratch_slot_garment_mask_path(cards_dir, card_id, slot_id)
+    cutout_matched_pair(
+        matched_bikini,
+        matched_clothes,
         photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini"),
         photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes"),
+        garment_mask_path=garment_mask if garment_mask.is_file() else None,
     )
 
     # Do not rewrite bikini/clothes — originals stay in the index.
