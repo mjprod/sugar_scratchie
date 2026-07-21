@@ -257,9 +257,10 @@ def match_clothes_to_bikini(
         aligned_clothes, garment_alpha = _garment_composite(
             bikini_rgb, aligned_clothes, gen
         )
-        register_info["garment_composite"] = True
-        register_info["garment_px"] = int((garment_alpha >= 0.5).sum())
-        method = f"{method}+garment-composite"
+        if garment_alpha is not None:
+            register_info["garment_composite"] = True
+            register_info["garment_px"] = int((garment_alpha >= 0.5).sum())
+            method = f"{method}+garment-composite"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(aligned_clothes, mode="RGB").save(
