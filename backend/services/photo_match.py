@@ -379,7 +379,7 @@ def _garment_composite(
             "Garment composite: no SegFormer fabric labels — leaving registered top",
             flush=True,
         )
-        return clothes_rgb, np.zeros(clothes_rgb.shape[:2], dtype=np.float32)
+        return clothes_rgb, None
 
     diff = np.linalg.norm(
         clothes_rgb.astype(np.float32) - bikini_rgb.astype(np.float32), axis=2
