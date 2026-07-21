@@ -3,8 +3,11 @@
 Uses rembg BiRefNet for the matte (far cleaner arm / sleeve edges than the
 SegFormer clothes parser), then punches hands-on-hips arm gaps with SegFormer
 background labels + a color pocket erase (BiRefNet often fills those). Cover-
-crops RGBA to 390×672. Light rim choke + color defringe remove the pale wall
-halo on light fabric. Mesh Mask Editor erase still works for any leftovers.
+crops RGBA to OUTPUT_SCALE × (390×672) so phones keep sharp pixels. Light rim
+choke + color defringe remove the pale wall halo on light fabric. Mesh Mask
+Editor erase still works for any leftovers.
+
+Paired bikini/clothes cutouts share one matte so hair/skin edges match.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ MAX_SEG_SIDE = 1280
 # Max fraction of the frame a single filled dropout may cover. Sleeve cracks are
 # tiny; hands-on-hips arm gaps are large — never refill those after we punch them.
 MAX_HOLE_FILL_FRAC = 0.002
+# Ship cutouts at 3× logical canvas so DPR-2/3 phones stay sharp. Mesh/game
+# coordinates stay in 390×672 space (cover_to_canvas downscales for mesh).
+OUTPUT_SCALE = 3
+OUTPUT_WIDTH = CANVAS_WIDTH * OUTPUT_SCALE
+OUTPUT_HEIGHT = CANVAS_HEIGHT * OUTPUT_SCALE
 
 _rembg_session = None
 
@@ -705,18 +713,23 @@ def _feather_edge(alpha: np.ndarray, sigma: float) -> np.ndarray:
     return np.clip(out, 0.0, 1.0)
 
 
-def _cover_rgba_to_canvas(rgba: Image.Image) -> Image.Image:
+def _cover_rgba_to_canvas(
+    rgba: Image.Image,
+    *,
+    width: int = OUTPUT_WIDTH,
+    height: int = OUTPUT_HEIGHT,
+) -> Image.Image:
     """Cover-crop RGBA the same way RGB plates are cropped."""
     src_w, src_h = rgba.size
     if src_w <= 0 or src_h <= 0:
         raise ValueError("Image has empty dimensions")
-    scale = max(CANVAS_WIDTH / src_w, CANVAS_HEIGHT / src_h)
-    new_w = max(CANVAS_WIDTH, int(round(src_w * scale)))
-    new_h = max(CANVAS_HEIGHT, int(round(src_h * scale)))
+    scale = max(width / src_w, height / src_h)
+    new_w = max(width, int(round(src_w * scale)))
+    new_h = max(height, int(round(src_h * scale)))
     resized = rgba.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    left = max(0, (new_w - CANVAS_WIDTH) // 2)
-    top = max(0, (new_h - CANVAS_HEIGHT) // 2)
-    cropped = resized.crop((left, top, left + CANVAS_WIDTH, top + CANVAS_HEIGHT))
+    left = max(0, (new_w - width) // 2)
+    top = max(0, (new_h - height) // 2)
+    cropped = resized.crop((left, top, left + width, top + height))
     arr = np.asarray(cropped).copy()
     a = arr[..., 3].astype(np.float32)
     # Hard-zero anything BiRefNet is less than ~20 % confident about (arm-hip gap
@@ -729,8 +742,10 @@ def _cover_rgba_to_canvas(rgba: Image.Image) -> Image.Image:
     return Image.fromarray(arr, mode="RGBA")
 
 
-def cutout_person_rgba(image_path: Path, output_path: Path) -> Path:
-    """Write a 390×672 RGBA PNG of the person (BiRefNet matte)."""
+def _matte_person(
+    image_path: Path,
+) -> tuple[np.ndarray, np.ndarray, tuple[int, int]]:
+    """Run BiRefNet + cleanup; return ``(rgb_u8, alpha_f, source_size)``."""
     if not image_path.is_file():
         raise FileNotFoundError(f"Image not found: {image_path}")
 
@@ -760,7 +775,6 @@ def cutout_person_rgba(image_path: Path, output_path: Path) -> Path:
     body_protect = None
     try:
         gen = _load_generator()
-        # Undilated body for protection; lightly dilated allow for sleeve edges.
         body_protect = _segformer_allow_mask(source_rgb, gen, body_dilate=0)
         allow = ndimage.binary_dilation(body_protect, iterations=2)
         before = int((alpha_f >= 0.35).sum())
@@ -771,8 +785,6 @@ def cutout_person_rgba(image_path: Path, output_path: Path) -> Path:
     except Exception as exc:  # noqa: BLE001 — cutout must still finish
         print(f"SegFormer hole punch skipped: {exc}", flush=True)
     alpha_f = _erase_background_pockets(source_rgb, alpha_f, body_protect=body_protect)
-    # Arm–hip fabric/wall leftovers that survive here are synced from the bikini
-    # cutout in cutout_photo_scratch_slot (pose-matched hole transfer).
 
     # 4) Choke pale wall halo from the rim.
     choke = min(2.0, RIM_CHOKE * max(1.0, max(source.size) / 672.0))
@@ -780,25 +792,131 @@ def cutout_person_rgba(image_path: Path, output_path: Path) -> Path:
     alpha_f = _strip_bright_rim(rgb, alpha_f)
     alpha_f = np.clip(alpha_f, 0.0, 1.0)
 
-    # 5) Hard-zero uncertain pixels (< 20 % alpha) — removes arm-hip gap fringe
-    #    and dark background bleed before defringe samples colours from them.
+    # 5) Hard-zero uncertain pixels (< 20 % alpha).
     alpha_f = np.where(alpha_f < 0.20, 0.0, alpha_f)
 
-    # 6) Defringe + 1 px edge feather.
+    # 6) Defringe + edge feather.
     clean_rgb = _defringe_rgb(rgb, alpha_f)
     feather_sigma = EDGE_FEATHER_SIGMA * max(1.0, max(source.size) / 672.0)
     alpha_f = _feather_edge(alpha_f, feather_sigma)
-    alpha = (alpha_f * 255.0).astype(np.uint8)
+    return clean_rgb, alpha_f, source.size
 
-    rgba_full = Image.fromarray(np.dstack([clean_rgb, alpha]), mode="RGBA")
-    rgba_out = _cover_rgba_to_canvas(rgba_full)
 
+def _write_cutout_png(
+    rgb: np.ndarray,
+    alpha_f: np.ndarray,
+    output_path: Path,
+    *,
+    src_size: tuple[int, int],
+    label: str = "",
+) -> Path:
+    alpha = (np.clip(alpha_f, 0.0, 1.0) * 255.0).astype(np.uint8)
+    rgba_full = Image.fromarray(np.dstack([rgb, alpha]), mode="RGBA")
+    rgba_out = _cover_rgba_to_canvas(
+        rgba_full, width=OUTPUT_WIDTH, height=OUTPUT_HEIGHT
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     rgba_out.save(output_path, format="PNG", optimize=True)
     a = np.asarray(rgba_out.getchannel("A"))
+    tag = f"{label} " if label else ""
     print(
         f"Cutout written: {output_path} "
-        f"({CANVAS_WIDTH}x{CANVAS_HEIGHT}, src={source.size[0]}x{source.size[1]}, "
-        f"model={REMBG_MODEL}, opaque={(a > 250).mean() * 100:.1f}%)"
+        f"({OUTPUT_WIDTH}x{OUTPUT_HEIGHT}, src={src_size[0]}x{src_size[1]}, "
+        f"model={REMBG_MODEL}, {tag}opaque={(a > 250).mean() * 100:.1f}%)",
+        flush=True,
     )
     return output_path
+
+
+def cutout_person_rgba(image_path: Path, output_path: Path) -> Path:
+    """Write an OUTPUT_SCALE×(390×672) RGBA PNG of the person (BiRefNet matte)."""
+    rgb, alpha_f, src_size = _matte_person(image_path)
+    return _write_cutout_png(rgb, alpha_f, output_path, src_size=src_size)
+
+
+def _load_garment_alpha(
+    garment_mask_path: Path | None, shape: tuple[int, int]
+) -> np.ndarray | None:
+    """Load match-step garment mask resized to ``shape`` (H, W), float 0..1."""
+    if garment_mask_path is None or not garment_mask_path.is_file():
+        return None
+    mask = Image.open(garment_mask_path).convert("L")
+    if mask.size != (shape[1], shape[0]):
+        mask = mask.resize((shape[1], shape[0]), Image.Resampling.BILINEAR)
+    return np.asarray(mask, dtype=np.float32) / 255.0
+
+
+def cutout_matched_pair(
+    bikini_path: Path,
+    clothes_path: Path,
+    bikini_out: Path,
+    clothes_out: Path,
+    garment_mask_path: Path | None = None,
+) -> None:
+    """Shared-matte cutouts for pose-matched bikini + clothes plates.
+
+    Bikini alpha is the source of truth for hair/skin silhouette. Clothes alpha
+    equals bikini alpha everywhere except where the garment grows past that
+    silhouette (skirts / loose sleeves), taken from a clothes BiRefNet pass.
+    """
+    b_rgb, b_a, b_size = _matte_person(bikini_path)
+    c_rgb, c_a, c_size = _matte_person(clothes_path)
+
+    if b_a.shape != c_a.shape:
+        # Matched plates should already share canvas size; resize clothes → bikini.
+        c_rgba = Image.fromarray(
+            np.dstack(
+                [c_rgb, (np.clip(c_a, 0.0, 1.0) * 255.0).astype(np.uint8)]
+            ),
+            mode="RGBA",
+        ).resize((b_a.shape[1], b_a.shape[0]), Image.Resampling.LANCZOS)
+        c_arr = np.asarray(c_rgba)
+        c_rgb = c_arr[..., :3].copy()
+        c_a = c_arr[..., 3].astype(np.float32) / 255.0
+
+    g_a = _load_garment_alpha(garment_mask_path, b_a.shape)
+    if g_a is not None:
+        g_hard = g_a >= 0.35
+        g_hard = ndimage.binary_dilation(g_hard, iterations=2)
+        # Extend only where fabric sticks out past the bikini person.
+        extend = g_hard & (c_a >= 0.35) & (b_a < 0.40)
+        clothes_a = b_a.copy()
+        clothes_a[extend] = np.maximum(clothes_a[extend], c_a[extend])
+        # Soft garment rim: blend clothes matte into shared alpha on fabric.
+        soft = (g_a > 0.05) & (c_a > 0.05)
+        clothes_a[soft] = np.maximum(
+            clothes_a[soft], c_a[soft] * np.clip(g_a[soft], 0.0, 1.0)
+        )
+        print(
+            f"Shared matte: garment extend={(extend.sum())} px "
+            f"(mask={garment_mask_path.name})",
+            flush=True,
+        )
+    else:
+        # No garment mask — still lock hair/skin to bikini; grow only where the
+        # clothes matte is solid outside the bikini silhouette.
+        extend = (c_a >= 0.50) & (b_a < 0.35)
+        extend = ndimage.binary_opening(extend, iterations=1)
+        clothes_a = b_a.copy()
+        clothes_a[extend] = np.maximum(clothes_a[extend], c_a[extend])
+        print(
+            f"Shared matte: no garment_mask — silhouette extend={extend.sum()} px",
+            flush=True,
+        )
+
+    clothes_a = np.clip(clothes_a, 0.0, 1.0)
+    # Outside garment, force exact bikini alpha so edges never pop while scratching.
+    if g_a is not None:
+        lock = g_a < 0.05
+        clothes_a[lock] = b_a[lock]
+
+    _write_cutout_png(
+        b_rgb, b_a, bikini_out, src_size=b_size, label="bikini"
+    )
+    _write_cutout_png(
+        c_rgb, clothes_a, clothes_out, src_size=c_size, label="clothes"
+    )
+
+    # Safety: punch any leftover wall in arm–hip bays (shared alpha usually
+    # already handles this; cheap no-op when clean).
+    sync_pose_matched_cutout_holes(bikini_out, clothes_out)

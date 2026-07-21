@@ -3,6 +3,7 @@ import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   GarmentGLRenderer,
+  MAX_PIXEL_RATIO,
   PRESENT_ZOOM,
   type ImageLayerCameras,
 } from "./glRenderer";
@@ -1025,6 +1026,10 @@ export function PhotoScratchTest() {
 
     let fgRenderer: GarmentGLRenderer;
     try {
+      const pixelRatio = Math.min(
+        MAX_PIXEL_RATIO,
+        typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+      );
       fgRenderer = new GarmentGLRenderer(
         fgCanvas,
         CANVAS_WIDTH,
@@ -1032,6 +1037,7 @@ export function PhotoScratchTest() {
         {
           alpha: true,
           preserveDrawingBuffer: true,
+          pixelRatio,
         },
       );
       fgRendererRef.current = fgRenderer;
@@ -1942,6 +1948,8 @@ export function PhotoScratchTest() {
             <canvas
               ref={fgCanvasRef}
               className="photo-scratch-fg-layer"
+              // Drawing-buffer size is set by GarmentGLRenderer from devicePixelRatio;
+              // CSS (width/height 100%) keeps the logical 390×672 stage size.
               width={CANVAS_WIDTH}
               height={CANVAS_HEIGHT}
               style={{ touchAction: "none", cursor: "crosshair" }}

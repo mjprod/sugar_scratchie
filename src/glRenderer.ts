@@ -21,11 +21,13 @@ export type GLMeshSample = {
   vis: number[];
 };
 
-const SCRATCH_TEX_SIZE = 1024;
+const SCRATCH_TEX_BASE = 1024;
 // Zoom applied to the presented layers (bottom video + final composite) for a
 // tighter shot framed on the performer. It doubles as pan headroom: the
 // chest-follow camera offset stays below PRESENT_ZOOM-1 so no canvas edge shows.
 export const PRESENT_ZOOM = 1.15;
+/** Cap devicePixelRatio so memory stays bounded on 3× phones. */
+export const MAX_PIXEL_RATIO = 3;
 
 export type ImageLayerDepths = {
   back: number;
@@ -263,8 +265,14 @@ type Flake = {
 
 export class GarmentGLRenderer {
   private gl: WebGL2RenderingContext;
+  /** Logical game coordinates (mesh / pointers) — always 390×672 for photo path. */
   private width: number;
   private height: number;
+  /** Drawing-buffer / FBO size in device pixels (= logical × pixelRatio). */
+  private bufferWidth: number;
+  private bufferHeight: number;
+  private scratchTexSize: number;
+  private pixelRatio: number;
 
   private blit: WebGLProgram;
   private composite: WebGLProgram;
@@ -315,7 +323,12 @@ export class GarmentGLRenderer {
     canvas: HTMLCanvasElement,
     width: number,
     height: number,
-    options?: { alpha?: boolean; preserveDrawingBuffer?: boolean },
+    options?: {
+      alpha?: boolean;
+      preserveDrawingBuffer?: boolean;
+      /** Device pixels per logical canvas unit (capped at MAX_PIXEL_RATIO). */
+      pixelRatio?: number;
+    },
   ) {
     const gl = canvas.getContext("webgl2", {
       premultipliedAlpha: false,
@@ -326,6 +339,20 @@ export class GarmentGLRenderer {
     this.gl = gl;
     this.width = width;
     this.height = height;
+    const dpr = Math.max(
+      1,
+      Math.min(MAX_PIXEL_RATIO, options?.pixelRatio ?? 1),
+    );
+    this.pixelRatio = dpr;
+    this.bufferWidth = Math.max(1, Math.round(width * dpr));
+    this.bufferHeight = Math.max(1, Math.round(height * dpr));
+    // UV-space scratch map — bump with DPR so punched holes stay crisp.
+    this.scratchTexSize = Math.max(
+      SCRATCH_TEX_BASE,
+      Math.round(SCRATCH_TEX_BASE * Math.min(dpr, 2)),
+    );
+    canvas.width = this.bufferWidth;
+    canvas.height = this.bufferHeight;
 
     this.blit = program(gl, BLIT_VS, BLIT_FS);
     this.composite = program(gl, BLIT_VS, COMPOSITE_FS);
@@ -347,19 +374,23 @@ export class GarmentGLRenderer {
     this.midTex = makeVideoTexture(gl);
     this.fgTex = makeVideoTexture(gl);
 
-    this.scratchTex = makeTexture(gl, SCRATCH_TEX_SIZE, SCRATCH_TEX_SIZE);
+    this.scratchTex = makeTexture(gl, this.scratchTexSize, this.scratchTexSize);
     this.scratchFbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.scratchFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.scratchTex, 0);
     this.clearScratch();
 
-    this.fgColorTex = makeTexture(gl, width, height);
+    this.fgColorTex = makeTexture(gl, this.bufferWidth, this.bufferHeight);
     this.fgFbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fgColorTex, 0);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  }
+
+  private setBufferViewport() {
+    this.gl.viewport(0, 0, this.bufferWidth, this.bufferHeight);
   }
 
   // Drop the "last good frame" memory so a card switch doesn't briefly composite
@@ -411,7 +442,7 @@ export class GarmentGLRenderer {
   clearScratch() {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.scratchFbo);
-    gl.viewport(0, 0, SCRATCH_TEX_SIZE, SCRATCH_TEX_SIZE);
+    gl.viewport(0, 0, this.scratchTexSize, this.scratchTexSize);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -421,7 +452,7 @@ export class GarmentGLRenderer {
   paintScratch(u: number, v: number, radius: number) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.scratchFbo);
-    gl.viewport(0, 0, SCRATCH_TEX_SIZE, SCRATCH_TEX_SIZE);
+    gl.viewport(0, 0, this.scratchTexSize, this.scratchTexSize);
     gl.useProgram(this.paint);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.MAX);
@@ -639,7 +670,7 @@ export class GarmentGLRenderer {
     this.lastFrontPresentCamera = cam;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -659,7 +690,7 @@ export class GarmentGLRenderer {
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -671,7 +702,7 @@ export class GarmentGLRenderer {
     this.fgEverReady = true;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.useProgram(this.composite);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
@@ -725,7 +756,7 @@ export class GarmentGLRenderer {
     this.lastFrontPresentCamera = frontCam;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -743,7 +774,7 @@ export class GarmentGLRenderer {
 
     if (frontReady) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
-      gl.viewport(0, 0, this.width, this.height);
+      this.setBufferViewport();
       gl.disable(gl.BLEND);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -756,7 +787,7 @@ export class GarmentGLRenderer {
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.useProgram(this.composite);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
@@ -799,7 +830,7 @@ export class GarmentGLRenderer {
 
     // 1. bottom video to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -819,7 +850,7 @@ export class GarmentGLRenderer {
     if (!hideForeground && fgFresh) {
       // 2. keyed foreground into fgFbo (reference frame — no camera/overscan)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
-      gl.viewport(0, 0, this.width, this.height);
+      this.setBufferViewport();
       gl.disable(gl.BLEND);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -837,7 +868,7 @@ export class GarmentGLRenderer {
     if (!hideForeground) {
     // 4. composite fg (with holes) over the bottom video on screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    this.setBufferViewport();
     gl.useProgram(this.composite);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
