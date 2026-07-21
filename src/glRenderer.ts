@@ -268,11 +268,10 @@ export class GarmentGLRenderer {
   /** Logical game coordinates (mesh / pointers) — always 390×672 for photo path. */
   private width: number;
   private height: number;
-  /** Drawing-buffer / FBO size in device pixels (= logical × pixelRatio). */
+  /** Drawing-buffer / FBO size in device pixels (= logical × DPR). */
   private bufferWidth: number;
   private bufferHeight: number;
   private scratchTexSize: number;
-  private pixelRatio: number;
 
   private blit: WebGLProgram;
   private composite: WebGLProgram;
