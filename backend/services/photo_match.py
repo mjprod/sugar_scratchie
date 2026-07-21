@@ -367,7 +367,7 @@ def _garment_composite(
     bikini_rgb: np.ndarray,
     clothes_rgb: np.ndarray,
     gen,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray | None]:
     """Bikini plate + feathered garment paste from the aligned top.
 
     Returns ``(composite_rgb, garment_alpha)`` where alpha is float32 0..1.
