@@ -24,7 +24,9 @@ SCRIPT = ROOT / "scripts" / "add-garment-mask.py"
 AUTO_MASK_SOURCE = "garment"
 AUTO_THRESHOLD = 0.22
 AUTO_PIXEL_DILATE = 3
-AUTO_GRID_DILATE = 2
+# One extra lattice ring so sleeve/collar/hem fringe is scratchable without a
+# manual Grow +1 in the mask editor (keep in lockstep with photo_mesh.py).
+AUTO_GRID_DILATE = 3
 AUTO_SAMPLE_FRAMES = 60
 AUTO_MAX_COVERAGE = 0.72
 

@@ -100,10 +100,14 @@ MOTION_ENHANCE_SYSTEM = (
     "in every frame. (4) Lock identity continuity: same face, hair, and skin tone in "
     "every frame — same undertone and lightness, no skin color flicker, no sudden "
     "tanning/paling, no beauty-filter shifts. (5) Prefer a seamless looping boomerang "
-    "unless the user asked otherwise. (6) Do NOT invent new scenery, wardrobe changes, "
-    "or camera moves. (7) Output ONLY the rewritten prompt, one paragraph, no preamble "
-    "or quotes."
-)
+    "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
+    "(e.g. nurse clinic, hospital room, police station, beach, neon city), KEEP and "
+    "STRENGTHEN that: place her in a clearly recognizable themed environment. Completely "
+    "replace ANY existing background — city skylines, balconies, streets, outdoors, busy "
+    "photos, studio, or plain walls — not only blank backdrops. Do NOT strip theme or "
+    "scenery requests. Do NOT invent unrelated wardrobe changes beyond what the user wrote "
+    "(bikini in step 1 stays a bikini). (7) Output ONLY the rewritten prompt, one "
+    "paragraph, no preamble or quotes.")
 
 DRESS_CAPTION_SYSTEM = (
     "You describe clothing for a video EDIT prompt. Look ONLY at the outfit worn "
@@ -124,7 +128,11 @@ DRESS_ENHANCE_SYSTEM = (
     "described — both top and bottom, not a skirt overlay on a bikini. Describe "
     "fabric, apparent color, cut, length, fit, AND any emissive glow/neon/luminous "
     "shine on the garment vividly — garment glow is part of the outfit, not a scene "
-    "effect; preserve glow intensity from the reference description. (2) Keep the "
+    "effect; preserve glow intensity from the reference description. If the user "
+    "names a themed costume or role (police, nurse, beach cover-up, etc.), keep that "
+    "theme unmistakable — do NOT replace it with a generic evening gown. If a "
+    "reference-outfit caption is present, that outfit wins over any conflicting "
+    "description. (2) Keep the "
     "EXACT same background, scenery, lighting, shadows, and environment as the "
     "input video — do NOT replace the background with a green screen or any other "
     "scene. (3) Keep the same person, face, identity, hair, and skin tone "
@@ -335,9 +343,7 @@ def format_http_error(exc: urllib.error.HTTPError, body: str) -> str:
         if "content moderation" in lowered:
             return (
                 "xAI rejected the result (content moderation). "
-                "Step 2 sends your approved bikini clip to x.ai — it scans the video frames, "
-                "not just the dress prompt. Switch Step 2 to WaveSpeed WAN 2.2 Video Edit, "
-                "or use Upload for a pre-made foreground clip."
+                "Try WaveSpeed instead of x.ai, soften the prompt, or upload a file instead."
             )
         return f"xAI API error: {err}"
     return f"API error {exc.code}:\n{body}"
@@ -636,6 +642,227 @@ def normalize_background_motion_prompt(prompt: str) -> str:
     return prompt.strip()
 
 
+def scenery_edit_prompt(theme: str) -> str:
+    scenery = (theme or "").strip() or "warm beach"
+    return (
+        f"Replace the entire background behind the person with a vividly recognizable {scenery} "
+        f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
+        "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
+        "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
+        "body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, "
+        "or reframe. Only change the background scenery."
+    )
+
+
+def edit_image_scenery(
+    *,
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
+    key = api_key()
+    text = scenery_edit_prompt(theme)
+    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}) ...")
+    result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image)
+    _save_image_response(result, out)
+    return out
+
+
+# Per-slot pose / composition variety for bikini (and scene mood for backgrounds).
+PHOTO_SCRATCH_POSE_VARIATIONS = [
+    "standing centered, hands on hips, confident front-facing pose",
+    "three-quarter turn toward camera, one hand in hair",
+    "leaning casually against furniture or a wall prop in the scene",
+    "seated on the edge of a chair or desk in the scene, legs crossed",
+    "walking pose mid-stride toward camera, full body",
+    "slight crouch / ready stance, weight on one leg",
+    "hands clasped behind back, upright stance",
+    "one hand on a desk or prop, looking over shoulder",
+    "arms crossed, relaxed hip cock, medium-wide framing",
+    "soft S-curve pose, weight shifted, looking at camera",
+]
+
+PHOTO_SCRATCH_SCENE_VARIATIONS = [
+    "warm amber tones",
+    "cool blue tones",
+    "dramatic side lighting",
+    "bright natural window light",
+    "moody low-key lighting",
+    "pastel colour palette",
+    "dark richly saturated palette",
+    "golden hour glow",
+    "high-contrast cinematic lighting",
+    "vivid neon accent lighting",
+]
+
+
+def photo_scratch_background_prompt(theme: str, variation: str = "") -> str:
+    """Empty scene plate only — never include the girl (she is composited in the bikini step)."""
+    scenery = (theme or "").strip() or "stylish"
+    hint = f" {variation.strip()}." if variation.strip() else ""
+    return (
+        f"Empty {scenery} themed room/scene backdrop only — no people, no faces, no body. "
+        f"Photorealistic, soft professional lighting, 9:16 vertical, suitable as a "
+        f"scratch-card background plate.{hint}"
+    )
+
+
+def photo_scratch_bikini_prompt(
+    theme: str,
+    variation: str = "",
+    *,
+    with_background: bool = False,
+) -> str:
+    """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene."""
+    scenery = (theme or "").strip() or "stylish"
+    pose = (variation or "").strip() or PHOTO_SCRATCH_POSE_VARIATIONS[0]
+    if with_background:
+        return (
+            f"Two references: reference 1 = ENVIRONMENT (the full room/scene), "
+            f"reference 2 = WOMAN (her face and body only). "
+            f"Place the woman from reference 2 standing naturally INSIDE the scene from reference 1. "
+            f"Rules: "
+            f"(1) Her feet must rest on the floor of the scene — correct perspective and scale for the room. "
+            f"(2) Full body from head to toe clearly visible. She must fill the 9:16 frame — "
+            f"head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
+            f"Do NOT zoom out or leave large empty space above/below her. "
+            f"(3) She wears a flattering {scenery} bikini/swimwear. "
+            f"(4) Pose: {pose}. "
+            f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
+            f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
+            f"(7) Keep face, hair colour, skin tone, and body proportions exactly from reference 2. "
+            f"(8) Do not invent a different woman. Photorealistic."
+        )
+    return (
+        f"Using this exact same woman from the reference image, change her outfit to a "
+        f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
+        f"Keep face, identity, hair, skin tone, and body proportions. "
+        f"Clean studio backdrop (no busy scene). "
+        f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+    )
+
+
+def photo_scratch_clothes_pose_locks() -> str:
+    """Shared limb / orientation locks for top-layer edits (raised-arm poses fail often)."""
+    return (
+        "FRONT VIEW ONLY — she faces the camera exactly as in the reference. "
+        "Do NOT show her back, rear shoulder blade, spine, or buttocks. "
+        "Do NOT twist the torso so one side looks like a back view. "
+        "If an arm is raised (hand in hair / behind head), keep that exact raised-arm "
+        "silhouette: same elbow height, same underarm opening, same hand in the hair — "
+        "only change fabric on that arm. Do not invent a second sleeve, a flat blue "
+        "panel, or a back-of-body fill in the armpit gap. "
+        "Exactly one left arm and one right arm in the same places as the reference — "
+        "no ghost limbs, no duplicate sleeves, no extra hands."
+    )
+
+
+def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
+    """Top layer must fully cover the bikini body — only the outfit fabric changes."""
+    scenery = (theme or "").strip() or "stylish"
+    hint = f" Outfit detail: {variation.strip()}." if variation.strip() else ""
+    return (
+        f"Change ONLY the bikini fabric to a fully clothed {scenery} costume — nothing else. "
+        f"The body underneath does NOT change: every curve, the bust size and projection, "
+        f"waist, and hips stay exactly as they appear in the reference. "
+        f"Make the costume a little bigger / fuller than a skintight wrap: slightly looser "
+        f"sleeves, bodice, and skirt so fabric covers a bit past the bikini silhouette. "
+        f"OPAQUE full coverage — no sheer fabric, no open zipper, no see-through panels. "
+        f"The bikini must be completely hidden; no bikini print or skin where clothing "
+        f"should be (sides, underarms, chest, hem). "
+        f"Do not flatten, reduce, or reshape the chest or any other curve. "
+        f"CRITICAL — the following must also be completely identical to the reference: "
+        f"camera zoom level, focal length, crop, frame edges, body scale in frame, "
+        f"head position in frame, feet position in frame, "
+        f"body pose, arm angles, elbow bends, hand positions, hip stance, leg placement, "
+        f"face, identity, hair, skin tone, background, room, lighting, shadow direction, "
+        f"and BODY SHAPE — bust size, waist curve, hip width must be identical to the reference. "
+        f"{photo_scratch_clothes_pose_locks()} "
+        f"The outfit MUST fully cover the bikini body with a little extra fabric volume — "
+        f"not skintight-shrunk. "
+        f"Do NOT zoom out, widen the shot, or move the camera — the girl must fill "
+        f"the same area of the 9:16 frame as in the reference.{hint} "
+        f"FACE LOCK — keep her face identical to the reference: same eyes, nose, mouth, "
+        f"and expression. No horizontal seams, smears, double mouths, or sliced nose "
+        f"across the face. Sharp, natural skin — not airbrushed. "
+        f"Photorealistic. Do not invent a different woman."
+    )
+
+
+def photo_scratch_custom_locks_source_pose(prompt: str) -> bool:
+    """True when a user/FE prompt still asks to clone the source pose/studio wall."""
+    lowered = (prompt or "").lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "pose, and framing identical",
+            "body, pose",
+            "keep face, identity, hair, skin tone, body, pose",
+            "transparent-friendly backdrop",
+            "clean studio",
+        )
+    )
+
+
+def photo_scratch_prompt_with_background(custom: str, *, has_background: bool, pose: str = "") -> str:
+    """When a custom prompt is used with a bg plate, force scene placement + optional pose."""
+    text = (custom or "").strip()
+    if not text or not has_background:
+        return text
+    if photo_scratch_custom_locks_source_pose(text):
+        # Stale studio/pose-lock text — rebuild from the with-bg template using theme words if any.
+        return ""
+    lowered = text.lower()
+    extras: list[str] = []
+    if "environment" not in lowered and "reference 1" not in lowered and "second reference" not in lowered:
+        extras.append(
+            "Use reference 1 as the full environment and reference 2 as the woman; "
+            "completely replace her source backdrop with the environment."
+        )
+    if pose and pose.lower() not in lowered:
+        extras.append(f"Pose and framing for this card: {pose}.")
+    if not extras:
+        return text
+    return f"{text} {' '.join(extras)}"
+
+
+def edit_photo_scratch_layer(
+    *,
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    background_image: str | Path | None = None,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Image-edit the Flow source girl (optionally onto a background) for a photo-scratch layer.
+
+    When a background plate is present, send ENVIRONMENT first then WOMAN so models attend to
+    the scene instead of cloning the source wall.
+    """
+    key = api_key()
+    if background_image is not None:
+        images: list[str | Path] = [background_image, source_image]
+        print("Editing photo-scratch layer (2 refs: environment + woman) ...")
+        result = _edit_image(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            key=key,
+            images=images,
+        )
+    else:
+        print("Editing photo-scratch layer (1 ref: woman) ...")
+        result = _edit_image(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            key=key,
+            image=source_image,
+        )
+    _save_image_response(result, out)
+    return out
+
+
 def swap_face_on_image(
     *,
     base_image: str | Path,
@@ -732,16 +959,12 @@ def edit_video(
 
     final_prompt = prompt
     reference_str = str(reference_image).strip() if reference_image is not None else ""
+    caption = ""
     if reference_str:
         print(f"Captioning dress reference image via {vision_model()} ...")
-        caption = describe_outfit(reference_str, key)
+        caption = describe_outfit(reference_str, key) or ""
         if caption:
             print(f"Reference outfit caption:\n  {caption}\n")
-            final_prompt = (
-                f"{final_prompt.rstrip()}\n\n"
-                f"Outfit from the reference image — match shape, color, and emissive "
-                f"glow/shine intensity exactly: {caption}"
-            )
         else:
             print("Warning: reference image provided but outfit caption was empty.")
 
@@ -749,6 +972,14 @@ def edit_video(
         print(f"Enhancing prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=enhance_system)
         print(f"Enhanced prompt:\n  {final_prompt}\n")
+
+    # Append reference LAST so the caption wins over any enhance rewrite.
+    if caption:
+        final_prompt = (
+            f"{final_prompt.rstrip()}\n\n"
+            f"CRITICAL — match the dress reference image outfit exactly "
+            f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+        )
 
     edit_model = video_edit_model(model)
     if edit_model != model:

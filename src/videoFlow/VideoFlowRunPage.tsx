@@ -16,6 +16,9 @@ export function VideoFlowRunPage() {
     setEnhancePrompt,
     image,
     setImage,
+    theme,
+    updateTheme,
+    applyThemeToPrompts,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,
@@ -107,6 +110,7 @@ export function VideoFlowRunPage() {
             dressVideoModel={dressVideoModel}
             enhancePrompt={enhancePrompt}
             image={image}
+            theme={theme}
             backgroundMotionPrompt={backgroundMotionPrompt}
             dressPrompt={dressPrompt}
             dressReferenceImage={dressReferenceImage}
@@ -123,6 +127,8 @@ export function VideoFlowRunPage() {
             faceImage={faceImage}
             baseImage={baseImage}
             onImageChange={setImage}
+            onThemeChange={updateTheme}
+            onApplyThemeToPrompts={applyThemeToPrompts}
             onBackgroundMotionPromptChange={setBackgroundMotionPrompt}
             onDressPromptChange={setDressPrompt}
             onDressReferenceImageChange={setDressReferenceImage}

@@ -1,8 +1,11 @@
 import {
+  backgroundMotionPromptForTheme,
   DEFAULT_BACKGROUND_MOTION_PROMPT,
   DEFAULT_VIDEO_FLOW_JSON,
-  LEGACY_BACKGROUND_MOTION_PROMPT,
-  LEGACY_LOCKED_CAMERA_MOTION_PROMPT,
+  dressPromptForTheme,
+  isStockBackgroundMotionPromptText,
+  isStockDressPromptText,
+  normalizeTheme,
   parseCompressPreset,
   stringifyVideoFlowJson,
   type CompressPreset,
@@ -22,7 +25,7 @@ export type DressVideoModel = "grok-imagine" | "wan-2.2-video-edit";
 
 export const DEFAULT_SOURCE_IMAGE_PROVIDER: AiProvider = "wavespeed";
 export const DEFAULT_SOURCE_IMAGE_MODEL: SourceImageModel = "seedream-v5-lite";
-export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "wan-2.2-video-edit";
+export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "grok-imagine";
 
 export function parseBackgroundVideoModel(value: unknown): BackgroundVideoModel {
   return value === "wan-2.2-spicy" ? "wan-2.2-spicy" : "grok-imagine";
@@ -70,21 +73,25 @@ export function isStockPortraitPrompt(prompt: string): boolean {
   );
 }
 
-function normalizeStoredMotionPrompt(prompt: string | undefined): string {
-  const stripped = (prompt ?? "").trim();
-  if (
-    !stripped ||
-    stripped === LEGACY_BACKGROUND_MOTION_PROMPT ||
-    stripped === LEGACY_LOCKED_CAMERA_MOTION_PROMPT ||
-    stripped === DEFAULT_BACKGROUND_MOTION_PROMPT
-  ) {
-    return DEFAULT_BACKGROUND_MOTION_PROMPT;
+function normalizeStoredMotionPrompt(prompt: string | undefined, theme: string): string {
+  const scenery = normalizeTheme(theme);
+  if (isStockBackgroundMotionPromptText(prompt ?? "", scenery)) {
+    return backgroundMotionPromptForTheme(scenery);
   }
-  return stripped;
+  return (prompt ?? "").trim() || DEFAULT_BACKGROUND_MOTION_PROMPT;
+}
+
+function normalizeStoredDressPrompt(prompt: string | undefined, theme: string): string {
+  const scenery = normalizeTheme(theme);
+  if (isStockDressPromptText(prompt ?? "", scenery)) {
+    return dressPromptForTheme(scenery);
+  }
+  return (prompt ?? "").trim();
 }
 
 export type StoredVideoFlowDraft = {
   image: string;
+  theme: string;
   backgroundMotionPrompt: string;
   foregroundMotionPrompt: string;
   dressPrompt: string;
@@ -117,13 +124,16 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredVideoFlowDraft>;
     if (!parsed.cardId && !parsed.image) return null;
+    const theme = normalizeTheme(parsed.theme);
     return {
       image: parsed.image ?? "",
-      backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt),
+      theme,
+      backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt, theme),
       foregroundMotionPrompt: normalizeStoredMotionPrompt(
         parsed.foregroundMotionPrompt || parsed.backgroundMotionPrompt,
+        theme,
       ),
-      dressPrompt: parsed.dressPrompt ?? "",
+      dressPrompt: normalizeStoredDressPrompt(parsed.dressPrompt, theme),
       dressReferenceImage: parsed.dressReferenceImage ?? "",
       cardId: parsed.cardId ?? "",
       cardLabel: parsed.cardLabel ?? "",
@@ -195,6 +205,7 @@ export function readFlowJsonText(): string {
 
 export function storedDraftFromApi(draft?: {
   image?: string;
+  theme?: string;
   background_motion_prompt?: string;
   foreground_motion_prompt?: string;
   dress_prompt?: string;
@@ -218,11 +229,13 @@ export function storedDraftFromApi(draft?: {
 }): StoredVideoFlowDraft | null {
   if (!draft?.card_id) return null;
   const sourceMode = draft.source_mode;
+  const theme = normalizeTheme(draft.theme);
   return {
     image: draft.image ?? "",
+    theme,
     backgroundMotionPrompt: draft.background_motion_prompt ?? "",
     foregroundMotionPrompt: draft.foreground_motion_prompt ?? "",
-    dressPrompt: draft.dress_prompt ?? "",
+    dressPrompt: normalizeStoredDressPrompt(draft.dress_prompt, theme),
     dressReferenceImage: draft.dress_reference_image ?? "",
     cardId: draft.card_id,
     cardLabel: draft.card_label ?? "",

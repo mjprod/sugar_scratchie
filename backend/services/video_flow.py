@@ -12,6 +12,9 @@ from fastapi import HTTPException
 
 from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths, create_card, update_card
 from backend.services.ai_provider import (
+    edit_clothes_layer,
+    edit_image_scenery,
+    edit_photo_scratch_layer,
     edit_video,
     generate_portrait_image,
     image_to_video,
@@ -27,6 +30,13 @@ from backend.services.grok import (
     is_stock_portrait_prompt,
     normalize_background_motion_prompt,
     output_video_ready,
+    PHOTO_SCRATCH_POSE_VARIATIONS,
+    PHOTO_SCRATCH_SCENE_VARIATIONS,
+    photo_scratch_background_prompt,
+    photo_scratch_bikini_prompt,
+    photo_scratch_clothes_prompt,
+    photo_scratch_custom_locks_source_pose,
+    photo_scratch_prompt_with_background,
     probe_video,
     request_id_sidecar,
 )
@@ -40,8 +50,11 @@ from backend.services.mesh_tracking import generate_mesh
 from backend.services.mesh_tune import build_mesh_tracking_env, mesh_tune_from_dict
 from backend.services.video_prep import (
     align_clip_to_reference,
+    detect_white_edge_frames,
+    ensure_pair_fps_match,
     finalize_card_videos,
     normalize_compress_preset,
+    trim_video_frames,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,7 +62,15 @@ CARDS_DIR = ROOT / "public" / "cards"
 MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
 
-VideoFlowStep = Literal["background", "dress", "card", "mesh", "symbols", "compress"]
+VideoFlowStep = Literal[
+    "background",
+    "trim",
+    "dress",
+    "card",
+    "mesh",
+    "symbols",
+    "compress",
+]
 MeshTracker = Literal["bootstapir", "cotracker", "blend"]
 MeshTrackerChoice = Literal["bootstapir", "cotracker", "blend", "all"]
 
@@ -59,9 +80,10 @@ MESH_TRACKERS: tuple[MeshTracker, MeshTracker, MeshTracker] = (
     "blend",
 )
 
-# Bikini background first (master motion), dress edit from it, then publish + track, compress last.
+# Bikini background → drop white edge frames → dress edit → publish + track → compress.
 STEP_ORDER: list[VideoFlowStep] = [
     "background",
+    "trim",
     "dress",
     "card",
     "mesh",
@@ -71,17 +93,19 @@ STEP_ORDER: list[VideoFlowStep] = [
 
 STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
     "background": [],
-    "dress": ["background"],
+    "trim": ["background"],
+    "dress": ["trim"],
     "card": ["background", "dress"],
     "mesh": ["card"],
     "symbols": ["mesh"],
     "compress": ["symbols"],
 }
 
-REVIEW_STEPS = frozenset({"background", "dress"})
+REVIEW_STEPS = frozenset({"background", "trim", "dress"})
 
 STEP_LABELS: dict[VideoFlowStep, str] = {
     "background": "Background bikini (image to video)",
+    "trim": "Fix frames (delete white frames)",
     "dress": "Foreground dress-up (video edit)",
     "card": "Create card",
     "mesh": "Generate mesh",
@@ -178,6 +202,106 @@ def state_path(work: Path) -> Path:
     return work / "state.json"
 
 
+def timings_path(work: Path) -> Path:
+    return work / "timings.json"
+
+
+def read_timings(work: Path) -> dict:
+    path = timings_path(work)
+    if not path.exists():
+        return {"steps": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"steps": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("steps"), dict):
+        return {"steps": {}}
+    return data
+
+
+def write_timings(work: Path, data: dict) -> None:
+    timings_path(work).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def record_step_started(work: Path, step: VideoFlowStep) -> None:
+    data = read_timings(work)
+    stamp = time.time()
+    data["steps"][step] = {"started_at": stamp}
+    if not data.get("flow_started_at"):
+        data["flow_started_at"] = stamp
+    # A step re-run invalidates any previous completion stamp.
+    if step != "compress":
+        data.pop("completed_at", None)
+    write_timings(work, data)
+
+
+def record_step_finished(work: Path, step: VideoFlowStep) -> None:
+    data = read_timings(work)
+    entry = data["steps"].get(step) or {}
+    stamp = time.time()
+    entry["ended_at"] = stamp
+    started = entry.get("started_at")
+    if isinstance(started, (int, float)):
+        entry["duration_seconds"] = round(stamp - started, 3)
+    data["steps"][step] = entry
+    write_timings(work, data)
+
+
+def record_step_approved(work: Path, step: VideoFlowStep) -> None:
+    data = read_timings(work)
+    entry = data["steps"].get(step) or {}
+    stamp = time.time()
+    entry.setdefault("started_at", stamp)
+    entry.setdefault("ended_at", stamp)
+    entry["approved_at"] = stamp
+    data["steps"][step] = entry
+    if not data.get("flow_started_at"):
+        data["flow_started_at"] = stamp
+    if step == "compress":
+        data["completed_at"] = stamp
+    write_timings(work, data)
+
+
+def clear_step_timing(work: Path, step: VideoFlowStep) -> None:
+    data = read_timings(work)
+    if step in data["steps"]:
+        del data["steps"][step]
+    data.pop("completed_at", None)
+    write_timings(work, data)
+
+
+def timings_summary(work: Path) -> dict:
+    """Per-step datetimes plus total time to create the card, for the dashboard."""
+    data = read_timings(work)
+    steps: dict[str, dict] = {}
+    total_duration = 0.0
+    for step in STEP_ORDER:
+        entry = data["steps"].get(step)
+        if not isinstance(entry, dict):
+            continue
+        duration = entry.get("duration_seconds")
+        if isinstance(duration, (int, float)):
+            total_duration += float(duration)
+        steps[step] = {
+            "started_at": entry.get("started_at"),
+            "ended_at": entry.get("ended_at"),
+            "approved_at": entry.get("approved_at"),
+            "duration_seconds": duration,
+        }
+    flow_started = data.get("flow_started_at")
+    completed = data.get("completed_at")
+    elapsed = None
+    if isinstance(flow_started, (int, float)) and isinstance(completed, (int, float)):
+        elapsed = round(float(completed) - float(flow_started), 3)
+    return {
+        "steps": steps,
+        "flow_started_at": flow_started,
+        "completed_at": completed,
+        "total_duration_seconds": round(total_duration, 3) if steps else None,
+        "total_elapsed_seconds": elapsed,
+    }
+
+
 def default_state() -> dict:
     return {"approved": []}
 
@@ -198,14 +322,24 @@ def read_state(work: Path) -> dict:
 
 def normalize_state(state: dict) -> dict:
     """Drop stale approvals from older pipeline versions or skipped dependencies."""
+    raw = [step for step in state["approved"] if step in STEP_ORDER]
+    # Pre-trim pipelines approved dress without a fix-frames step — backfill it.
+    later = {"dress", "card", "mesh", "symbols", "compress"}
+    if (
+        "background" in raw
+        and "trim" not in raw
+        and any(step in later for step in raw)
+    ):
+        insert_at = raw.index("background") + 1
+        raw = [*raw[:insert_at], "trim", *raw[insert_at:]]
     approved: list[VideoFlowStep] = []
     for step in STEP_ORDER:
-        if step not in state["approved"]:
+        if step not in raw:
             continue
         if all(dep in approved for dep in STEP_DEPS[step]):
             approved.append(step)
     if approved != state["approved"]:
-        state = {"approved": approved}
+        state = {**state, "approved": approved}
     return state
 
 
@@ -259,8 +393,13 @@ def artifact_paths(
         dress_preview = str(foreground_dressed.relative_to(ROOT))
     elif video_ok(card_fg) and "dress" in approved:
         dress_preview = str(card_fg.relative_to(ROOT))
+    trim_report = work / "trim-report.json"
+    trim_preview = ""
+    if trim_report.exists() and background_preview:
+        trim_preview = background_preview
     return {
         "background": [background_preview],
+        "trim": [trim_preview],
         "dress": [dress_preview],
         "card": [
             str(card_bg.relative_to(ROOT)) if video_ok(card_bg) else "",
@@ -314,6 +453,11 @@ def step_artifact_ready(
         report = work / "compress-report.json"
         video_ok = output_video_ready if probe_videos else video_file_present
         return video_ok(card_bg) and video_ok(card_fg) and report.exists()
+    if step == "trim":
+        report = work / "trim-report.json"
+        background_clip = _work_background_clip(work)
+        video_ok = output_video_ready if probe_videos else video_file_present
+        return bool(report.exists() and background_clip and video_ok(background_clip))
     paths = preview_paths(work, card_id, state, probe_videos=probe_videos)[step]
     if not paths:
         return False
@@ -395,7 +539,14 @@ def downstream_steps(step: VideoFlowStep) -> list[VideoFlowStep]:
 def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
     paths = _paths(work)
     files_by_step: dict[VideoFlowStep, list[Path]] = {
-        "background": [paths["background_raw"]],
+        "background": [
+            paths["background_raw"],
+            paths["background_source"],
+            paths["trim_report"],
+            work / "background-raw-grok-compatible.mp4",
+            paths["scenery_source"],
+        ],
+        "trim": [paths["trim_report"]],
         "dress": [paths["foreground_dressed"]],
         "compress": [
             work / "foreground-aligned-for-compress.mp4",
@@ -411,12 +562,14 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         rel_path.unlink(missing_ok=True)
         request_id_sidecar(rel_path).unlink(missing_ok=True)
 
+    if step == "trim" and output_video_ready(paths["background_source"]):
+        # Restore the pristine Grok clip so dress always sees the untrimmed source after reject.
+        shutil.copy2(paths["background_source"], paths["background_raw"])
+
     if step == "card":
-        card_dir = CARDS_DIR / card_id
-        if card_dir.exists():
-            for child in card_dir.iterdir():
-                child.unlink(missing_ok=True)
-            card_dir.rmdir()
+        # Keep published card videos on disk so a failed remake (or dress remake)
+        # does not blank the live gallery. Re-running Create card overwrites them.
+        pass
 
     if step == "mesh":
         for tracker in MESH_TRACKERS:
@@ -464,8 +617,11 @@ def approve_flow_step(
             if mesh_out.exists():
                 clear_symbol_points(mesh_out)
             _invalidate_after_mesh_switch(state)
+            for stale_step in ("symbols", "compress"):
+                clear_step_timing(work, stale_step)
         if step not in state["approved"]:
             state["approved"].append(step)
+        record_step_approved(work, step)
         write_state(work, state)
         return flow_state(card_id)
     if not step_artifact_ready(work, card_id, step, state):
@@ -482,7 +638,17 @@ def approve_flow_step(
         publish_mesh_choice(work, card_id, mesh_tracker)
     if step not in state["approved"]:
         state["approved"].append(step)
+        record_step_approved(work, step)
         if step == "background" and "dress" not in state["approved"]:
+            dressed = work / "foreground-dressed.mp4"
+            dressed.unlink(missing_ok=True)
+            request_id_sidecar(dressed).unlink(missing_ok=True)
+            # New bikini clip — drop prior fix-frames marker without restoring over the new raw.
+            paths = _paths(work)
+            paths["trim_report"].unlink(missing_ok=True)
+            if "trim" in state["approved"]:
+                state["approved"].remove("trim")
+        if step == "trim" and "dress" not in state["approved"]:
             dressed = work / "foreground-dressed.mp4"
             dressed.unlink(missing_ok=True)
             request_id_sidecar(dressed).unlink(missing_ok=True)
@@ -497,6 +663,7 @@ def reject_flow_step(card_id: str, step: VideoFlowStep) -> dict:
         if downstream in state["approved"]:
             state["approved"].remove(downstream)
         clear_step_outputs(work, card_id, downstream)
+        clear_step_timing(work, downstream)
     write_state(work, state)
     return flow_state(card_id)
 
@@ -619,7 +786,20 @@ def import_manual_clips(
     )
 
     state = read_state(work)
-    state["approved"] = ["background", "dress", "card"]
+    # Manual imports already skipped white-frame cleanup — mark trim done.
+    _ensure_background_source(work, paths)
+    _write_trim_report(
+        work,
+        {
+            "drop_start": 0,
+            "drop_end": 0,
+            "auto": False,
+            "manual_import": True,
+            "frames_before": None,
+            "frames_after": None,
+        },
+    )
+    state["approved"] = ["background", "trim", "dress", "card"]
     # Keep mesh/symbols if those artifacts already exist for this card.
     mesh_out = MESH_DIR / f"{card_id}.json"
     if mesh_out.exists():
@@ -627,9 +807,11 @@ def import_manual_clips(
         if symbol_points_complete(mesh_out):
             state["approved"].append("symbols")
     write_state(work, state)
+    for approved_step in state["approved"]:
+        record_step_approved(work, approved_step)
     print(
         f"Imported manual clips for {card_id} — "
-        "background, dress, and card marked approved."
+        "background, trim, dress, and card marked approved."
     )
     return flow_state(card_id)
 
@@ -641,24 +823,38 @@ def _publish_card(
     paths: dict[str, Path],
     model_id: str | None = None,
 ) -> None:
+    # The published pair must share one clock (same fps stamp + frame count) or
+    # the two free-running <video> elements drift apart during playback. Catch
+    # generator fps/padding defects here, before the clips are copied to the card.
+    try:
+        ensure_pair_fps_match(paths["background_raw"], paths["foreground_dressed"])
+    except RuntimeError as exc:
+        print(f"Warning: pair fps check failed for {card_id}: {exc}")
+
     work = paths["background_raw"].parent
     effective_model_id = model_id or _draft_model_id(work)
     background = str(paths["background_raw"].relative_to(ROOT))
     foreground = str(paths["foreground_dressed"].relative_to(ROOT))
-    card_dir = CARDS_DIR / card_id
-    if card_dir.exists():
-        card = update_card(
-            ROOT,
-            CARDS_DIR,
-            MESH_DIR,
-            card_id,
-            UpdateCardRequest(
-                label=card_label,
-                background=background,
-                foreground=foreground,
-                model_id=effective_model_id,
-            ),
-        )
+    bg_dst, fg_dst = card_paths(ROOT, CARDS_DIR, card_id)
+    # Prefer update only when both published videos already exist. An empty or
+    # half-written card dir is invisible to list_cards, so update_card 404s and
+    # the old "dir exists → update" branch deadlocked Create card forever.
+    if bg_dst.is_file() and fg_dst.is_file():
+        try:
+            card = update_card(
+                ROOT,
+                CARDS_DIR,
+                MESH_DIR,
+                card_id,
+                UpdateCardRequest(
+                    label=card_label,
+                    background=background,
+                    foreground=foreground,
+                    model_id=effective_model_id,
+                ),
+            )
+        except HTTPException as exc:
+            raise RuntimeError(str(exc.detail)) from exc
         print(f"Card updated: {card.id} ({card.label})")
         return
     try:
@@ -726,10 +922,14 @@ def recover_stale_approvals(
     # Published card implies background + dress + card were done, even if the
     # work-dir dress clip was cleaned up or only a grok-compatible bg remains.
     if published:
-        restored: list[VideoFlowStep] = ["background", "dress", "card"]
+        restored: list[VideoFlowStep] = ["background", "trim", "dress", "card"]
     elif background_clip and video_ok(background_clip):
         restored = ["background"]
+        if (work / "trim-report.json").exists():
+            restored.append("trim")
         if video_ok(paths["foreground_dressed"]):
+            if "trim" not in restored:
+                restored.append("trim")
             restored.append("dress")
     else:
         return False
@@ -782,6 +982,7 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
         == "approved",
         "mesh_compare": mesh_compare_entries(work, card_id),
         "compress_report": read_compress_report(card_id),
+        "timings": timings_summary(work),
         "recovered_approvals": recovered,
     }
 
@@ -819,13 +1020,17 @@ def save_flow_draft(
     ai_provider: str = "xai",
     source_image_model: str = "grok-imagine",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
+    theme: str = "",
 ) -> dict:
     work = work_dir(card_id)
+    existing = read_flow_draft(card_id) or {}
+    saved_theme = (theme or "").strip() or str(existing.get("theme") or "").strip()
     draft = {
         "image": str(image),
+        "theme": saved_theme,
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -929,8 +1134,13 @@ def _source_image_newer_than_background(
 
 
 def _clear_background_clip(paths: dict[str, Path]) -> None:
-    paths["background_raw"].unlink(missing_ok=True)
-    request_id_sidecar(paths["background_raw"]).unlink(missing_ok=True)
+    for key in ("background_raw", "background_source", "scenery_source", "trim_report"):
+        path = paths[key]
+        path.unlink(missing_ok=True)
+        request_id_sidecar(path).unlink(missing_ok=True)
+    compat = paths["background_raw"].with_name("background-raw-grok-compatible.mp4")
+    compat.unlink(missing_ok=True)
+    request_id_sidecar(compat).unlink(missing_ok=True)
 
 
 def invalidate_after_source_image_change(card_id: str) -> dict:
@@ -1019,6 +1229,248 @@ def run_generate_source_image(
     return patched
 
 
+def _resolve_photo_scratch_media(src: str) -> Path:
+    """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
+    from urllib.parse import unquote
+
+    trimmed = unquote(src.strip()).lstrip("/")
+    if trimmed.startswith("public/"):
+        trimmed = trimmed.removeprefix("public/")
+    path = ROOT / "public" / trimmed
+    if not path.is_file():
+        raise RuntimeError(f"Photo-scratch media not found: {src}")
+    return path
+
+
+def run_generate_photo_scratch_layer(
+    *,
+    card_id: str,
+    layer_type: str = "background",
+    theme: str = "",
+    count: int = 10,
+    provider: str = "xai",
+    image_model: str = "grok-imagine",
+    source_image: str = "",
+    slot_id: str = "",
+    prompt: str = "",
+) -> dict:
+    """Generate still images for one photo-scratch layer type.
+
+    If slot_id is set, only that one slot is generated (one-by-one AI).
+    Otherwise generates up to `count` slots (1..10).
+    """
+    from backend.cards import (
+        PHOTO_SCRATCH_LAYER_NAMES,
+        PHOTO_SCRATCH_SLOT_COUNT,
+        list_photo_scratch_slots,
+        public_url,
+        set_photo_scratch_pending_layer,
+        slot_layer_prompt,
+    )
+
+    if layer_type not in PHOTO_SCRATCH_LAYER_NAMES:
+        raise RuntimeError(f"Unknown photo-scratch layer: {layer_type}")
+
+    ai_provider = normalize_provider(provider)
+    source_image_model = normalize_source_image_model(image_model, provider=provider)
+
+    pending_dir = CARDS_DIR / card_id / "photo-scratch" / "pending"
+    pending_dir.mkdir(parents=True, exist_ok=True)
+
+    theme_str = theme.strip()
+
+    slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme_str)
+    target_slot = (slot_id or "").strip()
+    if target_slot:
+        slots_to_run = [s for s in slots if s.id == target_slot]
+        if not slots_to_run:
+            raise RuntimeError(f"Slot not found: {target_slot}")
+    else:
+        slots_to_run = slots[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
+
+    written: list[str] = []
+
+    girl_path: Path | None = None
+    if layer_type in ("bikini", "clothes"):
+        raw_source = (source_image or "").strip()
+        if not raw_source:
+            draft = read_flow_draft(card_id) or {}
+            raw_source = str(draft.get("image") or "").strip()
+        if not raw_source:
+            raise RuntimeError(
+                "Bikini/clothes generation needs the Flow source image. "
+                "Set it in Setup first."
+            )
+        if raw_source.startswith(("http://", "https://")):
+            raise RuntimeError("Source image must be a local workspace path, not a URL.")
+        girl_path = Path(raw_source)
+        if not girl_path.is_absolute():
+            girl_path = ROOT / girl_path
+        if not girl_path.is_file():
+            raise RuntimeError(f"Source image not found: {raw_source}")
+
+    if layer_type == "clothes":
+        if target_slot:
+            slot0 = slots_to_run[0]
+            if not slot0.bikini:
+                raise RuntimeError(
+                    f"Approve bikini for {target_slot} first so the top matches that pose."
+                )
+        elif not any(s.bikini for s in slots):
+            raise RuntimeError(
+                "Approve at least one bikini first so top/clothes match the same girl and pose."
+            )
+
+    for slot in slots_to_run:
+        # Variation hint keyed off slot number so regenerations stay distinctive.
+        try:
+            slot_num = int(slot.id.replace("slot_", "")) - 1
+        except ValueError:
+            slot_num = 0
+        pose_hint = PHOTO_SCRATCH_POSE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_POSE_VARIATIONS)]
+        scene_hint = PHOTO_SCRATCH_SCENE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_SCENE_VARIATIONS)]
+        filename = f"{slot.id}_{layer_type}.jpg"
+        out = pending_dir / filename
+        out.unlink(missing_ok=True)
+        # Prefer per-slot, per-layer stored prompt; fall back to request-time override.
+        custom = slot_layer_prompt(slot, layer_type) or (prompt or "").strip()
+        try:
+            if layer_type == "bikini":
+                assert girl_path is not None
+                bg_path = (
+                    _resolve_photo_scratch_media(slot.background) if slot.background else None
+                )
+                with_bg = bg_path is not None
+                if with_bg and (not custom or photo_scratch_custom_locks_source_pose(custom)):
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=True
+                    )
+                elif with_bg:
+                    patched = photo_scratch_prompt_with_background(
+                        custom, has_background=True, pose=pose_hint
+                    )
+                    final_prompt = patched or photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=True
+                    )
+                elif custom and (
+                    "reference 1" in custom.lower()
+                    or "second reference" in custom.lower()
+                    or "environment" in custom.lower()
+                ):
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=False
+                    )
+                elif custom and not photo_scratch_custom_locks_source_pose(custom):
+                    final_prompt = f"{custom} Pose and framing for this card: {pose_hint}."
+                else:
+                    final_prompt = photo_scratch_bikini_prompt(
+                        theme_str, pose_hint, with_background=False
+                    )
+                if with_bg:
+                    print(
+                        f"Photo-scratch bikini {slot.id}: environment+woman composite, "
+                        f"pose={pose_hint[:48]}…"
+                    )
+                edit_photo_scratch_layer(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=final_prompt,
+                    out=out,
+                    source_image=girl_path,
+                    background_image=bg_path,
+                    aspect_ratio="9:16",
+                )
+            elif layer_type == "clothes":
+                if slot.bikini:
+                    # Bikini already has pose+scene; lock them for scratch alignment.
+                    edit_src = _resolve_photo_scratch_media(slot.bikini)
+                    bg_ref = None
+                elif girl_path is not None:
+                    edit_src = girl_path
+                    bg_ref = (
+                        _resolve_photo_scratch_media(slot.background)
+                        if slot.background
+                        else None
+                    )
+                else:
+                    print(f"Photo-scratch clothes: skip {slot.id} (need bikini)")
+                    continue
+                final_prompt = (
+                    f"{custom} Outfit accent: {scene_hint}."
+                    if custom
+                    else photo_scratch_clothes_prompt(theme_str, scene_hint)
+                )
+                # Flux Kontext keeps pose/frame/bg locked by construction — best for
+                # scratch alignment.  bg_ref is ignored (Kontext uses bikini as sole ref).
+                edit_clothes_layer(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=final_prompt,
+                    out=out,
+                    source_image=edit_src,
+                    aspect_ratio="9:16",
+                )
+            else:  # background — empty scene plate only
+                base = custom if custom else photo_scratch_background_prompt(theme_str)
+                generate_portrait_image(
+                    provider=ai_provider,
+                    image_model=source_image_model,
+                    prompt=f"{base}, {scene_hint}",
+                    out=out,
+                    aspect_ratio="9:16",
+                )
+
+            src = public_url(f"cards/{card_id}/photo-scratch/pending/{filename}")
+            set_photo_scratch_pending_layer(CARDS_DIR, card_id, slot.id, layer_type, src, theme_str)
+            written.append(slot.id)
+            print(f"Photo-scratch {layer_type} written: {out.name}")
+        except Exception as exc:
+            print(f"Photo-scratch {layer_type} {slot.id} failed: {exc}")
+            if target_slot:
+                raise
+
+    if not written:
+        raise RuntimeError(
+            f"No {layer_type} images were generated."
+            + (" For tops, approve the bikini on that card first." if layer_type == "clothes" else "")
+        )
+
+    # One-by-one: auto-approve so the slot fills immediately (no batch review needed).
+    if target_slot:
+        from backend.cards import approve_photo_scratch_layer
+
+        for sid in written:
+            approve_photo_scratch_layer(CARDS_DIR, card_id, sid, layer_type, theme_str)
+
+    return {
+        "card_id": card_id,
+        "layer": layer_type,
+        "slot_id": target_slot or None,
+        "generated": len(written),
+        "slots": written,
+        "auto_approved": bool(target_slot),
+    }
+
+
+def run_generate_photo_scratch_backgrounds(
+    *,
+    card_id: str,
+    theme: str = "",
+    count: int = 10,
+    provider: str = "xai",
+    image_model: str = "grok-imagine",
+) -> dict:
+    """Thin wrapper — prefer run_generate_photo_scratch_layer."""
+    return run_generate_photo_scratch_layer(
+        card_id=card_id,
+        layer_type="background",
+        theme=theme,
+        count=count,
+        provider=provider,
+        image_model=image_model,
+    )
+
+
 def read_flow_draft(card_id: str) -> dict | None:
     work = WORK_DIR / card_id
     path = draft_path(work)
@@ -1101,8 +1553,160 @@ def list_flows() -> list[dict]:
 def _paths(work: Path) -> dict[str, Path]:
     return {
         "background_raw": work / "background-raw.mp4",
+        "background_source": work / "background-source.mp4",
+        "scenery_source": work / "scenery-source.png",
+        "trim_report": work / "trim-report.json",
         "foreground_dressed": work / "foreground-dressed.mp4",
     }
+
+
+def _ensure_background_source(work: Path, paths: dict[str, Path] | None = None) -> Path:
+    """Keep a pristine copy of the Grok output for re-trimming / reset."""
+    paths = paths or _paths(work)
+    raw = paths["background_raw"]
+    source = paths["background_source"]
+    if not output_video_ready(raw):
+        card_bg = CARDS_DIR / work.name / "background.mp4"
+        if output_video_ready(card_bg):
+            shutil.copy2(card_bg, raw)
+        else:
+            raise RuntimeError("Background clip missing — run the bikini step first.")
+    if not output_video_ready(source):
+        shutil.copy2(raw, source)
+        print(f"Saved pristine background source: {source.name}")
+    return source
+
+
+def _write_trim_report(work: Path, report: dict) -> Path:
+    path = _paths(work)["trim_report"]
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_trim_report(work: Path) -> dict | None:
+    path = _paths(work)["trim_report"]
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def trim_step_info(card_id: str) -> dict:
+    """Detection + current trim state for the Fix frames dashboard step."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    paths = _paths(work)
+    source = _ensure_background_source(work, paths)
+    detection = detect_white_edge_frames(source)
+    applied = _read_trim_report(work)
+    clip = _work_background_clip(work)
+    revised_at = 0
+    if clip and clip.exists():
+        revised_at = int(clip.stat().st_mtime_ns // 1_000_000)
+    return {
+        "source": str(source.relative_to(ROOT)),
+        "clip": str(clip.relative_to(ROOT)) if clip else "",
+        "detection": detection,
+        "applied": applied,
+        "status": step_status(work, card_id, "trim", state),
+        "revised_at": revised_at,
+    }
+
+
+def apply_trim_step(
+    card_id: str,
+    *,
+    drop_start: int | None = None,
+    drop_end: int | None = None,
+    auto: bool = False,
+) -> dict:
+    """Apply (or re-apply) a white-frame trim to the bikini clip."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    if not step_unlocked(state, "trim"):
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    paths = _paths(work)
+    source = _ensure_background_source(work, paths)
+    detection = detect_white_edge_frames(source)
+    if auto or drop_start is None or drop_end is None:
+        start = int(detection["drop_start"])
+        end = int(detection["drop_end"])
+        auto = True
+    else:
+        start = int(drop_start)
+        end = int(drop_end)
+    record_step_started(work, "trim")
+    result = trim_video_frames(
+        source,
+        paths["background_raw"],
+        drop_start=start,
+        drop_end=end,
+    )
+    record_step_finished(work, "trim")
+    report = {
+        **results_to_json(result),
+        "auto": auto,
+        "detected_start": int(detection["drop_start"]),
+        "detected_end": int(detection["drop_end"]),
+    }
+    _write_trim_report(work, report)
+    # Re-applying invalidates dress and later steps.
+    if "trim" in state["approved"]:
+        state["approved"].remove("trim")
+    for downstream in downstream_steps("trim"):
+        if downstream == "trim":
+            continue
+        if downstream in state["approved"]:
+            state["approved"].remove(downstream)
+        clear_step_outputs(work, card_id, downstream)
+        clear_step_timing(work, downstream)
+    write_state(work, state)
+    print(
+        f"Trim applied: drop_start={start}, drop_end={end} "
+        f"({result['frames_before']} → {result['frames_after']} frames)"
+    )
+    flow = flow_state(card_id)
+    flow["trim"] = trim_step_info(card_id)
+    return flow
+
+
+def results_to_json(result: dict) -> dict:
+    return {
+        "drop_start": int(result["drop_start"]),
+        "drop_end": int(result["drop_end"]),
+        "frames_before": int(result["frames_before"]),
+        "frames_after": int(result["frames_after"]),
+        "fps": float(result["fps"]),
+        "duration_after": float(result["duration_after"]),
+    }
+
+
+def reset_trim_step(card_id: str) -> dict:
+    """Restore the pristine Grok clip and clear the trim artifact."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "background" not in state["approved"]:
+        raise RuntimeError("Approve the bikini background clip before fixing frames.")
+    clear_step_outputs(work, card_id, "trim")
+    for downstream in downstream_steps("trim"):
+        if downstream in state["approved"] and downstream != "trim":
+            state["approved"].remove(downstream)
+        if downstream != "trim":
+            clear_step_outputs(work, card_id, downstream)
+        clear_step_timing(work, downstream)
+    if "trim" in state["approved"]:
+        state["approved"].remove("trim")
+    write_state(work, state)
+    flow = flow_state(card_id)
+    flow["trim"] = trim_step_info(card_id)
+    return flow
 
 
 def run_mesh_candidate_generation(
@@ -1131,6 +1735,7 @@ def run_mesh_candidate_generation(
     card_dir = CARDS_DIR / card_id
     foreground = str((card_dir / "foreground.mp4").relative_to(ROOT))
     print(f"=== Mesh compare candidate: {tracker} ===")
+    record_step_started(work, "mesh")
     generate_mesh(
         build_mesh_tracking_env(
             input_video=foreground,
@@ -1140,6 +1745,7 @@ def run_mesh_candidate_generation(
         )
     )
     print(f"Candidate written: {candidate.name}")
+    record_step_finished(work, "mesh")
     try:
         generate_garment_mask(candidate)
     except Exception as exc:
@@ -1168,9 +1774,10 @@ def run_video_flow_step(
     force: bool = False,
     provider: str = "xai",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
+    theme: str = "",
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -1186,6 +1793,7 @@ def run_video_flow_step(
 
     save_flow_draft(
         image=image,
+        theme=theme,
         background_motion_prompt=background_motion_prompt,
         foreground_motion_prompt=background_motion_prompt,
         dress_prompt=dress_prompt,
@@ -1202,6 +1810,9 @@ def run_video_flow_step(
         dress_reference_image=dress_reference_image,
         mesh_tune=tune.model_dump(),
         ai_provider=ai_provider,
+        source_image_model=str(
+            (read_flow_draft(card_id) or {}).get("source_image_model") or "grok-imagine"
+        ),
         background_video_model=bg_video_model,
         dress_video_model=dress_model,
         compress_preset=delivery_preset,
@@ -1216,8 +1827,17 @@ def run_video_flow_step(
         raise RuntimeError(f"Approve the {STEP_LABELS[missing]} result before running this step.")
 
     if step in state["approved"] and not force:
-        print(f"Already approved — skipping {step}.")
-        return
+        if step_artifact_ready(work, card_id, step, state):
+            print(f"Already approved — skipping {step}.")
+            return
+        # Approved in state.json but files were deleted (empty public/cards/<id>/,
+        # wiped work dir, etc.). Fall through and rebuild instead of no-op success.
+        print(
+            f"{STEP_LABELS[step]} is marked approved but artifacts are missing — re-running."
+        )
+        if step in state["approved"]:
+            state["approved"].remove(step)
+            write_state(work, state)
 
     if step_artifact_ready(work, card_id, step, state) and not force and step in REVIEW_STEPS:
         if step == "background" and _source_image_newer_than_background(work, paths, image):
@@ -1240,10 +1860,38 @@ def run_video_flow_step(
         reject_flow_step(card_id, step)
         state = read_state(work)
 
+    record_step_started(work, step)
+    step_started = time.time()
+
     if step == "background":
         if _source_image_newer_than_background(work, paths, image):
             _clear_background_clip(paths)
         motion_prompt = normalize_background_motion_prompt(background_motion_prompt)
+        theme_text = (theme or "").strip() or str(
+            (read_flow_draft(card_id) or {}).get("theme") or ""
+        ).strip()
+        i2v_image: str | Path = image
+        if theme_text:
+            # Image-to-video keeps busy source backdrops (city balcony, etc.). Bake the
+            # themed scenery into a still first, then animate that frame.
+            scenery_still = paths["scenery_source"]
+            draft = read_flow_draft(card_id) or {}
+            source_model = normalize_source_image_model(
+                str(draft.get("source_image_model") or "grok-imagine"),
+                provider=str(draft.get("ai_provider") or ai_provider),
+            )
+            print(
+                f"Theme scenery bake ({theme_text}) via {source_model} "
+                "before image-to-video — I2V alone rarely replaces outdoor/city BGs."
+            )
+            edit_image_scenery(
+                provider=ai_provider,
+                image_model=source_model,
+                image=image,
+                theme=theme_text,
+                out=scenery_still,
+            )
+            i2v_image = scenery_still
         if bg_video_model == "wan-2.2-spicy":
             print("Background video: WaveSpeed WAN 2.2 Spicy (image-to-video)")
         else:
@@ -1251,7 +1899,7 @@ def run_video_flow_step(
         print("Motion prompt uses locked-camera framing (enhance when XAI_API_KEY is set).")
         image_to_video(
             provider=ai_provider,
-            image=image,
+            image=i2v_image,
             prompt=motion_prompt,
             out=paths["background_raw"],
             model=model,
@@ -1261,10 +1909,23 @@ def run_video_flow_step(
             background_video_model=bg_video_model,
             enhance_motion_prompt=True,
         )
+        # Always refresh the pristine source so Fix frames can reset / re-trim.
+        shutil.copy2(paths["background_raw"], paths["background_source"])
+        paths["trim_report"].unlink(missing_ok=True)
+        print(f"Saved pristine background source: {paths['background_source'].name}")
+    elif step == "trim":
+        apply_trim_step(card_id, auto=True)
     elif step == "dress":
         if not output_video_ready(paths["background_raw"]):
-            raise RuntimeError("Background clip missing — run the bikini step first.")
-        print("Dress edit uses the approved background clip as input (same motion and scenery).")
+            # Work-dir raw is often cleaned up after publish; restore from the card.
+            card_bg = CARDS_DIR / card_id / "background.mp4"
+            if output_video_ready(card_bg):
+                shutil.copy2(card_bg, paths["background_raw"])
+                print(f"Restored background clip from published card: {card_bg}")
+            else:
+                raise RuntimeError("Background clip missing — run the bikini step first.")
+        _ensure_background_source(work, paths)
+        print("Dress edit uses the approved (trimmed) background clip as input.")
         if dress_model == "wan-2.2-video-edit":
             print("Dress video: WaveSpeed WAN 2.2 Video Edit")
         else:
@@ -1391,6 +2052,9 @@ def run_video_flow_step(
         )
     else:  # pragma: no cover
         raise RuntimeError(f"Unknown step: {step}")
+
+    record_step_finished(work, step)
+    print(f"Step time: {step} finished in {time.time() - step_started:.1f}s")
 
     if step in REVIEW_STEPS:
         print(f"Step complete: {step} — preview the clip in the dashboard, then continue.")

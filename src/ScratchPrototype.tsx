@@ -730,13 +730,30 @@ const CHEST_SMOOTH = 0.08;
 // get its current canvas-pixel location (the mesh UV grid is regular 0..1).
 // sampleMeshUvToWorld lives in meshGeometry.ts
 
-// Drift past this (seconds) is a genuine discontinuity (loop wrap) and is the
-// only case we correct with a hard seek — seeks stall the decoder, and on
+// Drift past this (seconds) is a genuine discontinuity (loop wrap) and is
+// corrected immediately with a hard seek. Seeks stall the decoder, and on
 // Safari, whose currentTime is coarse, a low threshold makes us seek constantly
-// (every stale reading crosses it) which reads as continuous lag. Keep it high:
-// a normal startup offset is closed smoothly by the gentle rate steering below,
-// not by seeking.
+// (every stale reading crosses it) which reads as continuous lag — so keep it
+// high.
 const HARD_SEEK_DRIFT = 0.45;
+
+// Smaller but persistent drift (a startup offset between the two play() calls,
+// a decode stall, tab-suspend catch-up) is closed with a rare one-shot seek:
+// drift must hold past SOFT_SEEK_DRIFT for SOFT_SEEK_CONFIRM_MS before we act,
+// and corrections are spaced by SOFT_SEEK_COOLDOWN_MS so a single stale
+// currentTime reading (Safari updates at ~4 Hz) can't cause a seek storm.
+// 0.05s catches a 2-frame offset at 24fps (2×0.042=0.083s) and at 30fps
+// (2×0.033=0.067s), which 0.09s would silently ignore.
+// 150ms confirm is long enough to outlast one Safari polling interval (~250ms)
+// while still snapping within the first visible loop.
+const SOFT_SEEK_DRIFT = 0.05;
+const SOFT_SEEK_CONFIRM_MS = 150;
+const SOFT_SEEK_COOLDOWN_MS = 2000;
+
+const videoSyncState = new WeakMap<
+  HTMLVideoElement,
+  { driftSince: number; lastSeekAt: number }
+>();
 
 function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
   if (source.paused && !target.paused) {
@@ -760,19 +777,44 @@ function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
   // and pile on more seeks — a seek storm that looks like a hard stutter.
   if (target.seeking) return;
 
-  // Let the foreground free-run at 1×. The two clips are near-identical length,
-  // so left alone they stay visually locked. Actively steering the foreground
-  // (changing playbackRate / seeking it) knocks Safari's video decoder off its
-  // smooth-decode path, which starves the foreground to a few fps and makes it
-  // fall behind — the opposite of what the steering is trying to do.
+  // Let the foreground free-run at 1×. Continuously steering playbackRate
+  // knocks Safari's video decoder off its smooth-decode path, which starves the
+  // foreground to a few fps and makes it fall behind — the opposite of what the
+  // steering is trying to do. Corrections below are seeks only, and rare.
   if (target.playbackRate !== 1) target.playbackRate = 1;
 
   const targetTime = foregroundTimeFromBottom(source, target);
   const drift = targetTime - target.currentTime;
+  const now = performance.now();
+  let state = videoSyncState.get(target);
+  if (!state) {
+    state = { driftSince: 0, lastSeekAt: 0 };
+    videoSyncState.set(target, state);
+  }
 
-  // Only correct a genuine discontinuity (a loop wrap), with a single snap.
+  // A genuine discontinuity (loop wrap): snap immediately.
   if (Math.abs(drift) > HARD_SEEK_DRIFT) {
     target.currentTime = targetTime;
+    state.driftSince = 0;
+    state.lastSeekAt = now;
+    return;
+  }
+
+  // Sub-wrap drift: require it to persist before correcting, and never correct
+  // more often than the cooldown, so coarse/stale readings can't cause a storm.
+  if (Math.abs(drift) > SOFT_SEEK_DRIFT) {
+    if (state.driftSince === 0) {
+      state.driftSince = now;
+    } else if (
+      now - state.driftSince >= SOFT_SEEK_CONFIRM_MS &&
+      now - state.lastSeekAt >= SOFT_SEEK_COOLDOWN_MS
+    ) {
+      target.currentTime = targetTime;
+      state.driftSince = 0;
+      state.lastSeekAt = now;
+    }
+  } else {
+    state.driftSince = 0;
   }
 }
 
@@ -1218,7 +1260,7 @@ export function ScratchPrototype() {
         bottomVideo &&
         foregroundVideo &&
         bottomVideo.readyState >= 2 &&
-        foregroundVideo.readyState >= 1
+        foregroundVideo.readyState >= 2
       ) {
         syncVideoTime(bottomVideo, foregroundVideo);
       }
@@ -1533,6 +1575,10 @@ export function ScratchPrototype() {
     foregroundVideo.currentTime = 0;
 
     const kickPlayback = () => {
+      // Wait until BOTH videos have at least HAVE_CURRENT_DATA so their first
+      // decoded frame is ready. Firing play() on one while the other is still
+      // buffering creates a startup offset that the soft-seek must then chase.
+      if (bottomVideo.readyState < 2 || foregroundVideo.readyState < 2) return;
       const nextDuration = bottomVideo.duration || uiStateRef.current.duration;
       uiStateRef.current = {
         ...uiStateRef.current,
@@ -1540,15 +1586,18 @@ export function ScratchPrototype() {
         isPaused: false,
       };
       setDuration(nextDuration);
-      void bottomVideo.play().catch(() => undefined);
-      void foregroundVideo.play().catch(() => undefined);
+      // Start both in the same microtask so the browser schedules their decode
+      // pipelines as close together as possible.
+      void Promise.all([
+        bottomVideo.play(),
+        foregroundVideo.play(),
+      ]).catch(() => undefined);
     };
 
     bottomVideo.addEventListener("canplay", kickPlayback);
     foregroundVideo.addEventListener("canplay", kickPlayback);
-    if (bottomVideo.readyState >= 2 || foregroundVideo.readyState >= 2) {
-      kickPlayback();
-    }
+    // Fire immediately if both are already ready (e.g. cached from a prior card).
+    kickPlayback();
 
     return () => {
       bottomVideo.removeEventListener("canplay", kickPlayback);

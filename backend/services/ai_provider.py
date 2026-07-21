@@ -150,6 +150,143 @@ def swap_face_on_image(
     )
 
 
+def edit_image_scenery(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    image: str | Path,
+    theme: str,
+    out: Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
+    route = source_image_route(provider, image_model)
+    if route == "seedream-v5-lite":
+        return wavespeed.edit_image_scenery_seedream(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+        )
+    return _with_xai_fallback(
+        "scenery edit",
+        route,
+        lambda module: module.edit_image_scenery(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+        ),
+    )
+
+
+def edit_clothes_layer(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Generate the TOP (clothes) layer from the bikini using Flux Kontext Pro.
+
+    Kontext keeps every pixel that the prompt doesn't ask to change — pose, framing,
+    background, and face are locked by construction, so no Match alignment is needed.
+    Falls back to Grok edit when WaveSpeed key is unavailable.
+    """
+    route = source_image_route(provider, image_model)
+    if route in ("wavespeed", "seedream-v5-lite"):
+        return wavespeed.edit_clothes_layer_kontext(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+        )
+    # x.ai / Grok fallback — use standard single-image edit
+    if provider == "xai" and xai_key_available():
+        from backend.services import grok as grok_mod
+        return grok_mod.edit_photo_scratch_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+        )
+    return wavespeed.edit_clothes_layer_kontext(
+        prompt=prompt,
+        out=out,
+        source_image=source_image,
+        aspect_ratio=aspect_ratio,
+    )
+
+
+def edit_photo_scratch_layer(
+    *,
+    provider: AiProvider,
+    image_model: SourceImageModel = "grok-imagine",
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    background_image: str | Path | None = None,
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Keep the Flow source girl's identity while building bikini/clothes photo-scratch layers.
+
+    Girl + approved background needs a multi-image edit (x.ai or Seedream). WaveSpeed Grok
+    Imagine edit is single-image only — when WaveSpeed is selected with a background plate,
+    route through Seedream so we do not silently fall back to x.ai moderation.
+    """
+    route = source_image_route(provider, image_model)
+    needs_bg = background_image is not None
+
+    def _seedream_edit() -> Path:
+        # Environment first, woman second — matches photo_scratch bikini prompts.
+        if background_image is not None:
+            images = [background_image, source_image]
+        else:
+            images = [source_image]
+        payload = {
+            "prompt": prompt,
+            "images": [wavespeed.media_url(img, "image/png") for img in images],
+            "size": wavespeed.aspect_ratio_to_seedream_size(aspect_ratio),
+            "output_format": "png",
+            "enable_base64_output": False,
+            "enable_sync_mode": False,
+        }
+        wavespeed.run_image_task(
+            wavespeed.SEEDREAM_EDIT_PATH,
+            payload,
+            out,
+            label="seedream photo-scratch edit",
+        )
+        return out
+
+    if route == "seedream-v5-lite":
+        return _seedream_edit()
+
+    # WaveSpeed + background: Seedream can take both refs; Grok Imagine edit cannot.
+    if needs_bg and provider == "wavespeed":
+        print("Photo-scratch: using Seedream for girl+background composite (WaveSpeed)")
+        return _seedream_edit()
+
+    if provider == "xai" and xai_key_available():
+        return grok.edit_photo_scratch_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            background_image=background_image,
+            aspect_ratio=aspect_ratio,
+        )
+
+    # WaveSpeed single-image edit (outfit change only — no background plate).
+    return wavespeed.edit_photo_scratch_layer(
+        prompt=prompt,
+        out=out,
+        source_image=source_image,
+        aspect_ratio=aspect_ratio,
+    )
+
+
 def image_to_video(
     *,
     provider: AiProvider,
@@ -215,22 +352,25 @@ def edit_video(
     if dress_video_model == "wan-2.2-video-edit":
         final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""
+        caption = ""
         if (enhance or reference_str) and xai_key_available():
             key = grok.api_key()
             if reference_str:
                 print(f"Captioning dress reference image via {grok.vision_model()} ...")
-                caption = grok.describe_outfit(reference_str, key)
+                caption = grok.describe_outfit(reference_str, key) or ""
                 if caption:
                     print(f"Reference outfit caption:\n  {caption}\n")
-                    final_prompt = (
-                        f"{final_prompt.rstrip()}\n\n"
-                        f"Outfit from the reference image — match shape, color, and emissive "
-                        f"glow/shine intensity exactly: {caption}"
-                    )
             if enhance:
                 print(f"Enhancing dress prompt via {grok.chat_model()} (for WAN edit) ...")
                 final_prompt = grok.enhance_prompt(final_prompt, key, system=enhance_system)
                 print(f"Enhanced dress prompt:\n  {final_prompt}\n")
+            # Append reference LAST so the caption wins over any enhance rewrite.
+            if caption:
+                final_prompt = (
+                    f"{final_prompt.rstrip()}\n\n"
+                    f"CRITICAL — match the dress reference image outfit exactly "
+                    f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+                )
         elif enhance and not xai_key_available():
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
         wavespeed.edit_video_wan22(
