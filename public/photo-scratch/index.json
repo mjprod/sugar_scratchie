@@ -109,15 +109,6 @@
       "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json"
     },
     {
-      "id": "asian_2_slot_01",
-      "label": "warm beach \u2013 1",
-      "model_id": "asia",
-      "background": "/cards/asian_2/photo-scratch/pending/slot_01_background.jpg",
-      "bikini": "/cards/asian_2/photo-scratch/slot_01/bikini.png",
-      "clothes": "/cards/asian_2/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/asian_2/photo-scratch/slot_01/mesh.json"
-    },
-    {
       "id": "asian_2_slot_02",
       "label": "warm beach \u2013 2",
       "model_id": "asia",
@@ -269,6 +260,15 @@
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_01/clothes.png",
       "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_01/mesh.json"
+    },
+    {
+      "id": "asian_2_slot_01",
+      "label": "warm beach \u2013 1",
+      "model_id": "julianaval",
+      "background": "/cards/asian_2/photo-scratch/pending/slot_01_background.jpg",
+      "bikini": "/cards/asian_2/photo-scratch/slot_01/bikini.png",
+      "clothes": "/cards/asian_2/photo-scratch/slot_01/clothes.png",
+      "mesh": "/cards/asian_2/photo-scratch/slot_01/mesh.json"
     }
   ]
 }

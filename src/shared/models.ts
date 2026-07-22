@@ -428,7 +428,6 @@ export function photoScratchSlotIsDone(slot: PhotoScratchSlot): boolean {
       slot.bikini &&
       slot.clothes &&
       slot.has_match &&
-      slot.has_adjust &&
       slot.has_cutout &&
       slot.has_zoom &&
       slot.mesh &&

@@ -12,7 +12,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../shared/api";
 import {
-  confirmPhotoScratchSlotAdjust,
   cutoutPhotoScratchSlot,
   fetchPhotoScratchSlots,
   generatePhotoScratchSlotMesh,
@@ -31,7 +30,6 @@ import { VideoFlowShell } from "../videoFlow/VideoFlowShell";
 type StepId =
   | "layers"
   | "match"
-  | "adjust"
   | "cutout"
   | "zooming"
   | "mesh"
@@ -58,13 +56,6 @@ const STEPS: StepDef[] = [
     subtitle: "Line up bikini + top for the game",
     blurb:
       "Puts both layers on the same canvas so scratching the top reveals the bikini underneath without a double face.",
-  },
-  {
-    id: "adjust",
-    label: "Adjust",
-    subtitle: "Nudge scale / position",
-    blurb:
-      "If the top looks too small or shifted, nudge scale and position, then confirm before Cutout.",
   },
   {
     id: "cutout",
@@ -115,8 +106,6 @@ function stepDone(slot: PhotoScratchSlot, step: StepId): boolean {
       return layersComplete(slot);
     case "match":
       return Boolean(slot.has_match);
-    case "adjust":
-      return Boolean(slot.has_adjust);
     case "cutout":
       return Boolean(slot.has_cutout);
     case "zooming":
@@ -193,9 +182,6 @@ export function PictureFlowPage() {
     {},
   );
   const [fixMeshOpen, setFixMeshOpen] = useState(false);
-  const [nudgeScale, setNudgeScale] = useState("1");
-  const [nudgeTx, setNudgeTx] = useState("0");
-  const [nudgeTy, setNudgeTy] = useState("0");
   const [zoomScale, setZoomScale] = useState("1");
   const [zoomTx, setZoomTx] = useState("0");
   const [zoomTy, setZoomTy] = useState("0");
@@ -243,21 +229,6 @@ export function PictureFlowPage() {
 
   const slot = visibleSlots.find((s) => s.id === selectedSlotId) ?? null;
   const busy = Boolean(cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy);
-
-  useEffect(() => {
-    if (!slot?.has_match) return;
-    setNudgeScale(
-      slot.match_nudge_scale != null ? String(slot.match_nudge_scale) : "1",
-    );
-    setNudgeTx(slot.match_nudge_tx != null ? String(slot.match_nudge_tx) : "0");
-    setNudgeTy(slot.match_nudge_ty != null ? String(slot.match_nudge_ty) : "0");
-  }, [
-    slot?.id,
-    slot?.has_match,
-    slot?.match_nudge_scale,
-    slot?.match_nudge_tx,
-    slot?.match_nudge_ty,
-  ]);
 
   useEffect(() => {
     if (!slot?.has_cutout) return;
@@ -315,19 +286,6 @@ export function PictureFlowPage() {
     }
   }
 
-  function parseNudge() {
-    const scale = Number(nudgeScale);
-    const tx = Number(nudgeTx);
-    const ty = Number(nudgeTy);
-    if (!Number.isFinite(scale) || scale <= 0.1 || scale > 3) {
-      throw new Error("Scale must be between 0.1 and 3");
-    }
-    if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
-      throw new Error("tx / ty must be numbers");
-    }
-    return { scale, tx, ty };
-  }
-
   function parseZoom() {
     const scale = Number(zoomScale);
     const tx = Number(zoomTx);
@@ -339,42 +297,6 @@ export function PictureFlowPage() {
       throw new Error("tx / ty must be numbers");
     }
     return { scale, tx, ty };
-  }
-
-  async function handleAdjustNudge(slotId: string) {
-    if (!cardId || busy) return;
-    setMatchBusy(slotId);
-    setError("");
-    try {
-      const { scale, tx, ty } = parseNudge();
-      const job = await matchPhotoScratchSlot(cardId, slotId, "", {
-        scale,
-        tx,
-        ty,
-        confirmAdjust: true,
-      });
-      await pollJob(job.id, "Apply nudge");
-      await refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMatchBusy("");
-    }
-  }
-
-  async function handleConfirmAdjust(slotId: string) {
-    if (!cardId || busy) return;
-    setMatchBusy(slotId);
-    setError("");
-    try {
-      await confirmPhotoScratchSlotAdjust(cardId, slotId);
-      clearManualStep(slotId);
-      await refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMatchBusy("");
-    }
   }
 
   async function handleCutout(slotId: string) {
@@ -445,7 +367,9 @@ export function PictureFlowPage() {
     try {
       const job = await generatePhotoScratchSlotMesh(cardId, slotId);
       await pollJob(job.id, "Mesh generation");
-      clearManualStep(slotId);
+      // Stay on Mesh and open the mask editor — don't auto-advance to Symbols.
+      setManualStepBySlot((prev) => ({ ...prev, [slotId]: "mesh" }));
+      setFixMeshOpen(true);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -711,7 +635,7 @@ export function PictureFlowPage() {
                           Judge <strong>Top (matched)</strong> only — that is the game
                           layer. Ghost check is a deliberate 50/50 of bikini + top (double
                           face/body is expected). Difference highlights pixel mismatch.
-                          Proceed to Adjust.
+                          Proceed to Cutout.
                         </Callout.Text>
                       </Callout.Root>
                     ) : null}
@@ -727,106 +651,8 @@ export function PictureFlowPage() {
                     {slot.has_match ? (
                       <Callout.Root color="blue">
                         <Callout.Text>
-                          Next: <strong>Adjust</strong> if the top looks small or
-                          shifted, then Cutout.
-                        </Callout.Text>
-                      </Callout.Root>
-                    ) : null}
-                  </Flex>
-                ) : null}
-
-                {activeStep === "adjust" ? (
-                  <Flex direction="column" gap="4">
-                    <Callout.Root color="blue">
-                      <Callout.Text>
-                        Use the ghost check: if the top is too small, raise scale
-                        (e.g. 1.04). If it sits high, raise ty (moves down). Then
-                        Apply nudge, or Looks good if alignment is already fine.
-                      </Callout.Text>
-                    </Callout.Root>
-                    <Flex gap="2" wrap="wrap">
-                      {slot.clothes_matched ? (
-                        <MediaPreview
-                          label="Top (matched)"
-                          size="compact"
-                          type="image"
-                          value={slot.clothes_matched}
-                          zoomable
-                        />
-                      ) : null}
-                      {slot.match_blend ? (
-                        <MediaPreview
-                          label="Ghost check (50/50)"
-                          size="compact"
-                          type="image"
-                          value={`${slot.match_blend}?t=${slot.match_iou ?? 0}`}
-                          zoomable
-                        />
-                      ) : null}
-                      {slot.match_overlay ? (
-                        <MediaPreview
-                          label="Difference (QA)"
-                          size="compact"
-                          type="image"
-                          value={slot.match_overlay}
-                          zoomable
-                        />
-                      ) : null}
-                    </Flex>
-                    <Flex gap="3" wrap="wrap" align="end">
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          Scale
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="0.01"
-                          min="0.5"
-                          max="2"
-                          value={nudgeScale}
-                          onChange={(e) => setNudgeScale(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          1.04 = +4%
-                        </Text>
-                      </Flex>
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          tx (px)
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="1"
-                          value={nudgeTx}
-                          onChange={(e) => setNudgeTx(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          +right / −left
-                        </Text>
-                      </Flex>
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          ty (px)
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="1"
-                          value={nudgeTy}
-                          onChange={(e) => setNudgeTy(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          +down / −up
-                        </Text>
-                      </Flex>
-                    </Flex>
-                    {slot.has_adjust ? (
-                      <Callout.Root color="green">
-                        <Callout.Text>
-                          Adjust confirmed
-                          {slot.match_iou != null
-                            ? ` (IoU ${slot.match_iou.toFixed(3)})`
-                            : ""}
-                          . Proceed to Cutout.
+                          Next: <strong>Cutout</strong> when the matched top looks
+                          aligned.
                         </Callout.Text>
                       </Callout.Root>
                     ) : null}
@@ -1170,44 +996,14 @@ export function PictureFlowPage() {
                     </Flex>
                   ) : null}
 
-                  {activeStep === "adjust" ? (
-                    <Flex direction="column" gap="3" style={{ width: "100%" }}>
-                      <Flex gap="2" wrap="wrap">
-                        <Button
-                          color="red"
-                          disabled={busy || !slot.has_match}
-                          onClick={() => void handleAdjustNudge(slot.id)}
-                        >
-                          {matchBusy === slot.id ? (
-                            <Loader2 {...iconProps} className="spin" />
-                          ) : (
-                            <Play {...iconProps} />
-                          )}
-                          Apply nudge
-                        </Button>
-                        <Button
-                          variant="soft"
-                          disabled={busy || !slot.has_match}
-                          onClick={() => void handleConfirmAdjust(slot.id)}
-                        >
-                          Looks good
-                        </Button>
-                      </Flex>
-                      <Text color="gray" size="1">
-                        Apply nudge re-runs Match with scale/tx/ty. Looks good
-                        confirms without changes and unlocks Cutout.
-                      </Text>
-                    </Flex>
-                  ) : null}
-
                   {activeStep === "cutout" ? (
                     <Button
                       color="red"
-                      disabled={busy || !slot.has_adjust}
+                      disabled={busy || !slot.has_match}
                       title={
-                        slot.has_adjust
+                        slot.has_match
                           ? undefined
-                          : "Finish Adjust first (Looks good or Apply nudge)"
+                          : "Finish Match first (Register layers)"
                       }
                       onClick={() => void handleCutout(slot.id)}
                     >
