@@ -16,8 +16,7 @@
       "foreground": "/cards/julia_1/foreground.mp4",
       "mesh": "julia_1.json",
       "chroma_key": false,
-      "sort_order": 1,
-      "model_id": "glaucamp"
+      "sort_order": 1
     },
     {
       "id": "brazilian_1",
@@ -26,8 +25,7 @@
       "foreground": "/cards/brazilian_1/foreground.mp4",
       "mesh": "brazilian_1.json",
       "chroma_key": false,
-      "sort_order": 2,
-      "model_id": "glaucamp"
+      "sort_order": 2
     },
     {
       "id": "janja_1",
@@ -36,8 +34,7 @@
       "foreground": "/cards/janja_1/foreground.mp4",
       "mesh": "janja_1.json",
       "chroma_key": false,
-      "sort_order": 3,
-      "model_id": "glaucamp"
+      "sort_order": 3
     },
     {
       "id": "girl_1",
@@ -46,8 +43,7 @@
       "foreground": "/cards/girl_1/foreground.mp4",
       "mesh": "girl_1.json",
       "chroma_key": false,
-      "sort_order": 4,
-      "model_id": "glaucamp"
+      "sort_order": 4
     },
     {
       "id": "janja_2",
@@ -56,8 +52,7 @@
       "foreground": "/cards/janja_2/foreground.mp4",
       "mesh": "janja_2.json",
       "chroma_key": false,
-      "sort_order": 5,
-      "model_id": "glaucamp"
+      "sort_order": 5
     },
     {
       "id": "asian_1",
@@ -66,8 +61,7 @@
       "foreground": "/cards/asian_1/foreground.mp4",
       "mesh": "asian_1.json",
       "chroma_key": false,
-      "sort_order": 6,
-      "model_id": "glaucamp"
+      "sort_order": 6
     },
     {
       "id": "chinese_1",
@@ -76,8 +70,7 @@
       "foreground": "/cards/chinese_1/foreground.mp4",
       "mesh": "chinese_1.json",
       "chroma_key": false,
-      "sort_order": 7,
-      "model_id": "glaucamp"
+      "sort_order": 7
     },
     {
       "id": "girl_2",
@@ -86,8 +79,7 @@
       "foreground": "/cards/girl_2/foreground.mp4",
       "mesh": "girl_2.json",
       "chroma_key": false,
-      "sort_order": 8,
-      "model_id": "glaucamp"
+      "sort_order": 8
     },
     {
       "id": "julianaval_cop",

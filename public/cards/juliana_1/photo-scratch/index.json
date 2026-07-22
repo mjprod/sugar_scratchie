@@ -4,34 +4,40 @@
     "label": "Police \u2013 1",
     "background": "/cards/juliana_1/photo-scratch/pending/slot_01_background.jpg",
     "bikini": "/cards/juliana_1/photo-scratch/pending/slot_01_bikini.jpg",
-    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_01_clothes.jpg"
+    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_01_clothes.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_01_background.jpg"
   },
   {
     "id": "slot_02",
     "label": "Police \u2013 2",
     "background": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg",
     "bikini": "/cards/juliana_1/photo-scratch/pending/slot_02_bikini.jpg",
-    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_02_clothes.jpg"
+    "clothes": "/cards/juliana_1/photo-scratch/pending/slot_02_clothes.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg"
   },
   {
     "id": "slot_03",
     "label": "Police \u2013 3",
-    "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg"
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg"
   },
   {
     "id": "slot_04",
     "label": "Police \u2013 4",
-    "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg"
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg"
   },
   {
     "id": "slot_05",
     "label": "Police \u2013 5",
-    "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg"
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg"
   },
   {
     "id": "slot_06",
     "label": "Police \u2013 6",
-    "background": "/cards/juliana_1/photo-scratch/pending/slot_06_background.jpg"
+    "background": "/cards/juliana_1/photo-scratch/pending/slot_06_background.jpg",
+    "pending_bg": "/cards/juliana_1/photo-scratch/pending/slot_06_background.jpg"
   },
   {
     "id": "slot_07",

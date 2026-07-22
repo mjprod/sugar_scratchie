@@ -1,11 +1,6 @@
 {
   "models": [
     {
-      "id": "glaucamp",
-      "label": "Glauca",
-      "avatar": null
-    },
-    {
       "id": "julianaval",
       "label": "julianaval",
       "avatar": null
