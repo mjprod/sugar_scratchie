@@ -25,6 +25,7 @@ import {
   deletePhotoScratchLayer,
   fetchPhotoScratchSlots,
   generatePhotoScratchLayer,
+  photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
   setPhotoScratchSlotPrompt,
   slotLayerPrompt,
@@ -808,6 +809,24 @@ const LAYER_META: Record<"background" | "bikini" | "clothes", { label: string; s
 /** Slot grid columns and Generate-button order: Background → Bikini → Top. */
 const PHOTO_SCRATCH_LAYER_ORDER = ["background", "bikini", "clothes"] as const;
 
+function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
+  color: "green" | "orange" | "gray";
+  label: string;
+} {
+  if (photoScratchSlotIsDone(slot)) {
+    return { color: "green", label: "Photo scratch done" };
+  }
+  if (!(slot.background && slot.bikini && slot.clothes)) {
+    return { color: "gray", label: "Needs 3 layers" };
+  }
+  if (!slot.has_match) return { color: "orange", label: "3 layers · needs match" };
+  if (!slot.has_adjust) return { color: "orange", label: "3 layers · needs adjust" };
+  if (!slot.has_cutout) return { color: "orange", label: "3 layers · needs cutout" };
+  if (!slot.mesh) return { color: "orange", label: "3 layers · needs mesh" };
+  if (!slot.has_symbols) return { color: "orange", label: "3 layers · needs symbols" };
+  return { color: "orange", label: "3 layers · Picture Flow" };
+}
+
 function SlotLayerUpload({
   cardId,
   slotId,
@@ -1319,6 +1338,7 @@ function CardPhotosPanel({
   const layersCompleteCount = slots.filter(
     (s) => Boolean(s.background && s.bikini && s.clothes),
   ).length;
+  const photoScratchDoneCount = slots.filter((s) => photoScratchSlotIsDone(s)).length;
   const anyGenBusy = Object.keys(genJobs).length > 0;
   const hasSourceImage = Boolean(image.trim());
   const pictureFlowHref = cardId.trim()
@@ -1493,11 +1513,17 @@ function CardPhotosPanel({
           </Text>
           <Flex align="center" gap="2" mt="2" wrap="wrap">
             <Badge color={layersCompleteCount > 0 ? "green" : "gray"} variant="soft">
-              Ready: {layersCompleteCount}/10
+              Layers: {layersCompleteCount}/10
+            </Badge>
+            <Badge
+              color={photoScratchDoneCount > 0 ? "green" : "gray"}
+              variant="soft"
+            >
+              Done: {photoScratchDoneCount}/10
             </Badge>
             <Text color="gray" size="1">
               Upload 3 layers per card, then Create game → Picture Flow (cutout / mesh /
-              symbols).
+              symbols). Done = match + cutout + mesh + symbols.
             </Text>
           </Flex>
         </Box>
@@ -1671,7 +1697,13 @@ function CardPhotosPanel({
                 Photo cards
                 {hasAnyPending || anyGenBusy ? " (approved layers stay here while you review)" : ""}
               </Text>
-              {slots.map((slot, index) => (
+              {slots.map((slot, index) => {
+                const status = photoScratchSlotStatusBadge(slot);
+                const done = photoScratchSlotIsDone(slot);
+                const layersReady = Boolean(
+                  slot.background && slot.bikini && slot.clothes,
+                );
+                return (
                 <Box
                   key={slot.id}
                   style={{
@@ -1686,23 +1718,21 @@ function CardPhotosPanel({
                       {index + 1}. {slot.label}
                     </Text>
                     <Flex align="center" gap="2" wrap="wrap">
-                      <Badge
-                        color={
-                          slot.background && slot.bikini && slot.clothes ? "green" : "gray"
-                        }
-                        variant="soft"
-                      >
-                        {slot.background && slot.bikini && slot.clothes
-                          ? "3 layers ready"
-                          : "Needs 3 layers"}
+                      <Badge color={status.color} variant="soft">
+                        {status.label}
                       </Badge>
-                      {slot.background && slot.bikini && slot.clothes ? (
-                        <Button asChild color="green" size="1">
+                      {layersReady ? (
+                        <Button
+                          asChild
+                          color={done ? "gray" : "green"}
+                          size="1"
+                          variant={done ? "soft" : "solid"}
+                        >
                           <a
                             href={`${pictureFlowHref}&slot=${encodeURIComponent(slot.id)}`}
                           >
                             <Gamepad2 {...iconProps} />
-                            Create game
+                            {done ? "Open Picture Flow" : "Create game"}
                           </a>
                         </Button>
                       ) : null}
@@ -1745,7 +1775,8 @@ function CardPhotosPanel({
                     })}
                   </Grid>
                 </Box>
-              ))}
+                );
+              })}
             </Flex>
           ) : null}
 

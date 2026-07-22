@@ -215,6 +215,15 @@
       "bikini": "/cards/glaucamp_1/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/glaucamp_1/photo-scratch/slot_03/clothes.png",
       "mesh": "/cards/glaucamp_1/photo-scratch/slot_03/mesh.json"
+    },
+    {
+      "id": "glaucamp_1_slot_06",
+      "label": "Firegirl \u2013 6",
+      "model_id": "julianaval",
+      "background": "/cards/glaucamp_1/photo-scratch/pending/slot_06_background.jpg",
+      "bikini": "/cards/glaucamp_1/photo-scratch/slot_06/bikini.png",
+      "clothes": "/cards/glaucamp_1/photo-scratch/slot_06/clothes.png",
+      "mesh": "/cards/glaucamp_1/photo-scratch/slot_06/mesh.json"
     }
   ]
 }
