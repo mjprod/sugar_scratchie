@@ -13,7 +13,7 @@
       "bottom": "/cards/asia_gym/background.mp4",
       "foreground": "/cards/asia_gym/foreground.mp4",
       "mesh": "asia_gym.json",
-      "model_id": "asia"
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2",
@@ -21,7 +21,7 @@
       "bottom": "/cards/asia_gym2/background.mp4",
       "foreground": "/cards/asia_gym2/foreground.mp4",
       "mesh": "asia_gym2.json",
-      "model_id": "asia"
+      "model_id": "julianaval"
     },
     {
       "id": "asian_1",
@@ -29,7 +29,7 @@
       "bottom": "/cards/asian_1/background.mp4",
       "foreground": "/cards/asian_1/foreground.mp4",
       "mesh": "asian_1.json",
-      "model_id": "girl"
+      "model_id": "glaucamp"
     },
     {
       "id": "asian_2",
@@ -37,7 +37,7 @@
       "bottom": "/cards/asian_2/background.mp4",
       "foreground": "/cards/asian_2/foreground.mp4",
       "mesh": "asian_2.json",
-      "model_id": "asia"
+      "model_id": "julianaval"
     },
     {
       "id": "brazilian_1",
@@ -53,7 +53,7 @@
       "bottom": "/cards/chinese_1/background.mp4",
       "foreground": "/cards/chinese_1/foreground.mp4",
       "mesh": "chinese_1.json",
-      "model_id": "girl"
+      "model_id": "glaucamp"
     },
     {
       "id": "girl_1",
@@ -61,7 +61,7 @@
       "bottom": "/cards/girl_1/background.mp4",
       "foreground": "/cards/girl_1/foreground.mp4",
       "mesh": "girl_1.json",
-      "model_id": "girl"
+      "model_id": "glaucamp"
     },
     {
       "id": "girl_2",
@@ -69,7 +69,15 @@
       "bottom": "/cards/girl_2/background.mp4",
       "foreground": "/cards/girl_2/foreground.mp4",
       "mesh": "girl_2.json",
-      "model_id": "girl"
+      "model_id": "glaucamp"
+    },
+    {
+      "id": "glaucamp_1",
+      "label": "Glaucamp 1",
+      "bottom": "/cards/glaucamp_1/background.mp4",
+      "foreground": "/cards/glaucamp_1/foreground.mp4",
+      "mesh": "glaucamp_1.json",
+      "model_id": "julianaval"
     },
     {
       "id": "janja_1",
@@ -77,7 +85,7 @@
       "bottom": "/cards/janja_1/background.mp4",
       "foreground": "/cards/janja_1/foreground.mp4",
       "mesh": "janja_1.json",
-      "model_id": "janja"
+      "model_id": "glaucamp"
     },
     {
       "id": "janja_2",
@@ -85,7 +93,7 @@
       "bottom": "/cards/janja_2/background.mp4",
       "foreground": "/cards/janja_2/foreground.mp4",
       "mesh": "janja_2.json",
-      "model_id": "janja"
+      "model_id": "glaucamp"
     },
     {
       "id": "julia_1",
@@ -181,7 +189,7 @@
       "bottom": "/cards/thai_1/background.mp4",
       "foreground": "/cards/thai_1/foreground.mp4",
       "mesh": "thai_1.json",
-      "model_id": "asia"
+      "model_id": "julianaval"
     }
   ]
 }

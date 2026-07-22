@@ -2291,20 +2291,20 @@ dd {
     display: none;
   }
 
-.photo-scratch-settings {
-  display: none;
-}
+  .photo-scratch-settings {
+    display: none;
+  }
 
-.photo-scratch-controls {
-  position: fixed;
-  top: max(12px, env(safe-area-inset-top));
-  left: 12px;
-  right: 12px;
-  z-index: 6;
-  margin: 0;
-  gap: 6px;
-  pointer-events: none;
-}
+  .photo-scratch-controls {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: 12px;
+    right: 12px;
+    z-index: 6;
+    margin: 0;
+    gap: 6px;
+    pointer-events: none;
+  }
 
   .photo-scratch-controls > * {
     pointer-events: auto;

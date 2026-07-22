@@ -27,6 +27,7 @@ type TopSymbolBarProps = {
 function paintSlotCoating(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
+  const size = canvas.width;
   ctx.clearRect(0, 0, size, size);
   const gradient = ctx.createRadialGradient(
     size * 0.35,
@@ -248,9 +249,7 @@ export function TopSymbolBar({
             className={`symbol-slot top-symbol-slot${
               revealed ? " is-revealed" : ""
             }`}
-            title={
-              revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"
-            }
+            title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
             {revealed ? <GameSymbolIcon typeId={typeId} size={28} /> : null}
             {!revealed ? (

@@ -27,15 +27,20 @@ export const iconProps = {
   strokeWidth: 2.25,
 } as const;
 
+/** Public Vite/static paths — not absolute filesystem paths like /Users/... */
+const PUBLIC_SITE_PREFIXES = ["/cards/", "/mesh/", "/models/", "/api/"] as const;
+
 export function previewSource(value: string, cacheBust?: string | number) {
   const trimmed = value.trim();
   if (!trimmed) return "";
   // Absolute http(s)/data URLs, or public site paths (/cards/..., /mesh/...).
+  // Do NOT treat /Users/... or other FS absolutes as site URLs — those must go
+  // through /api/files/preview (otherwise <img> gets SPA HTML and fails).
   const isPublicUrl =
     trimmed.startsWith("http://") ||
     trimmed.startsWith("https://") ||
     trimmed.startsWith("data:") ||
-    (trimmed.startsWith("/") && !trimmed.startsWith("//"));
+    PUBLIC_SITE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
   if (isPublicUrl) {
     const join = trimmed.includes("?") ? "&" : "?";
     return cacheBust != null && cacheBust !== "" ? `${trimmed}${join}v=${cacheBust}` : trimmed;
