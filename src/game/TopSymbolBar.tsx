@@ -107,6 +107,8 @@ export function TopSymbolBar({
     });
   }, [symbols, forceRevealed, roundKey]);
 
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+
   const markRevealed = useCallback((index: number) => {
     if (revealedMaskRef.current[index]) return;
     const next = revealedMaskRef.current.slice();
@@ -119,39 +121,79 @@ export function TopSymbolBar({
     }
   }, []);
 
+  /** Pick only the circle under the finger — never multiple slots at once. */
+  function hitSlotIndex(clientX: number, clientY: number): number {
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < TOP_SYMBOL_COUNT; i += 1) {
+      if (revealedMaskRef.current[i]) continue;
+      const el = slotElsRef.current[i];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) / 2;
+      const dist = Math.hypot(clientX - cx, clientY - cy);
+      // Must be inside the circle (tiny slack for fat fingers, still < half gap).
+      if (dist <= radius + 4 && dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  const scratchSlot = useCallback(
+    (index: number, clientX: number, clientY: number) => {
+      const canvas = canvasElsRef.current[index];
+      if (!canvas || revealedMaskRef.current[index]) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = ((clientX - rect.left) / rect.width) * canvas.width;
+      const y = ((clientY - rect.top) / rect.height) * canvas.height;
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+      if (measureErasedRatio(canvas) >= REVEAL_THRESHOLD) {
+        markRevealed(index);
+      }
+    },
+    [markRevealed],
+  );
+
   const scratchAtPoint = useCallback(
     (clientX: number, clientY: number) => {
       if (phase !== "center") return;
-      for (let i = 0; i < TOP_SYMBOL_COUNT; i += 1) {
-        if (revealedMaskRef.current[i]) continue;
-        const canvas = canvasElsRef.current[i];
-        if (!canvas) continue;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) continue;
-        const rect = canvas.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) continue;
-        const x = ((clientX - rect.left) / rect.width) * canvas.width;
-        const y = ((clientY - rect.top) / rect.height) * canvas.height;
-        const pad = BRUSH_RADIUS * 1.4;
-        if (
-          x < -pad ||
-          y < -pad ||
-          x > canvas.width + pad ||
-          y > canvas.height + pad
-        ) {
-          continue;
-        }
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.beginPath();
-        ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalCompositeOperation = "source-over";
-        if (measureErasedRatio(canvas) >= REVEAL_THRESHOLD) {
-          markRevealed(i);
-        }
+      const index = hitSlotIndex(clientX, clientY);
+      if (index < 0) {
+        lastPointRef.current = { x: clientX, y: clientY };
+        return;
       }
+      const last = lastPointRef.current;
+      if (last) {
+        const dx = clientX - last.x;
+        const dy = clientY - last.y;
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 6));
+        for (let s = 1; s <= steps; s += 1) {
+          const t = s / steps;
+          const x = last.x + dx * t;
+          const y = last.y + dy * t;
+          // Stay locked to the slot under each sample so a stroke across the
+          // bar only scratches one circle at a time.
+          const stepIndex = hitSlotIndex(x, y);
+          if (stepIndex >= 0) scratchSlot(stepIndex, x, y);
+        }
+      } else {
+        scratchSlot(index, clientX, clientY);
+      }
+      lastPointRef.current = { x: clientX, y: clientY };
     },
-    [markRevealed, phase],
+    [phase, scratchSlot],
   );
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -160,6 +202,7 @@ export function TopSymbolBar({
     event.preventDefault();
     event.stopPropagation();
     drawingRef.current = true;
+    lastPointRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
     scratchAtPoint(event.clientX, event.clientY);
   }
@@ -173,6 +216,7 @@ export function TopSymbolBar({
 
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     drawingRef.current = false;
+    lastPointRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
