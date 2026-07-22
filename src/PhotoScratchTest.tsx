@@ -1408,16 +1408,16 @@ export function PhotoScratchTest() {
       );
       outcome = match.result;
     } else {
+      const LEGACY_WIN_MATCH_COUNT = 3;
       const counts = new Array(SYMBOL_TYPE_COUNT).fill(0);
       outcome = "lose";
       for (const id of sessionSymbolsRef.current) {
         counts[id] += 1;
-        if (counts[id] >= 3) {
+        if (counts[id] >= LEGACY_WIN_MATCH_COUNT) {
           outcome = "win";
           break;
         }
       }
-    }
     gameResultPendingRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>
