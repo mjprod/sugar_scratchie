@@ -39,6 +39,7 @@ import {
   assignCardToModel,
   createModel,
   createMotionCardDraft,
+  deleteCard,
   deleteModel,
   fetchModels,
   fetchPhotoScratchSlots,
@@ -324,11 +325,37 @@ export function ModelsPage() {
   }
 
   async function handleDeleteModel(modelId: string) {
-    if (!window.confirm(`Delete model “${modelId}”?`)) return;
+    const linked = cardsByModel.get(modelId) ?? [];
+    const cardNote =
+      linked.length > 0
+        ? ` This will also permanently delete ${linked.length} motion card${linked.length === 1 ? "" : "s"} (videos, photo-scratch, mesh, video-flow).`
+        : "";
+    if (!window.confirm(`Delete model “${modelId}”?${cardNote}`)) return;
     setBusy(true);
     setError("");
     try {
       await deleteModel(modelId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteCard(card: CardInfo) {
+    const kind = card.draft ? "draft motion card" : "motion card";
+    if (
+      !window.confirm(
+        `Delete ${kind} “${card.label}” (${card.id})?\n\nThis permanently removes videos, photo-scratch slots, mesh, video-flow work, and published photo games.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await deleteCard(card.id);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -691,6 +718,17 @@ export function ModelsPage() {
                               Edit
                             </a>
                           </Button>
+                          <Button
+                            color="red"
+                            disabled={busy}
+                            size="1"
+                            title="Delete motion card"
+                            variant="soft"
+                            onClick={() => void handleDeleteCard(card)}
+                          >
+                            <Trash2 {...iconProps} />
+                            Delete
+                          </Button>
                         </Flex>
                       </Table.Cell>
                     </Table.Row>
@@ -863,6 +901,7 @@ export function ModelsPage() {
                             modelId={model.id}
                             publishedIndex={publishedIndex}
                             publishedCount={publishedCards.length}
+                            onDelete={() => void handleDeleteCard(card)}
                             onDetach={() => void handleAssignCard(card.id, "")}
                             onMoveDown={() => void handleMoveCard(model.id, card.id, 1)}
                             onMoveUp={() => void handleMoveCard(model.id, card.id, -1)}
@@ -1007,6 +1046,7 @@ function MotionCardRow({
   modelId,
   publishedCount,
   publishedIndex,
+  onDelete,
   onDetach,
   onMoveDown,
   onMoveUp,
@@ -1018,6 +1058,7 @@ function MotionCardRow({
   modelId: string;
   publishedCount: number;
   publishedIndex: number;
+  onDelete: () => void;
   onDetach: () => void;
   onMoveDown: () => void;
   onMoveUp: () => void;
@@ -1142,6 +1183,18 @@ function MotionCardRow({
                 <X {...iconProps} />
               </Button>
             )}
+          </ActionSlot>
+          <ActionSlot>
+            <Button
+              color="red"
+              disabled={busy}
+              size="1"
+              title={isDraft ? "Delete draft motion card" : "Delete motion card"}
+              variant="ghost"
+              onClick={onDelete}
+            >
+              <Trash2 {...iconProps} />
+            </Button>
           </ActionSlot>
         </Flex>
       </div>

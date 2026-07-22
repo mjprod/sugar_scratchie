@@ -1253,14 +1253,18 @@ def run_generate_photo_scratch_layer(
     source_image: str = "",
     slot_id: str = "",
     prompt: str = "",
+    fill_empty_only: bool = True,
 ) -> dict:
     """Generate still images for one photo-scratch layer type.
 
     If slot_id is set, only that one slot is generated (one-by-one AI).
     Otherwise generates up to `count` slots (1..10).
+    When fill_empty_only is True, only slots missing approved and pending for
+    the layer are filled (top-up after deletes).
     """
     from backend.cards import (
         PHOTO_SCRATCH_LAYER_NAMES,
+        PHOTO_SCRATCH_PENDING_FIELDS,
         PHOTO_SCRATCH_SLOT_COUNT,
         list_photo_scratch_slots,
         public_url,
@@ -1285,8 +1289,47 @@ def run_generate_photo_scratch_layer(
         slots_to_run = [s for s in slots if s.id == target_slot]
         if not slots_to_run:
             raise RuntimeError(f"Slot not found: {target_slot}")
+    elif fill_empty_only:
+        approved_field, pending_field = PHOTO_SCRATCH_PENDING_FIELDS[layer_type]
+        empty = [
+            s
+            for s in slots
+            if not getattr(s, approved_field, None) and not getattr(s, pending_field, None)
+        ]
+        if layer_type == "bikini":
+            empty = [s for s in empty if s.background]
+        elif layer_type == "clothes":
+            empty = [s for s in empty if s.bikini]
+        if not empty:
+            if layer_type == "clothes":
+                raise RuntimeError(
+                    "No empty top slots with an approved bikini — "
+                    "approve bikinis first, or delete tops to refill."
+                )
+            if layer_type == "bikini":
+                raise RuntimeError(
+                    "No empty bikini slots with an approved background — "
+                    "approve backgrounds first, or delete bikinis to refill."
+                )
+            raise RuntimeError(
+                f"No empty {layer_type} slots to fill — delete some first."
+            )
+        slots_to_run = empty[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
     else:
         slots_to_run = slots[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
+        if layer_type == "clothes":
+            # Never invent tops without bikini (even on regenerate-all).
+            slots_to_run = [s for s in slots_to_run if s.bikini]
+            if not slots_to_run:
+                raise RuntimeError(
+                    "Approve at least one bikini first so top/clothes match the same girl and pose."
+                )
+        elif layer_type == "bikini":
+            slots_to_run = [s for s in slots_to_run if s.background]
+            if not slots_to_run:
+                raise RuntimeError(
+                    "Approve backgrounds first, then generate bikinis."
+                )
 
     written: list[str] = []
 
@@ -1381,27 +1424,18 @@ def run_generate_photo_scratch_layer(
                     aspect_ratio="9:16",
                 )
             elif layer_type == "clothes":
-                if slot.bikini:
-                    # Bikini already has pose+scene; lock them for scratch alignment.
-                    edit_src = _resolve_photo_scratch_media(slot.bikini)
-                    bg_ref = None
-                elif girl_path is not None:
-                    edit_src = girl_path
-                    bg_ref = (
-                        _resolve_photo_scratch_media(slot.background)
-                        if slot.background
-                        else None
-                    )
-                else:
+                if not slot.bikini:
                     print(f"Photo-scratch clothes: skip {slot.id} (need bikini)")
                     continue
+                # Bikini already has pose+scene; lock them for scratch alignment.
+                edit_src = _resolve_photo_scratch_media(slot.bikini)
                 final_prompt = (
                     f"{custom} Outfit accent: {scene_hint}."
                     if custom
                     else photo_scratch_clothes_prompt(theme_str, scene_hint)
                 )
                 # Flux Kontext keeps pose/frame/bg locked by construction — best for
-                # scratch alignment.  bg_ref is ignored (Kontext uses bikini as sole ref).
+                # scratch alignment.
                 edit_clothes_layer(
                     provider=ai_provider,
                     image_model=source_image_model,

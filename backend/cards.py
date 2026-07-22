@@ -420,13 +420,61 @@ def update_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str, reque
     )
 
 
+def prune_published_photo_scratch(root: Path, card_id: str) -> int:
+    """Remove published photo-scratch game entries for a motion card.
+
+    Entries are keyed `{card_id}_slot_XX` in public/photo-scratch/index.json.
+    Returns how many entries were removed.
+    """
+    index_path = root / "public" / "photo-scratch" / "index.json"
+    if not index_path.exists():
+        return 0
+    try:
+        data = json.loads(index_path.read_text())
+    except Exception:
+        return 0
+    if not isinstance(data, dict) or not isinstance(data.get("cards"), list):
+        return 0
+    prefix = f"{card_id}_"
+    existing = [entry for entry in data["cards"] if isinstance(entry, dict)]
+    kept = [entry for entry in existing if not str(entry.get("id", "")).startswith(prefix)]
+    removed = len(existing) - len(kept)
+    if removed:
+        index_path.write_text(json.dumps({"cards": kept}, indent=2) + "\n")
+    return removed
+
+
 def delete_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str) -> None:
+    """Recursively delete a motion card and all related artifacts.
+
+    Removes:
+    - public/cards/<id>/ (videos, photos, photo-scratch slots)
+    - public/mesh/<id>.json
+    - .tmp/video-flow/<id>/ (draft + pipeline workdir)
+    - matching entries in public/photo-scratch/index.json
+    """
     if card_id == ORIGINAL_ID:
         raise HTTPException(status_code=400, detail="The original card cannot be deleted")
+
     card_dir = cards_dir / card_id
-    if not card_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    shutil.rmtree(card_dir)
+    mesh_path = mesh_dir / f"{card_id}.json"
+    work_dir = root / ".tmp" / "video-flow" / card_id
+    found = card_dir.exists() or mesh_path.exists() or work_dir.exists()
+    if not found:
+        # Still allow prune-only if published photo games linger without a card dir.
+        removed = prune_published_photo_scratch(root, card_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+        write_cards_index(root, cards_dir, mesh_dir)
+        return
+
+    if card_dir.exists():
+        shutil.rmtree(card_dir)
+    if mesh_path.is_file():
+        mesh_path.unlink()
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    prune_published_photo_scratch(root, card_id)
     write_cards_index(root, cards_dir, mesh_dir)
 
 

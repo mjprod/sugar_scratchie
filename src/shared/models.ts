@@ -58,6 +58,11 @@ export async function deleteModel(modelId: string): Promise<void> {
   await api(`/api/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
 }
 
+/** Recursively deletes a motion card (videos, photo-scratch, mesh, video-flow draft). */
+export async function deleteCard(cardId: string): Promise<void> {
+  await api(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" });
+}
+
 export async function assignCardToModel(cardId: string, modelId: string): Promise<void> {
   await api(`/api/cards/${encodeURIComponent(cardId)}`, {
     method: "PUT",
@@ -281,18 +286,21 @@ export async function generatePhotoScratchLayer(
   sourceImage = "",
   slotId = "",
   prompt = "",
+  count = 10,
+  fillEmptyOnly = true,
 ): Promise<{ id: string; status: string }> {
   return api(`/api/cards/${encodeURIComponent(cardId)}/photo-scratch/generate`, {
     method: "POST",
     body: JSON.stringify({
       theme,
-      count: slotId ? 1 : 10,
+      count: slotId ? 1 : count,
       provider,
       image_model: imageModel,
       layer,
       image: sourceImage,
       slot_id: slotId,
       prompt,
+      fill_empty_only: slotId ? false : fillEmptyOnly,
     }),
   });
 }

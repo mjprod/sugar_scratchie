@@ -595,6 +595,8 @@ class GeneratePhotoScratchRequest(BaseModel):
     image: str = ""  # Flow source image path — required for bikini/clothes
     slot_id: str = ""  # When set, generate only this one slot (one-by-one)
     prompt: str = ""  # Optional override; empty = built-in default for the layer
+    # When True (batch default), only fill slots missing approved+pending for the layer.
+    fill_empty_only: bool = True
 
 
 class SetSlotPromptRequest(BaseModel):
@@ -815,6 +817,7 @@ def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -
             source_image=source_image,
             slot_id=slot_id,
             prompt=custom_prompt,
+            fill_empty_only=False if slot_id else request.fill_empty_only,
         ),
     )
     return job.public()
