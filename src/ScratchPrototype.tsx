@@ -1,8 +1,18 @@
-import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { fetchModels, type ModelInfo } from "./shared/models";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
+import { GameSymbolIcon } from "./game/GameSymbolIcon";
+import {
+  buildBodySymbols,
+  buildTopSymbols,
+  matchResultDetail,
+  resolveMatchGame,
+  SYMBOL_TYPES,
+  SYMBOL_TYPE_COUNT,
+  type MatchGameOutcome,
+} from "./game/matchGame";
+import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -303,12 +313,10 @@ async function loadCards(): Promise<Card[]> {
 const MESH_INDEX_SRC = "/mesh/index.json";
 const MESH_DIRECTORY_SRC = "/mesh";
 const DEFAULT_MESH_FILE = "tracked-mesh.json";
-const SYMBOL_TYPE_COUNT = 12;
 const SYMBOL_SLOT_COUNT = SYMBOL_POINT_COUNT;
 const SYMBOL_REVEAL_STEP_MANUAL = 0.056;
 const SYMBOL_REVEAL_STEP_AUTO = 0.083;
 const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
-const WIN_MATCH_COUNT = 3;
 const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
 const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
@@ -331,25 +339,8 @@ const SCRATCH_ZOOM_DEFAULTS: ScratchZoomSettings = {
   bounce: false,
 };
 
-const SYMBOL_TYPES: { src: string; label: string }[] = [
-  { src: "/lotties/01-Heart.lottie", label: "Heart" },
-  { src: "/lotties/02-Lock.lottie", label: "Lock" },
-  { src: "/lotties/03-GemDiamond.lottie", label: "Gem" },
-  { src: "/lotties/04-Star.lottie", label: "Star" },
-  { src: "/lotties/05-Diamond.lottie", label: "Diamond" },
-  { src: "/lotties/06-Magnet.lottie", label: "Magnet" },
-  { src: "/lotties/07-Crown.lottie", label: "Crown" },
-  { src: "/lotties/08-Gold%20Coins.lottie", label: "Gold Coins" },
-  { src: "/lotties/09-Key.lottie", label: "Key" },
-  { src: "/lotties/10-Treasure%20Chest.lottie", label: "Treasure Chest" },
-  { src: "/lotties/11-Diamond%20Cards.lottie", label: "Diamond Cards" },
-  { src: "/lotties/12-WinnerTrophy.lottie", label: "Trophy" },
-];
-
 function buildSessionSymbols(): number[] {
-  return Array.from({ length: SYMBOL_SLOT_COUNT }, () =>
-    Math.floor(Math.random() * SYMBOL_TYPE_COUNT),
-  );
+  return buildBodySymbols();
 }
 
 function revealedSymbolCount(progress: number, autoMode: boolean) {
@@ -371,15 +362,6 @@ function isGarmentFullyRevealed(
     progress >= FULL_REVEAL_MANUAL_THRESHOLD ||
     revealedCount >= Math.ceil(sampleCount * FULL_REVEAL_MANUAL_THRESHOLD)
   );
-}
-
-function evaluateSessionWin(symbolIds: number[]) {
-  const counts = new Array(SYMBOL_TYPE_COUNT).fill(0);
-  for (const id of symbolIds) {
-    counts[id] += 1;
-    if (counts[id] >= WIN_MATCH_COUNT) return true;
-  }
-  return false;
 }
 
 type GameResult = "win" | "lose";
@@ -569,22 +551,6 @@ function playGameOutcomeSound(
   scheduleSlide(ctx, now + 0.62, 290, 130, 0.58, 0.18, "sawtooth");
   scheduleSlide(ctx, now + 1.28, 220, 95, 0.72, 0.16, "triangle");
   return 2.05 * 1000 + GAME_OUTCOME_OVERLAY_PAD_MS;
-}
-
-function GameSymbolIcon({ typeId, size = 24 }: { typeId: number; size?: number }) {
-  const entry = SYMBOL_TYPES[typeId] ?? SYMBOL_TYPES[0];
-  return (
-    <DotLottieReact
-      src={entry.src}
-      autoplay
-      loop
-      aria-hidden="true"
-      width={size}
-      height={size}
-      style={{ width: size, height: size }}
-      className="game-symbol-lottie"
-    />
-  );
 }
 
 function scratchZoomEasing(bounce: boolean) {
@@ -1061,6 +1027,12 @@ export function ScratchPrototype() {
   const [progress, setProgress] = useState(0);
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
+    null,
+  );
+  const [topSymbols, setTopSymbols] = useState(buildTopSymbols);
+  const [topBarPhase, setTopBarPhase] = useState<TopBarPhase>("center");
+  const [topBarRound, setTopBarRound] = useState(0);
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1072,6 +1044,10 @@ export function ScratchPrototype() {
   gameResultRef.current = gameResult;
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topSymbolsRef = useRef(topSymbols);
+  topSymbolsRef.current = topSymbols;
+  const topBarPhaseRef = useRef(topBarPhase);
+  topBarPhaseRef.current = topBarPhase;
   const sessionSymbolsRef = useRef(sessionSymbols);
   sessionSymbolsRef.current = sessionSymbols;
   const revealedSymbolsRef = useRef(revealedSymbols);
@@ -1123,6 +1099,21 @@ export function ScratchPrototype() {
     gameResultPendingRef.current = null;
     gameResultRef.current = null;
     setGameResult(null);
+    setMatchOutcome(null);
+  }
+
+  function resetMatchRound() {
+    setTopSymbols(buildTopSymbols());
+    setTopBarPhase("center");
+    topBarPhaseRef.current = "center";
+    setTopBarRound((n) => n + 1);
+    setSessionSymbols(buildBodySymbols());
+    setMatchOutcome(null);
+  }
+
+  function onTopBarAllRevealed() {
+    setTopBarPhase("docked");
+    topBarPhaseRef.current = "docked";
   }
 
   useEffect(() => () => clearGameResultTimer(), []);
@@ -1506,7 +1497,7 @@ export function ScratchPrototype() {
     );
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
-    setSessionSymbols(buildSessionSymbols());
+    resetMatchRound();
     setProgress(0);
     setClaimed(false);
     setRevealedSymbols(0);
@@ -1673,7 +1664,8 @@ export function ScratchPrototype() {
     if (
       patch.enabled &&
       useBodySymbolsRef.current &&
-      revealedSymbolsRef.current < SYMBOL_SLOT_COUNT
+      (revealedSymbolsRef.current < SYMBOL_SLOT_COUNT ||
+        topBarPhaseRef.current === "center")
     ) {
       return;
     }
@@ -1695,7 +1687,9 @@ export function ScratchPrototype() {
 
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
-  const autoScratchLocked = useBodySymbols && !symbolsHuntComplete;
+  const autoScratchLocked =
+    useBodySymbols &&
+    (!symbolsHuntComplete || topBarPhase === "center");
 
   function updateSoundEnabled(enabled: boolean) {
     if (enabled) ensureSymbolAudio(symbolAudioRef.current);
@@ -1728,7 +1722,7 @@ export function ScratchPrototype() {
     );
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
-    setSessionSymbols(buildSessionSymbols());
+    resetMatchRound();
     setProgress(0);
     setClaimed(false);
     setRevealedSymbols(0);
@@ -1778,10 +1772,29 @@ export function ScratchPrototype() {
     ) {
       return;
     }
-    const outcome: GameResult = evaluateSessionWin(sessionSymbolsRef.current)
-      ? "win"
-      : "lose";
+    let outcome: GameResult;
+    let match: MatchGameOutcome | null = null;
+    if (useBodySymbolsRef.current) {
+      match = resolveMatchGame(
+        topSymbolsRef.current,
+        sessionSymbolsRef.current,
+      );
+      outcome = match.result;
+    } else {
+      // Legacy path (no body anchors): any type appearing ≥3 times wins.
+      const LEGACY_WIN_MATCH_COUNT = 3;
+      const counts = new Array(SYMBOL_TYPE_COUNT).fill(0);
+      outcome = "lose";
+      for (const id of sessionSymbolsRef.current) {
+        counts[id] += 1;
+        if (counts[id] >= LEGACY_WIN_MATCH_COUNT) {
+          outcome = "win";
+          break;
+        }
+      }
+    }
     gameResultPendingRef.current = outcome;
+    setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
@@ -1925,6 +1938,12 @@ export function ScratchPrototype() {
     finalize = true,
   ) {
     if (gameResultPendingRef.current !== null) return;
+    if (
+      useBodySymbolsRef.current &&
+      topBarPhaseRef.current === "center"
+    ) {
+      return;
+    }
 
     marksRef.current = [...marksRef.current, { u, v, radius }].slice(-180);
     glRendererRef.current?.paintScratch(u, v, radius);
@@ -2018,6 +2037,12 @@ export function ScratchPrototype() {
   applyScratchAtUvRef.current = applyScratchAtUv;
 
   function addScratch(clientX: number, clientY: number) {
+    if (
+      useBodySymbolsRef.current &&
+      topBarPhaseRef.current === "center"
+    ) {
+      return;
+    }
     const point = getCanvasPoint(clientX, clientY);
     if (!point) return;
 
@@ -2171,8 +2196,9 @@ export function ScratchPrototype() {
       <legend>Auto scratch</legend>
       {autoScratchLocked ? (
         <p className="auto-scratch-hint">
-          Find all {SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch
-          finishes the reveal.
+          {topBarPhase === "center"
+            ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+            : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2364,13 +2390,22 @@ export function ScratchPrototype() {
       <section className="prototype">
         <div
           ref={stageRef}
-          className={`stage${gameResult ? " is-game-over" : ""}`}
+          className={`stage${gameResult ? " is-game-over" : ""}${
+            useBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
+          }`}
         >
           {typeof window !== "undefined" &&
           new URLSearchParams(window.location.search).has("debug") ? (
             <DebugHud />
           ) : null}
-          {!useBodySymbols ? (
+          {useBodySymbols ? (
+            <TopSymbolBar
+              symbols={topSymbols}
+              phase={topBarPhase}
+              roundKey={topBarRound}
+              onAllRevealed={onTopBarAllRevealed}
+            />
+          ) : (
             <div
               className={`symbol-bar${revealedSymbols >= SYMBOL_SLOT_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
               aria-label="Game symbols"
@@ -2394,7 +2429,7 @@ export function ScratchPrototype() {
                 </div>
               ))}
             </div>
-          ) : null}
+          )}
           {useBodySymbols
             ? sessionSymbols.map((typeId, index) => (
                 <div
@@ -2672,9 +2707,11 @@ export function ScratchPrototype() {
                 {gameResult === "win" ? "You win!" : "No luck this time"}
               </p>
               <p className="game-result-detail">
-                {gameResult === "win"
-                  ? "Three matching symbols — nice!"
-                  : "No three-of-a-kind — try again."}
+                {matchOutcome
+                  ? matchResultDetail(matchOutcome, "photo_scratches")
+                  : gameResult === "win"
+                    ? "Three matching symbols — nice!"
+                    : "No three-of-a-kind — try again."}
               </p>
               <button
                 type="button"
