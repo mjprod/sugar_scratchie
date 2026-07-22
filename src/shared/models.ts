@@ -242,6 +242,8 @@ export function defaultPhotoScratchPrompt(
     `arm silhouette — only change fabric; no second sleeve or back-of-body fill in the ` +
     `armpit. Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves. ` +
     `Only replace the bikini with clothing; do not restage the body. ` +
+    `EXPOSURE LOCK — keep the exact same bright exposure and lighting as the reference; ` +
+    `do not darken the image, lower brightness, or crush shadows even if the outfit is dark. ` +
     `FACE LOCK — keep her face identical to the reference: same eyes, nose, mouth, and ` +
     `expression. No horizontal seams, smears, double mouths, or sliced nose. Keep her ` +
     `face sharp and in focus — clear eyes, natural skin detail, not soft or ` +

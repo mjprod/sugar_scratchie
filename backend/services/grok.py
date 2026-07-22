@@ -779,6 +779,8 @@ def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
         f"body pose, arm angles, elbow bends, hand positions, hip stance, leg placement, "
         f"face, identity, hair, skin tone, background, room, lighting, shadow direction, "
         f"and BODY SHAPE — bust size, waist curve, hip width must be identical to the reference. "
+        f"EXPOSURE LOCK — keep the exact same bright exposure and lighting as the reference; "
+        f"do not darken the image, lower brightness, or crush shadows even if the outfit is dark. "
         f"{photo_scratch_clothes_pose_locks()} "
         f"The outfit MUST fully cover the bikini body with a little extra fabric volume — "
         f"not skintight-shrunk. "

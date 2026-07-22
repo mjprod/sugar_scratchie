@@ -170,6 +170,24 @@
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_05/clothes.png",
       "mesh": "/cards/julianaval_cop/photo-scratch/slot_05/mesh.json"
+    },
+    {
+      "id": "julianaval_cop_slot_06",
+      "label": "warm beach \u2013 6",
+      "model_id": "julianaval",
+      "background": "/cards/julianaval_cop/photo-scratch/pending/slot_06_background.jpg",
+      "bikini": "/cards/julianaval_cop/photo-scratch/slot_06/bikini.png",
+      "clothes": "/cards/julianaval_cop/photo-scratch/slot_06/clothes.png",
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_06/mesh.json"
+    },
+    {
+      "id": "julianaval_cop_slot_07",
+      "label": "warm beach \u2013 7",
+      "model_id": "julianaval",
+      "background": "/cards/julianaval_cop/photo-scratch/pending/slot_07_background.jpg",
+      "bikini": "/cards/julianaval_cop/photo-scratch/slot_07/bikini.png",
+      "clothes": "/cards/julianaval_cop/photo-scratch/slot_07/clothes.png",
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_07/mesh.json"
     }
   ]
 }
