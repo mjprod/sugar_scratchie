@@ -1963,6 +1963,97 @@ dd {
   font-size: 11px;
 }
 
+.models-card-list {
+  border: 1px solid var(--gray-5);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-background);
+}
+
+.models-card-list-header,
+.models-card-list-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 8px 12px;
+}
+
+.models-card-list-header {
+  background: var(--gray-2);
+  border-bottom: 1px solid var(--gray-5);
+}
+
+.models-card-list-row + .models-card-list-row {
+  border-top: 1px solid var(--gray-4);
+}
+
+.models-card-list-identity {
+  min-width: 0;
+}
+
+.models-card-list-identity code {
+  font-size: 11px;
+}
+
+.models-card-list-status {
+  min-width: 0;
+}
+
+.models-card-status {
+  flex-wrap: nowrap;
+}
+
+.models-card-list-actions {
+  justify-self: end;
+}
+
+.models-card-action-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.models-card-action-slot .rt-Button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+@media (max-width: 720px) {
+  .models-card-list-header {
+    display: none;
+  }
+
+  .models-card-list-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "identity actions"
+      "status status";
+    gap: 6px 10px;
+    padding: 10px 12px;
+  }
+
+  .models-card-list-identity {
+    grid-area: identity;
+  }
+
+  .models-card-list-status {
+    grid-area: status;
+  }
+
+  .models-card-list-actions {
+    grid-area: actions;
+  }
+
+  .models-card-status {
+    flex-wrap: wrap;
+  }
+}
+
 .photo-scratch-prototype {
   grid-template-columns: minmax(280px, 340px) minmax(390px, 420px);
   max-width: 900px;
