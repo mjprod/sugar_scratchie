@@ -242,6 +242,24 @@
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_02/clothes.png",
       "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_02/mesh.json"
+    },
+    {
+      "id": "julianaval_firegirl_slot_03",
+      "label": "Firegirl \u2013 3",
+      "model_id": "julianaval",
+      "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_03_background.jpg",
+      "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_03/bikini.png",
+      "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_03/clothes.png",
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_03/mesh.json"
+    },
+    {
+      "id": "julianaval_firegirl_slot_04",
+      "label": "Firegirl \u2013 4",
+      "model_id": "julianaval",
+      "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_04_background.jpg",
+      "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_04/bikini.png",
+      "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_04/clothes.png",
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_04/mesh.json"
     }
   ]
 }

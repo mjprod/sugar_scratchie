@@ -32,6 +32,9 @@ AUTO_PIXEL_DILATE = 3
 # One extra lattice ring vs a tight SegFormer paint — covers sleeve/hem fringe
 # so you rarely need a manual Grow +1 in the mask editor.
 AUTO_GRID_DILATE = 3
+# Then one lattice erosion (= mask editor "Shrink −1") so the auto paint sits
+# just inside the garment edge instead of spilling onto skin/background.
+AUTO_GRID_SHRINK = 1
 AUTO_MAX_COVERAGE = 0.72
 # Same extras as scripts/add-garment-mask.py (legs + arms).
 EXTRA_GARMENT_CLASSES = {12, 13, 14, 15}
@@ -93,6 +96,8 @@ def _garment_from_image(rgb: np.ndarray, cols: int, rows: int) -> list[int]:
 
     if AUTO_GRID_DILATE > 0 and flags.any():
         flags = ndimage.binary_dilation(flags, iterations=AUTO_GRID_DILATE)
+    if AUTO_GRID_SHRINK > 0 and flags.any():
+        flags = ndimage.binary_erosion(flags, iterations=AUTO_GRID_SHRINK)
 
     on = int(flags.sum())
     min_cells = max(12, (cols * rows) // 40)
