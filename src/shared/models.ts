@@ -162,6 +162,9 @@ export type PhotoScratchSlot = {
   /** Derived cutout PNG URLs — originals stay on bikini/clothes. */
   bikini_cutout?: string;
   clothes_cutout?: string;
+  /** Pristine pre-zoom cutouts for Zooming live preview. */
+  bikini_cutout_src?: string;
+  clothes_cutout_src?: string;
   /** Top warped onto bikini pose (before cutout). */
   has_match?: boolean;
   clothes_matched?: string;
@@ -177,6 +180,12 @@ export type PhotoScratchSlot = {
   match_nudge_scale?: number | null;
   match_nudge_tx?: number | null;
   match_nudge_ty?: number | null;
+  /** Zooming step confirmed (or legacy meshed slot). */
+  has_zoom?: boolean;
+  /** Last zoom applied to cutouts (from zoom_meta). */
+  zoom_scale?: number | null;
+  zoom_tx?: number | null;
+  zoom_ty?: number | null;
 };
 
 const SLOT_PROMPT_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
@@ -413,6 +422,7 @@ export function photoScratchSlotIsDone(slot: PhotoScratchSlot): boolean {
       slot.has_match &&
       slot.has_adjust &&
       slot.has_cutout &&
+      slot.has_zoom &&
       slot.mesh &&
       slot.has_symbols,
   );
@@ -464,6 +474,32 @@ export async function cutoutPhotoScratchSlot(
   const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
   return api(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/cutout${params}`,
+    { method: "POST" },
+  );
+}
+
+export async function zoomPhotoScratchSlot(
+  cardId: string,
+  slotId: string,
+  theme = "",
+  options?: {
+    scale?: number;
+    tx?: number;
+    ty?: number;
+    apply?: boolean;
+    confirm?: boolean;
+  },
+): Promise<PhotoScratchSlot> {
+  const params = new URLSearchParams();
+  if (theme.trim()) params.set("theme", theme.trim());
+  if (options?.scale != null) params.set("scale", String(options.scale));
+  if (options?.tx != null) params.set("tx", String(options.tx));
+  if (options?.ty != null) params.set("ty", String(options.ty));
+  if (options?.apply) params.set("apply", "true");
+  if (options?.confirm) params.set("confirm", "true");
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/zoom${q}`,
     { method: "POST" },
   );
 }

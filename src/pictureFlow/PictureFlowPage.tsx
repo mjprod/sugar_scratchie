@@ -20,6 +20,7 @@ import {
   photoScratchSlotIsDone,
   photoScratchSlotPlayHref,
   publishPhotoScratchGame,
+  zoomPhotoScratchSlot,
   type PhotoScratchSlot,
 } from "../shared/models";
 import { MaskEditor } from "../videoFlow/MaskEditor";
@@ -32,6 +33,7 @@ type StepId =
   | "match"
   | "adjust"
   | "cutout"
+  | "zooming"
   | "mesh"
   | "symbols"
   | "game";
@@ -72,6 +74,13 @@ const STEPS: StepDef[] = [
       "Remove the scene behind the girl into RGBA cutouts. Originals stay on the card.",
   },
   {
+    id: "zooming",
+    label: "Zooming",
+    subtitle: "Bikini + top front/back",
+    blurb:
+      "Scale bikini and top together over the room (background fixed). Larger = closer, smaller = farther — then confirm before Mesh.",
+  },
+  {
     id: "mesh",
     label: "Mesh",
     subtitle: "Scratch mask lattice",
@@ -110,6 +119,8 @@ function stepDone(slot: PhotoScratchSlot, step: StepId): boolean {
       return Boolean(slot.has_adjust);
     case "cutout":
       return Boolean(slot.has_cutout);
+    case "zooming":
+      return Boolean(slot.has_zoom);
     case "mesh":
       return Boolean(slot.mesh);
     case "symbols":
@@ -174,6 +185,7 @@ export function PictureFlowPage() {
   const [error, setError] = useState("");
   const [cutoutBusy, setCutoutBusy] = useState("");
   const [matchBusy, setMatchBusy] = useState("");
+  const [zoomBusy, setZoomBusy] = useState("");
   const [meshBusy, setMeshBusy] = useState("");
   const [publishBusy, setPublishBusy] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
@@ -184,6 +196,9 @@ export function PictureFlowPage() {
   const [nudgeScale, setNudgeScale] = useState("1");
   const [nudgeTx, setNudgeTx] = useState("0");
   const [nudgeTy, setNudgeTy] = useState("0");
+  const [zoomScale, setZoomScale] = useState("1");
+  const [zoomTx, setZoomTx] = useState("0");
+  const [zoomTy, setZoomTy] = useState("0");
 
   async function refresh() {
     if (!cardId) {
@@ -227,7 +242,7 @@ export function PictureFlowPage() {
   }, [focusSlot, visibleSlots, selectedSlotId]);
 
   const slot = visibleSlots.find((s) => s.id === selectedSlotId) ?? null;
-  const busy = Boolean(cutoutBusy || matchBusy || meshBusy || publishBusy);
+  const busy = Boolean(cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy);
 
   useEffect(() => {
     if (!slot?.has_match) return;
@@ -242,6 +257,19 @@ export function PictureFlowPage() {
     slot?.match_nudge_scale,
     slot?.match_nudge_tx,
     slot?.match_nudge_ty,
+  ]);
+
+  useEffect(() => {
+    if (!slot?.has_cutout) return;
+    setZoomScale(slot.zoom_scale != null ? String(slot.zoom_scale) : "1");
+    setZoomTx(slot.zoom_tx != null ? String(slot.zoom_tx) : "0");
+    setZoomTy(slot.zoom_ty != null ? String(slot.zoom_ty) : "0");
+  }, [
+    slot?.id,
+    slot?.has_cutout,
+    slot?.zoom_scale,
+    slot?.zoom_tx,
+    slot?.zoom_ty,
   ]);
 
   const autoStep = slot ? currentStep(slot) : "layers";
@@ -291,6 +319,19 @@ export function PictureFlowPage() {
     const scale = Number(nudgeScale);
     const tx = Number(nudgeTx);
     const ty = Number(nudgeTy);
+    if (!Number.isFinite(scale) || scale <= 0.1 || scale > 3) {
+      throw new Error("Scale must be between 0.1 and 3");
+    }
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+      throw new Error("tx / ty must be numbers");
+    }
+    return { scale, tx, ty };
+  }
+
+  function parseZoom() {
+    const scale = Number(zoomScale);
+    const tx = Number(zoomTx);
+    const ty = Number(zoomTy);
     if (!Number.isFinite(scale) || scale <= 0.1 || scale > 3) {
       throw new Error("Scale must be between 0.1 and 3");
     }
@@ -352,6 +393,51 @@ export function PictureFlowPage() {
     }
   }
 
+  async function handleZoomApply(slotId: string) {
+    if (!cardId || busy) return;
+    setZoomBusy(slotId);
+    setError("");
+    try {
+      const { scale, tx, ty } = parseZoom();
+      await zoomPhotoScratchSlot(cardId, slotId, "", {
+        scale,
+        tx,
+        ty,
+        apply: true,
+        confirm: true,
+      });
+      clearManualStep(slotId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setZoomBusy("");
+    }
+  }
+
+  async function handleZoomConfirm(slotId: string) {
+    if (!cardId || busy) return;
+    setZoomBusy(slotId);
+    setError("");
+    try {
+      // Bake current form values so Mesh is built at the same scale as the preview.
+      const { scale, tx, ty } = parseZoom();
+      await zoomPhotoScratchSlot(cardId, slotId, "", {
+        scale,
+        tx,
+        ty,
+        apply: true,
+        confirm: true,
+      });
+      clearManualStep(slotId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setZoomBusy("");
+    }
+  }
+
   async function handleMesh(slotId: string) {
     if (!cardId || busy) return;
     setMeshBusy(slotId);
@@ -388,7 +474,7 @@ export function PictureFlowPage() {
       error={error}
       subtitle={
         cardId
-          ? `Card ${cardId} — layers → match → cutout → mesh → symbols → game.`
+          ? `Card ${cardId} — layers → match → cutout → zooming → mesh → symbols → game.`
           : "Open from Video Flow after uploading 3 layers on a photo card."
       }
       title="Photo scratch game"
@@ -781,6 +867,143 @@ export function PictureFlowPage() {
                   </Flex>
                 ) : null}
 
+                {activeStep === "zooming" ? (
+                  <Flex direction="column" gap="4">
+                    <Callout.Root color="blue">
+                      <Callout.Text>
+                        Bikini + top zoom together as one unit over the room
+                        (background stays put). Larger = closer/front, smaller =
+                        farther/back. Apply bakes both cutouts; Looks good unlocks
+                        Mesh without changing pixels.
+                      </Callout.Text>
+                    </Callout.Root>
+                    {slot.has_cutout ? (
+                      <Flex gap="2" wrap="wrap" align="start">
+                        {slot.background ? (
+                          <div className="picture-flow-zoom-composite">
+                            <Text size="1" weight="medium" mb="1">
+                              In room (bikini + top together)
+                            </Text>
+                            <div className="picture-flow-zoom-stage">
+                              <img
+                                alt=""
+                                className="picture-flow-zoom-bg"
+                                src={slot.background}
+                              />
+                              <div
+                                className="picture-flow-zoom-girl-stack"
+                                style={{
+                                  transform: `translate(${((Number(zoomTx) || 0) * 140) / 1170}px, ${((Number(zoomTy) || 0) * 240) / 2016}px) scale(${Number(zoomScale) || 1})`,
+                                }}
+                              >
+                                {slot.bikini_cutout_src || slot.bikini_cutout ? (
+                                  <img
+                                    alt=""
+                                    className="picture-flow-zoom-girl picture-flow-zoom-girl--bikini"
+                                    src={
+                                      slot.bikini_cutout_src ||
+                                      slot.bikini_cutout ||
+                                      ""
+                                    }
+                                  />
+                                ) : null}
+                                {slot.clothes_cutout_src || slot.clothes_cutout ? (
+                                  <img
+                                    alt=""
+                                    className="picture-flow-zoom-girl picture-flow-zoom-girl--top"
+                                    src={
+                                      slot.clothes_cutout_src ||
+                                      slot.clothes_cutout ||
+                                      ""
+                                    }
+                                  />
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                        {slot.bikini_cutout ? (
+                          <MediaPreview
+                            label="Bikini (baked)"
+                            size="compact"
+                            type="image"
+                            value={slot.bikini_cutout}
+                            cacheBust={slot.zoom_scale ?? "0"}
+                            zoomable
+                          />
+                        ) : null}
+                        {slot.clothes_cutout ? (
+                          <MediaPreview
+                            label="Top (baked)"
+                            size="compact"
+                            type="image"
+                            value={slot.clothes_cutout}
+                            cacheBust={slot.zoom_scale ?? "0"}
+                            zoomable
+                          />
+                        ) : null}
+                      </Flex>
+                    ) : null}
+                    <Flex gap="3" wrap="wrap">
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          Scale
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="0.01"
+                          min="0.1"
+                          max="3"
+                          value={zoomScale}
+                          onChange={(e) => setZoomScale(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          &gt;1 closer · &lt;1 farther
+                        </Text>
+                      </Flex>
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          tx (px)
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="1"
+                          value={zoomTx}
+                          onChange={(e) => setZoomTx(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          +right / −left
+                        </Text>
+                      </Flex>
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          ty (px)
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="1"
+                          value={zoomTy}
+                          onChange={(e) => setZoomTy(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          +down / −up
+                        </Text>
+                      </Flex>
+                    </Flex>
+                    {slot.has_zoom ? (
+                      <Callout.Root color="green">
+                        <Callout.Text>
+                          Zooming confirmed
+                          {slot.zoom_scale != null
+                            ? ` (scale ${slot.zoom_scale})`
+                            : ""}
+                          . Both girl layers share this framing. Proceed to Mesh.
+                        </Callout.Text>
+                      </Callout.Root>
+                    ) : null}
+                  </Flex>
+                ) : null}
+
                 {activeStep === "mesh" ? (
                   <Flex direction="column" gap="4">
                     {fixMeshOpen && slot.mesh && previewClothes && cardId ? (
@@ -814,7 +1037,8 @@ export function PictureFlowPage() {
                         ) : (
                           <Callout.Root color="blue">
                             <Callout.Text>
-                              Create mesh builds a static UV lattice from the cutout top layer.
+                              Create mesh builds a static UV lattice from the
+                              zoomed top cutout so scratch scale matches Zooming.
                             </Callout.Text>
                           </Callout.Root>
                         )}
@@ -851,7 +1075,7 @@ export function PictureFlowPage() {
                       <Callout.Text>
                         {done
                           ? "All steps done — publish to open the playable game."
-                          : "Finish cutout, mesh, and symbols before creating the game."}
+                          : "Finish cutout, zooming, mesh, and symbols before creating the game."}
                       </Callout.Text>
                     </Callout.Root>
                     <Flex gap="2" wrap="wrap">
@@ -996,11 +1220,47 @@ export function PictureFlowPage() {
                     </Button>
                   ) : null}
 
+                  {activeStep === "zooming" ? (
+                    <Flex direction="column" gap="3" style={{ width: "100%" }}>
+                      <Flex gap="2" wrap="wrap">
+                        <Button
+                          color="red"
+                          disabled={busy || !slot.has_cutout}
+                          onClick={() => void handleZoomApply(slot.id)}
+                        >
+                          {zoomBusy === slot.id ? (
+                            <Loader2 {...iconProps} className="spin" />
+                          ) : (
+                            <Play {...iconProps} />
+                          )}
+                          Apply scale
+                        </Button>
+                        <Button
+                          variant="soft"
+                          disabled={busy || !slot.has_cutout}
+                          onClick={() => void handleZoomConfirm(slot.id)}
+                        >
+                          Looks good
+                        </Button>
+                      </Flex>
+                      <Text color="gray" size="1">
+                        Apply scale / Looks good both bake bikini + top at the
+                        current scale (so Mesh uses the same framing), then unlock
+                        Mesh.
+                      </Text>
+                    </Flex>
+                  ) : null}
+
                   {activeStep === "mesh" ? (
                     <>
                       <Button
                         color="red"
-                        disabled={busy || !slot.has_cutout}
+                        disabled={busy || !slot.has_zoom}
+                        title={
+                          slot.has_zoom
+                            ? undefined
+                            : "Finish Zooming first (Apply scale or Looks good)"
+                        }
                         onClick={() => void handleMesh(slot.id)}
                       >
                         {meshBusy === slot.id ? (

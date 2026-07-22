@@ -495,6 +495,9 @@ class PhotoScratchSlot(BaseModel):
     # Derived cutout PNG URLs (not stored in index — originals stay on bikini/clothes).
     bikini_cutout: str | None = None
     clothes_cutout: str | None = None
+    # Pristine pre-zoom cutouts (Zooming live preview source).
+    bikini_cutout_src: str | None = None
+    clothes_cutout_src: str | None = None
     # Top warped onto bikini pose (before cutout).
     has_match: bool = False
     clothes_matched: str | None = None
@@ -509,6 +512,12 @@ class PhotoScratchSlot(BaseModel):
     match_nudge_scale: float | None = None
     match_nudge_tx: float | None = None
     match_nudge_ty: float | None = None
+    # Picture Flow Zooming step confirmed (or mesh already exists — legacy).
+    has_zoom: bool = False
+    # Last zoom applied to cutouts (from zoom_meta.json).
+    zoom_scale: float | None = None
+    zoom_tx: float | None = None
+    zoom_ty: float | None = None
 
 
 PHOTO_SCRATCH_PROMPT_FIELDS = {
@@ -702,8 +711,68 @@ def photo_scratch_slot_cutout_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / f"{layer}.png"
 
 
+def photo_scratch_slot_cutout_src_path(
+    cards_dir: Path, card_id: str, slot_id: str, layer: str
+) -> Path:
+    """Pristine cutout used as Zooming source (never overwritten by Apply scale)."""
+    return _photo_scratch_dir(cards_dir, card_id) / slot_id / f"{layer}_src.png"
+
+
 def photo_scratch_slot_cutout_url(card_id: str, slot_id: str, layer: str) -> str:
     return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}.png")
+
+
+def photo_scratch_slot_cutout_src_url(card_id: str, slot_id: str, layer: str) -> str:
+    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}_src.png")
+
+
+def photo_scratch_slot_zoom_meta_path(
+    cards_dir: Path, card_id: str, slot_id: str
+) -> Path:
+    return _photo_scratch_dir(cards_dir, card_id) / slot_id / "zoom_meta.json"
+
+
+def _read_zoom_meta(cards_dir: Path, card_id: str, slot_id: str) -> dict:
+    path = photo_scratch_slot_zoom_meta_path(cards_dir, card_id, slot_id)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_zoom_meta(cards_dir: Path, card_id: str, slot_id: str, meta: dict) -> None:
+    path = photo_scratch_slot_zoom_meta_path(cards_dir, card_id, slot_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _clear_zoom_artifacts(cards_dir: Path, card_id: str, slot_id: str) -> None:
+    photo_scratch_slot_zoom_meta_path(cards_dir, card_id, slot_id).unlink(
+        missing_ok=True
+    )
+    for layer in ("bikini", "clothes"):
+        photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, layer).unlink(
+            missing_ok=True
+        )
+
+
+def _invalidate_mesh_after_zoom(cards_dir: Path, card_id: str, slot_id: str) -> None:
+    """Zoom changes cutout geometry — mesh + embedded symbols must be rebuilt."""
+    photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id).unlink(missing_ok=True)
+
+
+def photo_scratch_slot_has_zoom(cards_dir: Path, card_id: str, slot_id: str) -> bool:
+    """Zooming done when confirmed, or legacy (mesh + no pristine src yet)."""
+    if not photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id):
+        return False
+    if bool(_read_zoom_meta(cards_dir, card_id, slot_id).get("zoom_ok")):
+        return True
+    # Pre-Zooming slots: already meshed and never wrote bikini_src.png.
+    bikini_src = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, "bikini")
+    return photo_scratch_slot_has_mesh(cards_dir, card_id, slot_id) and not bikini_src.is_file()
 
 
 def photo_scratch_slot_has_cutout(cards_dir: Path, card_id: str, slot_id: str) -> bool:
@@ -730,11 +799,12 @@ def photo_scratch_slot_has_cutout(cards_dir: Path, card_id: str, slot_id: str) -
 
 
 def photo_scratch_slot_is_done(cards_dir: Path, card_id: str, slot: PhotoScratchSlot) -> bool:
-    """Done = layers + match + cutouts + mesh + symbols."""
+    """Done = layers + match + cutouts + zoom + mesh + symbols."""
     return (
         photo_scratch_slot_layers_complete(slot)
         and photo_scratch_slot_has_match(cards_dir, card_id, slot.id)
         and photo_scratch_slot_has_cutout(cards_dir, card_id, slot.id)
+        and photo_scratch_slot_has_zoom(cards_dir, card_id, slot.id)
         and photo_scratch_slot_has_mesh(cards_dir, card_id, slot.id)
         and photo_scratch_slot_has_symbols(cards_dir, card_id, slot.id)
     )
@@ -817,6 +887,7 @@ def list_photo_scratch_slots(
         has_cutout = photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id)
         has_match = photo_scratch_slot_has_match(cards_dir, card_id, slot_id)
         match_meta = _read_match_meta(cards_dir, card_id, slot_id) if has_match else {}
+        zoom_meta = _read_zoom_meta(cards_dir, card_id, slot_id) if has_cutout else {}
         overlay_path = photo_scratch_slot_match_overlay_path(cards_dir, card_id, slot_id)
         blend_path = photo_scratch_slot_match_blend_path(cards_dir, card_id, slot_id)
         slots.append(
@@ -843,6 +914,22 @@ def list_photo_scratch_slots(
                 clothes_cutout=(
                     photo_scratch_slot_cutout_url(card_id, slot_id, "clothes")
                     if has_cutout
+                    else None
+                ),
+                bikini_cutout_src=(
+                    photo_scratch_slot_cutout_src_url(card_id, slot_id, "bikini")
+                    if has_cutout
+                    and photo_scratch_slot_cutout_src_path(
+                        cards_dir, card_id, slot_id, "bikini"
+                    ).is_file()
+                    else None
+                ),
+                clothes_cutout_src=(
+                    photo_scratch_slot_cutout_src_url(card_id, slot_id, "clothes")
+                    if has_cutout
+                    and photo_scratch_slot_cutout_src_path(
+                        cards_dir, card_id, slot_id, "clothes"
+                    ).is_file()
                     else None
                 ),
                 has_match=has_match,
@@ -883,6 +970,22 @@ def list_photo_scratch_slots(
                     if isinstance(match_meta.get("nudge_ty"), (int, float))
                     else None
                 ),
+                has_zoom=photo_scratch_slot_has_zoom(cards_dir, card_id, slot_id),
+                zoom_scale=(
+                    float(zoom_meta["scale"])
+                    if isinstance(zoom_meta.get("scale"), (int, float))
+                    else None
+                ),
+                zoom_tx=(
+                    float(zoom_meta["tx"])
+                    if isinstance(zoom_meta.get("tx"), (int, float))
+                    else None
+                ),
+                zoom_ty=(
+                    float(zoom_meta["ty"])
+                    if isinstance(zoom_meta.get("ty"), (int, float))
+                    else None
+                ),
             )
         )
     return slots
@@ -898,6 +1001,8 @@ def _save_photo_scratch_slots(
         "has_cutout",
         "bikini_cutout",
         "clothes_cutout",
+        "bikini_cutout_src",
+        "clothes_cutout_src",
         "has_match",
         "clothes_matched",
         "match_overlay",
@@ -908,6 +1013,10 @@ def _save_photo_scratch_slots(
         "match_nudge_scale",
         "match_nudge_tx",
         "match_nudge_ty",
+        "has_zoom",
+        "zoom_scale",
+        "zoom_tx",
+        "zoom_ty",
     }
     data = [
         {k: v for k, v in slot.dict().items() if v is not None and k not in skip}
@@ -1202,13 +1311,14 @@ def match_photo_scratch_slot(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Rematch invalidates both cutouts.
+    # Rematch invalidates both cutouts + zoom sources.
     photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes").unlink(
         missing_ok=True
     )
     photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini").unlink(
         missing_ok=True
     )
+    _clear_zoom_artifacts(cards_dir, card_id, slot_id)
 
     return next(
         s for s in list_photo_scratch_slots(cards_dir, card_id, theme) if s.id == slot_id
@@ -1258,15 +1368,126 @@ def cutout_photo_scratch_slot(
         )
 
     garment_mask = photo_scratch_slot_garment_mask_path(cards_dir, card_id, slot_id)
+    bikini_out = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini")
+    clothes_out = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes")
     cutout_matched_pair(
         matched_bikini,
         matched_clothes,
-        photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini"),
-        photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes"),
+        bikini_out,
+        clothes_out,
         garment_mask_path=garment_mask if garment_mask.is_file() else None,
     )
 
+    # Pristine sources for Zooming; reset any prior zoom.
+    import shutil
+
+    bikini_src = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, "bikini")
+    clothes_src = photo_scratch_slot_cutout_src_path(
+        cards_dir, card_id, slot_id, "clothes"
+    )
+    shutil.copy2(bikini_out, bikini_src)
+    shutil.copy2(clothes_out, clothes_src)
+    photo_scratch_slot_zoom_meta_path(cards_dir, card_id, slot_id).unlink(
+        missing_ok=True
+    )
+
     # Do not rewrite bikini/clothes — originals stay in the index.
+    return next(
+        s for s in list_photo_scratch_slots(cards_dir, card_id, theme) if s.id == slot_id
+    )
+
+
+def zoom_photo_scratch_slot(
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    theme: str = "",
+    *,
+    scale: float = 1.0,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    confirm: bool = False,
+    apply: bool = False,
+) -> PhotoScratchSlot:
+    """Scale cutouts about canvas center (Picture Flow Zooming).
+
+    ``apply=True`` rewrites active PNGs from pristine sources and clears mesh.
+    ``confirm=True`` (or apply) marks the step done.
+    """
+    import shutil
+
+    from backend.services.photo_zoom import zoom_cutout_pair
+
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot zoom the original card")
+    if not apply and not confirm:
+        raise HTTPException(
+            status_code=400, detail="Pass apply=true and/or confirm=true"
+        )
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    if not photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id):
+        raise HTTPException(status_code=400, detail="Cut out girl first")
+
+    bikini_out = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini")
+    clothes_out = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes")
+    bikini_src = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, "bikini")
+    clothes_src = photo_scratch_slot_cutout_src_path(
+        cards_dir, card_id, slot_id, "clothes"
+    )
+
+    # Legacy cutouts (pre-Zooming): seed pristine from the current active PNGs.
+    if not bikini_src.is_file() and bikini_out.is_file():
+        shutil.copy2(bikini_out, bikini_src)
+    if not clothes_src.is_file() and clothes_out.is_file():
+        shutil.copy2(clothes_out, clothes_src)
+    if not (bikini_src.is_file() and clothes_src.is_file()):
+        raise HTTPException(
+            status_code=400,
+            detail="Cutout sources missing — re-run Cut out girl",
+        )
+
+    meta = _read_zoom_meta(cards_dir, card_id, slot_id)
+
+    if apply:
+        prev_scale = float(meta["scale"]) if isinstance(meta.get("scale"), (int, float)) else 1.0
+        prev_tx = float(meta["tx"]) if isinstance(meta.get("tx"), (int, float)) else 0.0
+        prev_ty = float(meta["ty"]) if isinstance(meta.get("ty"), (int, float)) else 0.0
+        try:
+            applied = zoom_cutout_pair(
+                bikini_src,
+                clothes_src,
+                bikini_out,
+                clothes_out,
+                scale=scale,
+                tx=tx,
+                ty=ty,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        meta.update(applied)
+        # Rebuild mesh when geometry changes (or first non-identity bake).
+        changed = (
+            abs(scale - prev_scale) >= 1e-4
+            or abs(tx - prev_tx) >= 1e-3
+            or abs(ty - prev_ty) >= 1e-3
+        )
+        non_identity = (
+            abs(scale - 1.0) >= 1e-4 or abs(tx) >= 1e-3 or abs(ty) >= 1e-3
+        )
+        if changed or non_identity:
+            _invalidate_mesh_after_zoom(cards_dir, card_id, slot_id)
+
+    if apply or confirm:
+        meta["zoom_ok"] = True
+        if "scale" not in meta:
+            meta["scale"] = round(float(scale), 4)
+            meta["tx"] = round(float(tx), 2)
+            meta["ty"] = round(float(ty), 2)
+        _write_zoom_meta(cards_dir, card_id, slot_id, meta)
+
     return next(
         s for s in list_photo_scratch_slots(cards_dir, card_id, theme) if s.id == slot_id
     )
@@ -1284,6 +1505,16 @@ def generate_photo_scratch_slot_mesh(
     slot = _get_slot(slots, slot_id)
     if slot is None:
         raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    if not photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Cut out girl first — mesh needs RGBA cutouts",
+        )
+    if not photo_scratch_slot_has_zoom(cards_dir, card_id, slot_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Finish Zooming first (Apply scale or Looks good)",
+        )
     # Prefer TOP cutout PNG when present (cleaner person boundary), else the
     # approved original composite. Bikini stills often under-detect clothing.
     cutout_clothes = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes")
@@ -1306,10 +1537,19 @@ def generate_photo_scratch_slot_mesh(
         raise HTTPException(status_code=404, detail=f"Layer image not found: {layer_src}")
 
     out = photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id)
+    zoom_meta = _read_zoom_meta(cards_dir, card_id, slot_id)
+    zoom_payload = None
+    if zoom_meta:
+        zoom_payload = {
+            "scale": float(zoom_meta.get("scale", 1.0)),
+            "tx": float(zoom_meta.get("tx", 0.0)),
+            "ty": float(zoom_meta.get("ty", 0.0)),
+        }
     generate_static_photo_mesh(
         image_path,
         out,
         source_label=f"photo-scratch {card_id}/{slot_id}",
+        zoom=zoom_payload,
     )
     # Refresh derived fields.
     return next(
@@ -1371,7 +1611,7 @@ def publish_photo_scratch_game(
                 status_code=400,
                 detail=(
                     f"{slot_id} is not done yet "
-                    "(need layers + Match + Cut out girl + Create mesh + 12 symbols)"
+                    "(need layers + Match + Cutout + Zooming + Create mesh + 12 symbols)"
                 ),
             )
         done = [slot]
@@ -1382,7 +1622,7 @@ def publish_photo_scratch_game(
                 status_code=400,
                 detail=(
                     "No fully done photo-scratch slots "
-                    "(need layers + Match + Cut out girl + Create mesh + 12 symbols per card)"
+                    "(need layers + Match + Cutout + Zooming + Create mesh + 12 symbols per card)"
                 ),
             )
 

@@ -98,6 +98,7 @@ function slotIsDone(slot: PhotoScratchSlot): boolean {
     slotLayersComplete(slot) &&
       slot.has_match &&
       slot.has_cutout &&
+      slot.has_zoom &&
       slot.mesh &&
       slot.has_symbols,
   );

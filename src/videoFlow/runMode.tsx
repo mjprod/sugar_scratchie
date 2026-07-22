@@ -822,6 +822,7 @@ function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
   if (!slot.has_match) return { color: "orange", label: "3 layers · needs match" };
   if (!slot.has_adjust) return { color: "orange", label: "3 layers · needs adjust" };
   if (!slot.has_cutout) return { color: "orange", label: "3 layers · needs cutout" };
+  if (!slot.has_zoom) return { color: "orange", label: "3 layers · needs zooming" };
   if (!slot.mesh) return { color: "orange", label: "3 layers · needs mesh" };
   if (!slot.has_symbols) return { color: "orange", label: "3 layers · needs symbols" };
   return { color: "orange", label: "3 layers · Picture Flow" };

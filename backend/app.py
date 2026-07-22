@@ -50,6 +50,7 @@ from backend.cards import (
     upload_photo_scratch_layer,
     write_cards_index,
     write_photo_scratch_slot_symbols,
+    zoom_photo_scratch_slot,
 )
 from backend.models_store import (
     CreateModelRequest,
@@ -694,6 +695,39 @@ def create_photo_scratch_slot_cutout(card_id: str, slot_id: str, theme: str = ""
         _run_cutout,
     )
     return job.public()
+
+
+@app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/zoom")
+def create_photo_scratch_slot_zoom(
+    card_id: str,
+    slot_id: str,
+    theme: str = "",
+    scale: float = 1.0,
+    tx: float = 0.0,
+    ty: float = 0.0,
+    confirm: bool = False,
+    apply: bool = False,
+) -> PhotoScratchSlot:
+    """Scale cutouts about canvas center (Picture Flow Zooming → Mesh)."""
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    if scale <= 0.1 or scale > 3.0:
+        raise HTTPException(status_code=400, detail="scale must be between 0.1 and 3.0")
+    if abs(tx) > 500 or abs(ty) > 500:
+        raise HTTPException(status_code=400, detail="tx/ty must be within ±500 px")
+    return zoom_photo_scratch_slot(
+        CARDS_DIR,
+        card_id,
+        slot_id,
+        theme,
+        scale=scale,
+        tx=tx,
+        ty=ty,
+        confirm=confirm,
+        apply=apply,
+    )
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/mesh")
