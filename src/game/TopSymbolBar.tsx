@@ -25,9 +25,8 @@ type TopSymbolBarProps = {
 };
 
 function paintSlotCoating(canvas: HTMLCanvasElement) {
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
-  const size = canvas.width;
   ctx.clearRect(0, 0, size, size);
   const gradient = ctx.createRadialGradient(
     size * 0.35,
