@@ -1,4 +1,4 @@
-import { ExternalLink, Gamepad2, Loader2, Play } from "lucide-react";
+import { ExternalLink, Gamepad2, Loader2, Play, Sparkles } from "lucide-react";
 import {
   Badge,
   Button,
@@ -10,6 +10,12 @@ import {
   TextField,
 } from "@radix-ui/themes";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  parseTrackedMesh,
+  randomSymbolPoints,
+  sampleTrackedMesh,
+  SYMBOL_POINT_COUNT,
+} from "../meshGeometry";
 import { api } from "../shared/api";
 import {
   cutoutPhotoScratchSlot,
@@ -19,6 +25,7 @@ import {
   photoScratchSlotIsDone,
   photoScratchSlotPlayHref,
   publishPhotoScratchGame,
+  savePhotoScratchSlotSymbols,
   zoomPhotoScratchSlot,
   type PhotoScratchSlot,
 } from "../shared/models";
@@ -164,6 +171,29 @@ async function pollJob(jobId: string, label: string) {
   throw new Error(`${label} timed out`);
 }
 
+async function autoSaveRandomSymbols(
+  cardId: string,
+  slotId: string,
+  meshUrl: string,
+) {
+  const meshResponse = await fetch(meshUrl, { cache: "no-store" });
+  if (!meshResponse.ok) {
+    throw new Error(`Mesh not found (${meshResponse.status})`);
+  }
+  const meshData = parseTrackedMesh(await meshResponse.json());
+  if (!meshData) {
+    throw new Error("Invalid mesh JSON");
+  }
+  const sample = sampleTrackedMesh(meshData, 0);
+  const points = randomSymbolPoints(sample, SYMBOL_POINT_COUNT, meshData.garment);
+  if (points.length !== SYMBOL_POINT_COUNT) {
+    throw new Error(
+      `Could only place ${points.length}/${SYMBOL_POINT_COUNT} symbol points`,
+    );
+  }
+  await savePhotoScratchSlotSymbols(cardId, slotId, points);
+}
+
 /** Prep screen: Video Flow pipeline boxes + detail screen on the right. */
 export function PictureFlowPage() {
   const cardId = useMemo(() => readQuery("card"), []);
@@ -177,6 +207,8 @@ export function PictureFlowPage() {
   const [zoomBusy, setZoomBusy] = useState("");
   const [meshBusy, setMeshBusy] = useState("");
   const [publishBusy, setPublishBusy] = useState("");
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoStatus, setAutoStatus] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [manualStepBySlot, setManualStepBySlot] = useState<Record<string, StepId>>(
     {},
@@ -228,7 +260,9 @@ export function PictureFlowPage() {
   }, [focusSlot, visibleSlots, selectedSlotId]);
 
   const slot = visibleSlots.find((s) => s.id === selectedSlotId) ?? null;
-  const busy = Boolean(cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy);
+  const busy = Boolean(
+    cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy || autoBusy,
+  );
 
   useEffect(() => {
     if (!slot?.has_cutout) return;
@@ -392,6 +426,112 @@ export function PictureFlowPage() {
     }
   }
 
+  async function handleAutoApprove() {
+    if (!cardId || busy) return;
+    setAutoBusy(true);
+    setAutoStatus("");
+    setError("");
+    setFixMeshOpen(false);
+    try {
+      let current = await fetchPhotoScratchSlots(cardId);
+      setSlots(current);
+
+      const candidates = (
+        focusSlot
+          ? current.filter((s) => s.id === focusSlot)
+          : current
+      ).filter(layersComplete);
+
+      const pending = candidates.filter((s) => !photoScratchSlotIsDone(s));
+      if (pending.length === 0) {
+        setAutoStatus("All ready slots already done — publishing…");
+        await publishPhotoScratchGame(cardId, focusSlot || "");
+        setAutoStatus(
+          focusSlot
+            ? "Published this slot."
+            : `Published ${candidates.length} ready slot(s).`,
+        );
+        await refresh();
+        return;
+      }
+
+      let published = 0;
+      for (let index = 0; index < pending.length; index += 1) {
+        const target = pending[index]!;
+        const progress = `${index + 1}/${pending.length}`;
+        let entry =
+          current.find((s) => s.id === target.id) ?? target;
+
+        const reloadSlot = async () => {
+          current = await fetchPhotoScratchSlots(cardId);
+          setSlots(current);
+          const next = current.find((s) => s.id === target.id);
+          if (!next) {
+            throw new Error(`${target.label} disappeared after a step`);
+          }
+          entry = next;
+        };
+
+        if (!entry.has_match) {
+          setAutoStatus(`${progress} ${entry.label}: Match…`);
+          const job = await matchPhotoScratchSlot(cardId, entry.id);
+          await pollJob(job.id, "Register layers");
+          await reloadSlot();
+        }
+
+        if (!entry.has_cutout) {
+          setAutoStatus(`${progress} ${entry.label}: Cutout…`);
+          const job = await cutoutPhotoScratchSlot(cardId, entry.id);
+          await pollJob(job.id, "Cut out girl");
+          await reloadSlot();
+        }
+
+        if (!entry.has_zoom) {
+          setAutoStatus(`${progress} ${entry.label}: Zoom…`);
+          await zoomPhotoScratchSlot(cardId, entry.id, "", {
+            scale: entry.zoom_scale ?? 1,
+            tx: entry.zoom_tx ?? 0,
+            ty: entry.zoom_ty ?? 0,
+            apply: true,
+            confirm: true,
+          });
+          await reloadSlot();
+        }
+
+        if (!entry.mesh) {
+          setAutoStatus(`${progress} ${entry.label}: Mesh…`);
+          const job = await generatePhotoScratchSlotMesh(cardId, entry.id);
+          await pollJob(job.id, "Mesh generation");
+          await reloadSlot();
+        }
+
+        if (!entry.has_symbols) {
+          setAutoStatus(`${progress} ${entry.label}: Symbols…`);
+          const meshUrl =
+            entry.mesh ||
+            `/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(entry.id)}/mesh.json`;
+          await autoSaveRandomSymbols(cardId, entry.id, meshUrl);
+          await reloadSlot();
+        }
+
+        setAutoStatus(`${progress} ${entry.label}: Publishing…`);
+        await publishPhotoScratchGame(cardId, entry.id);
+        published += 1;
+        clearManualStep(entry.id);
+      }
+
+      setAutoStatus(
+        `Done — auto-approved and published ${published} slot(s).`,
+      );
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setAutoStatus("");
+    } finally {
+      setAutoBusy(false);
+    }
+  }
+
   return (
     <VideoFlowShell
       active="picture"
@@ -425,6 +565,31 @@ export function PictureFlowPage() {
         </Card>
       ) : slot ? (
         <Flex direction="column" gap="4">
+          <Flex align="center" gap="3" wrap="wrap" justify="between">
+            <Button
+              color="green"
+              disabled={busy || visibleSlots.length === 0}
+              onClick={() => void handleAutoApprove()}
+              title="Run match → cutout → zoom → mesh → random symbols → publish for every incomplete teacher slot"
+            >
+              {autoBusy ? (
+                <Loader2 {...iconProps} className="spin" />
+              ) : (
+                <Sparkles {...iconProps} />
+              )}
+              {autoBusy ? "Auto-approving…" : "Auto-approve all"}
+            </Button>
+            {autoStatus ? (
+              <Text color="green" size="2">
+                {autoStatus}
+              </Text>
+            ) : (
+              <Text color="gray" size="2">
+                Runs the full pipeline for every incomplete teacher, then publishes.
+              </Text>
+            )}
+          </Flex>
+
           {!focusSlot && visibleSlots.length > 1 ? (
             <Flex gap="2" wrap="wrap">
               {visibleSlots.map((entry) => (
@@ -432,6 +597,7 @@ export function PictureFlowPage() {
                   key={entry.id}
                   size="1"
                   variant={entry.id === slot.id ? "solid" : "soft"}
+                  disabled={autoBusy}
                   onClick={() => {
                     setSelectedSlotId(entry.id);
                     setFixMeshOpen(false);
