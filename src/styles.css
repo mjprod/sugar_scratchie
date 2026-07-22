@@ -210,6 +210,61 @@ textarea:focus-visible {
   pointer-events: none;
 }
 
+/* Match-6 top bar: starts mid-screen (scratchable), docks to top after reveal. */
+.top-symbol-bar {
+  gap: 8px;
+  padding: 10px 14px;
+  max-width: calc(100% - 32px);
+  transition:
+    top 480ms cubic-bezier(0.33, 1.15, 0.4, 1),
+    transform 480ms cubic-bezier(0.33, 1.15, 0.4, 1),
+    box-shadow 320ms ease;
+  will-change: top, transform;
+}
+
+.top-symbol-bar.is-phase-center {
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.12);
+  z-index: 9;
+}
+
+.top-symbol-bar.is-phase-center.is-scratchable {
+  cursor: crosshair;
+}
+
+.top-symbol-bar.is-phase-docked {
+  top: max(12px, env(safe-area-inset-top));
+  transform: translateY(0);
+  pointer-events: none;
+  cursor: default;
+}
+
+.top-symbol-bar .top-symbol-slot {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.top-symbol-bar.is-phase-docked .top-symbol-slot {
+  pointer-events: none;
+  cursor: default;
+}
+
+.top-symbol-scratch-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
 .symbol-slot {
   display: flex;
   align-items: center;
@@ -287,6 +342,30 @@ textarea:focus-visible {
 .stage.is-game-over canvas,
 .stage.is-game-over .symbol-bar {
   filter: blur(5px);
+}
+
+.stage.is-bar-phase canvas {
+  pointer-events: none;
+}
+
+.stage.is-bar-phase::after {
+  content: "Scratch the symbols to start";
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 56px);
+  transform: translateX(-50%);
+  z-index: 8;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(12, 10, 8, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
 @keyframes symbolReveal {
@@ -420,9 +499,28 @@ textarea:focus-visible {
     padding: 5px 8px;
   }
 
+  .top-symbol-bar {
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .top-symbol-bar .top-symbol-slot {
+    width: 40px;
+    height: 40px;
+  }
+
+  .top-symbol-bar.is-phase-docked {
+    top: max(12px, env(safe-area-inset-top));
+  }
+
   .symbol-slot {
     width: 30px;
     height: 30px;
+  }
+
+  .stage.is-bar-phase::after {
+    top: calc(50% + 52px);
+    font-size: 12px;
   }
 }
 

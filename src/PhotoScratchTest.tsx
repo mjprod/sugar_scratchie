@@ -1,4 +1,3 @@
-import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -7,6 +6,16 @@ import {
   PRESENT_ZOOM,
   type ImageLayerCameras,
 } from "./glRenderer";
+import { GameSymbolIcon } from "./game/GameSymbolIcon";
+import {
+  buildBodySymbols,
+  buildTopSymbols,
+  matchResultDetail,
+  resolveMatchGame,
+  SYMBOL_TYPE_COUNT,
+  type MatchGameOutcome,
+} from "./game/matchGame";
+import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -62,7 +71,6 @@ const AUTO_SCRATCH_FILL_BATCH = 36;
 const AUTO_SCRATCH_MAX_PER_FRAME = 32;
 const SYMBOL_NOTE_BASE_HZ = 523.25;
 const SYMBOL_NOTE_DURATION_S = 0.32;
-const WIN_MATCH_COUNT = 3;
 const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
 const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
 const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
@@ -94,22 +102,6 @@ const BG_BRIGHTNESS_DIM = 0.8;
 
 type ScratchMark = { u: number; v: number; radius: number };
 
-// Lottie game symbols (same set as the video prototype). Symbols are revealed
-// when a scratch stroke passes near their mesh-UV anchor from mesh.json.
-const SYMBOL_TYPES: { src: string; label: string }[] = [
-  { src: "/lotties/01-Heart.lottie", label: "Heart" },
-  { src: "/lotties/02-Lock.lottie", label: "Lock" },
-  { src: "/lotties/03-GemDiamond.lottie", label: "Gem" },
-  { src: "/lotties/04-Star.lottie", label: "Star" },
-  { src: "/lotties/05-Diamond.lottie", label: "Diamond" },
-  { src: "/lotties/06-Magnet.lottie", label: "Magnet" },
-  { src: "/lotties/07-Crown.lottie", label: "Crown" },
-  { src: "/lotties/08-Gold%20Coins.lottie", label: "Gold Coins" },
-  { src: "/lotties/09-Key.lottie", label: "Key" },
-  { src: "/lotties/10-Treasure%20Chest.lottie", label: "Treasure Chest" },
-  { src: "/lotties/11-Diamond%20Cards.lottie", label: "Diamond Cards" },
-  { src: "/lotties/12-WinnerTrophy.lottie", label: "Trophy" },
-];
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 
 function clamp(value: number, lo: number, hi: number) {
@@ -132,13 +124,8 @@ type SymbolAudioState = {
 
 type GameResult = "win" | "lose";
 
-function evaluateSessionWin(symbolIds: number[]) {
-  const counts = new Array(SYMBOL_TYPES.length).fill(0);
-  for (const id of symbolIds) {
-    counts[id] += 1;
-    if (counts[id] >= WIN_MATCH_COUNT) return true;
-  }
-  return false;
+function buildSessionSymbols(): number[] {
+  return buildBodySymbols();
 }
 
 function isGarmentFullyRevealed(
@@ -374,12 +361,6 @@ function playGameOutcomeSound(
   return 2.05 * 1000 + GAME_OUTCOME_OVERLAY_PAD_MS;
 }
 
-function buildSessionSymbols(): number[] {
-  return Array.from({ length: SYMBOL_POINT_COUNT }, () =>
-    Math.floor(Math.random() * SYMBOL_TYPES.length),
-  );
-}
-
 function buildRevealSamples(mesh: TrackedMesh | null): Vec2[] {
   const samplesAcross = 13;
   const samplesDown = 18;
@@ -493,28 +474,6 @@ function buildAutoScratchPath(mesh: TrackedMesh | null): Vec2[] {
     sparse.push(...densifyScratchPath(line.points, AUTO_SCRATCH_PATH_STEP_UV));
   }
   return sparse;
-}
-
-function GameSymbolIcon({
-  typeId,
-  size = 24,
-}: {
-  typeId: number;
-  size?: number;
-}) {
-  const entry = SYMBOL_TYPES[typeId] ?? SYMBOL_TYPES[0];
-  return (
-    <DotLottieReact
-      src={entry.src}
-      autoplay
-      loop
-      aria-hidden="true"
-      width={size}
-      height={size}
-      style={{ width: size, height: size }}
-      className="game-symbol-lottie"
-    />
-  );
 }
 
 function worldPointToStage(
@@ -792,6 +751,16 @@ export function PhotoScratchTest() {
     useState<number[]>(buildSessionSymbols);
   const sessionSymbolsRef = useRef(sessionSymbols);
   sessionSymbolsRef.current = sessionSymbols;
+  const [topSymbols, setTopSymbols] = useState(buildTopSymbols);
+  const topSymbolsRef = useRef(topSymbols);
+  topSymbolsRef.current = topSymbols;
+  const [topBarPhase, setTopBarPhase] = useState<TopBarPhase>("center");
+  const topBarPhaseRef = useRef(topBarPhase);
+  topBarPhaseRef.current = topBarPhase;
+  const [topBarRound, setTopBarRound] = useState(0);
+  const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
+    null,
+  );
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
@@ -838,6 +807,21 @@ export function PhotoScratchTest() {
     clearGameResultTimer();
     gameResultPendingRef.current = null;
     setGameResult(null);
+    setMatchOutcome(null);
+  }
+
+  function resetMatchRound() {
+    setTopSymbols(buildTopSymbols());
+    setTopBarPhase("center");
+    topBarPhaseRef.current = "center";
+    setTopBarRound((n) => n + 1);
+    setSessionSymbols(buildBodySymbols());
+    setMatchOutcome(null);
+  }
+
+  function onTopBarAllRevealed() {
+    setTopBarPhase("docked");
+    topBarPhaseRef.current = "docked";
   }
 
   function applyMesh(mesh: TrackedMesh) {
@@ -858,7 +842,7 @@ export function PhotoScratchTest() {
     claimedRef.current = false;
     setClaimed(false);
     resetGameOutcome();
-    setSessionSymbols(buildSessionSymbols());
+    resetMatchRound();
     setRevealedSymbols(0);
     setHasBodySymbols(mesh.symbolPoints?.length === SYMBOL_POINT_COUNT);
     setAutoScratch((current) =>
@@ -1268,6 +1252,9 @@ export function PhotoScratchTest() {
 
   function applyScratchAtUv(u: number, v: number, radius: number) {
     if (gameResultPendingRef.current !== null || claimedRef.current) return;
+    if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
+      return;
+    }
 
     marksRef.current = [...marksRef.current, { u, v, radius }].slice(-180);
     fgRendererRef.current?.paintScratch(u, v, radius);
@@ -1373,7 +1360,8 @@ export function PhotoScratchTest() {
     if (
       patch.enabled &&
       hasBodySymbolsRef.current &&
-      revealedSymbolsRef.current < SYMBOL_POINT_COUNT
+      (revealedSymbolsRef.current < SYMBOL_POINT_COUNT ||
+        topBarPhaseRef.current === "center")
     ) {
       return;
     }
@@ -1411,10 +1399,27 @@ export function PhotoScratchTest() {
     ) {
       return;
     }
-    const outcome: GameResult = evaluateSessionWin(sessionSymbolsRef.current)
-      ? "win"
-      : "lose";
+    let outcome: GameResult;
+    let match: MatchGameOutcome | null = null;
+    if (hasBodySymbolsRef.current) {
+      match = resolveMatchGame(
+        topSymbolsRef.current,
+        sessionSymbolsRef.current,
+      );
+      outcome = match.result;
+    } else {
+      const counts = new Array(SYMBOL_TYPE_COUNT).fill(0);
+      outcome = "lose";
+      for (const id of sessionSymbolsRef.current) {
+        counts[id] += 1;
+        if (counts[id] >= 3) {
+          outcome = "win";
+          break;
+        }
+      }
+    }
     gameResultPendingRef.current = outcome;
+    setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
@@ -1490,7 +1495,7 @@ export function PhotoScratchTest() {
     claimedRef.current = false;
     setClaimed(false);
     resetGameOutcome();
-    setSessionSymbols(buildSessionSymbols());
+    resetMatchRound();
     setRevealedSymbols(0);
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
@@ -1547,6 +1552,9 @@ export function PhotoScratchTest() {
 
   function onPointerDown(clientX: number, clientY: number) {
     if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
+    if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
+      return;
+    }
     isScratchingRef.current = true;
     scratchStartedRef.current = true;
     setIsScratching(true);
@@ -1572,7 +1580,9 @@ export function PhotoScratchTest() {
   const parallaxState = parallaxStateRef.current;
   const symbolsHuntComplete =
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
-  const autoScratchLocked = hasBodySymbols && !symbolsHuntComplete;
+  const autoScratchLocked =
+    hasBodySymbols &&
+    (!symbolsHuntComplete || topBarPhase === "center");
   const remainingCards = playlist.filter(
     (entry) => !completedCardIds.includes(entry.id),
   );
@@ -1868,8 +1878,9 @@ export function PhotoScratchTest() {
             <legend>Auto scratch</legend>
             {autoScratchLocked ? (
               <p className="auto-scratch-hint">
-                Find all {SYMBOL_POINT_COUNT} symbols on the dress first — auto
-                scratch finishes the reveal.
+                {topBarPhase === "center"
+                  ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+                  : `Find all ${SYMBOL_POINT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
               </p>
             ) : null}
             <label className="checkbox-label">
@@ -1930,8 +1941,18 @@ export function PhotoScratchTest() {
 
         <div
           ref={stageRef}
-          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}`}
+          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
+            hasBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
+          }`}
         >
+          {hasBodySymbols ? (
+            <TopSymbolBar
+              symbols={topSymbols}
+              phase={topBarPhase}
+              roundKey={topBarRound}
+              onAllRevealed={onTopBarAllRevealed}
+            />
+          ) : null}
           <div
             className={`bg-drag-scale${isScratching ? " is-bg-blurred" : ""}`}
             aria-hidden="true"
@@ -2010,9 +2031,11 @@ export function PhotoScratchTest() {
                 {gameResult === "win" ? "You win!" : "No luck this time"}
               </p>
               <p className="game-result-detail">
-                {gameResult === "win"
-                  ? "Three matching symbols — nice!"
-                  : "No three-of-a-kind — try again."}
+                {matchOutcome
+                  ? matchResultDetail(matchOutcome, "diamonds")
+                  : gameResult === "win"
+                    ? "Three matching symbols — nice!"
+                    : "No three-of-a-kind — try again."}
               </p>
               <button
                 type="button"

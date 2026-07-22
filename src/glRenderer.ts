@@ -271,6 +271,7 @@ export class GarmentGLRenderer {
   /** Drawing-buffer / FBO size in device pixels (= logical × DPR). */
   private bufferWidth: number;
   private bufferHeight: number;
+  private pixelRatio: number;
   private scratchTexSize: number;
 
   private blit: WebGLProgram;
