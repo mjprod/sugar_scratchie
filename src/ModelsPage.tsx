@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ChevronDown,
   ChevronUp,
   ExternalLink,
@@ -148,6 +149,19 @@ function pictureFlowHref(cardId: string): string {
   return `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
 }
 
+function modelDetailHref(modelId: string): string {
+  return `/dashboard/models?model=${encodeURIComponent(modelId)}`;
+}
+
+function readSelectedModelId(): string {
+  return new URLSearchParams(window.location.search).get("model")?.trim() ?? "";
+}
+
+function modelInitial(label: string, id: string): string {
+  const source = (label.trim() || id.trim() || "?").charAt(0);
+  return source.toLowerCase();
+}
+
 function sortModelCards(cards: CardInfo[]): CardInfo[] {
   return [...cards].sort((a, b) => {
     // Published cards keep sort_order; drafts sort after them by id.
@@ -221,8 +235,15 @@ export function ModelsPage() {
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
   const [createModelOpen, setCreateModelOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
+
+  useEffect(() => {
+    const sync = () => setSelectedModelId(readSelectedModelId());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
 
   async function refresh() {
     const [nextModels, assets, flowData] = await Promise.all([
@@ -283,14 +304,9 @@ export function ModelsPage() {
     [cards],
   );
 
-  const modelsWithCards = useMemo(
-    () => models.filter((model) => (cardsByModel.get(model.id) ?? []).length > 0),
-    [models, cardsByModel],
-  );
-
-  const modelsWithoutCards = useMemo(
-    () => models.filter((model) => (cardsByModel.get(model.id) ?? []).length === 0),
-    [models, cardsByModel],
+  const selectedModel = useMemo(
+    () => models.find((model) => model.id === selectedModelId) ?? null,
+    [models, selectedModelId],
   );
 
   async function handleCreateModel() {
@@ -335,6 +351,10 @@ export function ModelsPage() {
     setError("");
     try {
       await deleteModel(modelId);
+      if (selectedModelId === modelId) {
+        window.history.pushState(null, "", "/dashboard/models");
+        setSelectedModelId("");
+      }
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -510,457 +530,200 @@ export function ModelsPage() {
             </Callout.Root>
           ) : null}
 
-          <Card size="3" className="models-create-inline">
-            <Heading size="4" mb="3">
-              Create model
-            </Heading>
-            <CreateModelFields
+          {selectedModel ? (
+            <ModelDetail
               busy={busy}
-              modelId={newModelId}
-              modelLabel={newModelLabel}
-              onModelIdChange={setNewModelId}
-              onModelLabelChange={setNewModelLabel}
-              onSubmit={() => void handleCreateModel()}
+              creatingCardFor={creatingCardFor}
+              editingId={editingId}
+              editingLabel={editingLabel}
+              importableCards={importableCards}
+              model={selectedModel}
+              modelCards={cardsByModel.get(selectedModel.id) ?? []}
+              models={models}
+              newCardId={newCardId}
+              newCardLabel={newCardLabel}
+              onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
+              onAvatarClick={() => {
+                setAvatarTargetId(selectedModel.id);
+                avatarInputRef.current?.click();
+              }}
+              onCancelCreateCard={closeCreateCard}
+              onCancelRename={() => {
+                setEditingId("");
+                setEditingLabel("");
+              }}
+              onCardIdChange={setNewCardId}
+              onCardLabelChange={setNewCardLabel}
+              onCreateCard={() => void handleCreateCard(selectedModel.id)}
+              onDeleteCard={(card) => void handleDeleteCard(card)}
+              onDeleteModel={() => void handleDeleteModel(selectedModel.id)}
+              onDetachCard={(cardId) => void handleAssignCard(cardId, "")}
+              onEditingLabelChange={setEditingLabel}
+              onMoveCard={(cardId, direction) => void handleMoveCard(selectedModel.id, cardId, direction)}
+              onOpenCreateCard={() => openCreateCard(selectedModel.id)}
+              onPublishGame={(cardId) => void handlePublishGame(cardId)}
+              onRename={() => void handleRenameModel(selectedModel.id)}
+              onStartRename={() => {
+                setEditingId(selectedModel.id);
+                setEditingLabel(selectedModel.label);
+              }}
             />
-          </Card>
-
-          <Box className="models-create-mobile">
-            <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
-              <Dialog.Trigger>
-                <Button size="3" style={{ width: "100%" }} variant="soft">
-                  <Plus {...iconProps} />
+          ) : (
+            <>
+              <Card size="3" className="models-create-inline">
+                <Heading size="4" mb="3">
                   Create model
-                </Button>
-              </Dialog.Trigger>
-              <Dialog.Content style={{ maxWidth: 420 }}>
-                <Dialog.Title>Create model</Dialog.Title>
-                <Dialog.Description size="2" mb="3">
-                  Add a girl/persona. You can attach motion cards after.
-                </Dialog.Description>
+                </Heading>
                 <CreateModelFields
                   busy={busy}
                   modelId={newModelId}
                   modelLabel={newModelLabel}
-                  stacked
                   onModelIdChange={setNewModelId}
                   onModelLabelChange={setNewModelLabel}
                   onSubmit={() => void handleCreateModel()}
                 />
-                <Flex gap="2" mt="3" justify="end">
-                  <Dialog.Close>
-                    <Button color="gray" disabled={busy} variant="soft">
-                      Cancel
-                    </Button>
-                  </Dialog.Close>
-                </Flex>
-              </Dialog.Content>
-            </Dialog.Root>
-          </Box>
+              </Card>
 
-          {modelsWithoutCards.length > 0 ? (
-            <Card size="3">
-              <Heading size="4" mb="1">
-                Girls with no motion cards
-              </Heading>
-              <Text color="gray" mb="3" size="2">
-                These models exist but have nothing to play yet — import an unassigned card or create one.
-              </Text>
-              <Flex direction="column" gap="3">
-                {modelsWithoutCards.map((model) => (
-                  <Box
-                    key={model.id}
-                    style={{
-                      padding: 12,
-                      borderRadius: 12,
-                      background: "var(--orange-2)",
-                      border: "1px solid var(--orange-6)",
-                    }}
-                  >
-                    <Flex align="center" gap="3" wrap="wrap">
-                      <Box
-                        style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 10,
-                          overflow: "hidden",
-                          background: "var(--gray-3)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {model.avatar ? (
-                          <img
-                            alt=""
-                            src={model.avatar}
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          />
-                        ) : (
-                          <Flex align="center" height="100%" justify="center">
-                            <UserRound {...iconProps} />
-                          </Flex>
-                        )}
-                      </Box>
-                      <Box style={{ flex: 1, minWidth: 140 }}>
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Text weight="bold">{model.label}</Text>
-                          <Badge color="orange" variant="soft">
-                            0 cards
-                          </Badge>
-                          <Badge color="plum" variant="soft">
-                            {model.id}
-                          </Badge>
-                        </Flex>
-                      </Box>
-                      <Flex gap="2" wrap="wrap">
-                        {unassignedCards.length > 0 ? (
-                          <Select.Root
-                            disabled={busy}
-                            value=""
-                            onValueChange={(value) => void handleAssignCard(value, model.id)}
-                          >
-                            <Select.Trigger placeholder="Import unassigned…" style={{ minWidth: 180 }} />
-                            <Select.Content>
-                              {unassignedCards.map((card) => (
-                                <Select.Item key={card.id} value={card.id}>
-                                  {card.label} ({card.id})
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select.Root>
-                        ) : null}
-                        {creatingCardFor === model.id ? null : (
-                          <Button
-                            disabled={busy}
-                            size="2"
-                            variant="soft"
-                            onClick={() => openCreateCard(model.id)}
-                          >
-                            <Plus {...iconProps} />
-                            New motion card
-                          </Button>
-                        )}
-                        <Button
-                          color="red"
-                          disabled={busy}
-                          size="2"
-                          variant="soft"
-                          onClick={() => void handleDeleteModel(model.id)}
-                        >
-                          <Trash2 {...iconProps} />
-                          Delete
+              <Box className="models-create-mobile">
+                <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
+                  <Dialog.Trigger>
+                    <Button size="3" style={{ width: "100%" }} variant="soft">
+                      <Plus {...iconProps} />
+                      Create model
+                    </Button>
+                  </Dialog.Trigger>
+                  <Dialog.Content style={{ maxWidth: 420 }}>
+                    <Dialog.Title>Create model</Dialog.Title>
+                    <Dialog.Description size="2" mb="3">
+                      Add a girl/persona. You can attach motion cards after.
+                    </Dialog.Description>
+                    <CreateModelFields
+                      busy={busy}
+                      modelId={newModelId}
+                      modelLabel={newModelLabel}
+                      stacked
+                      onModelIdChange={setNewModelId}
+                      onModelLabelChange={setNewModelLabel}
+                      onSubmit={() => void handleCreateModel()}
+                    />
+                    <Flex gap="2" mt="3" justify="end">
+                      <Dialog.Close>
+                        <Button color="gray" disabled={busy} variant="soft">
+                          Cancel
                         </Button>
-                      </Flex>
+                      </Dialog.Close>
                     </Flex>
-                    {creatingCardFor === model.id ? (
-                      <Box mt="3">
-                        <CreateCardForm
-                          busy={busy}
-                          cardId={newCardId}
-                          cardLabel={newCardLabel}
-                          onCancel={closeCreateCard}
-                          onCardIdChange={setNewCardId}
-                          onCardLabelChange={setNewCardLabel}
-                          onSubmit={() => void handleCreateCard(model.id)}
-                        />
-                      </Box>
-                    ) : null}
-                  </Box>
-                ))}
-              </Flex>
-            </Card>
-          ) : null}
+                  </Dialog.Content>
+                </Dialog.Root>
+              </Box>
 
-          {unassignedCards.length > 0 ? (
-            <Card size="3">
-              <Heading size="4" mb="1">
-                Unassigned motion cards
-              </Heading>
-              <Text color="gray" mb="3" size="2">
-                Cards with no girl yet — assign one below.
-              </Text>
-              <Table.Root size="1" variant="surface">
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
-                    <Table.ColumnHeaderCell>Assign to girl</Table.ColumnHeaderCell>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {unassignedCards.map((card) => (
-                    <Table.Row key={card.id}>
-                      <Table.Cell>
-                        {card.label} <CodeInline>{card.id}</CodeInline>
-                        {card.theme ? (
-                          <Badge color="iris" ml="2" variant="soft" title="Theme">
-                            {card.theme}
-                          </Badge>
-                        ) : null}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Select.Root
-                            disabled={busy || models.length === 0}
-                            value=""
-                            onValueChange={(value) => void handleAssignCard(card.id, value)}
-                          >
-                            <Select.Trigger placeholder="Choose girl…" style={{ minWidth: 180 }} />
-                            <Select.Content>
-                              {models.map((model) => (
-                                <Select.Item key={model.id} value={model.id}>
-                                  {model.label}
-                                  {(cardsByModel.get(model.id) ?? []).length === 0 ? " (empty)" : ""}
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select.Root>
-                          <Button asChild size="1" variant="soft">
-                            <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
-                              <Pencil {...iconProps} />
-                              Edit
-                            </a>
-                          </Button>
-                          <Button
-                            color="red"
-                            disabled={busy}
-                            size="1"
-                            title="Delete motion card"
-                            variant="soft"
-                            onClick={() => void handleDeleteCard(card)}
-                          >
-                            <Trash2 {...iconProps} />
-                            Delete
-                          </Button>
-                        </Flex>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Root>
-            </Card>
-          ) : null}
-
-          {modelsWithCards.length > 0 ? (
-            <Heading size="4">Girls with motion cards</Heading>
-          ) : null}
-
-          <Flex direction="column" gap="4">
-            {modelsWithCards.map((model) => {
-              const modelCards = cardsByModel.get(model.id) ?? [];
-              const candidates = importableCards.filter((card) => card.model_id !== model.id);
-              const publishedCards = modelCards.filter((entry) => !entry.draft);
-              return (
-                <Card key={model.id} size="3">
-                  <Flex align="start" gap="3" mb="3">
-                    <Box
-                      style={{
-                        width: 72,
-                        height: 72,
-                        borderRadius: 12,
-                        overflow: "hidden",
-                        background: "var(--gray-3)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {model.avatar ? (
-                        <img alt="" src={model.avatar} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        <Flex align="center" height="100%" justify="center">
-                          <UserRound {...iconProps} />
-                        </Flex>
-                      )}
-                    </Box>
-                    <Box style={{ flex: 1 }}>
-                      {editingId === model.id ? (
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <TextField.Root
-                            disabled={busy}
-                            value={editingLabel}
-                            onChange={(event) => setEditingLabel(event.currentTarget.value)}
-                          />
-                          <Button disabled={busy} size="1" onClick={() => void handleRenameModel(model.id)}>
-                            Save
-                          </Button>
-                          <Button
-                            disabled={busy}
-                            size="1"
-                            variant="soft"
-                            onClick={() => {
-                              setEditingId("");
-                              setEditingLabel("");
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </Flex>
-                      ) : (
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Heading size="4">{model.label}</Heading>
-                          <Badge color="plum" variant="soft">
-                            {model.id}
-                          </Badge>
-                        </Flex>
-                      )}
-                      <Text color="gray" mt="1" size="2">
-                        {publishedCards.length} published
-                        {modelCards.some((card) => card.draft)
-                          ? ` · ${modelCards.filter((card) => card.draft).length} draft`
-                          : ""}
-                      </Text>
-                    </Box>
-                  </Flex>
-
-                  <Flex gap="2" mb="3" wrap="wrap">
-                    {publishedCards.length > 0 ? (
-                      <Button asChild size="1">
-                        <a href={playAllHref(model.id)}>
-                          <Play {...iconProps} />
-                          Play all
-                        </a>
-                      </Button>
-                    ) : null}
-                    {creatingCardFor === model.id ? null : (
-                      <Button
-                        disabled={busy}
-                        size="1"
-                        variant="soft"
-                        onClick={() => openCreateCard(model.id)}
-                      >
-                        <Plus {...iconProps} />
-                        New motion card
-                      </Button>
-                    )}
-                    <Button
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => {
-                        setEditingId(model.id);
-                        setEditingLabel(model.label);
-                      }}
-                    >
-                      Rename
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => {
-                        setAvatarTargetId(model.id);
-                        avatarInputRef.current?.click();
-                      }}
-                    >
-                      <Upload {...iconProps} />
-                      Avatar
-                    </Button>
-                    <Button
-                      color="red"
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => void handleDeleteModel(model.id)}
-                    >
-                      <Trash2 {...iconProps} />
-                      Delete
-                    </Button>
-                  </Flex>
-
-                  {creatingCardFor === model.id ? (
-                    <Box mb="3">
-                      <CreateCardForm
-                        busy={busy}
-                        cardId={newCardId}
-                        cardLabel={newCardLabel}
-                        onCancel={closeCreateCard}
-                        onCardIdChange={setNewCardId}
-                        onCardLabelChange={setNewCardLabel}
-                        onSubmit={() => void handleCreateCard(model.id)}
-                      />
-                    </Box>
-                  ) : null}
-
-                  {modelCards.length > 0 ? (
-                    <Box className="models-card-list">
-                      <Flex className="models-card-list-header" align="center" gap="3">
-                        <Text className="models-card-list-identity" color="gray" size="1" weight="medium">
-                          Motion card
-                        </Text>
-                        <Text className="models-card-list-status" color="gray" size="1" weight="medium">
-                          Photo Scratch
-                        </Text>
-                        <Text className="models-card-list-actions" color="gray" size="1" weight="medium">
-                          Actions
-                        </Text>
-                      </Flex>
-                      {modelCards.map((card, index) => {
-                        const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
-                        return (
-                          <MotionCardRow
-                            key={card.id}
-                            busy={busy}
-                            card={card}
-                            index={index}
-                            modelId={model.id}
-                            publishedIndex={publishedIndex}
-                            publishedCount={publishedCards.length}
-                            onDelete={() => void handleDeleteCard(card)}
-                            onDetach={() => void handleAssignCard(card.id, "")}
-                            onMoveDown={() => void handleMoveCard(model.id, card.id, 1)}
-                            onMoveUp={() => void handleMoveCard(model.id, card.id, -1)}
-                            onPublishGame={() => void handlePublishGame(card.id)}
-                          />
-                        );
-                      })}
-                    </Box>
-                  ) : (
-                    <Text color="gray" size="2">
-                      No motion cards yet. Create one above or import an existing card below.
-                    </Text>
-                  )}
-
-                  {candidates.length > 0 ? (
-                    <Flex align="center" gap="2" mt="3" wrap="wrap">
-                      <Import {...iconProps} />
-                      <Select.Root
-                        disabled={busy}
-                        value=""
-                        onValueChange={(value) => void handleAssignCard(value, model.id)}
-                      >
-                        <Select.Trigger
-                          placeholder="Import an existing motion card…"
-                          style={{ minWidth: 240 }}
-                        />
-                        <Select.Content>
-                          {candidates
-                            .slice()
-                            .sort((a, b) => Number(Boolean(a.model_id)) - Number(Boolean(b.model_id)))
-                            .map((card) => {
-                              const owner = card.model_id
-                                ? models.find((entry) => entry.id === card.model_id)?.label ?? card.model_id
-                                : null;
-                              return (
-                                <Select.Item key={card.id} value={card.id}>
-                                  {card.label} ({card.id}){owner ? ` — from ${owner}` : " — unassigned"}
-                                </Select.Item>
-                              );
-                            })}
-                        </Select.Content>
-                      </Select.Root>
-                    </Flex>
-                  ) : null}
+              {models.length > 0 ? (
+                <Flex direction="column" gap="3">
+                  <Heading size="4">Models</Heading>
+                  {models.map((model) => {
+                    const count = (cardsByModel.get(model.id) ?? []).length;
+                    return (
+                      <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
+                        <ModelAvatar model={model} size={44} />
+                        <Box style={{ minWidth: 0 }}>
+                          <Text as="div" size="3" weight="bold" truncate>
+                            {model.label}
+                          </Text>
+                          <Text as="div" color="gray" size="2">
+                            {count} motion card{count === 1 ? "" : "s"}
+                          </Text>
+                        </Box>
+                      </a>
+                    );
+                  })}
+                </Flex>
+              ) : (
+                <Card size="3">
+                  <Text color="gray">No models yet. Create your first model above.</Text>
                 </Card>
-              );
-            })}
-          </Flex>
+              )}
 
-          {models.length === 0 ? (
-            <Card size="3">
-              <Text color="gray">No models yet. Create your first model above.</Text>
-            </Card>
-          ) : null}
+              {unassignedCards.length > 0 ? (
+                <Card size="3">
+                  <Heading size="4" mb="1">
+                    Unassigned motion cards
+                  </Heading>
+                  <Text color="gray" mb="3" size="2">
+                    Cards with no girl yet — assign one below.
+                  </Text>
+                  <Table.Root size="1" variant="surface">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Assign to girl</Table.ColumnHeaderCell>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {unassignedCards.map((card) => (
+                        <Table.Row key={card.id}>
+                          <Table.Cell>
+                            {card.label} <CodeInline>{card.id}</CodeInline>
+                            {card.theme ? (
+                              <Badge color="iris" ml="2" variant="soft" title="Theme">
+                                {card.theme}
+                              </Badge>
+                            ) : null}
+                          </Table.Cell>
+                          <Table.Cell>
+                            <Flex align="center" gap="2" wrap="wrap">
+                              <Select.Root
+                                disabled={busy || models.length === 0}
+                                value=""
+                                onValueChange={(value) => void handleAssignCard(card.id, value)}
+                              >
+                                <Select.Trigger placeholder="Choose girl…" style={{ minWidth: 180 }} />
+                                <Select.Content>
+                                  {models.map((model) => (
+                                    <Select.Item key={model.id} value={model.id}>
+                                      {model.label}
+                                      {(cardsByModel.get(model.id) ?? []).length === 0 ? " (empty)" : ""}
+                                    </Select.Item>
+                                  ))}
+                                </Select.Content>
+                              </Select.Root>
+                              <Button asChild size="1" variant="soft">
+                                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                                  <Pencil {...iconProps} />
+                                  Edit
+                                </a>
+                              </Button>
+                              <Button
+                                color="red"
+                                disabled={busy}
+                                size="1"
+                                title="Delete motion card"
+                                variant="soft"
+                                onClick={() => void handleDeleteCard(card)}
+                              >
+                                <Trash2 {...iconProps} />
+                                Delete
+                              </Button>
+                            </Flex>
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table.Root>
+                </Card>
+              ) : null}
+            </>
+          )}
 
-          {models.length > 0 && modelsWithCards.length === 0 && modelsWithoutCards.length === 0 ? (
-            <Card size="3">
-              <Text color="gray">No girls to show.</Text>
-            </Card>
+          {selectedModelId && !selectedModel && models.length > 0 ? (
+            <Callout.Root color="amber">
+              <Callout.Icon>
+                <AlertTriangle {...iconProps} />
+              </Callout.Icon>
+              <Callout.Text>
+                Model “{selectedModelId}” was not found.{" "}
+                <a href="/dashboard/models">Back to models</a>
+              </Callout.Text>
+            </Callout.Root>
           ) : null}
         </Flex>
       </Container>
@@ -985,6 +748,237 @@ function CodeInline({ children }: { children: ReactNode }) {
     <Text as="span" color="gray" size="1">
       <code>{children}</code>
     </Text>
+  );
+}
+
+function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
+  return (
+    <Box
+      className="models-list-avatar"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.22),
+      }}
+    >
+      {model.avatar ? (
+        <img alt="" src={model.avatar} />
+      ) : (
+        <span aria-hidden>{modelInitial(model.label, model.id)}</span>
+      )}
+    </Box>
+  );
+}
+
+function ModelDetail({
+  busy,
+  creatingCardFor,
+  editingId,
+  editingLabel,
+  importableCards,
+  model,
+  modelCards,
+  models,
+  newCardId,
+  newCardLabel,
+  onAssignCard,
+  onAvatarClick,
+  onCancelCreateCard,
+  onCancelRename,
+  onCardIdChange,
+  onCardLabelChange,
+  onCreateCard,
+  onDeleteCard,
+  onDeleteModel,
+  onDetachCard,
+  onEditingLabelChange,
+  onMoveCard,
+  onOpenCreateCard,
+  onPublishGame,
+  onRename,
+  onStartRename,
+}: {
+  busy: boolean;
+  creatingCardFor: string;
+  editingId: string;
+  editingLabel: string;
+  importableCards: CardInfo[];
+  model: ModelInfo;
+  modelCards: CardInfo[];
+  models: ModelInfo[];
+  newCardId: string;
+  newCardLabel: string;
+  onAssignCard: (cardId: string, modelId: string) => void;
+  onAvatarClick: () => void;
+  onCancelCreateCard: () => void;
+  onCancelRename: () => void;
+  onCardIdChange: (value: string) => void;
+  onCardLabelChange: (value: string) => void;
+  onCreateCard: () => void;
+  onDeleteCard: (card: CardInfo) => void;
+  onDeleteModel: () => void;
+  onDetachCard: (cardId: string) => void;
+  onEditingLabelChange: (value: string) => void;
+  onMoveCard: (cardId: string, direction: -1 | 1) => void;
+  onOpenCreateCard: () => void;
+  onPublishGame: (cardId: string) => void;
+  onRename: () => void;
+  onStartRename: () => void;
+}) {
+  const candidates = importableCards.filter((card) => card.model_id !== model.id);
+  const publishedCards = modelCards.filter((entry) => !entry.draft);
+
+  return (
+    <Flex direction="column" gap="3">
+      <Button asChild color="gray" size="2" variant="soft" style={{ alignSelf: "flex-start" }}>
+        <a href="/dashboard/models">
+          <ArrowLeft {...iconProps} />
+          All models
+        </a>
+      </Button>
+
+      <Card size="3">
+        <Flex align="start" gap="3" mb="3">
+          <ModelAvatar model={model} size={72} />
+          <Box style={{ flex: 1 }}>
+            {editingId === model.id ? (
+              <Flex align="center" gap="2" wrap="wrap">
+                <TextField.Root
+                  disabled={busy}
+                  value={editingLabel}
+                  onChange={(event) => onEditingLabelChange(event.currentTarget.value)}
+                />
+                <Button disabled={busy} size="1" onClick={onRename}>
+                  Save
+                </Button>
+                <Button disabled={busy} size="1" variant="soft" onClick={onCancelRename}>
+                  Cancel
+                </Button>
+              </Flex>
+            ) : (
+              <Flex align="center" gap="2" wrap="wrap">
+                <Heading size="4">{model.label}</Heading>
+                <Badge color="plum" variant="soft">
+                  {model.id}
+                </Badge>
+              </Flex>
+            )}
+            <Text color="gray" mt="1" size="2">
+              {publishedCards.length} published
+              {modelCards.some((card) => card.draft)
+                ? ` · ${modelCards.filter((card) => card.draft).length} draft`
+                : ""}
+            </Text>
+          </Box>
+        </Flex>
+
+        <Flex gap="2" mb="3" wrap="wrap">
+          {publishedCards.length > 0 ? (
+            <Button asChild size="1">
+              <a href={playAllHref(model.id)}>
+                <Play {...iconProps} />
+                Play all
+              </a>
+            </Button>
+          ) : null}
+          {creatingCardFor === model.id ? null : (
+            <Button disabled={busy} size="1" variant="soft" onClick={onOpenCreateCard}>
+              <Plus {...iconProps} />
+              New motion card
+            </Button>
+          )}
+          <Button disabled={busy} size="1" variant="soft" onClick={onStartRename}>
+            Rename
+          </Button>
+          <Button disabled={busy} size="1" variant="soft" onClick={onAvatarClick}>
+            <Upload {...iconProps} />
+            Avatar
+          </Button>
+          <Button color="red" disabled={busy} size="1" variant="soft" onClick={onDeleteModel}>
+            <Trash2 {...iconProps} />
+            Delete
+          </Button>
+        </Flex>
+
+        {creatingCardFor === model.id ? (
+          <Box mb="3">
+            <CreateCardForm
+              busy={busy}
+              cardId={newCardId}
+              cardLabel={newCardLabel}
+              onCancel={onCancelCreateCard}
+              onCardIdChange={onCardIdChange}
+              onCardLabelChange={onCardLabelChange}
+              onSubmit={onCreateCard}
+            />
+          </Box>
+        ) : null}
+
+        {modelCards.length > 0 ? (
+          <Box className="models-card-list">
+            <Flex className="models-card-list-header" align="center" gap="3">
+              <Text className="models-card-list-identity" color="gray" size="1" weight="medium">
+                Motion card
+              </Text>
+              <Text className="models-card-list-status" color="gray" size="1" weight="medium">
+                Photo Scratch
+              </Text>
+              <Text className="models-card-list-actions" color="gray" size="1" weight="medium">
+                Actions
+              </Text>
+            </Flex>
+            {modelCards.map((card, index) => {
+              const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
+              return (
+                <MotionCardRow
+                  key={card.id}
+                  busy={busy}
+                  card={card}
+                  index={index}
+                  modelId={model.id}
+                  publishedIndex={publishedIndex}
+                  publishedCount={publishedCards.length}
+                  onDelete={() => onDeleteCard(card)}
+                  onDetach={() => onDetachCard(card.id)}
+                  onMoveDown={() => onMoveCard(card.id, 1)}
+                  onMoveUp={() => onMoveCard(card.id, -1)}
+                  onPublishGame={() => onPublishGame(card.id)}
+                />
+              );
+            })}
+          </Box>
+        ) : (
+          <Text color="gray" size="2">
+            No motion cards yet. Create one above or import an existing card below.
+          </Text>
+        )}
+
+        {candidates.length > 0 ? (
+          <Flex align="center" gap="2" mt="3" wrap="wrap">
+            <Import {...iconProps} />
+            <Select.Root disabled={busy} value="" onValueChange={(value) => onAssignCard(value, model.id)}>
+              <Select.Trigger placeholder="Import an existing motion card…" style={{ minWidth: 240 }} />
+              <Select.Content>
+                {candidates
+                  .slice()
+                  .sort((a, b) => Number(Boolean(a.model_id)) - Number(Boolean(b.model_id)))
+                  .map((card) => {
+                    const owner = card.model_id
+                      ? models.find((entry) => entry.id === card.model_id)?.label ?? card.model_id
+                      : null;
+                    return (
+                      <Select.Item key={card.id} value={card.id}>
+                        {card.label} ({card.id})
+                        {owner ? ` — from ${owner}` : " — unassigned"}
+                      </Select.Item>
+                    );
+                  })}
+              </Select.Content>
+            </Select.Root>
+          </Flex>
+        ) : null}
+      </Card>
+    </Flex>
   );
 }
 

@@ -217,7 +217,7 @@ const DEFAULT_CARDS: Card[] = [
   },
   {
     id: "juliana_1",
-    label: "Juliana 1",
+    label: "Julianaval Cop 2",
     bottom: "/cards/juliana_1/background.mp4",
     foreground: "/cards/juliana_1/foreground.mp4",
     mesh: "juliana_1.json",
@@ -225,7 +225,7 @@ const DEFAULT_CARDS: Card[] = [
   },
   {
     id: "juliana_2",
-    label: "Juliana 2",
+    label: "Julianaval Nurse",
     bottom: "/cards/juliana_2/background.mp4",
     foreground: "/cards/juliana_2/foreground.mp4",
     mesh: "juliana_2.json",
