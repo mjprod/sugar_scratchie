@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Gamepad2,
   Home,
+  Images,
   Import,
   LoaderCircle,
   Pencil,
@@ -38,6 +39,7 @@ import {
   assignCardToModel,
   createModel,
   createMotionCardDraft,
+  deleteCard,
   deleteModel,
   fetchModels,
   fetchPhotoScratchSlots,
@@ -97,6 +99,7 @@ function slotIsDone(slot: PhotoScratchSlot): boolean {
     slotLayersComplete(slot) &&
       slot.has_match &&
       slot.has_cutout &&
+      slot.has_zoom &&
       slot.mesh &&
       slot.has_symbols,
   );
@@ -322,11 +325,37 @@ export function ModelsPage() {
   }
 
   async function handleDeleteModel(modelId: string) {
-    if (!window.confirm(`Delete model “${modelId}”?`)) return;
+    const linked = cardsByModel.get(modelId) ?? [];
+    const cardNote =
+      linked.length > 0
+        ? ` This will also permanently delete ${linked.length} motion card${linked.length === 1 ? "" : "s"} (videos, photo-scratch, mesh, video-flow).`
+        : "";
+    if (!window.confirm(`Delete model “${modelId}”?${cardNote}`)) return;
     setBusy(true);
     setError("");
     try {
       await deleteModel(modelId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteCard(card: CardInfo) {
+    const kind = card.draft ? "draft motion card" : "motion card";
+    if (
+      !window.confirm(
+        `Delete ${kind} “${card.label}” (${card.id})?\n\nThis permanently removes videos, photo-scratch slots, mesh, video-flow work, and published photo games.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await deleteCard(card.id);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -689,6 +718,17 @@ export function ModelsPage() {
                               Edit
                             </a>
                           </Button>
+                          <Button
+                            color="red"
+                            disabled={busy}
+                            size="1"
+                            title="Delete motion card"
+                            variant="soft"
+                            onClick={() => void handleDeleteCard(card)}
+                          >
+                            <Trash2 {...iconProps} />
+                            Delete
+                          </Button>
                         </Flex>
                       </Table.Cell>
                     </Table.Row>
@@ -702,10 +742,11 @@ export function ModelsPage() {
             <Heading size="4">Girls with motion cards</Heading>
           ) : null}
 
-          <Grid columns={{ initial: "1", lg: "2" }} gap="4">
+          <Flex direction="column" gap="4">
             {modelsWithCards.map((model) => {
               const modelCards = cardsByModel.get(model.id) ?? [];
               const candidates = importableCards.filter((card) => card.model_id !== model.id);
+              const publishedCards = modelCards.filter((entry) => !entry.draft);
               return (
                 <Card key={model.id} size="3">
                   <Flex align="start" gap="3" mb="3">
@@ -759,7 +800,7 @@ export function ModelsPage() {
                         </Flex>
                       )}
                       <Text color="gray" mt="1" size="2">
-                        {modelCards.filter((card) => !card.draft).length} published
+                        {publishedCards.length} published
                         {modelCards.some((card) => card.draft)
                           ? ` · ${modelCards.filter((card) => card.draft).length} draft`
                           : ""}
@@ -768,7 +809,7 @@ export function ModelsPage() {
                   </Flex>
 
                   <Flex gap="2" mb="3" wrap="wrap">
-                    {modelCards.some((card) => !card.draft) ? (
+                    {publishedCards.length > 0 ? (
                       <Button asChild size="1">
                         <a href={playAllHref(model.id)}>
                           <Play {...iconProps} />
@@ -837,167 +878,38 @@ export function ModelsPage() {
                   ) : null}
 
                   {modelCards.length > 0 ? (
-                      <Table.Root size="1" variant="surface">
-                      <Table.Header>
-                        <Table.Row>
-                          <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Photo Scratch</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell />
-                        </Table.Row>
-                      </Table.Header>
-                      <Table.Body>
-                        {modelCards.map((card, index) => {
-                          const publishedCards = modelCards.filter((entry) => !entry.draft);
-                          const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
-                          return (
-                          <Table.Row key={card.id}>
-                            <Table.Cell>
-                              {index + 1}. {card.label} <CodeInline>{card.id}</CodeInline>
-                              {card.draft ? (
-                                <Badge color="amber" ml="2" variant="soft">
-                                  draft
-                                </Badge>
-                              ) : null}
-                              {card.theme ? (
-                                <Badge color="iris" ml="2" variant="soft" title="Theme">
-                                  {card.theme}
-                                </Badge>
-                              ) : null}
-                            </Table.Cell>
-                            <Table.Cell>
-                              <Flex align="center" gap="1" wrap="wrap">
-                                {(card.photo_scratch_draft ?? 0) === 0 &&
-                                (card.photo_scratch_done ?? 0) === 0 ? (
-                                  <Text color="gray" size="2">
-                                    —
-                                  </Text>
-                                ) : null}
-                                {(card.photo_scratch_draft ?? 0) > 0 ? (
-                                  <Badge color="yellow" variant="soft">
-                                    {card.photo_scratch_draft} draft
-                                  </Badge>
-                                ) : null}
-                                {(card.photo_scratch_done ?? 0) > 0 ? (
-                                  <Badge color="green" variant="soft">
-                                    {card.photo_scratch_done} done
-                                  </Badge>
-                                ) : null}
-                                <Badge
-                                  color={
-                                    (card.photo_scratch_mesh_count ?? 0) > 0
-                                      ? "green"
-                                      : "gray"
-                                  }
-                                  variant="soft"
-                                  title="Photo-scratch meshes (per slot), not motion-card"
-                                >
-                                  Mesh {card.photo_scratch_mesh_count ?? 0}
-                                </Badge>
-                                <Badge
-                                  color={
-                                    (card.photo_scratch_symbols_count ?? 0) > 0
-                                      ? "green"
-                                      : "gray"
-                                  }
-                                  variant="soft"
-                                  title="Slots with 12 photo-scratch symbols"
-                                >
-                                  Symbols {card.photo_scratch_symbols_count ?? 0}
-                                </Badge>
-                              </Flex>
-                            </Table.Cell>
-                            <Table.Cell align="right">
-                              <Flex align="center" gap="1" justify="end">
-                                {card.draft ? null : (
-                                  <>
-                                    <Button
-                                      color="gray"
-                                      disabled={busy || publishedIndex <= 0}
-                                      size="1"
-                                      title="Move up"
-                                      variant="ghost"
-                                      onClick={() => void handleMoveCard(model.id, card.id, -1)}
-                                    >
-                                      <ChevronUp {...iconProps} />
-                                    </Button>
-                                    <Button
-                                      color="gray"
-                                      disabled={
-                                        busy ||
-                                        publishedIndex < 0 ||
-                                        publishedIndex >= publishedCards.length - 1
-                                      }
-                                      size="1"
-                                      title="Move down"
-                                      variant="ghost"
-                                      onClick={() => void handleMoveCard(model.id, card.id, 1)}
-                                    >
-                                      <ChevronDown {...iconProps} />
-                                    </Button>
-                                    <Button asChild size="1" variant="soft">
-                                      <a
-                                        href={playCardHref(model.id, card.id)}
-                                        title={`Play ${card.label}`}
-                                      >
-                                        <Play {...iconProps} />
-                                        Play
-                                      </a>
-                                    </Button>
-                                  </>
-                                )}
-                                {(card.photo_scratch_draft ?? 0) > 0 ||
-                                (card.photo_scratch_done ?? 0) > 0 ? (
-                                  <Button asChild color="green" size="1" variant="soft">
-                                    <a
-                                      href={pictureFlowHref(card.id)}
-                                      title="Open Picture Flow (cutout / mesh / symbols / game)"
-                                    >
-                                      <Gamepad2 {...iconProps} />
-                                      Picture
-                                    </a>
-                                  </Button>
-                                ) : null}
-                                {(card.photo_scratch_done ?? 0) > 0 ? (
-                                  <Button
-                                    color="green"
-                                    disabled={busy}
-                                    size="1"
-                                    title="Publish done photo-scratch slots as a playable game"
-                                    variant="soft"
-                                    onClick={() => void handlePublishGame(card.id)}
-                                  >
-                                    <Play {...iconProps} />
-                                    Game
-                                  </Button>
-                                ) : null}
-                                <Button asChild size="1" variant="soft">
-                                  <a
-                                    href={editCardHref(card.id)}
-                                    title={`Edit ${card.label} in Video Flow`}
-                                  >
-                                    <Pencil {...iconProps} />
-                                    Edit
-                                  </a>
-                                </Button>
-                                {card.draft ? null : (
-                                  <Button
-                                    color="gray"
-                                    disabled={busy}
-                                    size="1"
-                                    title="Detach card from this model"
-                                    variant="ghost"
-                                    onClick={() => void handleAssignCard(card.id, "")}
-                                  >
-                                    <X {...iconProps} />
-                                  </Button>
-                                )}
-                              </Flex>
-                            </Table.Cell>
-                          </Table.Row>
-                          );
-                        })}
-                      </Table.Body>
-                    </Table.Root>
+                    <Box className="models-card-list">
+                      <Flex className="models-card-list-header" align="center" gap="3">
+                        <Text className="models-card-list-identity" color="gray" size="1" weight="medium">
+                          Motion card
+                        </Text>
+                        <Text className="models-card-list-status" color="gray" size="1" weight="medium">
+                          Photo Scratch
+                        </Text>
+                        <Text className="models-card-list-actions" color="gray" size="1" weight="medium">
+                          Actions
+                        </Text>
+                      </Flex>
+                      {modelCards.map((card, index) => {
+                        const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
+                        return (
+                          <MotionCardRow
+                            key={card.id}
+                            busy={busy}
+                            card={card}
+                            index={index}
+                            modelId={model.id}
+                            publishedIndex={publishedIndex}
+                            publishedCount={publishedCards.length}
+                            onDelete={() => void handleDeleteCard(card)}
+                            onDetach={() => void handleAssignCard(card.id, "")}
+                            onMoveDown={() => void handleMoveCard(model.id, card.id, 1)}
+                            onMoveUp={() => void handleMoveCard(model.id, card.id, -1)}
+                            onPublishGame={() => void handlePublishGame(card.id)}
+                          />
+                        );
+                      })}
+                    </Box>
                   ) : (
                     <Text color="gray" size="2">
                       No motion cards yet. Create one above or import an existing card below.
@@ -1037,7 +949,7 @@ export function ModelsPage() {
                 </Card>
               );
             })}
-          </Grid>
+          </Flex>
 
           {models.length === 0 ? (
             <Card size="3">
@@ -1073,6 +985,220 @@ function CodeInline({ children }: { children: ReactNode }) {
     <Text as="span" color="gray" size="1">
       <code>{children}</code>
     </Text>
+  );
+}
+
+function PhotoScratchStatus({ card }: { card: CardInfo }) {
+  const draft = card.photo_scratch_draft ?? 0;
+  const done = card.photo_scratch_done ?? 0;
+  const mesh = card.photo_scratch_mesh_count ?? 0;
+  const symbols = card.photo_scratch_symbols_count ?? 0;
+  const empty = draft === 0 && done === 0 && mesh === 0 && symbols === 0;
+
+  if (empty) {
+    return (
+      <Text color="gray" size="1">
+        —
+      </Text>
+    );
+  }
+
+  return (
+    <Flex align="center" className="models-card-status" gap="1">
+      {draft > 0 ? (
+        <Badge color="yellow" size="1" variant="soft">
+          {draft} draft
+        </Badge>
+      ) : null}
+      {done > 0 ? (
+        <Badge color="green" size="1" variant="soft">
+          {done} done
+        </Badge>
+      ) : null}
+      <Badge
+        color={mesh > 0 ? "green" : "gray"}
+        size="1"
+        title="Photo-scratch meshes (per slot), not motion-card"
+        variant="soft"
+      >
+        Mesh {mesh}
+      </Badge>
+      <Badge
+        color={symbols > 0 ? "green" : "gray"}
+        size="1"
+        title="Slots with 12 photo-scratch symbols"
+        variant="soft"
+      >
+        Sym {symbols}
+      </Badge>
+    </Flex>
+  );
+}
+
+function ActionSlot({ children }: { children?: ReactNode }) {
+  return <span className="models-card-action-slot">{children}</span>;
+}
+
+function MotionCardRow({
+  busy,
+  card,
+  index,
+  modelId,
+  publishedCount,
+  publishedIndex,
+  onDelete,
+  onDetach,
+  onMoveDown,
+  onMoveUp,
+  onPublishGame,
+}: {
+  busy: boolean;
+  card: CardInfo;
+  index: number;
+  modelId: string;
+  publishedCount: number;
+  publishedIndex: number;
+  onDelete: () => void;
+  onDetach: () => void;
+  onMoveDown: () => void;
+  onMoveUp: () => void;
+  onPublishGame: () => void;
+}) {
+  const hasPicture =
+    (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
+  const hasGame = (card.photo_scratch_done ?? 0) > 0;
+  const isDraft = Boolean(card.draft);
+
+  return (
+    <div className="models-card-list-row">
+      <div className="models-card-list-identity">
+        <Flex align="baseline" gap="2" wrap="wrap">
+          <Text size="2" weight="medium">
+            {index + 1}. {card.label}
+          </Text>
+          {isDraft ? (
+            <Badge color="amber" size="1" variant="soft">
+              draft
+            </Badge>
+          ) : null}
+          {card.theme ? (
+            <Badge color="iris" size="1" title="Theme" variant="soft">
+              {card.theme}
+            </Badge>
+          ) : null}
+        </Flex>
+        <CodeInline>{card.id}</CodeInline>
+      </div>
+
+      <div className="models-card-list-status">
+        <PhotoScratchStatus card={card} />
+      </div>
+
+      <div className="models-card-list-actions">
+        <Flex align="center" gap="1" justify="end">
+          {isDraft ? (
+            <>
+              <ActionSlot />
+              <ActionSlot />
+              <ActionSlot />
+            </>
+          ) : (
+            <>
+              <ActionSlot>
+                <Button
+                  color="gray"
+                  disabled={busy || publishedIndex <= 0}
+                  size="1"
+                  title="Move up"
+                  variant="ghost"
+                  onClick={onMoveUp}
+                >
+                  <ChevronUp {...iconProps} />
+                </Button>
+              </ActionSlot>
+              <ActionSlot>
+                <Button
+                  color="gray"
+                  disabled={busy || publishedIndex < 0 || publishedIndex >= publishedCount - 1}
+                  size="1"
+                  title="Move down"
+                  variant="ghost"
+                  onClick={onMoveDown}
+                >
+                  <ChevronDown {...iconProps} />
+                </Button>
+              </ActionSlot>
+              <ActionSlot>
+                <Button asChild size="1" variant="soft">
+                  <a href={playCardHref(modelId, card.id)} title={`Play ${card.label}`}>
+                    <Play {...iconProps} />
+                  </a>
+                </Button>
+              </ActionSlot>
+            </>
+          )}
+          <ActionSlot>
+            {hasPicture ? (
+              <Button asChild color="green" size="1" variant="soft">
+                <a
+                  href={pictureFlowHref(card.id)}
+                  title="Picture Flow"
+                >
+                  <Images {...iconProps} />
+                </a>
+              </Button>
+            ) : null}
+          </ActionSlot>
+          <ActionSlot>
+            {hasGame ? (
+              <Button
+                color="green"
+                disabled={busy}
+                size="1"
+                title="Publish photo-scratch game"
+                variant="soft"
+                onClick={onPublishGame}
+              >
+                <Gamepad2 {...iconProps} />
+              </Button>
+            ) : null}
+          </ActionSlot>
+          <ActionSlot>
+            <Button asChild size="1" variant="soft">
+              <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                <Pencil {...iconProps} />
+              </a>
+            </Button>
+          </ActionSlot>
+          <ActionSlot>
+            {isDraft ? null : (
+              <Button
+                color="gray"
+                disabled={busy}
+                size="1"
+                title="Detach card from this model"
+                variant="ghost"
+                onClick={onDetach}
+              >
+                <X {...iconProps} />
+              </Button>
+            )}
+          </ActionSlot>
+          <ActionSlot>
+            <Button
+              color="red"
+              disabled={busy}
+              size="1"
+              title={isDraft ? "Delete draft motion card" : "Delete motion card"}
+              variant="ghost"
+              onClick={onDelete}
+            >
+              <Trash2 {...iconProps} />
+            </Button>
+          </ActionSlot>
+        </Flex>
+      </div>
+    </div>
   );
 }
 

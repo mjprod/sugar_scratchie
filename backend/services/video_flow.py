@@ -36,6 +36,7 @@ from backend.services.grok import (
     photo_scratch_bikini_prompt,
     photo_scratch_clothes_prompt,
     photo_scratch_custom_locks_source_pose,
+    photo_scratch_face_ref_clause,
     photo_scratch_prompt_with_background,
     probe_video,
     request_id_sidecar,
@@ -1229,6 +1230,46 @@ def run_generate_source_image(
     return patched
 
 
+def _face_lock_photo_scratch_layer(
+    layer_path: Path,
+    face_path: Path,
+    *,
+    provider: str,
+    image_model: str,
+) -> None:
+    """Polish pass: swap the Setup face reference onto a generated layer, in place.
+
+    Reference images improve identity a lot but don't guarantee it — the swap does.
+    Fail-soft: any error keeps the generated image untouched. Disable with
+    PHOTO_SCRATCH_FACE_LOCK=0.
+    """
+    if os.environ.get("PHOTO_SCRATCH_FACE_LOCK", "1").strip().lower() in ("0", "false", "no"):
+        return
+    tmp_out = layer_path.with_name(f"{layer_path.stem}_facelock.png")
+    try:
+        print(f"Face-lock: swapping Setup face onto {layer_path.name} …")
+        swap_face_on_image(
+            provider=provider,
+            image_model=image_model,
+            base_image=layer_path,
+            face_image=face_path,
+            out=tmp_out,
+            prompt=None,
+            aspect_ratio="9:16",
+        )
+        if not tmp_out.is_file():
+            raise RuntimeError("face swap wrote no image")
+        from PIL import Image
+
+        rgb = Image.open(tmp_out).convert("RGB")
+        rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
+        print(f"Face-lock applied: {layer_path.name}")
+    except Exception as exc:
+        print(f"Face-lock failed (keeping generated image): {exc}")
+    finally:
+        tmp_out.unlink(missing_ok=True)
+
+
 def _resolve_photo_scratch_media(src: str) -> Path:
     """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
     from urllib.parse import unquote
@@ -1253,14 +1294,18 @@ def run_generate_photo_scratch_layer(
     source_image: str = "",
     slot_id: str = "",
     prompt: str = "",
+    fill_empty_only: bool = True,
 ) -> dict:
     """Generate still images for one photo-scratch layer type.
 
     If slot_id is set, only that one slot is generated (one-by-one AI).
     Otherwise generates up to `count` slots (1..10).
+    When fill_empty_only is True, only slots missing approved and pending for
+    the layer are filled (top-up after deletes).
     """
     from backend.cards import (
         PHOTO_SCRATCH_LAYER_NAMES,
+        PHOTO_SCRATCH_PENDING_FIELDS,
         PHOTO_SCRATCH_SLOT_COUNT,
         list_photo_scratch_slots,
         public_url,
@@ -1285,16 +1330,56 @@ def run_generate_photo_scratch_layer(
         slots_to_run = [s for s in slots if s.id == target_slot]
         if not slots_to_run:
             raise RuntimeError(f"Slot not found: {target_slot}")
+    elif fill_empty_only:
+        approved_field, pending_field = PHOTO_SCRATCH_PENDING_FIELDS[layer_type]
+        empty = [
+            s
+            for s in slots
+            if not getattr(s, approved_field, None) and not getattr(s, pending_field, None)
+        ]
+        if layer_type == "bikini":
+            empty = [s for s in empty if s.background]
+        elif layer_type == "clothes":
+            empty = [s for s in empty if s.bikini]
+        if not empty:
+            if layer_type == "clothes":
+                raise RuntimeError(
+                    "No empty top slots with an approved bikini — "
+                    "approve bikinis first, or delete tops to refill."
+                )
+            if layer_type == "bikini":
+                raise RuntimeError(
+                    "No empty bikini slots with an approved background — "
+                    "approve backgrounds first, or delete bikinis to refill."
+                )
+            raise RuntimeError(
+                f"No empty {layer_type} slots to fill — delete some first."
+            )
+        slots_to_run = empty[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
     else:
         slots_to_run = slots[: min(count, PHOTO_SCRATCH_SLOT_COUNT)]
+        if layer_type == "clothes":
+            # Never invent tops without bikini (even on regenerate-all).
+            slots_to_run = [s for s in slots_to_run if s.bikini]
+            if not slots_to_run:
+                raise RuntimeError(
+                    "Approve at least one bikini first so top/clothes match the same girl and pose."
+                )
+        elif layer_type == "bikini":
+            slots_to_run = [s for s in slots_to_run if s.background]
+            if not slots_to_run:
+                raise RuntimeError(
+                    "Approve backgrounds first, then generate bikinis."
+                )
 
     written: list[str] = []
 
     girl_path: Path | None = None
+    face_path: Path | None = None
     if layer_type in ("bikini", "clothes"):
+        draft = read_flow_draft(card_id) or {}
         raw_source = (source_image or "").strip()
         if not raw_source:
-            draft = read_flow_draft(card_id) or {}
             raw_source = str(draft.get("image") or "").strip()
         if not raw_source:
             raise RuntimeError(
@@ -1308,6 +1393,16 @@ def run_generate_photo_scratch_layer(
             girl_path = ROOT / girl_path
         if not girl_path.is_file():
             raise RuntimeError(f"Source image not found: {raw_source}")
+        # Optional Setup face reference — pins her identity across regenerations.
+        raw_face = str(draft.get("face_image") or "").strip()
+        if raw_face and not raw_face.startswith(("http://", "https://")):
+            candidate = Path(raw_face)
+            if not candidate.is_absolute():
+                candidate = ROOT / candidate
+            if candidate.is_file():
+                face_path = candidate
+            else:
+                print(f"Face reference not found, skipping: {raw_face}")
 
     if layer_type == "clothes":
         if target_slot:
@@ -1341,16 +1436,19 @@ def run_generate_photo_scratch_layer(
                     _resolve_photo_scratch_media(slot.background) if slot.background else None
                 )
                 with_bg = bg_path is not None
+                with_face = face_path is not None
                 if with_bg and (not custom or photo_scratch_custom_locks_source_pose(custom)):
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=True
+                        theme_str, pose_hint, with_background=True, with_face=with_face
                     )
                 elif with_bg:
                     patched = photo_scratch_prompt_with_background(
                         custom, has_background=True, pose=pose_hint
                     )
+                    if patched and with_face:
+                        patched = f"{patched} {photo_scratch_face_ref_clause()}"
                     final_prompt = patched or photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=True
+                        theme_str, pose_hint, with_background=True, with_face=with_face
                     )
                 elif custom and (
                     "reference 1" in custom.lower()
@@ -1358,17 +1456,22 @@ def run_generate_photo_scratch_layer(
                     or "environment" in custom.lower()
                 ):
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=False
+                        theme_str, pose_hint, with_background=False, with_face=with_face
                     )
                 elif custom and not photo_scratch_custom_locks_source_pose(custom):
                     final_prompt = f"{custom} Pose and framing for this card: {pose_hint}."
+                    if with_face:
+                        final_prompt = f"{final_prompt} {photo_scratch_face_ref_clause()}"
                 else:
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=False
+                        theme_str, pose_hint, with_background=False, with_face=with_face
                     )
-                if with_bg:
+                if with_bg or with_face:
+                    refs = "environment+woman" if with_bg else "woman"
+                    if with_face:
+                        refs += "+face"
                     print(
-                        f"Photo-scratch bikini {slot.id}: environment+woman composite, "
+                        f"Photo-scratch bikini {slot.id}: {refs} composite, "
                         f"pose={pose_hint[:48]}…"
                     )
                 edit_photo_scratch_layer(
@@ -1378,30 +1481,29 @@ def run_generate_photo_scratch_layer(
                     out=out,
                     source_image=girl_path,
                     background_image=bg_path,
+                    face_image=face_path,
                     aspect_ratio="9:16",
                 )
-            elif layer_type == "clothes":
-                if slot.bikini:
-                    # Bikini already has pose+scene; lock them for scratch alignment.
-                    edit_src = _resolve_photo_scratch_media(slot.bikini)
-                    bg_ref = None
-                elif girl_path is not None:
-                    edit_src = girl_path
-                    bg_ref = (
-                        _resolve_photo_scratch_media(slot.background)
-                        if slot.background
-                        else None
+                if face_path is not None:
+                    _face_lock_photo_scratch_layer(
+                        out,
+                        face_path,
+                        provider=ai_provider,
+                        image_model=source_image_model,
                     )
-                else:
+            elif layer_type == "clothes":
+                if not slot.bikini:
                     print(f"Photo-scratch clothes: skip {slot.id} (need bikini)")
                     continue
+                # Bikini already has pose+scene; lock them for scratch alignment.
+                edit_src = _resolve_photo_scratch_media(slot.bikini)
                 final_prompt = (
                     f"{custom} Outfit accent: {scene_hint}."
                     if custom
                     else photo_scratch_clothes_prompt(theme_str, scene_hint)
                 )
                 # Flux Kontext keeps pose/frame/bg locked by construction — best for
-                # scratch alignment.  bg_ref is ignored (Kontext uses bikini as sole ref).
+                # scratch alignment.
                 edit_clothes_layer(
                     provider=ai_provider,
                     image_model=source_image_model,

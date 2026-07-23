@@ -1086,6 +1086,7 @@ export function ScratchPrototype() {
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [desktopSettingsTab, setDesktopSettingsTab] =
     useState<DesktopSettingsTab>("scratch-zoom");
+  const [glError, setGlError] = useState<string | null>(null);
 
   function clearGameResultTimer() {
     if (gameResultTimerRef.current !== null) {
@@ -1125,8 +1126,12 @@ export function ScratchPrototype() {
     let renderer: GarmentGLRenderer;
     try {
       renderer = new GarmentGLRenderer(canvas, CANVAS_WIDTH, CANVAS_HEIGHT);
+      setGlError(null);
     } catch (error) {
       console.error("WebGL init failed", error);
+      setGlError(
+        error instanceof Error ? error.message : "WebGL2 not available",
+      );
       return;
     }
     glRendererRef.current = renderer;
@@ -2394,6 +2399,19 @@ export function ScratchPrototype() {
             useBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
           }`}
         >
+          {glError ? (
+            <div
+              className="game-result"
+              role="alert"
+              style={{ pointerEvents: "auto" }}
+            >
+              <p className="game-result-title">WebGL2 required</p>
+              <p className="game-result-detail">
+                {glError}. Open this page in Chrome or Safari (not Cursor's
+                Simple Browser), and make sure hardware acceleration is on.
+              </p>
+            </div>
+          ) : null}
           {typeof window !== "undefined" &&
           new URLSearchParams(window.location.search).has("debug") ? (
             <DebugHud />

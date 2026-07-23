@@ -58,6 +58,11 @@ export async function deleteModel(modelId: string): Promise<void> {
   await api(`/api/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
 }
 
+/** Recursively deletes a motion card (videos, photo-scratch, mesh, video-flow draft). */
+export async function deleteCard(cardId: string): Promise<void> {
+  await api(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" });
+}
+
 export async function assignCardToModel(cardId: string, modelId: string): Promise<void> {
   await api(`/api/cards/${encodeURIComponent(cardId)}`, {
     method: "PUT",
@@ -162,6 +167,9 @@ export type PhotoScratchSlot = {
   /** Derived cutout PNG URLs — originals stay on bikini/clothes. */
   bikini_cutout?: string;
   clothes_cutout?: string;
+  /** Pristine pre-zoom cutouts for Zooming live preview. */
+  bikini_cutout_src?: string;
+  clothes_cutout_src?: string;
   /** Top warped onto bikini pose (before cutout). */
   has_match?: boolean;
   clothes_matched?: string;
@@ -177,6 +185,12 @@ export type PhotoScratchSlot = {
   match_nudge_scale?: number | null;
   match_nudge_tx?: number | null;
   match_nudge_ty?: number | null;
+  /** Zooming step confirmed (or legacy meshed slot). */
+  has_zoom?: boolean;
+  /** Last zoom applied to cutouts (from zoom_meta). */
+  zoom_scale?: number | null;
+  zoom_tx?: number | null;
+  zoom_ty?: number | null;
 };
 
 const SLOT_PROMPT_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
@@ -242,6 +256,8 @@ export function defaultPhotoScratchPrompt(
     `arm silhouette — only change fabric; no second sleeve or back-of-body fill in the ` +
     `armpit. Exactly one left arm and one right arm — no ghost limbs or duplicate sleeves. ` +
     `Only replace the bikini with clothing; do not restage the body. ` +
+    `EXPOSURE LOCK — keep the exact same bright exposure and lighting as the reference; ` +
+    `do not darken the image, lower brightness, or crush shadows even if the outfit is dark. ` +
     `FACE LOCK — keep her face identical to the reference: same eyes, nose, mouth, and ` +
     `expression. No horizontal seams, smears, double mouths, or sliced nose. Keep her ` +
     `face sharp and in focus — clear eyes, natural skin detail, not soft or ` +
@@ -270,18 +286,21 @@ export async function generatePhotoScratchLayer(
   sourceImage = "",
   slotId = "",
   prompt = "",
+  count = 10,
+  fillEmptyOnly = true,
 ): Promise<{ id: string; status: string }> {
   return api(`/api/cards/${encodeURIComponent(cardId)}/photo-scratch/generate`, {
     method: "POST",
     body: JSON.stringify({
       theme,
-      count: slotId ? 1 : 10,
+      count: slotId ? 1 : count,
       provider,
       image_model: imageModel,
       layer,
       image: sourceImage,
       slot_id: slotId,
       prompt,
+      fill_empty_only: slotId ? false : fillEmptyOnly,
     }),
   });
 }
@@ -409,8 +428,8 @@ export function photoScratchSlotIsDone(slot: PhotoScratchSlot): boolean {
       slot.bikini &&
       slot.clothes &&
       slot.has_match &&
-      slot.has_adjust &&
       slot.has_cutout &&
+      slot.has_zoom &&
       slot.mesh &&
       slot.has_symbols,
   );
@@ -462,6 +481,32 @@ export async function cutoutPhotoScratchSlot(
   const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
   return api(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/cutout${params}`,
+    { method: "POST" },
+  );
+}
+
+export async function zoomPhotoScratchSlot(
+  cardId: string,
+  slotId: string,
+  theme = "",
+  options?: {
+    scale?: number;
+    tx?: number;
+    ty?: number;
+    apply?: boolean;
+    confirm?: boolean;
+  },
+): Promise<PhotoScratchSlot> {
+  const params = new URLSearchParams();
+  if (theme.trim()) params.set("theme", theme.trim());
+  if (options?.scale != null) params.set("scale", String(options.scale));
+  if (options?.tx != null) params.set("tx", String(options.tx));
+  if (options?.ty != null) params.set("ty", String(options.ty));
+  if (options?.apply) params.set("apply", "true");
+  if (options?.confirm) params.set("confirm", "true");
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/zoom${q}`,
     { method: "POST" },
   );
 }

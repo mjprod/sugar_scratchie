@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from backend.cards import list_cards, public_url
+from backend.cards import delete_card, list_cards, public_url
 
 MODEL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -152,6 +152,36 @@ def update_model(models_dir: Path, model_id: str, request: UpdateModelRequest) -
     )
 
 
+def _linked_card_ids(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    model_id: str,
+) -> list[str]:
+    """Published cards + video-flow drafts assigned to this model."""
+    linked: set[str] = {
+        card.id for card in list_cards(root, cards_dir, mesh_dir) if card.model_id == model_id
+    }
+    work_root = root / ".tmp" / "video-flow"
+    if work_root.is_dir():
+        for work in work_root.iterdir():
+            if not work.is_dir():
+                continue
+            draft_file = work / "draft.json"
+            if not draft_file.is_file():
+                continue
+            try:
+                data = json.loads(draft_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            draft_model = data.get("model_id")
+            if isinstance(draft_model, str) and draft_model.strip() == model_id:
+                linked.add(work.name)
+    return sorted(linked)
+
+
 def delete_model(
     root: Path,
     models_dir: Path,
@@ -159,16 +189,16 @@ def delete_model(
     mesh_dir: Path,
     model_id: str,
 ) -> None:
+    """Delete a model and recursively delete all of its motion cards."""
     model_dir = models_dir / model_id
     if not model_dir.exists():
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    cards = list_cards(root, cards_dir, mesh_dir)
-    linked = [card.id for card in cards if card.model_id == model_id]
-    if linked:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot delete model — cards still reference it: {', '.join(linked)}",
-        )
+    for card_id in _linked_card_ids(root, cards_dir, mesh_dir, model_id):
+        try:
+            delete_card(root, cards_dir, mesh_dir, card_id)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
     shutil.rmtree(model_dir)
     write_models_index(models_dir)
 
