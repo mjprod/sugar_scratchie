@@ -218,6 +218,9 @@ def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
             continue
         card_id = directory.name
         mesh = f"{card_id}.json"
+        done, draft, mesh_count, symbols_count = _photo_scratch_card_counts(
+            cards_dir, card_id
+        )
         discovered.append(
             CardInfo(
                 id=card_id,
@@ -229,12 +232,10 @@ def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
                 model_id=read_card_model_id(directory),
                 sort_order=read_card_sort_order(directory),
                 photos=read_card_photos(directory, card_id),
-                photo_scratch_done=count_done_photo_scratch_slots(cards_dir, card_id),
-                photo_scratch_draft=count_draft_photo_scratch_slots(cards_dir, card_id),
-                photo_scratch_mesh_count=count_photo_scratch_mesh_slots(cards_dir, card_id),
-                photo_scratch_symbols_count=count_photo_scratch_symbols_slots(
-                    cards_dir, card_id
-                ),
+                photo_scratch_done=done,
+                photo_scratch_draft=draft,
+                photo_scratch_mesh_count=mesh_count,
+                photo_scratch_symbols_count=symbols_count,
             )
         )
     discovered.sort(key=lambda card: (card.model_id or "", card.sort_order, card.id))
@@ -639,18 +640,6 @@ def photo_scratch_slot_has_mesh(cards_dir: Path, card_id: str, slot_id: str) -> 
     return photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id).is_file()
 
 
-def photo_scratch_slot_has_symbols(cards_dir: Path, card_id: str, slot_id: str) -> bool:
-    from backend.services.mesh_symbols import symbol_points_complete
-
-    path = photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id)
-    if not path.is_file():
-        return False
-    try:
-        return symbol_points_complete(path)
-    except Exception:
-        return False
-
-
 def photo_scratch_slot_layers_complete(slot: PhotoScratchSlot) -> bool:
     return bool(slot.background and slot.bikini and slot.clothes)
 
@@ -812,23 +801,19 @@ def _invalidate_mesh_after_zoom(cards_dir: Path, card_id: str, slot_id: str) -> 
     photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id).unlink(missing_ok=True)
 
 
-def photo_scratch_slot_has_zoom(cards_dir: Path, card_id: str, slot_id: str) -> bool:
-    """Zooming done when confirmed, or legacy (mesh + no pristine src yet)."""
-    if not photo_scratch_slot_has_cutout(cards_dir, card_id, slot_id):
-        return False
-    if bool(_read_zoom_meta(cards_dir, card_id, slot_id).get("zoom_ok")):
-        return True
-    # Pre-Zooming slots: already meshed and never wrote bikini_src.png.
-    bikini_src = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, "bikini")
-    return photo_scratch_slot_has_mesh(cards_dir, card_id, slot_id) and not bikini_src.is_file()
+def photo_scratch_slot_has_cutout(
+    cards_dir: Path, card_id: str, slot_id: str, *, validate_alpha: bool = True
+) -> bool:
+    """True when bikini + clothes RGBA cutout PNGs exist (girl without scene).
 
-
-def photo_scratch_slot_has_cutout(cards_dir: Path, card_id: str, slot_id: str) -> bool:
-    """True when bikini + clothes RGBA cutout PNGs exist (girl without scene)."""
+    Set validate_alpha=False for cheap card-list counts (file presence only).
+    """
     bikini = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini")
     clothes = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "clothes")
     if not (bikini.is_file() and clothes.is_file()):
         return False
+    if not validate_alpha:
+        return True
     try:
         from PIL import Image
 
@@ -846,16 +831,102 @@ def photo_scratch_slot_has_cutout(cards_dir: Path, card_id: str, slot_id: str) -
         return False
 
 
-def photo_scratch_slot_is_done(cards_dir: Path, card_id: str, slot: PhotoScratchSlot) -> bool:
-    """Done = layers + match + cutouts + zoom + mesh + symbols."""
-    return (
-        photo_scratch_slot_layers_complete(slot)
-        and photo_scratch_slot_has_match(cards_dir, card_id, slot.id)
-        and photo_scratch_slot_has_cutout(cards_dir, card_id, slot.id)
-        and photo_scratch_slot_has_zoom(cards_dir, card_id, slot.id)
-        and photo_scratch_slot_has_mesh(cards_dir, card_id, slot.id)
-        and photo_scratch_slot_has_symbols(cards_dir, card_id, slot.id)
+def photo_scratch_slot_has_zoom(
+    cards_dir: Path, card_id: str, slot_id: str, *, validate_cutout: bool = True
+) -> bool:
+    """Zooming done when confirmed, or legacy (mesh + no pristine src yet)."""
+    if not photo_scratch_slot_has_cutout(
+        cards_dir, card_id, slot_id, validate_alpha=validate_cutout
+    ):
+        return False
+    if bool(_read_zoom_meta(cards_dir, card_id, slot_id).get("zoom_ok")):
+        return True
+    # Pre-Zooming slots: already meshed and never wrote bikini_src.png.
+    bikini_src = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, "bikini")
+    return photo_scratch_slot_has_mesh(cards_dir, card_id, slot_id) and not bikini_src.is_file()
+
+
+def _mesh_has_complete_symbols(mesh_path: Path) -> bool:
+    """True when mesh.json has 12 symbolPoints — without importing mesh_symbols."""
+    if not mesh_path.is_file():
+        return False
+    try:
+        data = json.loads(mesh_path.read_text(encoding="utf-8"))
+        points = data.get("symbolPoints")
+        return isinstance(points, list) and len(points) == 12
+    except Exception:
+        return False
+
+
+def photo_scratch_slot_has_symbols(cards_dir: Path, card_id: str, slot_id: str) -> bool:
+    return _mesh_has_complete_symbols(
+        photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id)
     )
+
+
+def photo_scratch_slot_is_done(cards_dir: Path, card_id: str, slot: PhotoScratchSlot) -> bool:
+    """Done = layers + match + cutouts + zoom + mesh + symbols.
+
+    Prefer flags already computed on `slot` (from list_photo_scratch_slots) so
+    card listings don't re-open every cutout PNG / remesh JSON.
+    """
+    del cards_dir, card_id
+    return bool(
+        slot.background
+        and slot.bikini
+        and slot.clothes
+        and slot.has_match
+        and slot.has_cutout
+        and slot.has_zoom
+        and slot.mesh
+        and slot.has_symbols
+    )
+
+
+def _photo_scratch_card_counts(cards_dir: Path, card_id: str) -> tuple[int, int, int, int]:
+    """Cheap (done, draft, mesh, symbols) counts — no PIL decode of cutouts."""
+    raw = {
+        entry["id"]: entry
+        for entry in _read_photo_scratch_index(cards_dir, card_id)
+        if isinstance(entry, dict) and entry.get("id")
+    }
+    done = 0
+    draft = 0
+    mesh_count = 0
+    symbols_count = 0
+    for i in range(1, PHOTO_SCRATCH_SLOT_COUNT + 1):
+        slot_id = f"slot_{i:02d}"
+        entry = raw.get(slot_id, {})
+        has_layers = _slot_entry_layers_complete(entry)
+        has_any_layer = _slot_entry_has_any_layer(entry)
+        has_match = photo_scratch_slot_has_match(cards_dir, card_id, slot_id)
+        has_cutout = photo_scratch_slot_has_cutout(
+            cards_dir, card_id, slot_id, validate_alpha=False
+        )
+        has_mesh = photo_scratch_slot_has_mesh(cards_dir, card_id, slot_id)
+        has_zoom = photo_scratch_slot_has_zoom(
+            cards_dir, card_id, slot_id, validate_cutout=False
+        )
+        has_symbols = _mesh_has_complete_symbols(
+            photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id)
+        )
+        if has_mesh:
+            mesh_count += 1
+        if has_symbols:
+            symbols_count += 1
+        is_done = (
+            has_layers
+            and has_match
+            and has_cutout
+            and has_zoom
+            and has_mesh
+            and has_symbols
+        )
+        if is_done:
+            done += 1
+        elif has_any_layer:
+            draft += 1
+    return done, draft, mesh_count, symbols_count
 
 
 def count_layers_complete_photo_scratch_slots(cards_dir: Path, card_id: str) -> int:
@@ -867,47 +938,23 @@ def count_layers_complete_photo_scratch_slots(cards_dir: Path, card_id: str) -> 
 
 
 def count_photo_scratch_mesh_slots(cards_dir: Path, card_id: str) -> int:
-    return sum(
-        1
-        for i in range(1, PHOTO_SCRATCH_SLOT_COUNT + 1)
-        if photo_scratch_slot_has_mesh(cards_dir, card_id, f"slot_{i:02d}")
-    )
+    return _photo_scratch_card_counts(cards_dir, card_id)[2]
 
 
 def count_photo_scratch_symbols_slots(cards_dir: Path, card_id: str) -> int:
-    return sum(
-        1
-        for i in range(1, PHOTO_SCRATCH_SLOT_COUNT + 1)
-        if photo_scratch_slot_has_symbols(cards_dir, card_id, f"slot_{i:02d}")
-    )
+    return _photo_scratch_card_counts(cards_dir, card_id)[3]
 
 
 def count_done_photo_scratch_slots(cards_dir: Path, card_id: str, mesh_dir: Path | None = None) -> int:
     """Count slots that are playable: 3 layers + per-slot mesh + symbols."""
     del mesh_dir  # kept for call-site compatibility; motion-card mesh is unused
-    slots = list_photo_scratch_slots(cards_dir, card_id)
-    return sum(1 for slot in slots if photo_scratch_slot_is_done(cards_dir, card_id, slot))
+    return _photo_scratch_card_counts(cards_dir, card_id)[0]
 
 
 def count_draft_photo_scratch_slots(cards_dir: Path, card_id: str, mesh_dir: Path | None = None) -> int:
     """Count slots with any layer present but not fully done."""
     del mesh_dir
-    slots = list_photo_scratch_slots(cards_dir, card_id)
-    total = 0
-    for slot in slots:
-        if not (
-            slot.background
-            or slot.bikini
-            or slot.clothes
-            or slot.pending_bg
-            or slot.pending_bikini
-            or slot.pending_clothes
-        ):
-            continue
-        if photo_scratch_slot_is_done(cards_dir, card_id, slot):
-            continue
-        total += 1
-    return total
+    return _photo_scratch_card_counts(cards_dir, card_id)[1]
 
 
 def _write_photo_scratch_index(cards_dir: Path, card_id: str, slots: list[dict]) -> None:

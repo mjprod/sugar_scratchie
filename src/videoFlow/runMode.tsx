@@ -1651,12 +1651,20 @@ function CardPhotosPanel({
             {showPrompts ? "Hide prompts" : "Show prompts"}
           </Button>
           {layersCompleteCount > 0 ? (
-            <Button asChild color="green" size="2">
-              <a href={pictureFlowHref}>
-                <Gamepad2 {...iconProps} />
-                Create game ({layersCompleteCount})
-              </a>
-            </Button>
+            <>
+              <Button asChild color="green" size="2">
+                <a href={`${pictureFlowHref}&auto=1`}>
+                  <Sparkles {...iconProps} />
+                  Auto-approve all ({layersCompleteCount})
+                </a>
+              </Button>
+              <Button asChild color="gray" size="2" variant="soft">
+                <a href={pictureFlowHref}>
+                  <Gamepad2 {...iconProps} />
+                  Open Picture Flow
+                </a>
+              </Button>
+            </>
           ) : null}
         </Flex>
       </Flex>

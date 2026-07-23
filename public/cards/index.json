@@ -5,46 +5,18 @@
       "label": "Original",
       "bottom": "/cards/ai%20girl%202.mp4",
       "foreground": "/cards/Green%20bg%20sample%202%20swap.mp4",
-      "mesh": "tracked-mesh.json"
+      "mesh": "tracked-mesh.json",
+      "chroma_key": true,
+      "sort_order": 0
     },
     {
-      "id": "asia_gym",
-      "label": "Asia gym",
-      "bottom": "/cards/asia_gym/background.mp4",
-      "foreground": "/cards/asia_gym/foreground.mp4",
-      "mesh": "asia_gym.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "asia_gym2",
-      "label": "Asia gym2",
-      "bottom": "/cards/asia_gym2/background.mp4",
-      "foreground": "/cards/asia_gym2/foreground.mp4",
-      "mesh": "asia_gym2.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "asian_2",
-      "label": "Asian 2",
-      "bottom": "/cards/asian_2/background.mp4",
-      "foreground": "/cards/asian_2/foreground.mp4",
-      "mesh": "asian_2.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "glaucamp_1",
-      "label": "Glaucamp 1",
-      "bottom": "/cards/glaucamp_1/background.mp4",
-      "foreground": "/cards/glaucamp_1/foreground.mp4",
-      "mesh": "glaucamp_1.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "ju_gym",
-      "label": "Ju gym",
-      "bottom": "/cards/ju_gym/background.mp4",
-      "foreground": "/cards/ju_gym/foreground.mp4",
-      "mesh": "ju_gym.json",
+      "id": "julianaval_cop",
+      "label": "Julianaval Cop",
+      "bottom": "/cards/julianaval_cop/background.mp4",
+      "foreground": "/cards/julianaval_cop/foreground.mp4",
+      "mesh": "julianaval_cop.json",
+      "chroma_key": false,
+      "sort_order": 0,
       "model_id": "julianaval"
     },
     {
@@ -53,46 +25,8 @@
       "bottom": "/cards/juliana_1/background.mp4",
       "foreground": "/cards/juliana_1/foreground.mp4",
       "mesh": "juliana_1.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "juliana_2",
-      "label": "Juliana 2",
-      "bottom": "/cards/juliana_2/background.mp4",
-      "foreground": "/cards/juliana_2/foreground.mp4",
-      "mesh": "juliana_2.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "juliana_3",
-      "label": "Juliana 3",
-      "bottom": "/cards/juliana_3/background.mp4",
-      "foreground": "/cards/juliana_3/foreground.mp4",
-      "mesh": "juliana_3.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "julianaval_cop",
-      "label": "Julianaval Cop",
-      "bottom": "/cards/julianaval_cop/background.mp4",
-      "foreground": "/cards/julianaval_cop/foreground.mp4",
-      "mesh": "julianaval_cop.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "julianaval_firegirl",
-      "label": "Julianaval firegirl",
-      "bottom": "/cards/julianaval_firegirl/background.mp4",
-      "foreground": "/cards/julianaval_firegirl/foreground.mp4",
-      "mesh": "julianaval_firegirl.json",
-      "model_id": "julianaval"
-    },
-    {
-      "id": "julianaval_gym",
-      "label": "Julianaval gym",
-      "bottom": "/cards/julianaval_gym/background.mp4",
-      "foreground": "/cards/julianaval_gym/foreground.mp4",
-      "mesh": "julianaval_gym.json",
+      "chroma_key": false,
+      "sort_order": 1,
       "model_id": "julianaval"
     },
     {
@@ -101,6 +35,98 @@
       "bottom": "/cards/thai_1/background.mp4",
       "foreground": "/cards/thai_1/foreground.mp4",
       "mesh": "thai_1.json",
+      "chroma_key": false,
+      "sort_order": 2,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "juliana_3",
+      "label": "Juliana 3",
+      "bottom": "/cards/juliana_3/background.mp4",
+      "foreground": "/cards/juliana_3/foreground.mp4",
+      "mesh": "juliana_3.json",
+      "chroma_key": false,
+      "sort_order": 3,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "asian_2",
+      "label": "Asian 2",
+      "bottom": "/cards/asian_2/background.mp4",
+      "foreground": "/cards/asian_2/foreground.mp4",
+      "mesh": "asian_2.json",
+      "chroma_key": false,
+      "sort_order": 4,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "juliana_2",
+      "label": "Juliana 2",
+      "bottom": "/cards/juliana_2/background.mp4",
+      "foreground": "/cards/juliana_2/foreground.mp4",
+      "mesh": "juliana_2.json",
+      "chroma_key": false,
+      "sort_order": 5,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "ju_gym",
+      "label": "Ju gym",
+      "bottom": "/cards/ju_gym/background.mp4",
+      "foreground": "/cards/ju_gym/foreground.mp4",
+      "mesh": "ju_gym.json",
+      "chroma_key": false,
+      "sort_order": 6,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "asia_gym",
+      "label": "Asia gym",
+      "bottom": "/cards/asia_gym/background.mp4",
+      "foreground": "/cards/asia_gym/foreground.mp4",
+      "mesh": "asia_gym.json",
+      "chroma_key": false,
+      "sort_order": 7,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_gym",
+      "label": "Julianaval gym",
+      "bottom": "/cards/julianaval_gym/background.mp4",
+      "foreground": "/cards/julianaval_gym/foreground.mp4",
+      "mesh": "julianaval_gym.json",
+      "chroma_key": false,
+      "sort_order": 8,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "asia_gym2",
+      "label": "Asia gym2",
+      "bottom": "/cards/asia_gym2/background.mp4",
+      "foreground": "/cards/asia_gym2/foreground.mp4",
+      "mesh": "asia_gym2.json",
+      "chroma_key": false,
+      "sort_order": 9,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "glaucamp_1",
+      "label": "Glaucamp 1",
+      "bottom": "/cards/glaucamp_1/background.mp4",
+      "foreground": "/cards/glaucamp_1/foreground.mp4",
+      "mesh": "glaucamp_1.json",
+      "chroma_key": false,
+      "sort_order": 10,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_firegirl",
+      "label": "Julianaval firegirl",
+      "bottom": "/cards/julianaval_firegirl/background.mp4",
+      "foreground": "/cards/julianaval_firegirl/foreground.mp4",
+      "mesh": "julianaval_firegirl.json",
+      "chroma_key": false,
+      "sort_order": 11,
       "model_id": "julianaval"
     }
   ]

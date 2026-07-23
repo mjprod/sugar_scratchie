@@ -1,4 +1,4 @@
-import { ExternalLink, Gamepad2, Loader2, Play, Sparkles } from "lucide-react";
+import { ExternalLink, Gamepad2, Loader2, Play, Sparkles, Square } from "lucide-react";
 import {
   Badge,
   Button,
@@ -42,6 +42,27 @@ type StepId =
   | "mesh"
   | "symbols"
   | "game";
+
+type AutoStepId = "match" | "cutout" | "zooming" | "mesh" | "symbols" | "game" | "done";
+
+type AutoProgress = {
+  slotId: string;
+  slotLabel: string;
+  step: AutoStepId;
+  index: number;
+  total: number;
+  detail: string;
+};
+
+const AUTO_STEP_LABEL: Record<AutoStepId, string> = {
+  match: "Match",
+  cutout: "Cutout",
+  zooming: "Zooming",
+  mesh: "Mesh",
+  symbols: "Symbols",
+  game: "Publish",
+  done: "Done",
+};
 
 type StepDef = {
   id: StepId;
@@ -157,14 +178,31 @@ function stepBadge(status: "done" | "ready" | "locked"): {
   return { color: "gray", label: "Locked" };
 }
 
-async function pollJob(jobId: string, label: string) {
+async function pollJob(
+  jobId: string,
+  label: string,
+  options?: { shouldStop?: () => boolean },
+) {
   for (let i = 0; i < 180; i += 1) {
+    if (options?.shouldStop?.()) {
+      try {
+        await api(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+          method: "POST",
+        });
+      } catch {
+        // Best-effort cancel — still stop the client loop.
+      }
+      throw new Error("AUTO_APPROVE_STOPPED");
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const next = await api<{ id: string; status: string; logs: string[] }>(
       `/api/jobs/${encodeURIComponent(jobId)}`,
     );
     if (next.status === "succeeded") return;
-    if (next.status === "failed" || next.status === "cancelled") {
+    if (next.status === "cancelled") {
+      throw new Error("AUTO_APPROVE_STOPPED");
+    }
+    if (next.status === "failed") {
       throw new Error(next.logs?.[next.logs.length - 1] ?? next.status);
     }
   }
@@ -198,7 +236,10 @@ async function autoSaveRandomSymbols(
 export function PictureFlowPage() {
   const cardId = useMemo(() => readQuery("card"), []);
   const focusSlot = useMemo(() => readQuery("slot"), []);
+  const autoStart = useMemo(() => readQuery("auto") === "1", []);
   const detailRef = useRef<HTMLElement | null>(null);
+  const autoStartedRef = useRef(false);
+  const autoCancelRef = useRef(false);
   const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -208,6 +249,7 @@ export function PictureFlowPage() {
   const [meshBusy, setMeshBusy] = useState("");
   const [publishBusy, setPublishBusy] = useState("");
   const [autoBusy, setAutoBusy] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<AutoProgress | null>(null);
   const [autoStatus, setAutoStatus] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [manualStepBySlot, setManualStepBySlot] = useState<Record<string, StepId>>(
@@ -240,26 +282,25 @@ export function PictureFlowPage() {
     void refresh();
   }, [cardId]);
 
+  // Always use every layer-ready teacher — ?slot= only picks the initial tab.
   const readySlots = slots.filter(layersComplete);
-  const visibleSlots = focusSlot
-    ? readySlots.filter((s) => s.id === focusSlot)
-    : readySlots;
 
   useEffect(() => {
-    if (visibleSlots.length === 0) {
+    if (readySlots.length === 0) {
       setSelectedSlotId("");
       return;
     }
-    if (focusSlot && visibleSlots.some((s) => s.id === focusSlot)) {
+    if (selectedSlotId && readySlots.some((s) => s.id === selectedSlotId)) {
+      return;
+    }
+    if (focusSlot && readySlots.some((s) => s.id === focusSlot)) {
       setSelectedSlotId(focusSlot);
       return;
     }
-    if (!visibleSlots.some((s) => s.id === selectedSlotId)) {
-      setSelectedSlotId(visibleSlots[0]!.id);
-    }
-  }, [focusSlot, visibleSlots, selectedSlotId]);
+    setSelectedSlotId(readySlots[0]!.id);
+  }, [focusSlot, readySlots, selectedSlotId]);
 
-  const slot = visibleSlots.find((s) => s.id === selectedSlotId) ?? null;
+  const slot = readySlots.find((s) => s.id === selectedSlotId) ?? null;
   const busy = Boolean(
     cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy || autoBusy,
   );
@@ -428,39 +469,77 @@ export function PictureFlowPage() {
 
   async function handleAutoApprove() {
     if (!cardId || busy) return;
+    autoCancelRef.current = false;
     setAutoBusy(true);
     setAutoStatus("");
+    setAutoProgress(null);
     setError("");
     setFixMeshOpen(false);
+
+    const throwIfStopped = () => {
+      if (autoCancelRef.current) {
+        throw new Error("AUTO_APPROVE_STOPPED");
+      }
+    };
+
+    const waitJob = (jobId: string, label: string) =>
+      pollJob(jobId, label, { shouldStop: () => autoCancelRef.current });
+
     try {
       let current = await fetchPhotoScratchSlots(cardId);
       setSlots(current);
+      throwIfStopped();
 
-      const candidates = (
-        focusSlot
-          ? current.filter((s) => s.id === focusSlot)
-          : current
-      ).filter(layersComplete);
-
+      // Always every layer-ready teacher — never only the focused ?slot=.
+      const candidates = current.filter(layersComplete);
       const pending = candidates.filter((s) => !photoScratchSlotIsDone(s));
       if (pending.length === 0) {
-        setAutoStatus("All ready slots already done — publishing…");
-        await publishPhotoScratchGame(cardId, focusSlot || "");
-        setAutoStatus(
-          focusSlot
-            ? "Published this slot."
-            : `Published ${candidates.length} ready slot(s).`,
-        );
+        setAutoProgress({
+          slotId: "",
+          slotLabel: "All teachers",
+          step: "game",
+          index: candidates.length,
+          total: candidates.length,
+          detail: "Publishing finished games…",
+        });
+        throwIfStopped();
+        await publishPhotoScratchGame(cardId);
+        setAutoProgress({
+          slotId: "",
+          slotLabel: "All teachers",
+          step: "done",
+          index: candidates.length,
+          total: candidates.length,
+          detail: `Published ${candidates.length} teacher(s).`,
+        });
+        setAutoStatus(`Published ${candidates.length} teacher(s).`);
         await refresh();
         return;
       }
 
       let published = 0;
       for (let index = 0; index < pending.length; index += 1) {
+        throwIfStopped();
         const target = pending[index]!;
-        const progress = `${index + 1}/${pending.length}`;
+        const progressNum = index + 1;
+        setSelectedSlotId(target.id);
+        setFixMeshOpen(false);
         let entry =
           current.find((s) => s.id === target.id) ?? target;
+
+        const setRunning = (step: AutoStepId, detail: string) => {
+          setAutoProgress({
+            slotId: entry.id,
+            slotLabel: entry.label,
+            step,
+            index: progressNum,
+            total: pending.length,
+            detail,
+          });
+          if (step !== "game" && step !== "done") {
+            setManualStepBySlot((prev) => ({ ...prev, [entry.id]: step }));
+          }
+        };
 
         const reloadSlot = async () => {
           current = await fetchPhotoScratchSlots(cardId);
@@ -472,22 +551,26 @@ export function PictureFlowPage() {
           entry = next;
         };
 
-        if (!entry.has_match) {
-          setAutoStatus(`${progress} ${entry.label}: Match…`);
+        // Always press Register / Re-register layers (same as the red Match button).
+        throwIfStopped();
+        setRunning("match", "Re-registering bikini + top layers…");
+        {
           const job = await matchPhotoScratchSlot(cardId, entry.id);
-          await pollJob(job.id, "Register layers");
+          await waitJob(job.id, "Register layers");
           await reloadSlot();
         }
 
         if (!entry.has_cutout) {
-          setAutoStatus(`${progress} ${entry.label}: Cutout…`);
+          throwIfStopped();
+          setRunning("cutout", "Cutting girl out of the scene…");
           const job = await cutoutPhotoScratchSlot(cardId, entry.id);
-          await pollJob(job.id, "Cut out girl");
+          await waitJob(job.id, "Cut out girl");
           await reloadSlot();
         }
 
         if (!entry.has_zoom) {
-          setAutoStatus(`${progress} ${entry.label}: Zoom…`);
+          throwIfStopped();
+          setRunning("zooming", "Confirming zoom framing…");
           await zoomPhotoScratchSlot(cardId, entry.id, "", {
             scale: entry.zoom_scale ?? 1,
             tx: entry.zoom_tx ?? 0,
@@ -499,14 +582,16 @@ export function PictureFlowPage() {
         }
 
         if (!entry.mesh) {
-          setAutoStatus(`${progress} ${entry.label}: Mesh…`);
+          throwIfStopped();
+          setRunning("mesh", "Building scratch mesh…");
           const job = await generatePhotoScratchSlotMesh(cardId, entry.id);
-          await pollJob(job.id, "Mesh generation");
+          await waitJob(job.id, "Mesh generation");
           await reloadSlot();
         }
 
         if (!entry.has_symbols) {
-          setAutoStatus(`${progress} ${entry.label}: Symbols…`);
+          throwIfStopped();
+          setRunning("symbols", "Placing 12 random symbol anchors…");
           const meshUrl =
             entry.mesh ||
             `/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(entry.id)}/mesh.json`;
@@ -514,23 +599,78 @@ export function PictureFlowPage() {
           await reloadSlot();
         }
 
-        setAutoStatus(`${progress} ${entry.label}: Publishing…`);
+        throwIfStopped();
+        setRunning("game", "Publishing playable game…");
         await publishPhotoScratchGame(cardId, entry.id);
         published += 1;
         clearManualStep(entry.id);
       }
 
-      setAutoStatus(
-        `Done — auto-approved and published ${published} slot(s).`,
-      );
+      setAutoProgress({
+        slotId: "",
+        slotLabel: "All teachers",
+        step: "done",
+        index: published,
+        total: pending.length,
+        detail: `Auto-approved and published ${published} teacher(s).`,
+      });
+      setAutoStatus(`Done — auto-approved and published ${published} teacher(s).`);
       await refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-      setAutoStatus("");
+      const message = caught instanceof Error ? caught.message : String(caught);
+      if (message === "AUTO_APPROVE_STOPPED") {
+        setError("");
+        setAutoStatus("Stopped — finished teachers stay done; resume anytime.");
+        setAutoProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                step: "done",
+                detail: `Stopped at ${prev.slotLabel} · ${AUTO_STEP_LABEL[prev.step]}. Resume with Auto-approve all.`,
+              }
+            : {
+                slotId: "",
+                slotLabel: "Stopped",
+                step: "done",
+                index: 0,
+                total: 0,
+                detail: "Stopped. Resume with Auto-approve all.",
+              },
+        );
+        await refresh();
+      } else {
+        setError(message);
+        setAutoStatus("");
+        setAutoProgress(null);
+      }
     } finally {
+      autoCancelRef.current = false;
       setAutoBusy(false);
     }
   }
+
+  function handleStopAutoApprove() {
+    if (!autoBusy) return;
+    autoCancelRef.current = true;
+    setAutoProgress((prev) =>
+      prev
+        ? { ...prev, detail: `Stopping after current job… (${prev.detail})` }
+        : prev,
+    );
+  }
+
+  // Video Flow "Auto-approve all" lands here with ?auto=1 — start once slots load.
+  useEffect(() => {
+    if (!autoStart || autoStartedRef.current || loading || !cardId) return;
+    if (readySlots.length === 0) return;
+    autoStartedRef.current = true;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("auto")) {
+      url.searchParams.delete("auto");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    }
+    void handleAutoApprove();
+  }, [autoStart, loading, cardId, readySlots.length]);
 
   return (
     <VideoFlowShell
@@ -548,7 +688,7 @@ export function PictureFlowPage() {
         <Text color="gray">Missing ?card= in the URL.</Text>
       ) : loading ? (
         <Text color="gray">Loading photo cards…</Text>
-      ) : visibleSlots.length === 0 ? (
+      ) : readySlots.length === 0 ? (
         <Card size="3">
           <Heading size="4" mb="2">
             No photo cards ready
@@ -566,51 +706,125 @@ export function PictureFlowPage() {
       ) : slot ? (
         <Flex direction="column" gap="4">
           <Flex align="center" gap="3" wrap="wrap" justify="between">
-            <Button
-              color="green"
-              disabled={busy || visibleSlots.length === 0}
-              onClick={() => void handleAutoApprove()}
-              title="Run match → cutout → zoom → mesh → random symbols → publish for every incomplete teacher slot"
-            >
+            <Flex align="center" gap="2" wrap="wrap">
+              <Button
+                color="green"
+                disabled={busy || readySlots.length === 0}
+                onClick={() => void handleAutoApprove()}
+                title="Run match → cutout → zoom → mesh → random symbols → publish for every incomplete teacher — no need to open each tab"
+              >
+                {autoBusy ? (
+                  <Loader2 {...iconProps} className="spin" />
+                ) : (
+                  <Sparkles {...iconProps} />
+                )}
+                {autoBusy
+                  ? "Auto-approving…"
+                  : `Auto-approve all (${readySlots.filter((s) => !photoScratchSlotIsDone(s)).length || readySlots.length})`}
+              </Button>
               {autoBusy ? (
-                <Loader2 {...iconProps} className="spin" />
-              ) : (
-                <Sparkles {...iconProps} />
-              )}
-              {autoBusy ? "Auto-approving…" : "Auto-approve all"}
-            </Button>
-            {autoStatus ? (
-              <Text color="green" size="2">
-                {autoStatus}
-              </Text>
-            ) : (
+                <Button
+                  color="red"
+                  variant="solid"
+                  onClick={handleStopAutoApprove}
+                  title="Stop after the current job finishes cancelling"
+                >
+                  <Square {...iconProps} />
+                  Stop
+                </Button>
+              ) : null}
+            </Flex>
+            {!autoBusy && !autoProgress ? (
               <Text color="gray" size="2">
-                Runs the full pipeline for every incomplete teacher, then publishes.
+                One click for every teacher — match → cutout → zoom → mesh → symbols → publish.
               </Text>
-            )}
+            ) : null}
           </Flex>
 
-          {!focusSlot && visibleSlots.length > 1 ? (
-            <Flex gap="2" wrap="wrap">
-              {visibleSlots.map((entry) => (
-                <Button
-                  key={entry.id}
-                  size="1"
-                  variant={entry.id === slot.id ? "solid" : "soft"}
-                  disabled={autoBusy}
-                  onClick={() => {
-                    setSelectedSlotId(entry.id);
-                    setFixMeshOpen(false);
-                  }}
-                >
-                  {entry.label}
-                  {photoScratchSlotIsDone(entry) ? (
-                    <Badge color="green" ml="2" size="1">
-                      Done
+          {autoProgress ? (
+            <Callout.Root
+              color={
+                autoProgress.step === "done"
+                  ? autoStatus.startsWith("Stopped")
+                    ? "amber"
+                    : "green"
+                  : "blue"
+              }
+              size="2"
+            >
+              <Callout.Text>
+                <Flex align="center" gap="3" wrap="wrap">
+                  {autoBusy ? <Loader2 {...iconProps} className="spin" /> : null}
+                  <Text weight="bold">
+                    {autoProgress.step === "done"
+                      ? autoStatus.startsWith("Stopped")
+                        ? "Stopped"
+                        : "Finished"
+                      : `Running ${autoProgress.index}/${autoProgress.total}`}
+                  </Text>
+                  <Badge color="red" size="2" variant="solid">
+                    {autoProgress.slotLabel}
+                  </Badge>
+                  {autoProgress.step !== "done" ? (
+                    <Badge color="blue" size="2" variant="soft">
+                      Step: {AUTO_STEP_LABEL[autoProgress.step]}
                     </Badge>
                   ) : null}
-                </Button>
-              ))}
+                  <Text size="2">{autoProgress.detail}</Text>
+                  {autoStatus && autoProgress.step === "done" ? (
+                    <Text size="2">{autoStatus}</Text>
+                  ) : null}
+                  {autoBusy ? (
+                    <Button color="red" size="1" variant="soft" onClick={handleStopAutoApprove}>
+                      <Square {...iconProps} />
+                      Stop
+                    </Button>
+                  ) : null}
+                </Flex>
+              </Callout.Text>
+            </Callout.Root>
+          ) : null}
+
+          {readySlots.length > 1 ? (
+            <Flex gap="2" wrap="wrap">
+              {readySlots.map((entry) => {
+                const isRunning =
+                  autoBusy && autoProgress?.slotId === entry.id;
+                const isDone = photoScratchSlotIsDone(entry);
+                const isSelected = entry.id === slot.id;
+                return (
+                  <Button
+                    key={entry.id}
+                    size="1"
+                    color={isRunning ? "blue" : undefined}
+                    variant={isRunning || isSelected ? "solid" : "soft"}
+                    disabled={autoBusy && !isRunning}
+                    onClick={() => {
+                      if (autoBusy) return;
+                      setSelectedSlotId(entry.id);
+                      setFixMeshOpen(false);
+                    }}
+                  >
+                    {isRunning ? (
+                      <Loader2 {...iconProps} className="spin" />
+                    ) : null}
+                    {entry.label}
+                    {isRunning ? (
+                      <Badge color="blue" ml="2" size="1" variant="solid">
+                        {AUTO_STEP_LABEL[autoProgress.step]}…
+                      </Badge>
+                    ) : isDone ? (
+                      <Badge color="green" ml="2" size="1">
+                        Done
+                      </Badge>
+                    ) : autoBusy ? (
+                      <Badge color="gray" ml="2" size="1">
+                        Waiting
+                      </Badge>
+                    ) : null}
+                  </Button>
+                );
+              })}
             </Flex>
           ) : null}
 
@@ -621,11 +835,18 @@ export function PictureFlowPage() {
               </Text>
               <Text color="gray" size="1" mb="2">
                 {slot.label}
+                {autoBusy && autoProgress?.slotId === slot.id
+                  ? ` — running ${AUTO_STEP_LABEL[autoProgress.step]}`
+                  : ""}
               </Text>
               {STEPS.map((step, index) => {
                 const status = stepStatus(slot, step.id);
                 const badge = stepBadge(status);
                 const locked = status === "locked";
+                const isAutoRunning =
+                  autoBusy &&
+                  autoProgress?.slotId === slot.id &&
+                  autoProgress.step === step.id;
                 return (
                   <button
                     key={step.id}
@@ -633,12 +854,13 @@ export function PictureFlowPage() {
                     className={[
                       "video-flow-run-step",
                       `is-${status}`,
-                      activeStep === step.id ? "is-active" : "",
+                      activeStep === step.id || isAutoRunning ? "is-active" : "",
                       locked ? "is-disabled" : "",
+                      isAutoRunning ? "is-auto-running" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
-                    disabled={locked}
+                    disabled={locked || autoBusy}
                     onClick={() => selectStep(step.id)}
                   >
                     <span className="video-flow-run-step-num">{index + 1}</span>
@@ -646,9 +868,15 @@ export function PictureFlowPage() {
                       <strong>{step.label}</strong>
                       <span>{step.subtitle}</span>
                     </span>
-                    <Badge color={badge.color} size="1">
-                      {badge.label}
-                    </Badge>
+                    {isAutoRunning ? (
+                      <Badge color="blue" size="1">
+                        Running
+                      </Badge>
+                    ) : (
+                      <Badge color={badge.color} size="1">
+                        {badge.label}
+                      </Badge>
+                    )}
                   </button>
                 );
               })}

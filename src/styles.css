@@ -1494,6 +1494,12 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px var(--blue-8);
 }
 
+.video-flow-run-step.is-auto-running {
+  background: var(--blue-2);
+  border-color: var(--blue-9);
+  box-shadow: inset 0 0 0 1px var(--blue-9);
+}
+
 .video-flow-run-step.is-disabled,
 .video-flow-run-step:disabled {
   cursor: not-allowed;

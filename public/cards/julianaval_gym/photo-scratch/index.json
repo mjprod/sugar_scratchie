@@ -1,0 +1,45 @@
+[
+  {
+    "id": "slot_01",
+    "label": "Gym \u2013 1",
+    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_01_background.jpg"
+  },
+  {
+    "id": "slot_02",
+    "label": "Gym \u2013 2",
+    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_02_background.jpg"
+  },
+  {
+    "id": "slot_03",
+    "label": "Gym \u2013 3",
+    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_03_background.jpg"
+  },
+  {
+    "id": "slot_04",
+    "label": "Gym \u2013 4"
+  },
+  {
+    "id": "slot_05",
+    "label": "Gym \u2013 5"
+  },
+  {
+    "id": "slot_06",
+    "label": "Gym \u2013 6"
+  },
+  {
+    "id": "slot_07",
+    "label": "Gym \u2013 7"
+  },
+  {
+    "id": "slot_08",
+    "label": "Gym \u2013 8"
+  },
+  {
+    "id": "slot_09",
+    "label": "Gym \u2013 9"
+  },
+  {
+    "id": "slot_10",
+    "label": "Gym \u2013 10"
+  }
+]
