@@ -26,12 +26,14 @@
   {
     "id": "slot_05",
     "label": "Gym \u2013 5",
-    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_05_background.jpg"
+    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_05_background.jpg",
+    "bikini": "/cards/julianaval_gym/photo-scratch/pending/slot_05_bikini.jpg"
   },
   {
     "id": "slot_06",
     "label": "Gym \u2013 6",
-    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_06_background.jpg"
+    "background": "/cards/julianaval_gym/photo-scratch/pending/slot_06_background.jpg",
+    "bikini": "/cards/julianaval_gym/photo-scratch/pending/slot_06_bikini.jpg"
   },
   {
     "id": "slot_07",

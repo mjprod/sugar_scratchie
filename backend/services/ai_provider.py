@@ -228,23 +228,27 @@ def edit_photo_scratch_layer(
     out: Path,
     source_image: str | Path,
     background_image: str | Path | None = None,
+    face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
 ) -> Path:
     """Keep the Flow source girl's identity while building bikini/clothes photo-scratch layers.
 
-    Girl + approved background needs a multi-image edit (x.ai or Seedream). WaveSpeed Grok
-    Imagine edit is single-image only — when WaveSpeed is selected with a background plate,
-    route through Seedream so we do not silently fall back to x.ai moderation.
+    Girl + approved background (and/or a face identity reference) needs a multi-image edit
+    (x.ai or Seedream). WaveSpeed Grok Imagine edit is single-image only — when WaveSpeed is
+    selected with extra reference images, route through Seedream so we do not silently fall
+    back to x.ai moderation.
     """
     route = source_image_route(provider, image_model)
-    needs_bg = background_image is not None
+    needs_multi = background_image is not None or face_image is not None
 
     def _seedream_edit() -> Path:
-        # Environment first, woman second — matches photo_scratch bikini prompts.
+        # Environment first, woman second, face last — matches photo_scratch bikini prompts.
+        images: list[str | Path] = []
         if background_image is not None:
-            images = [background_image, source_image]
-        else:
-            images = [source_image]
+            images.append(background_image)
+        images.append(source_image)
+        if face_image is not None:
+            images.append(face_image)
         payload = {
             "prompt": prompt,
             "images": [wavespeed.media_url(img, "image/png") for img in images],
@@ -264,9 +268,9 @@ def edit_photo_scratch_layer(
     if route == "seedream-v5-lite":
         return _seedream_edit()
 
-    # WaveSpeed + background: Seedream can take both refs; Grok Imagine edit cannot.
-    if needs_bg and provider == "wavespeed":
-        print("Photo-scratch: using Seedream for girl+background composite (WaveSpeed)")
+    # WaveSpeed + extra refs: Seedream can take them all; Grok Imagine edit cannot.
+    if needs_multi and provider == "wavespeed":
+        print("Photo-scratch: using Seedream for multi-reference composite (WaveSpeed)")
         return _seedream_edit()
 
     if provider == "xai" and xai_key_available():
@@ -275,6 +279,7 @@ def edit_photo_scratch_layer(
             out=out,
             source_image=source_image,
             background_image=background_image,
+            face_image=face_image,
             aspect_ratio=aspect_ratio,
         )
 
