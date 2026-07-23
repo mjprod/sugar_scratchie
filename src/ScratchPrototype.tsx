@@ -1192,8 +1192,14 @@ export function ScratchPrototype() {
       camera.y += (targetCamY - camera.y) * CHEST_SMOOTH;
 
       const autoSettings = autoScratchRef.current;
+      // Never auto-finish while body-symbol hunt is still in progress — otherwise a
+      // persisted "enabled" flag (or premature toggle) wipes the dress before the player finds them all.
+      const huntComplete =
+        !useBodySymbolsRef.current ||
+        revealedSymbolsRef.current >= SYMBOL_SLOT_COUNT;
       if (
         autoSettings.enabled &&
+        huntComplete &&
         trackedSample &&
         gameResultPendingRef.current === null
       ) {
@@ -1287,14 +1293,18 @@ export function ScratchPrototype() {
 
       const sampleCount = revealSamplesRef.current.length;
       const autoMode = autoScratchRef.current.enabled;
+      const canClaim =
+        !useBodySymbolsRef.current ||
+        revealedSymbolsRef.current >= SYMBOL_SLOT_COUNT;
       const hideForeground =
         claimedRef.current ||
-        isGarmentFullyRevealed(
-          progressRef.current,
-          revealedCountRef.current,
-          sampleCount,
-          autoMode,
-        );
+        (canClaim &&
+          isGarmentFullyRevealed(
+            progressRef.current,
+            revealedCountRef.current,
+            sampleCount,
+            autoMode,
+          ));
       if (hideForeground && !claimedRef.current) {
         claimedRef.current = true;
         setClaimed(true);
@@ -1695,6 +1705,16 @@ export function ScratchPrototype() {
   const autoScratchLocked =
     useBodySymbols &&
     (!symbolsHuntComplete || topBarPhase === "center");
+
+  // Drop a persisted/stale auto-scratch enable while the hunt is still locked.
+  useEffect(() => {
+    if (!autoScratchLocked) return;
+    if (!autoScratch.enabled) return;
+    autoScratchRef.current = { ...autoScratchRef.current, enabled: false };
+    setAutoScratch((current) =>
+      current.enabled ? { ...current, enabled: false } : current,
+    );
+  }, [autoScratchLocked, autoScratch.enabled]);
 
   function updateSoundEnabled(enabled: boolean) {
     if (enabled) ensureSymbolAudio(symbolAudioRef.current);
