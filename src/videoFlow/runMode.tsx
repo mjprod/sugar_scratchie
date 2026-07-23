@@ -2919,6 +2919,26 @@ export function RunMode(props: RunModeProps) {
               </Box>
             </Tabs.Root>
 
+            <Field label="Her face — identity reference (used by all AI generations)">
+              <Flex direction="column" gap="1">
+                <FilePathPicker
+                  accept="image/*"
+                  placeholder="Pick a clear face photo or paste a path/URL"
+                  preview="image"
+                  previewLabel="Face reference"
+                  previewSize="compact"
+                  previewZoomable
+                  value={faceImage}
+                  onChange={onFaceImageChange}
+                  onError={onError}
+                />
+                <Text color="gray" size="1">
+                  Every photo-scratch generation sends this photo as a face reference and
+                  face-locks the result, so her face stays the same across all cards and slots.
+                </Text>
+              </Flex>
+            </Field>
+
             <Grid columns={{ initial: "1", md: "2" }} gap="3">
               <Field label="Card id (work folder)">
                 <TextField.Root

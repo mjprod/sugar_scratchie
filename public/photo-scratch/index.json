@@ -404,6 +404,51 @@
       "bikini": "/cards/juliana_2/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_05/clothes.png",
       "mesh": "/cards/juliana_2/photo-scratch/slot_05/mesh.json"
+    },
+    {
+      "id": "juliana_2_slot_06",
+      "label": "Nurse \u2013 6",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_2/photo-scratch/pending/slot_06_background.jpg",
+      "bikini": "/cards/juliana_2/photo-scratch/slot_06/bikini.png",
+      "clothes": "/cards/juliana_2/photo-scratch/slot_06/clothes.png",
+      "mesh": "/cards/juliana_2/photo-scratch/slot_06/mesh.json"
+    },
+    {
+      "id": "juliana_2_slot_07",
+      "label": "Nurse \u2013 7",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_2/photo-scratch/pending/slot_07_background.jpg",
+      "bikini": "/cards/juliana_2/photo-scratch/slot_07/bikini.png",
+      "clothes": "/cards/juliana_2/photo-scratch/slot_07/clothes.png",
+      "mesh": "/cards/juliana_2/photo-scratch/slot_07/mesh.json"
+    },
+    {
+      "id": "juliana_2_slot_08",
+      "label": "Nurse \u2013 8",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_2/photo-scratch/pending/slot_08_background.jpg",
+      "bikini": "/cards/juliana_2/photo-scratch/slot_08/bikini.png",
+      "clothes": "/cards/juliana_2/photo-scratch/slot_08/clothes.png",
+      "mesh": "/cards/juliana_2/photo-scratch/slot_08/mesh.json"
+    },
+    {
+      "id": "juliana_2_slot_09",
+      "label": "Nurse \u2013 9",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_2/photo-scratch/pending/slot_09_background.jpg",
+      "bikini": "/cards/juliana_2/photo-scratch/slot_09/bikini.png",
+      "clothes": "/cards/juliana_2/photo-scratch/slot_09/clothes.png",
+      "mesh": "/cards/juliana_2/photo-scratch/slot_09/mesh.json"
+    },
+    {
+      "id": "juliana_2_slot_10",
+      "label": "Nurse \u2013 10",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_2/photo-scratch/pending/slot_10_background.jpg",
+      "bikini": "/cards/juliana_2/photo-scratch/slot_10/bikini.png",
+      "clothes": "/cards/juliana_2/photo-scratch/slot_10/clothes.png",
+      "mesh": "/cards/juliana_2/photo-scratch/slot_10/mesh.json"
     }
   ]
 }

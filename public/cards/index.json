@@ -128,6 +128,16 @@
       "chroma_key": false,
       "sort_order": 11,
       "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_teacher",
+      "label": "Julianaval Teacher",
+      "bottom": "/cards/julianaval_teacher/background.mp4",
+      "foreground": "/cards/julianaval_teacher/foreground.mp4",
+      "mesh": "julianaval_teacher.json",
+      "chroma_key": false,
+      "sort_order": 12,
+      "model_id": "julianaval"
     }
   ]
 }
