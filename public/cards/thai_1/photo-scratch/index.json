@@ -45,24 +45,28 @@
     "id": "slot_07",
     "label": "Police \u2013 7",
     "background": "/cards/thai_1/photo-scratch/pending/slot_07_background.jpg",
-    "bikini": "/cards/thai_1/photo-scratch/pending/slot_07_bikini.jpg"
+    "bikini": "/cards/thai_1/photo-scratch/pending/slot_07_bikini.jpg",
+    "clothes": "/cards/thai_1/photo-scratch/pending/slot_07_clothes.jpg"
   },
   {
     "id": "slot_08",
     "label": "Police \u2013 8",
     "background": "/cards/thai_1/photo-scratch/pending/slot_08_background.jpg",
-    "bikini": "/cards/thai_1/photo-scratch/pending/slot_08_bikini.jpg"
+    "bikini": "/cards/thai_1/photo-scratch/pending/slot_08_bikini.jpg",
+    "clothes": "/cards/thai_1/photo-scratch/pending/slot_08_clothes.jpg"
   },
   {
     "id": "slot_09",
     "label": "Police \u2013 9",
     "background": "/cards/thai_1/photo-scratch/pending/slot_09_background.jpg",
-    "bikini": "/cards/thai_1/photo-scratch/pending/slot_09_bikini.jpg"
+    "bikini": "/cards/thai_1/photo-scratch/pending/slot_09_bikini.jpg",
+    "clothes": "/cards/thai_1/photo-scratch/pending/slot_09_clothes.jpg"
   },
   {
     "id": "slot_10",
     "label": "Police \u2013 10",
     "background": "/cards/thai_1/photo-scratch/pending/slot_10_background.jpg",
-    "bikini": "/cards/thai_1/photo-scratch/pending/slot_10_bikini.jpg"
+    "bikini": "/cards/thai_1/photo-scratch/pending/slot_10_bikini.jpg",
+    "clothes": "/cards/thai_1/photo-scratch/pending/slot_10_clothes.jpg"
   }
 ]

@@ -1,13 +1,16 @@
 {
-  "iou": 0.847,
-  "peek": 0.0035,
-  "edge_mae": 1.87,
+  "iou": 0.846,
+  "peek": 0.0006,
+  "edge_mae": 0.46,
   "pose_ok": true,
   "pose_mismatch": false,
-  "method": "orb-person (clothes\u2192bikini)",
-  "inliers": 170,
-  "scale": 1.0254,
-  "tx": -17.66,
-  "ty": -15.79,
-  "ai_relock": false
+  "method": "orb-person (clothes\u2192bikini)+garment-composite",
+  "inliers": 234,
+  "scale": 0.9996,
+  "tx": 0.21,
+  "ty": 0.39,
+  "garment_composite": true,
+  "garment_px": 142123,
+  "ai_relock": false,
+  "adjust_ok": true
 }
