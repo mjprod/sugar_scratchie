@@ -230,6 +230,14 @@ export function useVideoFlowState() {
     const serverRef = (draft.dressReferenceImage ?? "").trim();
     const localRef = sameCard ? (local.dressReferenceImage ?? "").trim() : "";
     const dressRefToApply = serverRef || localRef;
+    // Face identity reference: a server draft saved before the debounced POST
+    // fires has an empty face_image — never let it wipe a freshly picked face.
+    const serverFace = (draft.faceImage ?? "").trim();
+    const localFace = sameCard ? (local.faceImage ?? "").trim() : "";
+    const faceToApply = serverFace || localFace;
+    const serverBase = (draft.baseImage ?? "").trim();
+    const localBase = sameCard ? (local.baseImage ?? "").trim() : "";
+    const baseToApply = serverBase || localBase;
     const localImage = sameCard ? (local.image ?? "").trim() : "";
     const serverImage = (draft.image ?? "").trim();
     // Never keep a path that is the workspace root (debounce/save race bug).
@@ -282,8 +290,8 @@ export function useVideoFlowState() {
     setSourcePrompt(
       isStockPortraitPrompt(draft.sourcePrompt) ? DEFAULT_PORTRAIT_PROMPT : draft.sourcePrompt || DEFAULT_PORTRAIT_PROMPT,
     );
-    setFaceImage(draft.faceImage);
-    setBaseImage(draft.baseImage);
+    setFaceImage(faceToApply);
+    setBaseImage(baseToApply);
     setAiProvider(draft.aiProvider);
     setSourceImageModel(draft.sourceImageModel);
     setBackgroundVideoModel(draft.backgroundVideoModel);
@@ -296,6 +304,8 @@ export function useVideoFlowState() {
       foregroundMotionPrompt: motion,
       dressPrompt: dress,
       dressReferenceImage: dressRefToApply,
+      faceImage: faceToApply,
+      baseImage: baseToApply,
     });
     writeActiveProjectId(draft.cardId);
     switchingCardRef.current = false;

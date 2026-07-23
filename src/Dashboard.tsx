@@ -713,7 +713,7 @@ function VideoManagerPanel({
 
   async function deleteCard() {
     if (!editingCard || editingCard.id === "original") return;
-    if (!window.confirm(`Delete card "${editingCard.label}" and its video files?`)) return;
+    if (!window.confirm(`Delete card "${editingCard.label}" and all related files (videos, photo-scratch, mesh, video-flow)?`)) return;
     setIsDeleting(true);
     onError("");
     try {

@@ -1418,6 +1418,7 @@ export function PhotoScratchTest() {
           break;
         }
       }
+    }
     gameResultPendingRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>

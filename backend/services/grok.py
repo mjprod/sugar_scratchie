@@ -709,19 +709,37 @@ def photo_scratch_background_prompt(theme: str, variation: str = "") -> str:
     )
 
 
+def photo_scratch_face_ref_clause() -> str:
+    """Identity clause added when a dedicated face reference is the LAST image."""
+    return (
+        "FACE IDENTITY — the LAST reference image is a close-up of her exact face. "
+        "Reproduce that face identically: same eyes, eyebrows, nose, mouth, jawline, "
+        "cheekbones, skin tone, and hair colour. Her face in the result must look like "
+        "the same real person as that face reference — not a lookalike. "
+    )
+
+
 def photo_scratch_bikini_prompt(
     theme: str,
     variation: str = "",
     *,
     with_background: bool = False,
+    with_face: bool = False,
 ) -> str:
     """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene."""
     scenery = (theme or "").strip() or "stylish"
     pose = (variation or "").strip() or PHOTO_SCRATCH_POSE_VARIATIONS[0]
+    face_clause = photo_scratch_face_ref_clause() if with_face else ""
     if with_background:
+        refs = (
+            "Three references: reference 1 = ENVIRONMENT (the full room/scene), "
+            "reference 2 = WOMAN (her body), reference 3 = FACE (her exact face). "
+            if with_face
+            else "Two references: reference 1 = ENVIRONMENT (the full room/scene), "
+            "reference 2 = WOMAN (her face and body only). "
+        )
         return (
-            f"Two references: reference 1 = ENVIRONMENT (the full room/scene), "
-            f"reference 2 = WOMAN (her face and body only). "
+            f"{refs}"
             f"Place the woman from reference 2 standing naturally INSIDE the scene from reference 1. "
             f"Rules: "
             f"(1) Her feet must rest on the floor of the scene — correct perspective and scale for the room. "
@@ -733,12 +751,14 @@ def photo_scratch_bikini_prompt(
             f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
             f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
             f"(7) Keep face, hair colour, skin tone, and body proportions exactly from reference 2. "
+            f"{face_clause}"
             f"(8) Do not invent a different woman. Photorealistic."
         )
     return (
         f"Using this exact same woman from the reference image, change her outfit to a "
         f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
         f"Keep face, identity, hair, skin tone, and body proportions. "
+        f"{face_clause}"
         f"Clean studio backdrop (no busy scene). "
         f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
     )
@@ -779,6 +799,8 @@ def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
         f"body pose, arm angles, elbow bends, hand positions, hip stance, leg placement, "
         f"face, identity, hair, skin tone, background, room, lighting, shadow direction, "
         f"and BODY SHAPE — bust size, waist curve, hip width must be identical to the reference. "
+        f"EXPOSURE LOCK — keep the exact same bright exposure and lighting as the reference; "
+        f"do not darken the image, lower brightness, or crush shadows even if the outfit is dark. "
         f"{photo_scratch_clothes_pose_locks()} "
         f"The outfit MUST fully cover the bikini body with a little extra fabric volume — "
         f"not skintight-shrunk. "
@@ -834,17 +856,28 @@ def edit_photo_scratch_layer(
     out: Path,
     source_image: str | Path,
     background_image: str | Path | None = None,
+    face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
 ) -> Path:
     """Image-edit the Flow source girl (optionally onto a background) for a photo-scratch layer.
 
-    When a background plate is present, send ENVIRONMENT first then WOMAN so models attend to
-    the scene instead of cloning the source wall.
+    Reference order: ENVIRONMENT first (if any), then WOMAN, then FACE last (if any) —
+    models attend to the scene instead of cloning the source wall, and the face ref
+    pins her identity across regenerations.
     """
     key = api_key()
+    images: list[str | Path] = []
+    labels: list[str] = []
     if background_image is not None:
-        images: list[str | Path] = [background_image, source_image]
-        print("Editing photo-scratch layer (2 refs: environment + woman) ...")
+        images.append(background_image)
+        labels.append("environment")
+    images.append(source_image)
+    labels.append("woman")
+    if face_image is not None:
+        images.append(face_image)
+        labels.append("face")
+    if len(images) > 1:
+        print(f"Editing photo-scratch layer ({len(images)} refs: {' + '.join(labels)}) ...")
         result = _edit_image(
             prompt=prompt,
             aspect_ratio=aspect_ratio,

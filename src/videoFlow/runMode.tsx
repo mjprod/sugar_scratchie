@@ -25,6 +25,7 @@ import {
   deletePhotoScratchLayer,
   fetchPhotoScratchSlots,
   generatePhotoScratchLayer,
+  photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
   setPhotoScratchSlotPrompt,
   slotLayerPrompt,
@@ -807,6 +808,66 @@ const LAYER_META: Record<"background" | "bikini" | "clothes", { label: string; s
 
 /** Slot grid columns and Generate-button order: Background → Bikini → Top. */
 const PHOTO_SCRATCH_LAYER_ORDER = ["background", "bikini", "clothes"] as const;
+const PHOTO_SCRATCH_SLOT_COUNT = 10;
+
+const PENDING_FIELD: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
+  background: "pending_bg",
+  bikini: "pending_bikini",
+  clothes: "pending_clothes",
+};
+
+/** Slots with neither approved nor pending for this layer (top-up targets). */
+function slotsNeedingLayer(
+  slots: PhotoScratchSlot[],
+  layer: PhotoScratchLayerType,
+): PhotoScratchSlot[] {
+  const pendingKey = PENDING_FIELD[layer];
+  return slots.filter((s) => !s[layer] && !s[pendingKey]);
+}
+
+/**
+ * Empty slots that are ready to generate for this layer.
+ * Bikini needs an approved background; top needs an approved bikini.
+ */
+function slotsEligibleForLayer(
+  slots: PhotoScratchSlot[],
+  layer: PhotoScratchLayerType,
+): PhotoScratchSlot[] {
+  return slotsNeedingLayer(slots, layer).filter((s) => {
+    if (layer === "bikini") return Boolean(s.background);
+    if (layer === "clothes") return Boolean(s.bikini);
+    return true;
+  });
+}
+
+/** Per-layer AI defaults: bikini → WaveSpeed/Seedream; background & top → x.ai. */
+function defaultProviderForLayer(layer: PhotoScratchLayerType): {
+  provider: AiProvider;
+  imageModel: SourceImageModel;
+} {
+  if (layer === "bikini") {
+    return { provider: "wavespeed", imageModel: "seedream-v5-lite" };
+  }
+  return { provider: "xai", imageModel: "grok-imagine" };
+}
+
+function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
+  color: "green" | "orange" | "gray";
+  label: string;
+} {
+  if (photoScratchSlotIsDone(slot)) {
+    return { color: "green", label: "Photo scratch done" };
+  }
+  if (!(slot.background && slot.bikini && slot.clothes)) {
+    return { color: "gray", label: "Needs 3 layers" };
+  }
+  if (!slot.has_match) return { color: "orange", label: "3 layers · needs match" };
+  if (!slot.has_cutout) return { color: "orange", label: "3 layers · needs cutout" };
+  if (!slot.has_zoom) return { color: "orange", label: "3 layers · needs zooming" };
+  if (!slot.mesh) return { color: "orange", label: "3 layers · needs mesh" };
+  if (!slot.has_symbols) return { color: "orange", label: "3 layers · needs symbols" };
+  return { color: "orange", label: "3 layers · Picture Flow" };
+}
 
 function SlotLayerUpload({
   cardId,
@@ -1056,16 +1117,14 @@ function CardPhotosPanel({
   cardId,
   theme,
   image,
-  aiProvider,
-  sourceImageModel,
   onError,
 }: {
   cardId: string;
   theme: string;
   /** Flow Setup source image path — used so bikini/clothes match the same girl. */
   image: string;
-  aiProvider: string;
-  sourceImageModel: string;
+  aiProvider?: string;
+  sourceImageModel?: string;
   onError: (message: string) => void;
 }) {
   const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
@@ -1074,12 +1133,10 @@ function CardPhotosPanel({
   const [layerBusy] = useState(false);
   const [showPrompts, setShowPrompts] = useState(true);
   // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
-  const [psProvider, setPsProvider] = useState<AiProvider>(
-    () => (aiProvider === "wavespeed" ? "wavespeed" : "xai"),
-  );
-  const [psImageModel, setPsImageModel] = useState<SourceImageModel>(
-    () => (sourceImageModel === "seedream-v5-lite" ? "seedream-v5-lite" : "grok-imagine"),
-  );
+  // Defaults to x.ai; bikini batch uses WaveSpeed/Seedream unless the user overrides.
+  const [psProvider, setPsProvider] = useState<AiProvider>("xai");
+  const [psImageModel, setPsImageModel] = useState<SourceImageModel>("seedream-v5-lite");
+  const [psProviderTouched, setPsProviderTouched] = useState(false);
   const [prompts, setPrompts] = useState<Record<PhotoScratchLayerType, string>>(() => ({
     bikini: defaultPhotoScratchPrompt("bikini", theme),
     clothes: defaultPhotoScratchPrompt("clothes", theme),
@@ -1087,6 +1144,20 @@ function CardPhotosPanel({
   }));
   const prevThemeRef = useRef(theme);
   const prevHasBgRef = useRef(false);
+
+  // Keep the provider dropdown honest: show the default for the next generatable layer
+  // (bikini → WaveSpeed/Seedream; background/top → x.ai) until the user overrides.
+  useEffect(() => {
+    if (psProviderTouched) return;
+    const focus =
+      PHOTO_SCRATCH_LAYER_ORDER.find((layer) => {
+        if (slotsEligibleForLayer(slots, layer).length > 0) return true;
+        return slots.some((s) => Boolean(s[PENDING_FIELD[layer]]));
+      }) ?? "background";
+    const next = defaultProviderForLayer(focus);
+    setPsProvider((prev) => (prev === next.provider ? prev : next.provider));
+    setPsImageModel((prev) => (prev === next.imageModel ? prev : next.imageModel));
+  }, [slots, psProviderTouched]);
 
   // When theme changes, refresh prompts that still match the previous defaults.
   useEffect(() => {
@@ -1143,6 +1214,19 @@ function CardPhotosPanel({
     clothes: "tops",
     background: "backgrounds",
   };
+
+  function resolvePsAi(layer: PhotoScratchLayerType): {
+    provider: AiProvider;
+    imageModel: SourceImageModel;
+  } {
+    if (psProviderTouched) {
+      return {
+        provider: psProvider,
+        imageModel: psProvider === "wavespeed" ? psImageModel : "grok-imagine",
+      };
+    }
+    return defaultProviderForLayer(layer);
+  }
 
   const refreshSlots = async (silent = false) => {
     const id = cardId.trim();
@@ -1237,21 +1321,43 @@ function CardPhotosPanel({
       reportError("Set the Flow source image in Setup first — bikini/top must match that girl.");
       return;
     }
+    if (layer === "bikini" && !slots.some((s) => s.background)) {
+      reportError("Generate and approve backgrounds first, then bikinis.");
+      return;
+    }
     if (layer === "clothes" && !slots.some((s) => s.bikini)) {
       reportError("Approve bikinis first so the top matches the same pose and girl.");
       return;
     }
+    const hasPending = pendingByLayer(layer).length > 0;
+    const eligible = slotsEligibleForLayer(slots, layer);
+    // Top up eligible empty slots only. Pending review may regenerate those pending slots.
+    if (!hasPending && eligible.length === 0) {
+      reportError(
+        layer === "clothes"
+          ? "No tops to generate — approve bikinis on empty slots first (or delete tops to refill)."
+          : layer === "bikini"
+            ? "No bikinis to generate — approve backgrounds on empty slots first (or delete bikinis to refill)."
+            : "All backgrounds are already approved — delete some to generate replacements.",
+      );
+      return;
+    }
+    const fillEmptyOnly = !hasPending;
+    const count = hasPending ? PHOTO_SCRATCH_SLOT_COUNT : eligible.length;
+    const { provider, imageModel } = resolvePsAi(layer);
     setPanelError("");
     try {
       const job = await generatePhotoScratchLayer(
         id,
         layer,
         theme,
-        psProvider,
-        psImageModel,
+        provider,
+        imageModel,
         image.trim(),
         "",
         prompts[layer],
+        count,
+        fillEmptyOnly,
       );
       setGenJobs((prev) => ({ ...prev, [layer]: { id: job.id, logs: [] } }));
     } catch (caught) {
@@ -1315,10 +1421,12 @@ function CardPhotosPanel({
     pendingByLayer("bikini").length > 0 ||
     pendingByLayer("clothes").length > 0;
   const hasApprovedBikini = slots.some((s) => s.bikini);
+  const hasApprovedBackground = slots.some((s) => s.background);
   const hasAnyLayer = slots.some((s) => s.background || s.bikini || s.clothes);
   const layersCompleteCount = slots.filter(
     (s) => Boolean(s.background && s.bikini && s.clothes),
   ).length;
+  const photoScratchDoneCount = slots.filter((s) => photoScratchSlotIsDone(s)).length;
   const anyGenBusy = Object.keys(genJobs).length > 0;
   const hasSourceImage = Boolean(image.trim());
   const pictureFlowHref = cardId.trim()
@@ -1328,12 +1436,30 @@ function CardPhotosPanel({
   function generateButton(layer: PhotoScratchLayerType, label: string) {
     const busy = Boolean(genJobs[layer]);
     const hasPending = pendingByLayer(layer).length > 0;
+    const eligible = slotsEligibleForLayer(slots, layer);
     const needsSource = (layer === "bikini" || layer === "clothes") && !hasSourceImage;
+    const needsBackground = layer === "bikini" && !hasApprovedBackground;
     const needsBikini = layer === "clothes" && !hasApprovedBikini;
-    const blocked = needsSource || needsBikini;
+    const nothingToFill = !hasPending && eligible.length === 0;
+    const blocked = needsSource || needsBackground || needsBikini || nothingToFill;
     let title = "";
     if (needsSource) title = "Set Flow source image in Setup first";
+    else if (needsBackground) title = "Approve backgrounds first, then bikinis";
     else if (needsBikini) title = "Approve bikinis first so top matches";
+    else if (nothingToFill) {
+      if (layer === "clothes") {
+        title = "Approve bikinis on empty slots first — cannot create top without bikini";
+      } else if (layer === "bikini") {
+        title = "Approve backgrounds on empty slots first — or delete bikinis to refill";
+      } else {
+        title = "All backgrounds approved — delete some to generate replacements";
+      }
+    }
+    let buttonLabel: string;
+    if (busy) buttonLabel = `Generating ${label}…`;
+    else if (hasPending) buttonLabel = `Regenerate ${label}`;
+    else if (eligible.length === 0) buttonLabel = `Generate ${label}`;
+    else buttonLabel = `Generate ${eligible.length} ${label}`;
     return (
       <Button
         key={layer}
@@ -1346,7 +1472,7 @@ function CardPhotosPanel({
         onClick={() => void handleGenerate(layer)}
       >
         {busy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
-        {busy ? `Generating ${label}…` : hasPending ? `Regenerate ${label}` : `Generate 10 ${label}`}
+        {buttonLabel}
       </Button>
     );
   }
@@ -1493,11 +1619,17 @@ function CardPhotosPanel({
           </Text>
           <Flex align="center" gap="2" mt="2" wrap="wrap">
             <Badge color={layersCompleteCount > 0 ? "green" : "gray"} variant="soft">
-              Ready: {layersCompleteCount}/10
+              Layers: {layersCompleteCount}/10
+            </Badge>
+            <Badge
+              color={photoScratchDoneCount > 0 ? "green" : "gray"}
+              variant="soft"
+            >
+              Done: {photoScratchDoneCount}/10
             </Badge>
             <Text color="gray" size="1">
               Upload 3 layers per card, then Create game → Picture Flow (cutout / mesh /
-              symbols).
+              symbols). Done = match + cutout + mesh + symbols.
             </Text>
           </Flex>
         </Box>
@@ -1519,12 +1651,20 @@ function CardPhotosPanel({
             {showPrompts ? "Hide prompts" : "Show prompts"}
           </Button>
           {layersCompleteCount > 0 ? (
-            <Button asChild color="green" size="2">
-              <a href={pictureFlowHref}>
-                <Gamepad2 {...iconProps} />
-                Create game ({layersCompleteCount})
-              </a>
-            </Button>
+            <>
+              <Button asChild color="green" size="2">
+                <a href={`${pictureFlowHref}&auto=1`}>
+                  <Sparkles {...iconProps} />
+                  Auto-approve all ({layersCompleteCount})
+                </a>
+              </Button>
+              <Button asChild color="gray" size="2" variant="soft">
+                <a href={pictureFlowHref}>
+                  <Gamepad2 {...iconProps} />
+                  Open Picture Flow
+                </a>
+              </Button>
+            </>
           ) : null}
         </Flex>
       </Flex>
@@ -1536,7 +1676,12 @@ function CardPhotosPanel({
           </Text>
           <Select.Root
             value={psProvider}
-            onValueChange={(value) => setPsProvider(value as AiProvider)}
+            onValueChange={(value) => {
+              const next = value as AiProvider;
+              setPsProviderTouched(true);
+              setPsProvider(next);
+              if (next === "wavespeed") setPsImageModel("seedream-v5-lite");
+            }}
           >
             <Select.Trigger />
             <Select.Content>
@@ -1552,7 +1697,10 @@ function CardPhotosPanel({
             </Text>
             <Select.Root
               value={psImageModel}
-              onValueChange={(value) => setPsImageModel(value as SourceImageModel)}
+              onValueChange={(value) => {
+                setPsProviderTouched(true);
+                setPsImageModel(value as SourceImageModel);
+              }}
             >
               <Select.Trigger />
               <Select.Content>
@@ -1562,9 +1710,9 @@ function CardPhotosPanel({
             </Select.Root>
           </Box>
         ) : null}
-        <Text color="gray" size="1" style={{ maxWidth: 360 }}>
-          Bikini onto a background uses multi-image edit (x.ai, or Seedream when WaveSpeed is
-          selected). If x.ai blocks, switch to WaveSpeed.
+        <Text color="gray" size="1" style={{ maxWidth: 400 }}>
+          Dropdown follows the next step (bikini → WaveSpeed + Seedream; backgrounds & tops →
+          x.ai). Change it to override all layers. If x.ai blocks, switch to WaveSpeed.
         </Text>
       </Flex>
 
@@ -1671,7 +1819,13 @@ function CardPhotosPanel({
                 Photo cards
                 {hasAnyPending || anyGenBusy ? " (approved layers stay here while you review)" : ""}
               </Text>
-              {slots.map((slot, index) => (
+              {slots.map((slot, index) => {
+                const status = photoScratchSlotStatusBadge(slot);
+                const done = photoScratchSlotIsDone(slot);
+                const layersReady = Boolean(
+                  slot.background && slot.bikini && slot.clothes,
+                );
+                return (
                 <Box
                   key={slot.id}
                   style={{
@@ -1686,23 +1840,21 @@ function CardPhotosPanel({
                       {index + 1}. {slot.label}
                     </Text>
                     <Flex align="center" gap="2" wrap="wrap">
-                      <Badge
-                        color={
-                          slot.background && slot.bikini && slot.clothes ? "green" : "gray"
-                        }
-                        variant="soft"
-                      >
-                        {slot.background && slot.bikini && slot.clothes
-                          ? "3 layers ready"
-                          : "Needs 3 layers"}
+                      <Badge color={status.color} variant="soft">
+                        {status.label}
                       </Badge>
-                      {slot.background && slot.bikini && slot.clothes ? (
-                        <Button asChild color="green" size="1">
+                      {layersReady ? (
+                        <Button
+                          asChild
+                          color={done ? "gray" : "green"}
+                          size="1"
+                          variant={done ? "soft" : "solid"}
+                        >
                           <a
                             href={`${pictureFlowHref}&slot=${encodeURIComponent(slot.id)}`}
                           >
                             <Gamepad2 {...iconProps} />
-                            Create game
+                            {done ? "Open Picture Flow" : "Create game"}
                           </a>
                         </Button>
                       ) : null}
@@ -1716,6 +1868,7 @@ function CardPhotosPanel({
                       } else if (layer === "clothes" && !slot.bikini) {
                         aiBlockedReason = "Generate/approve bikini on this card first";
                       }
+                      const layerAi = resolvePsAi(layer);
                       return (
                         <SlotLayerUpload
                           key={layer}
@@ -1725,8 +1878,8 @@ function CardPhotosPanel({
                           src={slot[layer]}
                           theme={theme}
                           sourceImage={image.trim()}
-                          aiProvider={psProvider}
-                          sourceImageModel={psImageModel}
+                          aiProvider={layerAi.provider}
+                          sourceImageModel={layerAi.imageModel}
                           prompt={slotLayerPrompt(slot, layer) || prompts[layer]}
                           slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
@@ -1745,15 +1898,17 @@ function CardPhotosPanel({
                     })}
                   </Grid>
                 </Box>
-              ))}
+                );
+              })}
             </Flex>
           ) : null}
 
           {!hasAnyPending && !anyGenBusy && !hasAnyLayer ? (
             <Text color="gray" size="2">
-              Start with <strong>Generate 10 backgrounds</strong> (empty scene), approve, then{" "}
-              <strong>Generate 10 bikinis</strong> (girl onto that scene), then{" "}
-              <strong>Generate 10 tops</strong>.
+              Start with <strong>Generate backgrounds</strong> (empty scene), approve, then{" "}
+              <strong>Generate bikinis</strong> (girl onto that scene), then{" "}
+              <strong>Generate tops</strong>. Delete any you dislike — the button shows how many
+              empty slots will be filled.
             </Text>
           ) : null}
         </Flex>
@@ -2763,6 +2918,26 @@ export function RunMode(props: RunModeProps) {
                 </Tabs.Content>
               </Box>
             </Tabs.Root>
+
+            <Field label="Her face — identity reference (used by all AI generations)">
+              <Flex direction="column" gap="1">
+                <FilePathPicker
+                  accept="image/*"
+                  placeholder="Pick a clear face photo or paste a path/URL"
+                  preview="image"
+                  previewLabel="Face reference"
+                  previewSize="compact"
+                  previewZoomable
+                  value={faceImage}
+                  onChange={onFaceImageChange}
+                  onError={onError}
+                />
+                <Text color="gray" size="1">
+                  Every photo-scratch generation sends this photo as a face reference and
+                  face-locks the result, so her face stays the same across all cards and slots.
+                </Text>
+              </Flex>
+            </Field>
 
             <Grid columns={{ initial: "1", md: "2" }} gap="3">
               <Field label="Card id (work folder)">

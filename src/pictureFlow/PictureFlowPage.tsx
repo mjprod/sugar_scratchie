@@ -1,4 +1,4 @@
-import { ExternalLink, Gamepad2, Loader2, Play } from "lucide-react";
+import { ExternalLink, Gamepad2, Loader2, Play, Sparkles, Square } from "lucide-react";
 import {
   Badge,
   Button,
@@ -10,9 +10,14 @@ import {
   TextField,
 } from "@radix-ui/themes";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  parseTrackedMesh,
+  randomSymbolPoints,
+  sampleTrackedMesh,
+  SYMBOL_POINT_COUNT,
+} from "../meshGeometry";
 import { api } from "../shared/api";
 import {
-  confirmPhotoScratchSlotAdjust,
   cutoutPhotoScratchSlot,
   fetchPhotoScratchSlots,
   generatePhotoScratchSlotMesh,
@@ -20,6 +25,8 @@ import {
   photoScratchSlotIsDone,
   photoScratchSlotPlayHref,
   publishPhotoScratchGame,
+  savePhotoScratchSlotSymbols,
+  zoomPhotoScratchSlot,
   type PhotoScratchSlot,
 } from "../shared/models";
 import { MaskEditor } from "../videoFlow/MaskEditor";
@@ -30,11 +37,32 @@ import { VideoFlowShell } from "../videoFlow/VideoFlowShell";
 type StepId =
   | "layers"
   | "match"
-  | "adjust"
   | "cutout"
+  | "zooming"
   | "mesh"
   | "symbols"
   | "game";
+
+type AutoStepId = "match" | "cutout" | "zooming" | "mesh" | "symbols" | "game" | "done";
+
+type AutoProgress = {
+  slotId: string;
+  slotLabel: string;
+  step: AutoStepId;
+  index: number;
+  total: number;
+  detail: string;
+};
+
+const AUTO_STEP_LABEL: Record<AutoStepId, string> = {
+  match: "Match",
+  cutout: "Cutout",
+  zooming: "Zooming",
+  mesh: "Mesh",
+  symbols: "Symbols",
+  game: "Publish",
+  done: "Done",
+};
 
 type StepDef = {
   id: StepId;
@@ -58,18 +86,18 @@ const STEPS: StepDef[] = [
       "Puts both layers on the same canvas so scratching the top reveals the bikini underneath without a double face.",
   },
   {
-    id: "adjust",
-    label: "Adjust",
-    subtitle: "Nudge scale / position",
-    blurb:
-      "If the top looks too small or shifted, nudge scale and position, then confirm before Cutout.",
-  },
-  {
     id: "cutout",
     label: "Cutout",
     subtitle: "Girl without scene",
     blurb:
       "Remove the scene behind the girl into RGBA cutouts. Originals stay on the card.",
+  },
+  {
+    id: "zooming",
+    label: "Zooming",
+    subtitle: "Bikini + top front/back",
+    blurb:
+      "Scale bikini and top together over the room (background fixed). Larger = closer, smaller = farther — then confirm before Mesh.",
   },
   {
     id: "mesh",
@@ -106,10 +134,10 @@ function stepDone(slot: PhotoScratchSlot, step: StepId): boolean {
       return layersComplete(slot);
     case "match":
       return Boolean(slot.has_match);
-    case "adjust":
-      return Boolean(slot.has_adjust);
     case "cutout":
       return Boolean(slot.has_cutout);
+    case "zooming":
+      return Boolean(slot.has_zoom);
     case "mesh":
       return Boolean(slot.mesh);
     case "symbols":
@@ -150,40 +178,87 @@ function stepBadge(status: "done" | "ready" | "locked"): {
   return { color: "gray", label: "Locked" };
 }
 
-async function pollJob(jobId: string, label: string) {
+async function pollJob(
+  jobId: string,
+  label: string,
+  options?: { shouldStop?: () => boolean },
+) {
   for (let i = 0; i < 180; i += 1) {
+    if (options?.shouldStop?.()) {
+      try {
+        await api(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+          method: "POST",
+        });
+      } catch {
+        // Best-effort cancel — still stop the client loop.
+      }
+      throw new Error("AUTO_APPROVE_STOPPED");
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const next = await api<{ id: string; status: string; logs: string[] }>(
       `/api/jobs/${encodeURIComponent(jobId)}`,
     );
     if (next.status === "succeeded") return;
-    if (next.status === "failed" || next.status === "cancelled") {
+    if (next.status === "cancelled") {
+      throw new Error("AUTO_APPROVE_STOPPED");
+    }
+    if (next.status === "failed") {
       throw new Error(next.logs?.[next.logs.length - 1] ?? next.status);
     }
   }
   throw new Error(`${label} timed out`);
 }
 
+async function autoSaveRandomSymbols(
+  cardId: string,
+  slotId: string,
+  meshUrl: string,
+) {
+  const meshResponse = await fetch(meshUrl, { cache: "no-store" });
+  if (!meshResponse.ok) {
+    throw new Error(`Mesh not found (${meshResponse.status})`);
+  }
+  const meshData = parseTrackedMesh(await meshResponse.json());
+  if (!meshData) {
+    throw new Error("Invalid mesh JSON");
+  }
+  const sample = sampleTrackedMesh(meshData, 0);
+  const points = randomSymbolPoints(sample, SYMBOL_POINT_COUNT, meshData.garment);
+  if (points.length !== SYMBOL_POINT_COUNT) {
+    throw new Error(
+      `Could only place ${points.length}/${SYMBOL_POINT_COUNT} symbol points`,
+    );
+  }
+  await savePhotoScratchSlotSymbols(cardId, slotId, points);
+}
+
 /** Prep screen: Video Flow pipeline boxes + detail screen on the right. */
 export function PictureFlowPage() {
   const cardId = useMemo(() => readQuery("card"), []);
   const focusSlot = useMemo(() => readQuery("slot"), []);
+  const autoStart = useMemo(() => readQuery("auto") === "1", []);
   const detailRef = useRef<HTMLElement | null>(null);
+  const autoStartedRef = useRef(false);
+  const autoCancelRef = useRef(false);
   const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cutoutBusy, setCutoutBusy] = useState("");
   const [matchBusy, setMatchBusy] = useState("");
+  const [zoomBusy, setZoomBusy] = useState("");
   const [meshBusy, setMeshBusy] = useState("");
   const [publishBusy, setPublishBusy] = useState("");
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<AutoProgress | null>(null);
+  const [autoStatus, setAutoStatus] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [manualStepBySlot, setManualStepBySlot] = useState<Record<string, StepId>>(
     {},
   );
   const [fixMeshOpen, setFixMeshOpen] = useState(false);
-  const [nudgeScale, setNudgeScale] = useState("1");
-  const [nudgeTx, setNudgeTx] = useState("0");
-  const [nudgeTy, setNudgeTy] = useState("0");
+  const [zoomScale, setZoomScale] = useState("1");
+  const [zoomTx, setZoomTx] = useState("0");
+  const [zoomTy, setZoomTy] = useState("0");
 
   async function refresh() {
     if (!cardId) {
@@ -207,41 +282,40 @@ export function PictureFlowPage() {
     void refresh();
   }, [cardId]);
 
+  // Always use every layer-ready teacher — ?slot= only picks the initial tab.
   const readySlots = slots.filter(layersComplete);
-  const visibleSlots = focusSlot
-    ? readySlots.filter((s) => s.id === focusSlot)
-    : readySlots;
 
   useEffect(() => {
-    if (visibleSlots.length === 0) {
+    if (readySlots.length === 0) {
       setSelectedSlotId("");
       return;
     }
-    if (focusSlot && visibleSlots.some((s) => s.id === focusSlot)) {
+    if (selectedSlotId && readySlots.some((s) => s.id === selectedSlotId)) {
+      return;
+    }
+    if (focusSlot && readySlots.some((s) => s.id === focusSlot)) {
       setSelectedSlotId(focusSlot);
       return;
     }
-    if (!visibleSlots.some((s) => s.id === selectedSlotId)) {
-      setSelectedSlotId(visibleSlots[0]!.id);
-    }
-  }, [focusSlot, visibleSlots, selectedSlotId]);
+    setSelectedSlotId(readySlots[0]!.id);
+  }, [focusSlot, readySlots, selectedSlotId]);
 
-  const slot = visibleSlots.find((s) => s.id === selectedSlotId) ?? null;
-  const busy = Boolean(cutoutBusy || matchBusy || meshBusy || publishBusy);
+  const slot = readySlots.find((s) => s.id === selectedSlotId) ?? null;
+  const busy = Boolean(
+    cutoutBusy || matchBusy || zoomBusy || meshBusy || publishBusy || autoBusy,
+  );
 
   useEffect(() => {
-    if (!slot?.has_match) return;
-    setNudgeScale(
-      slot.match_nudge_scale != null ? String(slot.match_nudge_scale) : "1",
-    );
-    setNudgeTx(slot.match_nudge_tx != null ? String(slot.match_nudge_tx) : "0");
-    setNudgeTy(slot.match_nudge_ty != null ? String(slot.match_nudge_ty) : "0");
+    if (!slot?.has_cutout) return;
+    setZoomScale(slot.zoom_scale != null ? String(slot.zoom_scale) : "1");
+    setZoomTx(slot.zoom_tx != null ? String(slot.zoom_tx) : "0");
+    setZoomTy(slot.zoom_ty != null ? String(slot.zoom_ty) : "0");
   }, [
     slot?.id,
-    slot?.has_match,
-    slot?.match_nudge_scale,
-    slot?.match_nudge_tx,
-    slot?.match_nudge_ty,
+    slot?.has_cutout,
+    slot?.zoom_scale,
+    slot?.zoom_tx,
+    slot?.zoom_ty,
   ]);
 
   const autoStep = slot ? currentStep(slot) : "layers";
@@ -287,10 +361,10 @@ export function PictureFlowPage() {
     }
   }
 
-  function parseNudge() {
-    const scale = Number(nudgeScale);
-    const tx = Number(nudgeTx);
-    const ty = Number(nudgeTy);
+  function parseZoom() {
+    const scale = Number(zoomScale);
+    const tx = Number(zoomTx);
+    const ty = Number(zoomTy);
     if (!Number.isFinite(scale) || scale <= 0.1 || scale > 3) {
       throw new Error("Scale must be between 0.1 and 3");
     }
@@ -298,42 +372,6 @@ export function PictureFlowPage() {
       throw new Error("tx / ty must be numbers");
     }
     return { scale, tx, ty };
-  }
-
-  async function handleAdjustNudge(slotId: string) {
-    if (!cardId || busy) return;
-    setMatchBusy(slotId);
-    setError("");
-    try {
-      const { scale, tx, ty } = parseNudge();
-      const job = await matchPhotoScratchSlot(cardId, slotId, "", {
-        scale,
-        tx,
-        ty,
-        confirmAdjust: true,
-      });
-      await pollJob(job.id, "Apply nudge");
-      await refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMatchBusy("");
-    }
-  }
-
-  async function handleConfirmAdjust(slotId: string) {
-    if (!cardId || busy) return;
-    setMatchBusy(slotId);
-    setError("");
-    try {
-      await confirmPhotoScratchSlotAdjust(cardId, slotId);
-      clearManualStep(slotId);
-      await refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMatchBusy("");
-    }
   }
 
   async function handleCutout(slotId: string) {
@@ -352,6 +390,51 @@ export function PictureFlowPage() {
     }
   }
 
+  async function handleZoomApply(slotId: string) {
+    if (!cardId || busy) return;
+    setZoomBusy(slotId);
+    setError("");
+    try {
+      const { scale, tx, ty } = parseZoom();
+      await zoomPhotoScratchSlot(cardId, slotId, "", {
+        scale,
+        tx,
+        ty,
+        apply: true,
+        confirm: true,
+      });
+      clearManualStep(slotId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setZoomBusy("");
+    }
+  }
+
+  async function handleZoomConfirm(slotId: string) {
+    if (!cardId || busy) return;
+    setZoomBusy(slotId);
+    setError("");
+    try {
+      // Bake current form values so Mesh is built at the same scale as the preview.
+      const { scale, tx, ty } = parseZoom();
+      await zoomPhotoScratchSlot(cardId, slotId, "", {
+        scale,
+        tx,
+        ty,
+        apply: true,
+        confirm: true,
+      });
+      clearManualStep(slotId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setZoomBusy("");
+    }
+  }
+
   async function handleMesh(slotId: string) {
     if (!cardId || busy) return;
     setMeshBusy(slotId);
@@ -359,7 +442,9 @@ export function PictureFlowPage() {
     try {
       const job = await generatePhotoScratchSlotMesh(cardId, slotId);
       await pollJob(job.id, "Mesh generation");
-      clearManualStep(slotId);
+      // Stay on Mesh and open the mask editor — don't auto-advance to Symbols.
+      setManualStepBySlot((prev) => ({ ...prev, [slotId]: "mesh" }));
+      setFixMeshOpen(true);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -382,13 +467,218 @@ export function PictureFlowPage() {
     }
   }
 
+  async function handleAutoApprove() {
+    if (!cardId || busy) return;
+    autoCancelRef.current = false;
+    setAutoBusy(true);
+    setAutoStatus("");
+    setAutoProgress(null);
+    setError("");
+    setFixMeshOpen(false);
+
+    const throwIfStopped = () => {
+      if (autoCancelRef.current) {
+        throw new Error("AUTO_APPROVE_STOPPED");
+      }
+    };
+
+    const waitJob = (jobId: string, label: string) =>
+      pollJob(jobId, label, { shouldStop: () => autoCancelRef.current });
+
+    try {
+      let current = await fetchPhotoScratchSlots(cardId);
+      setSlots(current);
+      throwIfStopped();
+
+      // Always every layer-ready teacher — never only the focused ?slot=.
+      const candidates = current.filter(layersComplete);
+      const pending = candidates.filter((s) => !photoScratchSlotIsDone(s));
+      if (pending.length === 0) {
+        setAutoProgress({
+          slotId: "",
+          slotLabel: "All teachers",
+          step: "game",
+          index: candidates.length,
+          total: candidates.length,
+          detail: "Publishing finished games…",
+        });
+        throwIfStopped();
+        await publishPhotoScratchGame(cardId);
+        setAutoProgress({
+          slotId: "",
+          slotLabel: "All teachers",
+          step: "done",
+          index: candidates.length,
+          total: candidates.length,
+          detail: `Published ${candidates.length} teacher(s).`,
+        });
+        setAutoStatus(`Published ${candidates.length} teacher(s).`);
+        await refresh();
+        return;
+      }
+
+      let published = 0;
+      for (let index = 0; index < pending.length; index += 1) {
+        throwIfStopped();
+        const target = pending[index]!;
+        const progressNum = index + 1;
+        setSelectedSlotId(target.id);
+        setFixMeshOpen(false);
+        let entry =
+          current.find((s) => s.id === target.id) ?? target;
+
+        const setRunning = (step: AutoStepId, detail: string) => {
+          setAutoProgress({
+            slotId: entry.id,
+            slotLabel: entry.label,
+            step,
+            index: progressNum,
+            total: pending.length,
+            detail,
+          });
+          if (step !== "game" && step !== "done") {
+            setManualStepBySlot((prev) => ({ ...prev, [entry.id]: step }));
+          }
+        };
+
+        const reloadSlot = async () => {
+          current = await fetchPhotoScratchSlots(cardId);
+          setSlots(current);
+          const next = current.find((s) => s.id === target.id);
+          if (!next) {
+            throw new Error(`${target.label} disappeared after a step`);
+          }
+          entry = next;
+        };
+
+        // Always press Register / Re-register layers (same as the red Match button).
+        throwIfStopped();
+        setRunning("match", "Re-registering bikini + top layers…");
+        {
+          const job = await matchPhotoScratchSlot(cardId, entry.id);
+          await waitJob(job.id, "Register layers");
+          await reloadSlot();
+        }
+
+        if (!entry.has_cutout) {
+          throwIfStopped();
+          setRunning("cutout", "Cutting girl out of the scene…");
+          const job = await cutoutPhotoScratchSlot(cardId, entry.id);
+          await waitJob(job.id, "Cut out girl");
+          await reloadSlot();
+        }
+
+        if (!entry.has_zoom) {
+          throwIfStopped();
+          setRunning("zooming", "Confirming zoom framing…");
+          await zoomPhotoScratchSlot(cardId, entry.id, "", {
+            scale: entry.zoom_scale ?? 1,
+            tx: entry.zoom_tx ?? 0,
+            ty: entry.zoom_ty ?? 0,
+            apply: true,
+            confirm: true,
+          });
+          await reloadSlot();
+        }
+
+        if (!entry.mesh) {
+          throwIfStopped();
+          setRunning("mesh", "Building scratch mesh…");
+          const job = await generatePhotoScratchSlotMesh(cardId, entry.id);
+          await waitJob(job.id, "Mesh generation");
+          await reloadSlot();
+        }
+
+        if (!entry.has_symbols) {
+          throwIfStopped();
+          setRunning("symbols", "Placing 12 random symbol anchors…");
+          const meshUrl =
+            entry.mesh ||
+            `/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(entry.id)}/mesh.json`;
+          await autoSaveRandomSymbols(cardId, entry.id, meshUrl);
+          await reloadSlot();
+        }
+
+        throwIfStopped();
+        setRunning("game", "Publishing playable game…");
+        await publishPhotoScratchGame(cardId, entry.id);
+        published += 1;
+        clearManualStep(entry.id);
+      }
+
+      setAutoProgress({
+        slotId: "",
+        slotLabel: "All teachers",
+        step: "done",
+        index: published,
+        total: pending.length,
+        detail: `Auto-approved and published ${published} teacher(s).`,
+      });
+      setAutoStatus(`Done — auto-approved and published ${published} teacher(s).`);
+      await refresh();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      if (message === "AUTO_APPROVE_STOPPED") {
+        setError("");
+        setAutoStatus("Stopped — finished teachers stay done; resume anytime.");
+        setAutoProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                step: "done",
+                detail: `Stopped at ${prev.slotLabel} · ${AUTO_STEP_LABEL[prev.step]}. Resume with Auto-approve all.`,
+              }
+            : {
+                slotId: "",
+                slotLabel: "Stopped",
+                step: "done",
+                index: 0,
+                total: 0,
+                detail: "Stopped. Resume with Auto-approve all.",
+              },
+        );
+        await refresh();
+      } else {
+        setError(message);
+        setAutoStatus("");
+        setAutoProgress(null);
+      }
+    } finally {
+      autoCancelRef.current = false;
+      setAutoBusy(false);
+    }
+  }
+
+  function handleStopAutoApprove() {
+    if (!autoBusy) return;
+    autoCancelRef.current = true;
+    setAutoProgress((prev) =>
+      prev
+        ? { ...prev, detail: `Stopping after current job… (${prev.detail})` }
+        : prev,
+    );
+  }
+
+  // Video Flow "Auto-approve all" lands here with ?auto=1 — start once slots load.
+  useEffect(() => {
+    if (!autoStart || autoStartedRef.current || loading || !cardId) return;
+    if (readySlots.length === 0) return;
+    autoStartedRef.current = true;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("auto")) {
+      url.searchParams.delete("auto");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    }
+    void handleAutoApprove();
+  }, [autoStart, loading, cardId, readySlots.length]);
+
   return (
     <VideoFlowShell
       active="picture"
       error={error}
       subtitle={
         cardId
-          ? `Card ${cardId} — layers → match → cutout → mesh → symbols → game.`
+          ? `Card ${cardId} — layers → match → cutout → zooming → mesh → symbols → game.`
           : "Open from Video Flow after uploading 3 layers on a photo card."
       }
       title="Photo scratch game"
@@ -398,7 +688,7 @@ export function PictureFlowPage() {
         <Text color="gray">Missing ?card= in the URL.</Text>
       ) : loading ? (
         <Text color="gray">Loading photo cards…</Text>
-      ) : visibleSlots.length === 0 ? (
+      ) : readySlots.length === 0 ? (
         <Card size="3">
           <Heading size="4" mb="2">
             No photo cards ready
@@ -415,26 +705,126 @@ export function PictureFlowPage() {
         </Card>
       ) : slot ? (
         <Flex direction="column" gap="4">
-          {!focusSlot && visibleSlots.length > 1 ? (
-            <Flex gap="2" wrap="wrap">
-              {visibleSlots.map((entry) => (
+          <Flex align="center" gap="3" wrap="wrap" justify="between">
+            <Flex align="center" gap="2" wrap="wrap">
+              <Button
+                color="green"
+                disabled={busy || readySlots.length === 0}
+                onClick={() => void handleAutoApprove()}
+                title="Run match → cutout → zoom → mesh → random symbols → publish for every incomplete teacher — no need to open each tab"
+              >
+                {autoBusy ? (
+                  <Loader2 {...iconProps} className="spin" />
+                ) : (
+                  <Sparkles {...iconProps} />
+                )}
+                {autoBusy
+                  ? "Auto-approving…"
+                  : `Auto-approve all (${readySlots.filter((s) => !photoScratchSlotIsDone(s)).length || readySlots.length})`}
+              </Button>
+              {autoBusy ? (
                 <Button
-                  key={entry.id}
-                  size="1"
-                  variant={entry.id === slot.id ? "solid" : "soft"}
-                  onClick={() => {
-                    setSelectedSlotId(entry.id);
-                    setFixMeshOpen(false);
-                  }}
+                  color="red"
+                  variant="solid"
+                  onClick={handleStopAutoApprove}
+                  title="Stop after the current job finishes cancelling"
                 >
-                  {entry.label}
-                  {photoScratchSlotIsDone(entry) ? (
-                    <Badge color="green" ml="2" size="1">
-                      Done
+                  <Square {...iconProps} />
+                  Stop
+                </Button>
+              ) : null}
+            </Flex>
+            {!autoBusy && !autoProgress ? (
+              <Text color="gray" size="2">
+                One click for every teacher — match → cutout → zoom → mesh → symbols → publish.
+              </Text>
+            ) : null}
+          </Flex>
+
+          {autoProgress ? (
+            <Callout.Root
+              color={
+                autoProgress.step === "done"
+                  ? autoStatus.startsWith("Stopped")
+                    ? "amber"
+                    : "green"
+                  : "blue"
+              }
+              size="2"
+            >
+              <Callout.Text>
+                <Flex align="center" gap="3" wrap="wrap">
+                  {autoBusy ? <Loader2 {...iconProps} className="spin" /> : null}
+                  <Text weight="bold">
+                    {autoProgress.step === "done"
+                      ? autoStatus.startsWith("Stopped")
+                        ? "Stopped"
+                        : "Finished"
+                      : `Running ${autoProgress.index}/${autoProgress.total}`}
+                  </Text>
+                  <Badge color="red" size="2" variant="solid">
+                    {autoProgress.slotLabel}
+                  </Badge>
+                  {autoProgress.step !== "done" ? (
+                    <Badge color="blue" size="2" variant="soft">
+                      Step: {AUTO_STEP_LABEL[autoProgress.step]}
                     </Badge>
                   ) : null}
-                </Button>
-              ))}
+                  <Text size="2">{autoProgress.detail}</Text>
+                  {autoStatus && autoProgress.step === "done" ? (
+                    <Text size="2">{autoStatus}</Text>
+                  ) : null}
+                  {autoBusy ? (
+                    <Button color="red" size="1" variant="soft" onClick={handleStopAutoApprove}>
+                      <Square {...iconProps} />
+                      Stop
+                    </Button>
+                  ) : null}
+                </Flex>
+              </Callout.Text>
+            </Callout.Root>
+          ) : null}
+
+          {readySlots.length > 1 ? (
+            <Flex gap="2" wrap="wrap">
+              {readySlots.map((entry) => {
+                const isRunning =
+                  autoBusy && autoProgress?.slotId === entry.id;
+                const isDone = photoScratchSlotIsDone(entry);
+                const isSelected = entry.id === slot.id;
+                return (
+                  <Button
+                    key={entry.id}
+                    size="1"
+                    color={isRunning ? "blue" : undefined}
+                    variant={isRunning || isSelected ? "solid" : "soft"}
+                    disabled={autoBusy && !isRunning}
+                    onClick={() => {
+                      if (autoBusy) return;
+                      setSelectedSlotId(entry.id);
+                      setFixMeshOpen(false);
+                    }}
+                  >
+                    {isRunning ? (
+                      <Loader2 {...iconProps} className="spin" />
+                    ) : null}
+                    {entry.label}
+                    {isRunning ? (
+                      <Badge color="blue" ml="2" size="1" variant="solid">
+                        {AUTO_STEP_LABEL[autoProgress.step]}…
+                      </Badge>
+                    ) : isDone ? (
+                      <Badge color="green" ml="2" size="1">
+                        Done
+                      </Badge>
+                    ) : autoBusy ? (
+                      <Badge color="gray" ml="2" size="1">
+                        Waiting
+                      </Badge>
+                    ) : null}
+                  </Button>
+                );
+              })}
             </Flex>
           ) : null}
 
@@ -445,11 +835,18 @@ export function PictureFlowPage() {
               </Text>
               <Text color="gray" size="1" mb="2">
                 {slot.label}
+                {autoBusy && autoProgress?.slotId === slot.id
+                  ? ` — running ${AUTO_STEP_LABEL[autoProgress.step]}`
+                  : ""}
               </Text>
               {STEPS.map((step, index) => {
                 const status = stepStatus(slot, step.id);
                 const badge = stepBadge(status);
                 const locked = status === "locked";
+                const isAutoRunning =
+                  autoBusy &&
+                  autoProgress?.slotId === slot.id &&
+                  autoProgress.step === step.id;
                 return (
                   <button
                     key={step.id}
@@ -457,12 +854,13 @@ export function PictureFlowPage() {
                     className={[
                       "video-flow-run-step",
                       `is-${status}`,
-                      activeStep === step.id ? "is-active" : "",
+                      activeStep === step.id || isAutoRunning ? "is-active" : "",
                       locked ? "is-disabled" : "",
+                      isAutoRunning ? "is-auto-running" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
-                    disabled={locked}
+                    disabled={locked || autoBusy}
                     onClick={() => selectStep(step.id)}
                   >
                     <span className="video-flow-run-step-num">{index + 1}</span>
@@ -470,9 +868,15 @@ export function PictureFlowPage() {
                       <strong>{step.label}</strong>
                       <span>{step.subtitle}</span>
                     </span>
-                    <Badge color={badge.color} size="1">
-                      {badge.label}
-                    </Badge>
+                    {isAutoRunning ? (
+                      <Badge color="blue" size="1">
+                        Running
+                      </Badge>
+                    ) : (
+                      <Badge color={badge.color} size="1">
+                        {badge.label}
+                      </Badge>
+                    )}
                   </button>
                 );
               })}
@@ -625,7 +1029,7 @@ export function PictureFlowPage() {
                           Judge <strong>Top (matched)</strong> only — that is the game
                           layer. Ghost check is a deliberate 50/50 of bikini + top (double
                           face/body is expected). Difference highlights pixel mismatch.
-                          Proceed to Adjust.
+                          Proceed to Cutout.
                         </Callout.Text>
                       </Callout.Root>
                     ) : null}
@@ -641,106 +1045,8 @@ export function PictureFlowPage() {
                     {slot.has_match ? (
                       <Callout.Root color="blue">
                         <Callout.Text>
-                          Next: <strong>Adjust</strong> if the top looks small or
-                          shifted, then Cutout.
-                        </Callout.Text>
-                      </Callout.Root>
-                    ) : null}
-                  </Flex>
-                ) : null}
-
-                {activeStep === "adjust" ? (
-                  <Flex direction="column" gap="4">
-                    <Callout.Root color="blue">
-                      <Callout.Text>
-                        Use the ghost check: if the top is too small, raise scale
-                        (e.g. 1.04). If it sits high, raise ty (moves down). Then
-                        Apply nudge, or Looks good if alignment is already fine.
-                      </Callout.Text>
-                    </Callout.Root>
-                    <Flex gap="2" wrap="wrap">
-                      {slot.clothes_matched ? (
-                        <MediaPreview
-                          label="Top (matched)"
-                          size="compact"
-                          type="image"
-                          value={slot.clothes_matched}
-                          zoomable
-                        />
-                      ) : null}
-                      {slot.match_blend ? (
-                        <MediaPreview
-                          label="Ghost check (50/50)"
-                          size="compact"
-                          type="image"
-                          value={`${slot.match_blend}?t=${slot.match_iou ?? 0}`}
-                          zoomable
-                        />
-                      ) : null}
-                      {slot.match_overlay ? (
-                        <MediaPreview
-                          label="Difference (QA)"
-                          size="compact"
-                          type="image"
-                          value={slot.match_overlay}
-                          zoomable
-                        />
-                      ) : null}
-                    </Flex>
-                    <Flex gap="3" wrap="wrap" align="end">
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          Scale
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="0.01"
-                          min="0.5"
-                          max="2"
-                          value={nudgeScale}
-                          onChange={(e) => setNudgeScale(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          1.04 = +4%
-                        </Text>
-                      </Flex>
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          tx (px)
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="1"
-                          value={nudgeTx}
-                          onChange={(e) => setNudgeTx(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          +right / −left
-                        </Text>
-                      </Flex>
-                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
-                        <Text size="1" weight="medium">
-                          ty (px)
-                        </Text>
-                        <TextField.Root
-                          type="number"
-                          step="1"
-                          value={nudgeTy}
-                          onChange={(e) => setNudgeTy(e.target.value)}
-                        />
-                        <Text color="gray" size="1">
-                          +down / −up
-                        </Text>
-                      </Flex>
-                    </Flex>
-                    {slot.has_adjust ? (
-                      <Callout.Root color="green">
-                        <Callout.Text>
-                          Adjust confirmed
-                          {slot.match_iou != null
-                            ? ` (IoU ${slot.match_iou.toFixed(3)})`
-                            : ""}
-                          . Proceed to Cutout.
+                          Next: <strong>Cutout</strong> when the matched top looks
+                          aligned.
                         </Callout.Text>
                       </Callout.Root>
                     ) : null}
@@ -781,6 +1087,143 @@ export function PictureFlowPage() {
                   </Flex>
                 ) : null}
 
+                {activeStep === "zooming" ? (
+                  <Flex direction="column" gap="4">
+                    <Callout.Root color="blue">
+                      <Callout.Text>
+                        Bikini + top zoom together as one unit over the room
+                        (background stays put). Larger = closer/front, smaller =
+                        farther/back. Apply bakes both cutouts; Looks good unlocks
+                        Mesh without changing pixels.
+                      </Callout.Text>
+                    </Callout.Root>
+                    {slot.has_cutout ? (
+                      <Flex gap="2" wrap="wrap" align="start">
+                        {slot.background ? (
+                          <div className="picture-flow-zoom-composite">
+                            <Text size="1" weight="medium" mb="1">
+                              In room (bikini + top together)
+                            </Text>
+                            <div className="picture-flow-zoom-stage">
+                              <img
+                                alt=""
+                                className="picture-flow-zoom-bg"
+                                src={slot.background}
+                              />
+                              <div
+                                className="picture-flow-zoom-girl-stack"
+                                style={{
+                                  transform: `translate(${((Number(zoomTx) || 0) * 140) / 1170}px, ${((Number(zoomTy) || 0) * 240) / 2016}px) scale(${Number(zoomScale) || 1})`,
+                                }}
+                              >
+                                {slot.bikini_cutout_src || slot.bikini_cutout ? (
+                                  <img
+                                    alt=""
+                                    className="picture-flow-zoom-girl picture-flow-zoom-girl--bikini"
+                                    src={
+                                      slot.bikini_cutout_src ||
+                                      slot.bikini_cutout ||
+                                      ""
+                                    }
+                                  />
+                                ) : null}
+                                {slot.clothes_cutout_src || slot.clothes_cutout ? (
+                                  <img
+                                    alt=""
+                                    className="picture-flow-zoom-girl picture-flow-zoom-girl--top"
+                                    src={
+                                      slot.clothes_cutout_src ||
+                                      slot.clothes_cutout ||
+                                      ""
+                                    }
+                                  />
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                        {slot.bikini_cutout ? (
+                          <MediaPreview
+                            label="Bikini (baked)"
+                            size="compact"
+                            type="image"
+                            value={slot.bikini_cutout}
+                            cacheBust={slot.zoom_scale ?? "0"}
+                            zoomable
+                          />
+                        ) : null}
+                        {slot.clothes_cutout ? (
+                          <MediaPreview
+                            label="Top (baked)"
+                            size="compact"
+                            type="image"
+                            value={slot.clothes_cutout}
+                            cacheBust={slot.zoom_scale ?? "0"}
+                            zoomable
+                          />
+                        ) : null}
+                      </Flex>
+                    ) : null}
+                    <Flex gap="3" wrap="wrap">
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          Scale
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="0.01"
+                          min="0.1"
+                          max="3"
+                          value={zoomScale}
+                          onChange={(e) => setZoomScale(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          &gt;1 closer · &lt;1 farther
+                        </Text>
+                      </Flex>
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          tx (px)
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="1"
+                          value={zoomTx}
+                          onChange={(e) => setZoomTx(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          +right / −left
+                        </Text>
+                      </Flex>
+                      <Flex direction="column" gap="1" style={{ minWidth: 120 }}>
+                        <Text size="1" weight="medium">
+                          ty (px)
+                        </Text>
+                        <TextField.Root
+                          type="number"
+                          step="1"
+                          value={zoomTy}
+                          onChange={(e) => setZoomTy(e.target.value)}
+                        />
+                        <Text color="gray" size="1">
+                          +down / −up
+                        </Text>
+                      </Flex>
+                    </Flex>
+                    {slot.has_zoom ? (
+                      <Callout.Root color="green">
+                        <Callout.Text>
+                          Zooming confirmed
+                          {slot.zoom_scale != null
+                            ? ` (scale ${slot.zoom_scale})`
+                            : ""}
+                          . Both girl layers share this framing. Proceed to Mesh.
+                        </Callout.Text>
+                      </Callout.Root>
+                    ) : null}
+                  </Flex>
+                ) : null}
+
                 {activeStep === "mesh" ? (
                   <Flex direction="column" gap="4">
                     {fixMeshOpen && slot.mesh && previewClothes && cardId ? (
@@ -814,7 +1257,8 @@ export function PictureFlowPage() {
                         ) : (
                           <Callout.Root color="blue">
                             <Callout.Text>
-                              Create mesh builds a static UV lattice from the cutout top layer.
+                              Create mesh builds a static UV lattice from the
+                              zoomed top cutout so scratch scale matches Zooming.
                             </Callout.Text>
                           </Callout.Root>
                         )}
@@ -851,7 +1295,7 @@ export function PictureFlowPage() {
                       <Callout.Text>
                         {done
                           ? "All steps done — publish to open the playable game."
-                          : "Finish cutout, mesh, and symbols before creating the game."}
+                          : "Finish cutout, zooming, mesh, and symbols before creating the game."}
                       </Callout.Text>
                     </Callout.Root>
                     <Flex gap="2" wrap="wrap">
@@ -946,44 +1390,14 @@ export function PictureFlowPage() {
                     </Flex>
                   ) : null}
 
-                  {activeStep === "adjust" ? (
-                    <Flex direction="column" gap="3" style={{ width: "100%" }}>
-                      <Flex gap="2" wrap="wrap">
-                        <Button
-                          color="red"
-                          disabled={busy || !slot.has_match}
-                          onClick={() => void handleAdjustNudge(slot.id)}
-                        >
-                          {matchBusy === slot.id ? (
-                            <Loader2 {...iconProps} className="spin" />
-                          ) : (
-                            <Play {...iconProps} />
-                          )}
-                          Apply nudge
-                        </Button>
-                        <Button
-                          variant="soft"
-                          disabled={busy || !slot.has_match}
-                          onClick={() => void handleConfirmAdjust(slot.id)}
-                        >
-                          Looks good
-                        </Button>
-                      </Flex>
-                      <Text color="gray" size="1">
-                        Apply nudge re-runs Match with scale/tx/ty. Looks good
-                        confirms without changes and unlocks Cutout.
-                      </Text>
-                    </Flex>
-                  ) : null}
-
                   {activeStep === "cutout" ? (
                     <Button
                       color="red"
-                      disabled={busy || !slot.has_adjust}
+                      disabled={busy || !slot.has_match}
                       title={
-                        slot.has_adjust
+                        slot.has_match
                           ? undefined
-                          : "Finish Adjust first (Looks good or Apply nudge)"
+                          : "Finish Match first (Register layers)"
                       }
                       onClick={() => void handleCutout(slot.id)}
                     >
@@ -996,11 +1410,47 @@ export function PictureFlowPage() {
                     </Button>
                   ) : null}
 
+                  {activeStep === "zooming" ? (
+                    <Flex direction="column" gap="3" style={{ width: "100%" }}>
+                      <Flex gap="2" wrap="wrap">
+                        <Button
+                          color="red"
+                          disabled={busy || !slot.has_cutout}
+                          onClick={() => void handleZoomApply(slot.id)}
+                        >
+                          {zoomBusy === slot.id ? (
+                            <Loader2 {...iconProps} className="spin" />
+                          ) : (
+                            <Play {...iconProps} />
+                          )}
+                          Apply scale
+                        </Button>
+                        <Button
+                          variant="soft"
+                          disabled={busy || !slot.has_cutout}
+                          onClick={() => void handleZoomConfirm(slot.id)}
+                        >
+                          Looks good
+                        </Button>
+                      </Flex>
+                      <Text color="gray" size="1">
+                        Apply scale / Looks good both bake bikini + top at the
+                        current scale (so Mesh uses the same framing), then unlock
+                        Mesh.
+                      </Text>
+                    </Flex>
+                  ) : null}
+
                   {activeStep === "mesh" ? (
                     <>
                       <Button
                         color="red"
-                        disabled={busy || !slot.has_cutout}
+                        disabled={busy || !slot.has_zoom}
+                        title={
+                          slot.has_zoom
+                            ? undefined
+                            : "Finish Zooming first (Apply scale or Looks good)"
+                        }
                         onClick={() => void handleMesh(slot.id)}
                       >
                         {meshBusy === slot.id ? (
