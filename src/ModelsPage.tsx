@@ -33,7 +33,8 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./shared/api";
 import { suggestCardId } from "./shared/groupCards";
 import {
@@ -59,12 +60,17 @@ import {
   slugifyProjectId,
   type VideoFlowProject,
 } from "./videoFlow/projects";
+import { previewSource } from "./videoFlow/ui";
 
 type CardInfo = {
   id: string;
   label: string;
   model_id?: string | null;
   sort_order?: number;
+  /** Workspace-relative or public path to background.mp4 (from /api/cards). */
+  background?: string;
+  /** Workspace-relative or public path to foreground.mp4 (from /api/cards). */
+  foreground?: string;
   photos?: PhotoInfo[];
   /** Slots with 3 layers + per-slot photo mesh + symbols. */
   photo_scratch_done?: number;
@@ -145,8 +151,58 @@ function editCardHref(cardId: string): string {
   return `/dashboard/video-flow/run?card=${encodeURIComponent(cardId)}`;
 }
 
-function pictureFlowHref(cardId: string): string {
-  return `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
+function pictureFlowHref(cardId: string, slotId?: string): string {
+  const base = `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
+  return slotId ? `${base}&slot=${encodeURIComponent(slotId)}` : base;
+}
+
+function slotThumbSrc(slot: PhotoScratchSlot): string {
+  // Prefer the dressed full-scene plate over cutouts / bikini-only.
+  return (
+    slot.clothes ||
+    slot.pending_clothes ||
+    slot.bikini ||
+    slot.pending_bikini ||
+    slot.background ||
+    slot.pending_bg ||
+    slot.clothes_cutout ||
+    slot.bikini_cutout ||
+    ""
+  );
+}
+
+type SlotPreviewLayers = {
+  background: string;
+  bikini: string;
+  clothes: string;
+};
+
+function slotPreviewLayers(slot: PhotoScratchSlot): SlotPreviewLayers {
+  const background = previewSource(slot.background || slot.pending_bg || "");
+  // RGBA cutouts need the room underneath to read as a full picture.
+  if (slot.clothes_cutout || slot.bikini_cutout) {
+    return {
+      background,
+      bikini: previewSource(slot.bikini_cutout || ""),
+      clothes: previewSource(slot.clothes_cutout || ""),
+    };
+  }
+  // Full-scene plates (pending JPGs) already include background + girl.
+  const clothes = previewSource(slot.clothes || slot.pending_clothes || "");
+  if (clothes) return { background: "", bikini: "", clothes };
+  const bikini = previewSource(slot.bikini || slot.pending_bikini || "");
+  if (bikini) return { background: "", bikini, clothes: "" };
+  return { background, bikini: "", clothes: "" };
+}
+
+function slotHasPreview(layers: SlotPreviewLayers): boolean {
+  return Boolean(layers.background || layers.bikini || layers.clothes);
+}
+
+function motionCardVideoSrc(card: CardInfo): string {
+  // Prefer foreground (the moving performer) for the motion-card miniature.
+  const raw = card.foreground?.trim() || card.background?.trim() || "";
+  return raw ? previewSource(raw) : "";
 }
 
 function modelDetailHref(modelId: string): string {
@@ -916,17 +972,6 @@ function ModelDetail({
 
         {modelCards.length > 0 ? (
           <Box className="models-card-list">
-            <Flex className="models-card-list-header" align="center" gap="3">
-              <Text className="models-card-list-identity" color="gray" size="1" weight="medium">
-                Motion card
-              </Text>
-              <Text className="models-card-list-status" color="gray" size="1" weight="medium">
-                Photo Scratch
-              </Text>
-              <Text className="models-card-list-actions" color="gray" size="1" weight="medium">
-                Actions
-              </Text>
-            </Flex>
             {modelCards.map((card, index) => {
               const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
               return (
@@ -992,7 +1037,7 @@ function PhotoScratchStatus({ card }: { card: CardInfo }) {
   if (empty) {
     return (
       <Text color="gray" size="1">
-        —
+        No photo-scratch yet
       </Text>
     );
   }
@@ -1029,8 +1074,352 @@ function PhotoScratchStatus({ card }: { card: CardInfo }) {
   );
 }
 
+const TOUCH_LONG_PRESS_MS = 450;
+const PEEK_WIDTH_PX = 148;
+
+type PeekPoint = { x: number; y: number };
+
+function peekPosition(point: PeekPoint): { top: number; left: number; width: number } {
+  const width = PEEK_WIDTH_PX;
+  const height = width * (16 / 9);
+  const margin = 10;
+  const offset = 14;
+  // Prefer above-right of the pointer; flip so the full peek stays on-screen.
+  let left = point.x + offset;
+  let top = point.y - height - offset;
+  if (left + width > window.innerWidth - margin) left = point.x - width - offset;
+  if (top < margin) top = point.y + offset;
+  if (top + height > window.innerHeight - margin) {
+    top = Math.max(margin, window.innerHeight - height - margin);
+  }
+  left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
+  top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+  return { top, left, width };
+}
+
+/** Instagram-style peek: hold to view at pointer, release to close. */
+function useInstagramPeek(onOpen: (point: PeekPoint) => void, onClose: () => void) {
+  const timerRef = useRef<number | null>(null);
+  const peekingRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const pointRef = useRef<PeekPoint>({ x: 0, y: 0 });
+
+  const clearTimer = () => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const startPeek = () => {
+    if (peekingRef.current) return;
+    peekingRef.current = true;
+    suppressClickRef.current = true;
+    onOpen({ ...pointRef.current });
+  };
+
+  const endPeek = () => {
+    clearTimer();
+    if (!peekingRef.current) return;
+    peekingRef.current = false;
+    onClose();
+  };
+
+  useEffect(
+    () => () => {
+      clearTimer();
+    },
+    [],
+  );
+
+  return {
+    consumeSuppressClick: () => {
+      if (!suppressClickRef.current) return false;
+      suppressClickRef.current = false;
+      return true;
+    },
+    bind: {
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        if (event.pointerType === "pen" && event.button !== 0) return;
+        pointRef.current = { x: event.clientX, y: event.clientY };
+        const el = event.currentTarget;
+        el.setPointerCapture(event.pointerId);
+        clearTimer();
+        if (event.pointerType === "touch") {
+          peekingRef.current = false;
+          timerRef.current = window.setTimeout(startPeek, TOUCH_LONG_PRESS_MS);
+          return;
+        }
+        startPeek();
+      },
+      onPointerMove: (event: PointerEvent<HTMLElement>) => {
+        pointRef.current = { x: event.clientX, y: event.clientY };
+        // Keep peek glued to the pointer while held (helps after scroll).
+        if (peekingRef.current) onOpen({ ...pointRef.current });
+      },
+      onPointerUp: (event: PointerEvent<HTMLElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        endPeek();
+      },
+      onPointerCancel: (event: PointerEvent<HTMLElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        endPeek();
+      },
+      onLostPointerCapture: () => {
+        endPeek();
+      },
+      onContextMenu: (event: MouseEvent) => {
+        if (peekingRef.current || timerRef.current != null) event.preventDefault();
+      },
+      onDragStart: (event: DragEvent) => {
+        event.preventDefault();
+      },
+    },
+  };
+}
+
+function MiniMediaOverlay({
+  point,
+  label,
+  layers,
+  src,
+  type,
+}: {
+  point: PeekPoint;
+  label: string;
+  layers?: SlotPreviewLayers;
+  src?: string;
+  type: "image" | "video" | "layers";
+}) {
+  const pos = peekPosition(point);
+
+  return createPortal(
+    <div
+      aria-label={`${label} preview`}
+      className="models-media-peek"
+      role="dialog"
+      style={{ top: pos.top, left: pos.left, width: pos.width }}
+    >
+      {type === "video" && src ? (
+        <video autoPlay className="models-media-peek-media" muted playsInline src={src} />
+      ) : type === "layers" && layers ? (
+        <div className="models-media-peek-stack">
+          {layers.background ? (
+            <img alt="" className="models-media-peek-layer" src={layers.background} />
+          ) : null}
+          {layers.bikini ? (
+            <img alt="" className="models-media-peek-layer" src={layers.bikini} />
+          ) : null}
+          {layers.clothes ? (
+            <img alt="" className="models-media-peek-layer" src={layers.clothes} />
+          ) : null}
+        </div>
+      ) : src ? (
+        <img alt={label} className="models-media-peek-media" src={src} />
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
+
+function SlotPictureStack({
+  layers,
+  className,
+}: {
+  layers: SlotPreviewLayers;
+  className?: string;
+}) {
+  const fallback = layers.clothes || layers.bikini || layers.background;
+  const stacked = Boolean(layers.background && (layers.clothes || layers.bikini));
+
+  if (!fallback) return null;
+
+  if (!stacked) {
+    return <img alt="" className={className} src={fallback} draggable={false} />;
+  }
+
+  return (
+    <span className={`models-slot-stack${className ? ` ${className}` : ""}`}>
+      {layers.background ? <img alt="" src={layers.background} draggable={false} /> : null}
+      {layers.bikini ? <img alt="" src={layers.bikini} draggable={false} /> : null}
+      {layers.clothes ? <img alt="" src={layers.clothes} draggable={false} /> : null}
+    </span>
+  );
+}
+
 function ActionSlot({ children }: { children?: ReactNode }) {
   return <span className="models-card-action-slot">{children}</span>;
+}
+
+function MotionCardThumb({ card }: { card: CardInfo }) {
+  const videoSrc = motionCardVideoSrc(card);
+  const [peek, setPeek] = useState<{ point: PeekPoint } | null>(null);
+  const peekHandlers = useInstagramPeek(
+    (point) => setPeek({ point }),
+    () => setPeek(null),
+  );
+
+  if (!videoSrc) {
+    return <div aria-hidden className="models-card-thumb models-card-thumb--empty" />;
+  }
+
+  return (
+    <>
+      <button
+        aria-label={`Hold to preview ${card.label}`}
+        className="models-card-thumb models-card-thumb--button"
+        type="button"
+        title="Hold to preview motion card · release to close"
+        onClick={(event) => {
+          if (peekHandlers.consumeSuppressClick()) event.preventDefault();
+        }}
+        {...peekHandlers.bind}
+      >
+        <video
+          aria-hidden
+          className="models-card-thumb-media"
+          muted
+          playsInline
+          preload="metadata"
+          src={videoSrc}
+          onLoadedData={(event) => {
+            const video = event.currentTarget;
+            if (video.readyState >= 2 && video.currentTime < 0.05) {
+              try {
+                video.currentTime = Math.min(0.15, (video.duration || 1) * 0.08);
+              } catch {
+                /* ignore seek failures */
+              }
+            }
+          }}
+        />
+      </button>
+      {peek ? (
+        <MiniMediaOverlay label={card.label} point={peek.point} src={videoSrc} type="video" />
+      ) : null}
+    </>
+  );
+}
+
+function PhotoScratchThumbs({ card }: { card: CardInfo }) {
+  const [thumbs, setThumbs] = useState<
+    Array<{ id: string; layers: SlotPreviewLayers; done: boolean }>
+  >([]);
+  const [peek, setPeek] = useState<{
+    label: string;
+    layers: SlotPreviewLayers;
+    point: PeekPoint;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasAny =
+      (card.photo_scratch_draft ?? 0) > 0 ||
+      (card.photo_scratch_done ?? 0) > 0 ||
+      (card.photo_scratch_mesh_count ?? 0) > 0;
+    if (!hasAny) {
+      setThumbs([]);
+      return;
+    }
+    fetchPhotoScratchSlots(card.id, card.theme ?? "")
+      .then((slots) => {
+        if (cancelled) return;
+        const next = slots
+          .map((slot) => {
+            const layers = slotPreviewLayers(slot);
+            if (!slotHasPreview(layers) && !slotThumbSrc(slot)) return null;
+            if (!slotHasPreview(layers)) {
+              const src = previewSource(slotThumbSrc(slot));
+              layers.clothes = src;
+            }
+            return { id: slot.id, layers, done: slotIsDone(slot) };
+          })
+          .filter(
+            (entry): entry is { id: string; layers: SlotPreviewLayers; done: boolean } =>
+              entry != null,
+          );
+        setThumbs(next);
+      })
+      .catch(() => {
+        if (!cancelled) setThumbs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    card.id,
+    card.theme,
+    card.photo_scratch_draft,
+    card.photo_scratch_done,
+    card.photo_scratch_mesh_count,
+  ]);
+
+  if (thumbs.length === 0) return null;
+
+  return (
+    <>
+      <div className="models-card-ps-thumbs">
+        {thumbs.map((thumb) => (
+          <PhotoScratchThumbLink
+            key={thumb.id}
+            done={thumb.done}
+            href={pictureFlowHref(card.id, thumb.id)}
+            label={thumb.id}
+            layers={thumb.layers}
+            onClosePeek={() => setPeek(null)}
+            onOpenPeek={(point) =>
+              setPeek({ label: thumb.id, layers: thumb.layers, point })
+            }
+          />
+        ))}
+      </div>
+      {peek ? (
+        <MiniMediaOverlay
+          label={peek.label}
+          layers={peek.layers}
+          point={peek.point}
+          type="layers"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function PhotoScratchThumbLink({
+  done,
+  href,
+  label,
+  layers,
+  onOpenPeek,
+  onClosePeek,
+}: {
+  done: boolean;
+  href: string;
+  label: string;
+  layers: SlotPreviewLayers;
+  onOpenPeek: (point: PeekPoint) => void;
+  onClosePeek: () => void;
+}) {
+  const peekHandlers = useInstagramPeek(onOpenPeek, onClosePeek);
+
+  return (
+    <a
+      className={`models-card-ps-thumb${done ? " is-done" : ""}`}
+      href={href}
+      title={`${label}${done ? " (done)" : ""} · hold to preview`}
+      onClick={(event) => {
+        if (peekHandlers.consumeSuppressClick()) event.preventDefault();
+      }}
+      {...peekHandlers.bind}
+    >
+      <SlotPictureStack layers={layers} />
+    </a>
+  );
 }
 
 function MotionCardRow({
@@ -1065,132 +1454,148 @@ function MotionCardRow({
 
   return (
     <div className="models-card-list-row">
-      <div className="models-card-list-identity">
-        <Flex align="baseline" gap="2" wrap="wrap">
-          <Text size="2" weight="medium">
-            {index + 1}. {card.label}
-          </Text>
-          {isDraft ? (
-            <Badge color="amber" size="1" variant="soft">
-              draft
-            </Badge>
-          ) : null}
-          {card.theme ? (
-            <Badge color="iris" size="1" title="Theme" variant="soft">
-              {card.theme}
-            </Badge>
-          ) : null}
-        </Flex>
-        <CodeInline>{card.id}</CodeInline>
-      </div>
+      <div className="models-card-list-line models-card-list-line--motion">
+        <div className="models-card-list-identity">
+          <MotionCardThumb card={card} />
+          <div className="models-card-list-identity-text">
+            <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+              Motion card
+            </Text>
+            <Flex align="baseline" gap="2" wrap="wrap">
+              <Text size="2" weight="medium">
+                {index + 1}. {card.label}
+              </Text>
+              {isDraft ? (
+                <Badge color="amber" size="1" variant="soft">
+                  draft
+                </Badge>
+              ) : null}
+              {card.theme ? (
+                <Badge color="iris" size="1" title="Theme" variant="soft">
+                  {card.theme}
+                </Badge>
+              ) : null}
+            </Flex>
+            <CodeInline>{card.id}</CodeInline>
+          </div>
+        </div>
 
-      <div className="models-card-list-status">
-        <PhotoScratchStatus card={card} />
-      </div>
-
-      <div className="models-card-list-actions">
-        <Flex align="center" gap="1" justify="end">
-          {isDraft ? (
-            <>
-              <ActionSlot />
-              <ActionSlot />
-              <ActionSlot />
-            </>
-          ) : (
-            <>
-              <ActionSlot>
-                <Button
-                  color="gray"
-                  disabled={busy || publishedIndex <= 0}
-                  size="1"
-                  title="Move up"
-                  variant="ghost"
-                  onClick={onMoveUp}
-                >
-                  <ChevronUp {...iconProps} />
-                </Button>
-              </ActionSlot>
-              <ActionSlot>
-                <Button
-                  color="gray"
-                  disabled={busy || publishedIndex < 0 || publishedIndex >= publishedCount - 1}
-                  size="1"
-                  title="Move down"
-                  variant="ghost"
-                  onClick={onMoveDown}
-                >
-                  <ChevronDown {...iconProps} />
-                </Button>
-              </ActionSlot>
-              <ActionSlot>
-                <Button asChild size="1" variant="soft">
-                  <a href={playCardHref(modelId, card.id)} title={`Play ${card.label}`}>
-                    <Play {...iconProps} />
-                  </a>
-                </Button>
-              </ActionSlot>
-            </>
-          )}
-          <ActionSlot>
-            {hasPicture ? (
-              <Button asChild color="green" size="1" variant="soft">
-                <a
-                  href={pictureFlowHref(card.id)}
-                  title="Picture Flow"
-                >
-                  <Images {...iconProps} />
+        <div className="models-card-list-actions">
+          <Flex align="center" gap="1" justify="end">
+            {isDraft ? (
+              <>
+                <ActionSlot />
+                <ActionSlot />
+                <ActionSlot />
+              </>
+            ) : (
+              <>
+                <ActionSlot>
+                  <Button
+                    color="gray"
+                    disabled={busy || publishedIndex <= 0}
+                    size="1"
+                    title="Move up"
+                    variant="ghost"
+                    onClick={onMoveUp}
+                  >
+                    <ChevronUp {...iconProps} />
+                  </Button>
+                </ActionSlot>
+                <ActionSlot>
+                  <Button
+                    color="gray"
+                    disabled={busy || publishedIndex < 0 || publishedIndex >= publishedCount - 1}
+                    size="1"
+                    title="Move down"
+                    variant="ghost"
+                    onClick={onMoveDown}
+                  >
+                    <ChevronDown {...iconProps} />
+                  </Button>
+                </ActionSlot>
+                <ActionSlot>
+                  <Button asChild size="1" variant="soft">
+                    <a href={playCardHref(modelId, card.id)} title={`Play ${card.label}`}>
+                      <Play {...iconProps} />
+                    </a>
+                  </Button>
+                </ActionSlot>
+              </>
+            )}
+            <ActionSlot>
+              <Button asChild size="1" variant="soft">
+                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                  <Pencil {...iconProps} />
                 </a>
               </Button>
-            ) : null}
-          </ActionSlot>
-          <ActionSlot>
-            {hasGame ? (
+            </ActionSlot>
+            <ActionSlot>
+              {isDraft ? null : (
+                <Button
+                  color="gray"
+                  disabled={busy}
+                  size="1"
+                  title="Detach card from this model"
+                  variant="ghost"
+                  onClick={onDetach}
+                >
+                  <X {...iconProps} />
+                </Button>
+              )}
+            </ActionSlot>
+            <ActionSlot>
               <Button
-                color="green"
+                color="red"
                 disabled={busy}
                 size="1"
-                title="Publish photo-scratch game"
-                variant="soft"
-                onClick={onPublishGame}
-              >
-                <Gamepad2 {...iconProps} />
-              </Button>
-            ) : null}
-          </ActionSlot>
-          <ActionSlot>
-            <Button asChild size="1" variant="soft">
-              <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
-                <Pencil {...iconProps} />
-              </a>
-            </Button>
-          </ActionSlot>
-          <ActionSlot>
-            {isDraft ? null : (
-              <Button
-                color="gray"
-                disabled={busy}
-                size="1"
-                title="Detach card from this model"
+                title={isDraft ? "Delete draft motion card" : "Delete motion card"}
                 variant="ghost"
-                onClick={onDetach}
+                onClick={onDelete}
               >
-                <X {...iconProps} />
+                <Trash2 {...iconProps} />
               </Button>
-            )}
-          </ActionSlot>
-          <ActionSlot>
-            <Button
-              color="red"
-              disabled={busy}
-              size="1"
-              title={isDraft ? "Delete draft motion card" : "Delete motion card"}
-              variant="ghost"
-              onClick={onDelete}
-            >
-              <Trash2 {...iconProps} />
-            </Button>
-          </ActionSlot>
-        </Flex>
+            </ActionSlot>
+          </Flex>
+        </div>
+      </div>
+
+      <div className="models-card-list-line models-card-list-line--photos">
+        <div className="models-card-list-photos">
+          <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+            Photo Scratch
+          </Text>
+          <PhotoScratchThumbs card={card} />
+          <PhotoScratchStatus card={card} />
+        </div>
+
+        <div className="models-card-list-actions">
+          <Flex align="center" gap="1" justify="end">
+            <ActionSlot>
+              {hasPicture ? (
+                <Button asChild color="green" size="1" variant="soft">
+                  <a href={pictureFlowHref(card.id)} title="Picture Flow">
+                    <Images {...iconProps} />
+                  </a>
+                </Button>
+              ) : null}
+            </ActionSlot>
+            <ActionSlot>
+              {hasGame ? (
+                <Button
+                  color="green"
+                  disabled={busy}
+                  size="1"
+                  title="Publish photo-scratch game"
+                  variant="soft"
+                  onClick={onPublishGame}
+                >
+                  <Gamepad2 {...iconProps} />
+                </Button>
+              ) : null}
+            </ActionSlot>
+          </Flex>
+        </div>
       </div>
     </div>
   );
