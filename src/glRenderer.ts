@@ -316,8 +316,10 @@ export class GarmentGLRenderer {
   // browsers without rVFC).
   private videoFrameHooked = new WeakSet<HTMLVideoElement>();
   private videoFrameReady = new WeakMap<HTMLVideoElement, boolean>();
+  private videoFrameHandles = new Map<HTMLVideoElement, number>();
   private imageTexState = new WeakMap<WebGLTexture, { w: number; h: number; src: ImageSource }>();
   private lastFrontPresentCamera = { x: 0, y: 0 };
+  private disposed = false;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -396,6 +398,7 @@ export class GarmentGLRenderer {
   // Drop the "last good frame" memory so a card switch doesn't briefly composite
   // the previous clip's performer over the new background while it decodes.
   resetForeground() {
+    this.detachAllVideoFrames();
     this.fgEverReady = false;
     this.bottomEverReady = false;
     // Force the next frame of each video to re-upload (and reallocate if the new
@@ -406,6 +409,14 @@ export class GarmentGLRenderer {
     this.imageTexState.delete(this.midTex);
     this.imageTexState.delete(this.fgTex);
     this.clearFlakes();
+  }
+
+  /** Cancel rVFC chains so Safari can release decoder-backed video elements. */
+  detachAllVideoFrames() {
+    for (const video of [...this.videoFrameHandles.keys()]) {
+      this.unhookVideoFrames(video);
+    }
+    this.videoFrameHandles.clear();
   }
 
   getFrontPresentCamera() {
@@ -499,22 +510,77 @@ export class GarmentGLRenderer {
   // caller falls back to the currentTime heuristic.
   private hookVideoFrames(video: HTMLVideoElement): boolean {
     type RVFCVideo = HTMLVideoElement & {
-      requestVideoFrameCallback?: (cb: () => void) => number;
+      requestVideoFrameCallback?: (cb: (now: number, metadata: unknown) => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
     };
     const rvfcVideo = video as RVFCVideo;
     if (typeof rvfcVideo.requestVideoFrameCallback !== "function") return false;
     if (this.videoFrameHooked.has(video)) return true;
     this.videoFrameHooked.add(video);
     this.videoFrameReady.set(video, true);
+    let handle = 0;
     const onFrame = () => {
+      if (this.disposed) return;
       this.videoFrameReady.set(video, true);
-      rvfcVideo.requestVideoFrameCallback?.(onFrame);
+      handle = rvfcVideo.requestVideoFrameCallback?.(onFrame) ?? 0;
+      this.videoFrameHandles.set(video, handle);
     };
-    rvfcVideo.requestVideoFrameCallback(onFrame);
+    handle = rvfcVideo.requestVideoFrameCallback(onFrame);
+    this.videoFrameHandles.set(video, handle);
     return true;
   }
 
+  private unhookVideoFrames(video: HTMLVideoElement) {
+    type RVFCVideo = HTMLVideoElement & {
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+    const handle = this.videoFrameHandles.get(video);
+    if (handle != null) {
+      (video as RVFCVideo).cancelVideoFrameCallback?.(handle);
+      this.videoFrameHandles.delete(video);
+    }
+    this.videoFrameHooked.delete(video);
+    this.videoFrameReady.delete(video);
+  }
+
+  /** Release GPU resources. Call only when the canvas is going away. */
+  dispose(options?: { loseContext?: boolean }) {
+    if (this.disposed) return;
+    this.disposed = true;
+    const gl = this.gl;
+    this.detachAllVideoFrames();
+    this.clearFlakes();
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (this.scratchFbo) gl.deleteFramebuffer(this.scratchFbo);
+    if (this.fgFbo) gl.deleteFramebuffer(this.fgFbo);
+    gl.deleteTexture(this.bottomTex);
+    gl.deleteTexture(this.midTex);
+    gl.deleteTexture(this.fgTex);
+    gl.deleteTexture(this.scratchTex);
+    gl.deleteTexture(this.fgColorTex);
+    gl.deleteBuffer(this.quadBuf);
+    gl.deleteBuffer(this.meshPosBuf);
+    gl.deleteBuffer(this.meshUvBuf);
+    gl.deleteBuffer(this.meshIndexBuf);
+    gl.deleteBuffer(this.lineBuf);
+    gl.deleteProgram(this.blit);
+    gl.deleteProgram(this.composite);
+    gl.deleteProgram(this.punch);
+    gl.deleteProgram(this.paint);
+    gl.deleteProgram(this.line);
+    gl.deleteProgram(this.flake);
+
+    // Only lose the context when the canvas itself is going away. Recreating a
+    // renderer on the same canvas must keep the WebGL2 context alive — Safari
+    // returns the existing (lost) context from getContext otherwise.
+    if (options?.loseContext !== false) {
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    }
+  }
+
   private uploadVideo(tex: WebGLTexture, video: HTMLVideoElement) {
+    if (this.disposed) return;
     const gl = this.gl;
     const vw = video.videoWidth;
     const vh = video.videoHeight;

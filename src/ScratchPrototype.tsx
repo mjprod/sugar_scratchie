@@ -1,6 +1,7 @@
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { fetchModels, type ModelInfo } from "./shared/models";
+import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
@@ -12,6 +13,14 @@ import {
   SYMBOL_TYPE_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
+import {
+  finishMotionHand,
+  isGameModeUrl,
+  loadGameSession,
+  navigateTo,
+  recordMotionCardResult,
+  type GameSession,
+} from "./game/gameSession";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -297,6 +306,19 @@ function playlistCardsForModel(cards: Card[], modelId: string): Card[] {
       if (orderA !== orderB) return orderA - orderB;
       return a.id.localeCompare(b.id);
     });
+}
+
+function playlistCardsForGameSession(
+  cards: Card[],
+  session: GameSession,
+): Card[] {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const ordered: Card[] = [];
+  for (const id of session.motionCardIds) {
+    const card = byId.get(id);
+    if (card) ordered.push(card);
+  }
+  return ordered;
 }
 
 async function loadCards(): Promise<Card[]> {
@@ -985,11 +1007,19 @@ export function ScratchPrototype() {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("card")?.trim() || "";
   });
-  const modelCards = useMemo(
-    () => (activeModelId ? playlistCardsForModel(cards, activeModelId) : []),
-    [cards, activeModelId],
+  const [gameSession, setGameSession] = useState<GameSession | null>(() => {
+    if (typeof window === "undefined" || !isGameModeUrl()) return null;
+    const session = loadGameSession();
+    return session?.phase === "motion" ? session : null;
+  });
+  const gameMode = Boolean(gameSession);
+  const modelCards = useMemo(() => {
+    if (gameSession) return playlistCardsForGameSession(cards, gameSession);
+    return activeModelId ? playlistCardsForModel(cards, activeModelId) : [];
+  }, [activeModelId, cards, gameSession]);
+  const [completedCardIds, setCompletedCardIds] = useState<string[]>(() =>
+    gameSession?.completedMotionIds ?? [],
   );
-  const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
   const completedCardIdsRef = useRef<string[]>([]);
   completedCardIdsRef.current = completedCardIds;
   const remainingCards = useMemo(
@@ -997,18 +1027,24 @@ export function ScratchPrototype() {
     [modelCards, completedCardIds],
   );
   const activeModel = models.find((entry) => entry.id === activeModelId) ?? null;
-  // Never fall back to another girl's card — only play cards owned by the active model.
+  // Never fall back to another girl's card — only play cards owned by the active model
+  // (or the curated game-session hand).
   const card = useMemo(() => {
-    if (!activeModelId || modelCards.length === 0) return null;
+    if (modelCards.length === 0) return null;
+    if (!gameMode && !activeModelId) return null;
     return (
       remainingCards.find((entry) => entry.id === selectedCardId) ??
       remainingCards[0] ??
       null
     );
-  }, [activeModelId, modelCards.length, remainingCards, selectedCardId]);
-  const showModelPicker = !cardsReady || !activeModelId || modelCards.length === 0;
+  }, [activeModelId, gameMode, modelCards.length, remainingCards, selectedCardId]);
+  const showModelPicker =
+    !cardsReady ||
+    (!gameMode && (!activeModelId || modelCards.length === 0));
   const playlistFinished =
-    Boolean(activeModelId) && modelCards.length > 0 && remainingCards.length === 0;
+    (gameMode || Boolean(activeModelId)) &&
+    modelCards.length > 0 &&
+    remainingCards.length === 0;
   const chromaKeyRef = useRef(card?.chromaKey ?? false);
   chromaKeyRef.current = card?.chromaKey ?? false;
   const advanceAfterScratchRef = useRef<() => void>(() => undefined);
@@ -1035,6 +1071,9 @@ export function ScratchPrototype() {
   const [topBarRound, setTopBarRound] = useState(0);
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
+  const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
+  );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(18.8);
   const [isPaused, setIsPaused] = useState(false);
@@ -1353,7 +1392,11 @@ export function ScratchPrototype() {
     animationId = requestAnimationFrame(render);
     return () => {
       cancelAnimationFrame(animationId);
+      // Dispose only when the stage goes away — never mid-card.
+      glRendererRef.current?.dispose();
       glRendererRef.current = null;
+      releaseMediaElement(bottomVideoRef.current);
+      releaseMediaElement(foregroundVideoRef.current);
     };
     // Re-init when the player stage mounts after the girl picker (canvas is absent until then).
   }, [showModelPicker]);
@@ -1374,6 +1417,36 @@ export function ScratchPrototype() {
           // Card wins over a stale ?model= so Shine never opens Brazilian.
           if (cardModel) modelFromUrl = cardModel;
         }
+
+        if (isGameModeUrl()) {
+          const session = loadGameSession();
+          if (session?.phase === "motion") {
+            setGameSession(session);
+            setCompletedCardIds(session.completedMotionIds);
+            completedCardIdsRef.current = session.completedMotionIds;
+            const ordered = playlistCardsForGameSession(loaded, session);
+            const modelId =
+              modelFromUrl ||
+              session.modelId ||
+              ordered[0]?.model_id?.trim() ||
+              "";
+            setActiveModelId(modelId);
+            if (ordered.length === 0) {
+              setSelectedCardId("");
+              return;
+            }
+            const remaining = ordered.filter(
+              (entry) => !session.completedMotionIds.includes(entry.id),
+            );
+            const startId =
+              fromUrl && remaining.some((entry) => entry.id === fromUrl)
+                ? fromUrl
+                : remaining[0]?.id ?? ordered[0]!.id;
+            setSelectedCardId(startId);
+            return;
+          }
+        }
+
         if (!modelFromUrl) {
           setActiveModelId("");
           setSelectedCardId("");
@@ -1407,18 +1480,22 @@ export function ScratchPrototype() {
     } else {
       url.searchParams.delete("card");
     }
+    if (gameMode) url.searchParams.set("game", "1");
+    else url.searchParams.delete("game");
     url.searchParams.delete("playlist");
     const next = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ""}`;
     window.history.replaceState(null, "", next);
-  }, [activeModelId, cardsReady, modelCards, selectedCardId]);
+  }, [activeModelId, cardsReady, gameMode, modelCards, selectedCardId]);
 
   useEffect(() => {
+    if (gameMode) return;
     setCompletedCardIds([]);
     completedCardIdsRef.current = [];
-  }, [activeModelId]);
+  }, [activeModelId, gameMode]);
 
   useEffect(() => {
-    if (!cardsReady || !activeModelId) return;
+    if (!cardsReady) return;
+    if (!gameMode && !activeModelId) return;
     if (modelCards.length === 0) {
       if (selectedCardId) setSelectedCardId("");
       return;
@@ -1433,6 +1510,7 @@ export function ScratchPrototype() {
     activeModelId,
     cardsReady,
     completedCardIds,
+    gameMode,
     modelCards,
     remainingCards,
     selectedCardId,
@@ -1516,6 +1594,7 @@ export function ScratchPrototype() {
     setProgress(0);
     setClaimed(false);
     setRevealedSymbols(0);
+    setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setFlyingCoins([]);
     setGameResult(null);
     setAutoScratch((current) => ({ ...current, enabled: false }));
@@ -1573,14 +1652,12 @@ export function ScratchPrototype() {
     const foregroundVideo = foregroundVideoRef.current;
     if (!bottomVideo || !foregroundVideo || !card) return;
 
-    // New card always starts playing — don't inherit a paused flag from the
-    // previous clip (canplay often fires while the new src is still paused).
+    let cancelled = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
-    bottomVideo.currentTime = 0;
-    foregroundVideo.currentTime = 0;
 
     const kickPlayback = () => {
+      if (cancelled) return;
       // Wait until BOTH videos have at least HAVE_CURRENT_DATA so their first
       // decoded frame is ready. Firing play() on one while the other is still
       // buffering creates a startup offset that the soft-seek must then chase.
@@ -1592,24 +1669,41 @@ export function ScratchPrototype() {
         isPaused: false,
       };
       setDuration(nextDuration);
-      // Start both in the same microtask so the browser schedules their decode
-      // pipelines as close together as possible.
       void Promise.all([
         bottomVideo.play(),
         foregroundVideo.play(),
       ]).catch(() => undefined);
     };
 
-    bottomVideo.addEventListener("canplay", kickPlayback);
-    foregroundVideo.addEventListener("canplay", kickPlayback);
-    // Fire immediately if both are already ready (e.g. cached from a prior card).
-    kickPlayback();
+    // Reuse the same two <video> elements and swap src (no React key remount).
+    // Safari releases the previous decoder only when we unload before load.
+    void (async () => {
+      try {
+        await Promise.all([
+          loadVideoSrc(bottomVideo, card.bottom),
+          loadVideoSrc(foregroundVideo, card.foreground),
+        ]);
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      bottomVideo.addEventListener("canplay", kickPlayback);
+      foregroundVideo.addEventListener("canplay", kickPlayback);
+      kickPlayback();
+    })();
 
     return () => {
+      cancelled = true;
       bottomVideo.removeEventListener("canplay", kickPlayback);
       foregroundVideo.removeEventListener("canplay", kickPlayback);
+      try {
+        bottomVideo.pause();
+        foregroundVideo.pause();
+      } catch {
+        // ignore
+      }
     };
-  }, [card?.id]);
+  }, [card?.id, card?.bottom, card?.foreground]);
 
   // Mobile browsers (notably iOS Safari) will suspend a second, simultaneously
   // playing <video> after a few seconds to save power — which here drops the
@@ -1759,6 +1853,19 @@ export function ScratchPrototype() {
   function advanceAfterScratch() {
     const finishedId = selectedCardId;
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
+
+    let prize = 0;
+    if (matchOutcome) {
+      prize = matchOutcome.prize;
+    } else if (gameResult === "win") {
+      prize = 1;
+    }
+
+    if (gameMode) {
+      const updated = recordMotionCardResult(finishedId, prize);
+      if (updated) setGameSession(updated);
+    }
+
     const nextCompleted = [...completedCardIdsRef.current, finishedId];
     completedCardIdsRef.current = nextCompleted;
     setCompletedCardIds(nextCompleted);
@@ -1773,6 +1880,12 @@ export function ScratchPrototype() {
       return;
     }
     setSelectedCardId("");
+    if (gameMode) {
+      void finishMotionHand().then((finished) => {
+        if (finished) setGameSession(finished);
+        navigateTo("/game");
+      });
+    }
   }
   advanceAfterScratchRef.current = advanceAfterScratch;
 
@@ -2017,6 +2130,7 @@ export function ScratchPrototype() {
         const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
+        setBodyRevealed(revealedPointsRef.current.slice());
         playNewSymbolNotes(
           symbolAudioRef.current,
           prevCount,
@@ -2371,6 +2485,7 @@ export function ScratchPrototype() {
             </p>
           ) : null}
           <div className="home-picker-links">
+            <a href="/game">Game</a>
             <a href="/dashboard/models">Models</a>
             <a href="/dashboard">Dashboard</a>
           </div>
@@ -2478,9 +2593,11 @@ export function ScratchPrototype() {
                   className="body-symbol-marker"
                   style={{ display: "none" }}
                 >
-                  <span className="body-symbol-icon">
-                    <GameSymbolIcon typeId={typeId} size={42} />
-                  </span>
+                  {bodyRevealed[index] ? (
+                    <span className="body-symbol-icon">
+                      <GameSymbolIcon typeId={typeId} size={42} />
+                    </span>
+                  ) : null}
                 </div>
               ))
             : null}
@@ -2509,26 +2626,20 @@ export function ScratchPrototype() {
           ))
             : null}
           <video
-            key={`bottom-${card.id}`}
             ref={bottomVideoRef}
             className="source-video"
-            autoPlay
             muted
             loop
             playsInline
             preload="auto"
-            src={card.bottom}
           />
           <video
-            key={`foreground-${card.id}`}
             ref={foregroundVideoRef}
             className="source-video"
-            autoPlay
             muted
             loop
             playsInline
             preload="auto"
-            src={card.foreground}
           />
           <canvas
             ref={canvasRef}
@@ -2600,6 +2711,12 @@ export function ScratchPrototype() {
               )}
             </button>
           </div>
+          {gameMode ? (
+            <a className="mobile-game-badge" href="/game">
+              GAME {completedCardIds.length + (card ? 1 : 0)}/{modelCards.length}
+              {gameSession ? ` · ${gameSession.photoPrizeTotal} photos` : ""}
+            </a>
+          ) : null}
           {/* Phones hide the dev panel, so surface compact controls on the stage
               itself. Hidden on desktop where the panel is used. */}
           <div className="mobile-controls-wrap">
@@ -2633,6 +2750,11 @@ export function ScratchPrototype() {
             </button>
             {mobileControlsOpen && (
               <div className="mobile-controls">
+                {gameMode ? (
+                  <a className="mobile-reset mobile-game-link" href="/game">
+                    Game
+                  </a>
+                ) : null}
                 <label className="mobile-card-switch">
                   <span className="visually-hidden">Card</span>
                   <select
@@ -2756,35 +2878,52 @@ export function ScratchPrototype() {
                 className="game-result-button"
                 onClick={() => advanceAfterScratchRef.current()}
               >
-                {remainingCards.length > 1 ? "Next card" : "Done"}
+                {remainingCards.length > 1
+                  ? "Next card"
+                  : gameMode
+                    ? "Claim photo scratches"
+                    : "Done"}
               </button>
             </div>
           ) : null}
         </div>
         <aside className="panel">
           <div>
-            <p className="eyebrow">{activeModel?.label ?? "Sugar Scratchie"}</p>
+            <p className="eyebrow">
+              {gameMode
+                ? "GAME · motion hand"
+                : (activeModel?.label ?? "Sugar Scratchie")}
+            </p>
             <h1>{card.label}</h1>
             <p className="eyebrow">
               Left {remainingCards.length}/{modelCards.length}
               {completedCardIds.length > 0
                 ? ` · scratched ${completedCardIds.length}`
                 : ""}
+              {gameMode && gameSession
+                ? ` · photos banked ${gameSession.photoPrizeTotal}`
+                : ""}
             </p>
           </div>
           <div className="button-row">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setActiveModelId("");
-                setSelectedCardId("");
-                setCompletedCardIds([]);
-                completedCardIdsRef.current = [];
-              }}
-            >
-              Girls
-            </button>
+            {gameMode ? (
+              <a className="secondary-button" href="/game">
+                Game
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setActiveModelId("");
+                  setSelectedCardId("");
+                  setCompletedCardIds([]);
+                  completedCardIdsRef.current = [];
+                }}
+              >
+                Girls
+              </button>
+            )}
             <a className="secondary-button" href="/dashboard/models">
               Models
             </a>
