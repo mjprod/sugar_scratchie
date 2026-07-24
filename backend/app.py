@@ -226,7 +226,7 @@ class VideoFlowRequest(BaseModel):
     resolution: str = "720p"
     enhance_dress_prompt: bool = True
     tracker: Literal["cotracker", "bootstapir", "blend", "all"] = "all"
-    write_webm: bool = True
+    write_webm: bool = False
     compress_preset: Literal["mobile", "hd", "master"] = "mobile"
     mesh_tune: MeshTuneOptions = Field(default_factory=MeshTuneOptions)
     model: str = "grok-imagine-video-1.5"
@@ -295,7 +295,7 @@ class SymbolPointsRequest(BaseModel):
 
 
 class CompressCardRequest(BaseModel):
-    write_webm: bool = True
+    write_webm: bool = False
     compress_preset: Literal["mobile", "hd", "master"] = "mobile"
 
 
