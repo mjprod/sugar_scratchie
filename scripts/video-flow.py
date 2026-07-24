@@ -56,7 +56,7 @@ def main() -> None:
     parser.add_argument("--resolution", default="720p")
     parser.add_argument("--model", default="grok-imagine-video-1.5")
     parser.add_argument("--tracker", default="bootstapir", choices=["bootstapir", "cotracker", "blend"])
-    parser.add_argument("--no-webm", action="store_true", help="Skip WebM sidecar generation")
+    parser.add_argument("--webm", action="store_true", help="Also write VP9 WebM sidecars")
     parser.add_argument("--image-field", default="image")
     parser.add_argument("--video-field", default="video")
     parser.add_argument("--endpoint", default="/v1/videos/generations")
@@ -76,7 +76,7 @@ def main() -> None:
         video_field=args.video_field,
         enhance_dress_prompt=True,
         tracker=args.tracker,
-        write_webm=not args.no_webm,
+        write_webm=args.webm,
     )
 
 

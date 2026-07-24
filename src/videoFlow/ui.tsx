@@ -80,6 +80,8 @@ export function MediaPreview({
   const src = previewSource(value, cacheBust);
   const [hasError, setHasError] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
 
   useEffect(() => {
     setHasError(false);
@@ -95,9 +97,23 @@ export function MediaPreview({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [zoomOpen]);
 
+  useEffect(
+    () => () => {
+      if (longPressTimerRef.current != null) window.clearTimeout(longPressTimerRef.current);
+    },
+    [],
+  );
+
   if (!src) return null;
 
   const showZoom = zoomable && type === "image";
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
 
   return (
     <>
@@ -148,14 +164,40 @@ export function MediaPreview({
           <button
             className={`dashboard-preview-media-button${size === "compact" ? " dashboard-preview-media-button--compact" : ""}`}
             disabled={!showZoom}
+            title={showZoom ? "Click or long-press to zoom" : undefined}
             type="button"
             onClick={() => {
-              if (showZoom) setZoomOpen(true);
+              if (!showZoom) return;
+              // Touch opens via long-press; click is for mouse / maximize fallback.
+              if (longPressFiredRef.current) {
+                longPressFiredRef.current = false;
+                return;
+              }
+              if (window.matchMedia("(pointer: fine)").matches) setZoomOpen(true);
             }}
+            onContextMenu={(event) => {
+              if (showZoom && (longPressFiredRef.current || longPressTimerRef.current != null)) {
+                event.preventDefault();
+              }
+            }}
+            onPointerCancel={clearLongPress}
+            onPointerDown={(event) => {
+              if (!showZoom || event.pointerType !== "touch") return;
+              longPressFiredRef.current = false;
+              clearLongPress();
+              longPressTimerRef.current = window.setTimeout(() => {
+                longPressFiredRef.current = true;
+                longPressTimerRef.current = null;
+                setZoomOpen(true);
+              }, 450);
+            }}
+            onPointerLeave={clearLongPress}
+            onPointerUp={clearLongPress}
           >
             <img
               alt={label}
               className={`dashboard-preview-media${size === "compact" ? " dashboard-preview-media--compact" : ""}`}
+              draggable={false}
               onError={() => setHasError(true)}
               src={src}
             />

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ChevronDown,
   ChevronUp,
   ExternalLink,
@@ -32,7 +33,8 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./shared/api";
 import { suggestCardId } from "./shared/groupCards";
 import {
@@ -58,12 +60,17 @@ import {
   slugifyProjectId,
   type VideoFlowProject,
 } from "./videoFlow/projects";
+import { previewSource } from "./videoFlow/ui";
 
 type CardInfo = {
   id: string;
   label: string;
   model_id?: string | null;
   sort_order?: number;
+  /** Workspace-relative or public path to background.mp4 (from /api/cards). */
+  background?: string;
+  /** Workspace-relative or public path to foreground.mp4 (from /api/cards). */
+  foreground?: string;
   photos?: PhotoInfo[];
   /** Slots with 3 layers + per-slot photo mesh + symbols. */
   photo_scratch_done?: number;
@@ -144,8 +151,71 @@ function editCardHref(cardId: string): string {
   return `/dashboard/video-flow/run?card=${encodeURIComponent(cardId)}`;
 }
 
-function pictureFlowHref(cardId: string): string {
-  return `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
+function pictureFlowHref(cardId: string, slotId?: string): string {
+  const base = `/dashboard/picture-flow?card=${encodeURIComponent(cardId)}`;
+  return slotId ? `${base}&slot=${encodeURIComponent(slotId)}` : base;
+}
+
+function slotThumbSrc(slot: PhotoScratchSlot): string {
+  // Prefer the dressed full-scene plate over cutouts / bikini-only.
+  return (
+    slot.clothes ||
+    slot.pending_clothes ||
+    slot.bikini ||
+    slot.pending_bikini ||
+    slot.background ||
+    slot.pending_bg ||
+    slot.clothes_cutout ||
+    slot.bikini_cutout ||
+    ""
+  );
+}
+
+type SlotPreviewLayers = {
+  background: string;
+  bikini: string;
+  clothes: string;
+};
+
+function slotPreviewLayers(slot: PhotoScratchSlot): SlotPreviewLayers {
+  const background = previewSource(slot.background || slot.pending_bg || "");
+  // RGBA cutouts need the room underneath to read as a full picture.
+  if (slot.clothes_cutout || slot.bikini_cutout) {
+    return {
+      background,
+      bikini: previewSource(slot.bikini_cutout || ""),
+      clothes: previewSource(slot.clothes_cutout || ""),
+    };
+  }
+  // Full-scene plates (pending JPGs) already include background + girl.
+  const clothes = previewSource(slot.clothes || slot.pending_clothes || "");
+  if (clothes) return { background: "", bikini: "", clothes };
+  const bikini = previewSource(slot.bikini || slot.pending_bikini || "");
+  if (bikini) return { background: "", bikini, clothes: "" };
+  return { background, bikini: "", clothes: "" };
+}
+
+function slotHasPreview(layers: SlotPreviewLayers): boolean {
+  return Boolean(layers.background || layers.bikini || layers.clothes);
+}
+
+function motionCardVideoSrc(card: CardInfo): string {
+  // Prefer foreground (the moving performer) for the motion-card miniature.
+  const raw = card.foreground?.trim() || card.background?.trim() || "";
+  return raw ? previewSource(raw) : "";
+}
+
+function modelDetailHref(modelId: string): string {
+  return `/dashboard/models?model=${encodeURIComponent(modelId)}`;
+}
+
+function readSelectedModelId(): string {
+  return new URLSearchParams(window.location.search).get("model")?.trim() ?? "";
+}
+
+function modelInitial(label: string, id: string): string {
+  const source = (label.trim() || id.trim() || "?").charAt(0);
+  return source.toLowerCase();
 }
 
 function sortModelCards(cards: CardInfo[]): CardInfo[] {
@@ -221,8 +291,15 @@ export function ModelsPage() {
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
   const [createModelOpen, setCreateModelOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
+
+  useEffect(() => {
+    const sync = () => setSelectedModelId(readSelectedModelId());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
 
   async function refresh() {
     const [nextModels, assets, flowData] = await Promise.all([
@@ -283,14 +360,9 @@ export function ModelsPage() {
     [cards],
   );
 
-  const modelsWithCards = useMemo(
-    () => models.filter((model) => (cardsByModel.get(model.id) ?? []).length > 0),
-    [models, cardsByModel],
-  );
-
-  const modelsWithoutCards = useMemo(
-    () => models.filter((model) => (cardsByModel.get(model.id) ?? []).length === 0),
-    [models, cardsByModel],
+  const selectedModel = useMemo(
+    () => models.find((model) => model.id === selectedModelId) ?? null,
+    [models, selectedModelId],
   );
 
   async function handleCreateModel() {
@@ -335,6 +407,10 @@ export function ModelsPage() {
     setError("");
     try {
       await deleteModel(modelId);
+      if (selectedModelId === modelId) {
+        window.history.pushState(null, "", "/dashboard/models");
+        setSelectedModelId("");
+      }
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -510,457 +586,200 @@ export function ModelsPage() {
             </Callout.Root>
           ) : null}
 
-          <Card size="3" className="models-create-inline">
-            <Heading size="4" mb="3">
-              Create model
-            </Heading>
-            <CreateModelFields
+          {selectedModel ? (
+            <ModelDetail
               busy={busy}
-              modelId={newModelId}
-              modelLabel={newModelLabel}
-              onModelIdChange={setNewModelId}
-              onModelLabelChange={setNewModelLabel}
-              onSubmit={() => void handleCreateModel()}
+              creatingCardFor={creatingCardFor}
+              editingId={editingId}
+              editingLabel={editingLabel}
+              importableCards={importableCards}
+              model={selectedModel}
+              modelCards={cardsByModel.get(selectedModel.id) ?? []}
+              models={models}
+              newCardId={newCardId}
+              newCardLabel={newCardLabel}
+              onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
+              onAvatarClick={() => {
+                setAvatarTargetId(selectedModel.id);
+                avatarInputRef.current?.click();
+              }}
+              onCancelCreateCard={closeCreateCard}
+              onCancelRename={() => {
+                setEditingId("");
+                setEditingLabel("");
+              }}
+              onCardIdChange={setNewCardId}
+              onCardLabelChange={setNewCardLabel}
+              onCreateCard={() => void handleCreateCard(selectedModel.id)}
+              onDeleteCard={(card) => void handleDeleteCard(card)}
+              onDeleteModel={() => void handleDeleteModel(selectedModel.id)}
+              onDetachCard={(cardId) => void handleAssignCard(cardId, "")}
+              onEditingLabelChange={setEditingLabel}
+              onMoveCard={(cardId, direction) => void handleMoveCard(selectedModel.id, cardId, direction)}
+              onOpenCreateCard={() => openCreateCard(selectedModel.id)}
+              onPublishGame={(cardId) => void handlePublishGame(cardId)}
+              onRename={() => void handleRenameModel(selectedModel.id)}
+              onStartRename={() => {
+                setEditingId(selectedModel.id);
+                setEditingLabel(selectedModel.label);
+              }}
             />
-          </Card>
-
-          <Box className="models-create-mobile">
-            <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
-              <Dialog.Trigger>
-                <Button size="3" style={{ width: "100%" }} variant="soft">
-                  <Plus {...iconProps} />
+          ) : (
+            <>
+              <Card size="3" className="models-create-inline">
+                <Heading size="4" mb="3">
                   Create model
-                </Button>
-              </Dialog.Trigger>
-              <Dialog.Content style={{ maxWidth: 420 }}>
-                <Dialog.Title>Create model</Dialog.Title>
-                <Dialog.Description size="2" mb="3">
-                  Add a girl/persona. You can attach motion cards after.
-                </Dialog.Description>
+                </Heading>
                 <CreateModelFields
                   busy={busy}
                   modelId={newModelId}
                   modelLabel={newModelLabel}
-                  stacked
                   onModelIdChange={setNewModelId}
                   onModelLabelChange={setNewModelLabel}
                   onSubmit={() => void handleCreateModel()}
                 />
-                <Flex gap="2" mt="3" justify="end">
-                  <Dialog.Close>
-                    <Button color="gray" disabled={busy} variant="soft">
-                      Cancel
-                    </Button>
-                  </Dialog.Close>
-                </Flex>
-              </Dialog.Content>
-            </Dialog.Root>
-          </Box>
+              </Card>
 
-          {modelsWithoutCards.length > 0 ? (
-            <Card size="3">
-              <Heading size="4" mb="1">
-                Girls with no motion cards
-              </Heading>
-              <Text color="gray" mb="3" size="2">
-                These models exist but have nothing to play yet — import an unassigned card or create one.
-              </Text>
-              <Flex direction="column" gap="3">
-                {modelsWithoutCards.map((model) => (
-                  <Box
-                    key={model.id}
-                    style={{
-                      padding: 12,
-                      borderRadius: 12,
-                      background: "var(--orange-2)",
-                      border: "1px solid var(--orange-6)",
-                    }}
-                  >
-                    <Flex align="center" gap="3" wrap="wrap">
-                      <Box
-                        style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 10,
-                          overflow: "hidden",
-                          background: "var(--gray-3)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {model.avatar ? (
-                          <img
-                            alt=""
-                            src={model.avatar}
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          />
-                        ) : (
-                          <Flex align="center" height="100%" justify="center">
-                            <UserRound {...iconProps} />
-                          </Flex>
-                        )}
-                      </Box>
-                      <Box style={{ flex: 1, minWidth: 140 }}>
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Text weight="bold">{model.label}</Text>
-                          <Badge color="orange" variant="soft">
-                            0 cards
-                          </Badge>
-                          <Badge color="plum" variant="soft">
-                            {model.id}
-                          </Badge>
-                        </Flex>
-                      </Box>
-                      <Flex gap="2" wrap="wrap">
-                        {unassignedCards.length > 0 ? (
-                          <Select.Root
-                            disabled={busy}
-                            value=""
-                            onValueChange={(value) => void handleAssignCard(value, model.id)}
-                          >
-                            <Select.Trigger placeholder="Import unassigned…" style={{ minWidth: 180 }} />
-                            <Select.Content>
-                              {unassignedCards.map((card) => (
-                                <Select.Item key={card.id} value={card.id}>
-                                  {card.label} ({card.id})
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select.Root>
-                        ) : null}
-                        {creatingCardFor === model.id ? null : (
-                          <Button
-                            disabled={busy}
-                            size="2"
-                            variant="soft"
-                            onClick={() => openCreateCard(model.id)}
-                          >
-                            <Plus {...iconProps} />
-                            New motion card
-                          </Button>
-                        )}
-                        <Button
-                          color="red"
-                          disabled={busy}
-                          size="2"
-                          variant="soft"
-                          onClick={() => void handleDeleteModel(model.id)}
-                        >
-                          <Trash2 {...iconProps} />
-                          Delete
+              <Box className="models-create-mobile">
+                <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
+                  <Dialog.Trigger>
+                    <Button size="3" style={{ width: "100%" }} variant="soft">
+                      <Plus {...iconProps} />
+                      Create model
+                    </Button>
+                  </Dialog.Trigger>
+                  <Dialog.Content style={{ maxWidth: 420 }}>
+                    <Dialog.Title>Create model</Dialog.Title>
+                    <Dialog.Description size="2" mb="3">
+                      Add a girl/persona. You can attach motion cards after.
+                    </Dialog.Description>
+                    <CreateModelFields
+                      busy={busy}
+                      modelId={newModelId}
+                      modelLabel={newModelLabel}
+                      stacked
+                      onModelIdChange={setNewModelId}
+                      onModelLabelChange={setNewModelLabel}
+                      onSubmit={() => void handleCreateModel()}
+                    />
+                    <Flex gap="2" mt="3" justify="end">
+                      <Dialog.Close>
+                        <Button color="gray" disabled={busy} variant="soft">
+                          Cancel
                         </Button>
-                      </Flex>
+                      </Dialog.Close>
                     </Flex>
-                    {creatingCardFor === model.id ? (
-                      <Box mt="3">
-                        <CreateCardForm
-                          busy={busy}
-                          cardId={newCardId}
-                          cardLabel={newCardLabel}
-                          onCancel={closeCreateCard}
-                          onCardIdChange={setNewCardId}
-                          onCardLabelChange={setNewCardLabel}
-                          onSubmit={() => void handleCreateCard(model.id)}
-                        />
-                      </Box>
-                    ) : null}
-                  </Box>
-                ))}
-              </Flex>
-            </Card>
-          ) : null}
+                  </Dialog.Content>
+                </Dialog.Root>
+              </Box>
 
-          {unassignedCards.length > 0 ? (
-            <Card size="3">
-              <Heading size="4" mb="1">
-                Unassigned motion cards
-              </Heading>
-              <Text color="gray" mb="3" size="2">
-                Cards with no girl yet — assign one below.
-              </Text>
-              <Table.Root size="1" variant="surface">
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
-                    <Table.ColumnHeaderCell>Assign to girl</Table.ColumnHeaderCell>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {unassignedCards.map((card) => (
-                    <Table.Row key={card.id}>
-                      <Table.Cell>
-                        {card.label} <CodeInline>{card.id}</CodeInline>
-                        {card.theme ? (
-                          <Badge color="iris" ml="2" variant="soft" title="Theme">
-                            {card.theme}
-                          </Badge>
-                        ) : null}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Select.Root
-                            disabled={busy || models.length === 0}
-                            value=""
-                            onValueChange={(value) => void handleAssignCard(card.id, value)}
-                          >
-                            <Select.Trigger placeholder="Choose girl…" style={{ minWidth: 180 }} />
-                            <Select.Content>
-                              {models.map((model) => (
-                                <Select.Item key={model.id} value={model.id}>
-                                  {model.label}
-                                  {(cardsByModel.get(model.id) ?? []).length === 0 ? " (empty)" : ""}
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select.Root>
-                          <Button asChild size="1" variant="soft">
-                            <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
-                              <Pencil {...iconProps} />
-                              Edit
-                            </a>
-                          </Button>
-                          <Button
-                            color="red"
-                            disabled={busy}
-                            size="1"
-                            title="Delete motion card"
-                            variant="soft"
-                            onClick={() => void handleDeleteCard(card)}
-                          >
-                            <Trash2 {...iconProps} />
-                            Delete
-                          </Button>
-                        </Flex>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Root>
-            </Card>
-          ) : null}
-
-          {modelsWithCards.length > 0 ? (
-            <Heading size="4">Girls with motion cards</Heading>
-          ) : null}
-
-          <Flex direction="column" gap="4">
-            {modelsWithCards.map((model) => {
-              const modelCards = cardsByModel.get(model.id) ?? [];
-              const candidates = importableCards.filter((card) => card.model_id !== model.id);
-              const publishedCards = modelCards.filter((entry) => !entry.draft);
-              return (
-                <Card key={model.id} size="3">
-                  <Flex align="start" gap="3" mb="3">
-                    <Box
-                      style={{
-                        width: 72,
-                        height: 72,
-                        borderRadius: 12,
-                        overflow: "hidden",
-                        background: "var(--gray-3)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {model.avatar ? (
-                        <img alt="" src={model.avatar} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        <Flex align="center" height="100%" justify="center">
-                          <UserRound {...iconProps} />
-                        </Flex>
-                      )}
-                    </Box>
-                    <Box style={{ flex: 1 }}>
-                      {editingId === model.id ? (
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <TextField.Root
-                            disabled={busy}
-                            value={editingLabel}
-                            onChange={(event) => setEditingLabel(event.currentTarget.value)}
-                          />
-                          <Button disabled={busy} size="1" onClick={() => void handleRenameModel(model.id)}>
-                            Save
-                          </Button>
-                          <Button
-                            disabled={busy}
-                            size="1"
-                            variant="soft"
-                            onClick={() => {
-                              setEditingId("");
-                              setEditingLabel("");
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </Flex>
-                      ) : (
-                        <Flex align="center" gap="2" wrap="wrap">
-                          <Heading size="4">{model.label}</Heading>
-                          <Badge color="plum" variant="soft">
-                            {model.id}
-                          </Badge>
-                        </Flex>
-                      )}
-                      <Text color="gray" mt="1" size="2">
-                        {publishedCards.length} published
-                        {modelCards.some((card) => card.draft)
-                          ? ` · ${modelCards.filter((card) => card.draft).length} draft`
-                          : ""}
-                      </Text>
-                    </Box>
-                  </Flex>
-
-                  <Flex gap="2" mb="3" wrap="wrap">
-                    {publishedCards.length > 0 ? (
-                      <Button asChild size="1">
-                        <a href={playAllHref(model.id)}>
-                          <Play {...iconProps} />
-                          Play all
-                        </a>
-                      </Button>
-                    ) : null}
-                    {creatingCardFor === model.id ? null : (
-                      <Button
-                        disabled={busy}
-                        size="1"
-                        variant="soft"
-                        onClick={() => openCreateCard(model.id)}
-                      >
-                        <Plus {...iconProps} />
-                        New motion card
-                      </Button>
-                    )}
-                    <Button
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => {
-                        setEditingId(model.id);
-                        setEditingLabel(model.label);
-                      }}
-                    >
-                      Rename
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => {
-                        setAvatarTargetId(model.id);
-                        avatarInputRef.current?.click();
-                      }}
-                    >
-                      <Upload {...iconProps} />
-                      Avatar
-                    </Button>
-                    <Button
-                      color="red"
-                      disabled={busy}
-                      size="1"
-                      variant="soft"
-                      onClick={() => void handleDeleteModel(model.id)}
-                    >
-                      <Trash2 {...iconProps} />
-                      Delete
-                    </Button>
-                  </Flex>
-
-                  {creatingCardFor === model.id ? (
-                    <Box mb="3">
-                      <CreateCardForm
-                        busy={busy}
-                        cardId={newCardId}
-                        cardLabel={newCardLabel}
-                        onCancel={closeCreateCard}
-                        onCardIdChange={setNewCardId}
-                        onCardLabelChange={setNewCardLabel}
-                        onSubmit={() => void handleCreateCard(model.id)}
-                      />
-                    </Box>
-                  ) : null}
-
-                  {modelCards.length > 0 ? (
-                    <Box className="models-card-list">
-                      <Flex className="models-card-list-header" align="center" gap="3">
-                        <Text className="models-card-list-identity" color="gray" size="1" weight="medium">
-                          Motion card
-                        </Text>
-                        <Text className="models-card-list-status" color="gray" size="1" weight="medium">
-                          Photo Scratch
-                        </Text>
-                        <Text className="models-card-list-actions" color="gray" size="1" weight="medium">
-                          Actions
-                        </Text>
-                      </Flex>
-                      {modelCards.map((card, index) => {
-                        const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
-                        return (
-                          <MotionCardRow
-                            key={card.id}
-                            busy={busy}
-                            card={card}
-                            index={index}
-                            modelId={model.id}
-                            publishedIndex={publishedIndex}
-                            publishedCount={publishedCards.length}
-                            onDelete={() => void handleDeleteCard(card)}
-                            onDetach={() => void handleAssignCard(card.id, "")}
-                            onMoveDown={() => void handleMoveCard(model.id, card.id, 1)}
-                            onMoveUp={() => void handleMoveCard(model.id, card.id, -1)}
-                            onPublishGame={() => void handlePublishGame(card.id)}
-                          />
-                        );
-                      })}
-                    </Box>
-                  ) : (
-                    <Text color="gray" size="2">
-                      No motion cards yet. Create one above or import an existing card below.
-                    </Text>
-                  )}
-
-                  {candidates.length > 0 ? (
-                    <Flex align="center" gap="2" mt="3" wrap="wrap">
-                      <Import {...iconProps} />
-                      <Select.Root
-                        disabled={busy}
-                        value=""
-                        onValueChange={(value) => void handleAssignCard(value, model.id)}
-                      >
-                        <Select.Trigger
-                          placeholder="Import an existing motion card…"
-                          style={{ minWidth: 240 }}
-                        />
-                        <Select.Content>
-                          {candidates
-                            .slice()
-                            .sort((a, b) => Number(Boolean(a.model_id)) - Number(Boolean(b.model_id)))
-                            .map((card) => {
-                              const owner = card.model_id
-                                ? models.find((entry) => entry.id === card.model_id)?.label ?? card.model_id
-                                : null;
-                              return (
-                                <Select.Item key={card.id} value={card.id}>
-                                  {card.label} ({card.id}){owner ? ` — from ${owner}` : " — unassigned"}
-                                </Select.Item>
-                              );
-                            })}
-                        </Select.Content>
-                      </Select.Root>
-                    </Flex>
-                  ) : null}
+              {models.length > 0 ? (
+                <Flex direction="column" gap="3">
+                  <Heading size="4">Models</Heading>
+                  {models.map((model) => {
+                    const count = (cardsByModel.get(model.id) ?? []).length;
+                    return (
+                      <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
+                        <ModelAvatar model={model} size={44} />
+                        <Box style={{ minWidth: 0 }}>
+                          <Text as="div" size="3" weight="bold" truncate>
+                            {model.label}
+                          </Text>
+                          <Text as="div" color="gray" size="2">
+                            {count} motion card{count === 1 ? "" : "s"}
+                          </Text>
+                        </Box>
+                      </a>
+                    );
+                  })}
+                </Flex>
+              ) : (
+                <Card size="3">
+                  <Text color="gray">No models yet. Create your first model above.</Text>
                 </Card>
-              );
-            })}
-          </Flex>
+              )}
 
-          {models.length === 0 ? (
-            <Card size="3">
-              <Text color="gray">No models yet. Create your first model above.</Text>
-            </Card>
-          ) : null}
+              {unassignedCards.length > 0 ? (
+                <Card size="3">
+                  <Heading size="4" mb="1">
+                    Unassigned motion cards
+                  </Heading>
+                  <Text color="gray" mb="3" size="2">
+                    Cards with no girl yet — assign one below.
+                  </Text>
+                  <Table.Root size="1" variant="surface">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.ColumnHeaderCell>Motion card</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Assign to girl</Table.ColumnHeaderCell>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {unassignedCards.map((card) => (
+                        <Table.Row key={card.id}>
+                          <Table.Cell>
+                            {card.label} <CodeInline>{card.id}</CodeInline>
+                            {card.theme ? (
+                              <Badge color="iris" ml="2" variant="soft" title="Theme">
+                                {card.theme}
+                              </Badge>
+                            ) : null}
+                          </Table.Cell>
+                          <Table.Cell>
+                            <Flex align="center" gap="2" wrap="wrap">
+                              <Select.Root
+                                disabled={busy || models.length === 0}
+                                value=""
+                                onValueChange={(value) => void handleAssignCard(card.id, value)}
+                              >
+                                <Select.Trigger placeholder="Choose girl…" style={{ minWidth: 180 }} />
+                                <Select.Content>
+                                  {models.map((model) => (
+                                    <Select.Item key={model.id} value={model.id}>
+                                      {model.label}
+                                      {(cardsByModel.get(model.id) ?? []).length === 0 ? " (empty)" : ""}
+                                    </Select.Item>
+                                  ))}
+                                </Select.Content>
+                              </Select.Root>
+                              <Button asChild size="1" variant="soft">
+                                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                                  <Pencil {...iconProps} />
+                                  Edit
+                                </a>
+                              </Button>
+                              <Button
+                                color="red"
+                                disabled={busy}
+                                size="1"
+                                title="Delete motion card"
+                                variant="soft"
+                                onClick={() => void handleDeleteCard(card)}
+                              >
+                                <Trash2 {...iconProps} />
+                                Delete
+                              </Button>
+                            </Flex>
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table.Root>
+                </Card>
+              ) : null}
+            </>
+          )}
 
-          {models.length > 0 && modelsWithCards.length === 0 && modelsWithoutCards.length === 0 ? (
-            <Card size="3">
-              <Text color="gray">No girls to show.</Text>
-            </Card>
+          {selectedModelId && !selectedModel && models.length > 0 ? (
+            <Callout.Root color="amber">
+              <Callout.Icon>
+                <AlertTriangle {...iconProps} />
+              </Callout.Icon>
+              <Callout.Text>
+                Model “{selectedModelId}” was not found.{" "}
+                <a href="/dashboard/models">Back to models</a>
+              </Callout.Text>
+            </Callout.Root>
           ) : null}
         </Flex>
       </Container>
@@ -988,6 +807,226 @@ function CodeInline({ children }: { children: ReactNode }) {
   );
 }
 
+function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
+  return (
+    <Box
+      className="models-list-avatar"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.22),
+      }}
+    >
+      {model.avatar ? (
+        <img alt="" src={model.avatar} />
+      ) : (
+        <span aria-hidden>{modelInitial(model.label, model.id)}</span>
+      )}
+    </Box>
+  );
+}
+
+function ModelDetail({
+  busy,
+  creatingCardFor,
+  editingId,
+  editingLabel,
+  importableCards,
+  model,
+  modelCards,
+  models,
+  newCardId,
+  newCardLabel,
+  onAssignCard,
+  onAvatarClick,
+  onCancelCreateCard,
+  onCancelRename,
+  onCardIdChange,
+  onCardLabelChange,
+  onCreateCard,
+  onDeleteCard,
+  onDeleteModel,
+  onDetachCard,
+  onEditingLabelChange,
+  onMoveCard,
+  onOpenCreateCard,
+  onPublishGame,
+  onRename,
+  onStartRename,
+}: {
+  busy: boolean;
+  creatingCardFor: string;
+  editingId: string;
+  editingLabel: string;
+  importableCards: CardInfo[];
+  model: ModelInfo;
+  modelCards: CardInfo[];
+  models: ModelInfo[];
+  newCardId: string;
+  newCardLabel: string;
+  onAssignCard: (cardId: string, modelId: string) => void;
+  onAvatarClick: () => void;
+  onCancelCreateCard: () => void;
+  onCancelRename: () => void;
+  onCardIdChange: (value: string) => void;
+  onCardLabelChange: (value: string) => void;
+  onCreateCard: () => void;
+  onDeleteCard: (card: CardInfo) => void;
+  onDeleteModel: () => void;
+  onDetachCard: (cardId: string) => void;
+  onEditingLabelChange: (value: string) => void;
+  onMoveCard: (cardId: string, direction: -1 | 1) => void;
+  onOpenCreateCard: () => void;
+  onPublishGame: (cardId: string) => void;
+  onRename: () => void;
+  onStartRename: () => void;
+}) {
+  const candidates = importableCards.filter((card) => card.model_id !== model.id);
+  const publishedCards = modelCards.filter((entry) => !entry.draft);
+
+  return (
+    <Flex direction="column" gap="3">
+      <Button asChild color="gray" size="2" variant="soft" style={{ alignSelf: "flex-start" }}>
+        <a href="/dashboard/models">
+          <ArrowLeft {...iconProps} />
+          All models
+        </a>
+      </Button>
+
+      <Card size="3">
+        <Flex align="start" gap="3" mb="3">
+          <ModelAvatar model={model} size={72} />
+          <Box style={{ flex: 1 }}>
+            {editingId === model.id ? (
+              <Flex align="center" gap="2" wrap="wrap">
+                <TextField.Root
+                  disabled={busy}
+                  value={editingLabel}
+                  onChange={(event) => onEditingLabelChange(event.currentTarget.value)}
+                />
+                <Button disabled={busy} size="1" onClick={onRename}>
+                  Save
+                </Button>
+                <Button disabled={busy} size="1" variant="soft" onClick={onCancelRename}>
+                  Cancel
+                </Button>
+              </Flex>
+            ) : (
+              <Flex align="center" gap="2" wrap="wrap">
+                <Heading size="4">{model.label}</Heading>
+                <Badge color="plum" variant="soft">
+                  {model.id}
+                </Badge>
+              </Flex>
+            )}
+            <Text color="gray" mt="1" size="2">
+              {publishedCards.length} published
+              {modelCards.some((card) => card.draft)
+                ? ` · ${modelCards.filter((card) => card.draft).length} draft`
+                : ""}
+            </Text>
+          </Box>
+        </Flex>
+
+        <Flex gap="2" mb="3" wrap="wrap">
+          {publishedCards.length > 0 ? (
+            <Button asChild size="1">
+              <a href={playAllHref(model.id)}>
+                <Play {...iconProps} />
+                Play all
+              </a>
+            </Button>
+          ) : null}
+          {creatingCardFor === model.id ? null : (
+            <Button disabled={busy} size="1" variant="soft" onClick={onOpenCreateCard}>
+              <Plus {...iconProps} />
+              New motion card
+            </Button>
+          )}
+          <Button disabled={busy} size="1" variant="soft" onClick={onStartRename}>
+            Rename
+          </Button>
+          <Button disabled={busy} size="1" variant="soft" onClick={onAvatarClick}>
+            <Upload {...iconProps} />
+            Avatar
+          </Button>
+          <Button color="red" disabled={busy} size="1" variant="soft" onClick={onDeleteModel}>
+            <Trash2 {...iconProps} />
+            Delete
+          </Button>
+        </Flex>
+
+        {creatingCardFor === model.id ? (
+          <Box mb="3">
+            <CreateCardForm
+              busy={busy}
+              cardId={newCardId}
+              cardLabel={newCardLabel}
+              onCancel={onCancelCreateCard}
+              onCardIdChange={onCardIdChange}
+              onCardLabelChange={onCardLabelChange}
+              onSubmit={onCreateCard}
+            />
+          </Box>
+        ) : null}
+
+        {modelCards.length > 0 ? (
+          <Box className="models-card-list">
+            {modelCards.map((card, index) => {
+              const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
+              return (
+                <MotionCardRow
+                  key={card.id}
+                  busy={busy}
+                  card={card}
+                  index={index}
+                  modelId={model.id}
+                  publishedIndex={publishedIndex}
+                  publishedCount={publishedCards.length}
+                  onDelete={() => onDeleteCard(card)}
+                  onDetach={() => onDetachCard(card.id)}
+                  onMoveDown={() => onMoveCard(card.id, 1)}
+                  onMoveUp={() => onMoveCard(card.id, -1)}
+                  onPublishGame={() => onPublishGame(card.id)}
+                />
+              );
+            })}
+          </Box>
+        ) : (
+          <Text color="gray" size="2">
+            No motion cards yet. Create one above or import an existing card below.
+          </Text>
+        )}
+
+        {candidates.length > 0 ? (
+          <Flex align="center" gap="2" mt="3" wrap="wrap">
+            <Import {...iconProps} />
+            <Select.Root disabled={busy} value="" onValueChange={(value) => onAssignCard(value, model.id)}>
+              <Select.Trigger placeholder="Import an existing motion card…" style={{ minWidth: 240 }} />
+              <Select.Content>
+                {candidates
+                  .slice()
+                  .sort((a, b) => Number(Boolean(a.model_id)) - Number(Boolean(b.model_id)))
+                  .map((card) => {
+                    const owner = card.model_id
+                      ? models.find((entry) => entry.id === card.model_id)?.label ?? card.model_id
+                      : null;
+                    return (
+                      <Select.Item key={card.id} value={card.id}>
+                        {card.label} ({card.id})
+                        {owner ? ` — from ${owner}` : " — unassigned"}
+                      </Select.Item>
+                    );
+                  })}
+              </Select.Content>
+            </Select.Root>
+          </Flex>
+        ) : null}
+      </Card>
+    </Flex>
+  );
+}
+
 function PhotoScratchStatus({ card }: { card: CardInfo }) {
   const draft = card.photo_scratch_draft ?? 0;
   const done = card.photo_scratch_done ?? 0;
@@ -998,7 +1037,7 @@ function PhotoScratchStatus({ card }: { card: CardInfo }) {
   if (empty) {
     return (
       <Text color="gray" size="1">
-        —
+        No photo-scratch yet
       </Text>
     );
   }
@@ -1035,8 +1074,352 @@ function PhotoScratchStatus({ card }: { card: CardInfo }) {
   );
 }
 
+const TOUCH_LONG_PRESS_MS = 450;
+const PEEK_WIDTH_PX = 148;
+
+type PeekPoint = { x: number; y: number };
+
+function peekPosition(point: PeekPoint): { top: number; left: number; width: number } {
+  const width = PEEK_WIDTH_PX;
+  const height = width * (16 / 9);
+  const margin = 10;
+  const offset = 14;
+  // Prefer above-right of the pointer; flip so the full peek stays on-screen.
+  let left = point.x + offset;
+  let top = point.y - height - offset;
+  if (left + width > window.innerWidth - margin) left = point.x - width - offset;
+  if (top < margin) top = point.y + offset;
+  if (top + height > window.innerHeight - margin) {
+    top = Math.max(margin, window.innerHeight - height - margin);
+  }
+  left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
+  top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+  return { top, left, width };
+}
+
+/** Instagram-style peek: hold to view at pointer, release to close. */
+function useInstagramPeek(onOpen: (point: PeekPoint) => void, onClose: () => void) {
+  const timerRef = useRef<number | null>(null);
+  const peekingRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const pointRef = useRef<PeekPoint>({ x: 0, y: 0 });
+
+  const clearTimer = () => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const startPeek = () => {
+    if (peekingRef.current) return;
+    peekingRef.current = true;
+    suppressClickRef.current = true;
+    onOpen({ ...pointRef.current });
+  };
+
+  const endPeek = () => {
+    clearTimer();
+    if (!peekingRef.current) return;
+    peekingRef.current = false;
+    onClose();
+  };
+
+  useEffect(
+    () => () => {
+      clearTimer();
+    },
+    [],
+  );
+
+  return {
+    consumeSuppressClick: () => {
+      if (!suppressClickRef.current) return false;
+      suppressClickRef.current = false;
+      return true;
+    },
+    bind: {
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        if (event.pointerType === "pen" && event.button !== 0) return;
+        pointRef.current = { x: event.clientX, y: event.clientY };
+        const el = event.currentTarget;
+        el.setPointerCapture(event.pointerId);
+        clearTimer();
+        if (event.pointerType === "touch") {
+          peekingRef.current = false;
+          timerRef.current = window.setTimeout(startPeek, TOUCH_LONG_PRESS_MS);
+          return;
+        }
+        startPeek();
+      },
+      onPointerMove: (event: PointerEvent<HTMLElement>) => {
+        pointRef.current = { x: event.clientX, y: event.clientY };
+        // Keep peek glued to the pointer while held (helps after scroll).
+        if (peekingRef.current) onOpen({ ...pointRef.current });
+      },
+      onPointerUp: (event: PointerEvent<HTMLElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        endPeek();
+      },
+      onPointerCancel: (event: PointerEvent<HTMLElement>) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        endPeek();
+      },
+      onLostPointerCapture: () => {
+        endPeek();
+      },
+      onContextMenu: (event: MouseEvent) => {
+        if (peekingRef.current || timerRef.current != null) event.preventDefault();
+      },
+      onDragStart: (event: DragEvent) => {
+        event.preventDefault();
+      },
+    },
+  };
+}
+
+function MiniMediaOverlay({
+  point,
+  label,
+  layers,
+  src,
+  type,
+}: {
+  point: PeekPoint;
+  label: string;
+  layers?: SlotPreviewLayers;
+  src?: string;
+  type: "image" | "video" | "layers";
+}) {
+  const pos = peekPosition(point);
+
+  return createPortal(
+    <div
+      aria-label={`${label} preview`}
+      className="models-media-peek"
+      role="dialog"
+      style={{ top: pos.top, left: pos.left, width: pos.width }}
+    >
+      {type === "video" && src ? (
+        <video autoPlay className="models-media-peek-media" muted playsInline src={src} />
+      ) : type === "layers" && layers ? (
+        <div className="models-media-peek-stack">
+          {layers.background ? (
+            <img alt="" className="models-media-peek-layer" src={layers.background} />
+          ) : null}
+          {layers.bikini ? (
+            <img alt="" className="models-media-peek-layer" src={layers.bikini} />
+          ) : null}
+          {layers.clothes ? (
+            <img alt="" className="models-media-peek-layer" src={layers.clothes} />
+          ) : null}
+        </div>
+      ) : src ? (
+        <img alt={label} className="models-media-peek-media" src={src} />
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
+
+function SlotPictureStack({
+  layers,
+  className,
+}: {
+  layers: SlotPreviewLayers;
+  className?: string;
+}) {
+  const fallback = layers.clothes || layers.bikini || layers.background;
+  const stacked = Boolean(layers.background && (layers.clothes || layers.bikini));
+
+  if (!fallback) return null;
+
+  if (!stacked) {
+    return <img alt="" className={className} src={fallback} draggable={false} />;
+  }
+
+  return (
+    <span className={`models-slot-stack${className ? ` ${className}` : ""}`}>
+      {layers.background ? <img alt="" src={layers.background} draggable={false} /> : null}
+      {layers.bikini ? <img alt="" src={layers.bikini} draggable={false} /> : null}
+      {layers.clothes ? <img alt="" src={layers.clothes} draggable={false} /> : null}
+    </span>
+  );
+}
+
 function ActionSlot({ children }: { children?: ReactNode }) {
   return <span className="models-card-action-slot">{children}</span>;
+}
+
+function MotionCardThumb({ card }: { card: CardInfo }) {
+  const videoSrc = motionCardVideoSrc(card);
+  const [peek, setPeek] = useState<{ point: PeekPoint } | null>(null);
+  const peekHandlers = useInstagramPeek(
+    (point) => setPeek({ point }),
+    () => setPeek(null),
+  );
+
+  if (!videoSrc) {
+    return <div aria-hidden className="models-card-thumb models-card-thumb--empty" />;
+  }
+
+  return (
+    <>
+      <button
+        aria-label={`Hold to preview ${card.label}`}
+        className="models-card-thumb models-card-thumb--button"
+        type="button"
+        title="Hold to preview motion card · release to close"
+        onClick={(event) => {
+          if (peekHandlers.consumeSuppressClick()) event.preventDefault();
+        }}
+        {...peekHandlers.bind}
+      >
+        <video
+          aria-hidden
+          className="models-card-thumb-media"
+          muted
+          playsInline
+          preload="metadata"
+          src={videoSrc}
+          onLoadedData={(event) => {
+            const video = event.currentTarget;
+            if (video.readyState >= 2 && video.currentTime < 0.05) {
+              try {
+                video.currentTime = Math.min(0.15, (video.duration || 1) * 0.08);
+              } catch {
+                /* ignore seek failures */
+              }
+            }
+          }}
+        />
+      </button>
+      {peek ? (
+        <MiniMediaOverlay label={card.label} point={peek.point} src={videoSrc} type="video" />
+      ) : null}
+    </>
+  );
+}
+
+function PhotoScratchThumbs({ card }: { card: CardInfo }) {
+  const [thumbs, setThumbs] = useState<
+    Array<{ id: string; layers: SlotPreviewLayers; done: boolean }>
+  >([]);
+  const [peek, setPeek] = useState<{
+    label: string;
+    layers: SlotPreviewLayers;
+    point: PeekPoint;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasAny =
+      (card.photo_scratch_draft ?? 0) > 0 ||
+      (card.photo_scratch_done ?? 0) > 0 ||
+      (card.photo_scratch_mesh_count ?? 0) > 0;
+    if (!hasAny) {
+      setThumbs([]);
+      return;
+    }
+    fetchPhotoScratchSlots(card.id, card.theme ?? "")
+      .then((slots) => {
+        if (cancelled) return;
+        const next = slots
+          .map((slot) => {
+            const layers = slotPreviewLayers(slot);
+            if (!slotHasPreview(layers) && !slotThumbSrc(slot)) return null;
+            if (!slotHasPreview(layers)) {
+              const src = previewSource(slotThumbSrc(slot));
+              layers.clothes = src;
+            }
+            return { id: slot.id, layers, done: slotIsDone(slot) };
+          })
+          .filter(
+            (entry): entry is { id: string; layers: SlotPreviewLayers; done: boolean } =>
+              entry != null,
+          );
+        setThumbs(next);
+      })
+      .catch(() => {
+        if (!cancelled) setThumbs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    card.id,
+    card.theme,
+    card.photo_scratch_draft,
+    card.photo_scratch_done,
+    card.photo_scratch_mesh_count,
+  ]);
+
+  if (thumbs.length === 0) return null;
+
+  return (
+    <>
+      <div className="models-card-ps-thumbs">
+        {thumbs.map((thumb) => (
+          <PhotoScratchThumbLink
+            key={thumb.id}
+            done={thumb.done}
+            href={pictureFlowHref(card.id, thumb.id)}
+            label={thumb.id}
+            layers={thumb.layers}
+            onClosePeek={() => setPeek(null)}
+            onOpenPeek={(point) =>
+              setPeek({ label: thumb.id, layers: thumb.layers, point })
+            }
+          />
+        ))}
+      </div>
+      {peek ? (
+        <MiniMediaOverlay
+          label={peek.label}
+          layers={peek.layers}
+          point={peek.point}
+          type="layers"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function PhotoScratchThumbLink({
+  done,
+  href,
+  label,
+  layers,
+  onOpenPeek,
+  onClosePeek,
+}: {
+  done: boolean;
+  href: string;
+  label: string;
+  layers: SlotPreviewLayers;
+  onOpenPeek: (point: PeekPoint) => void;
+  onClosePeek: () => void;
+}) {
+  const peekHandlers = useInstagramPeek(onOpenPeek, onClosePeek);
+
+  return (
+    <a
+      className={`models-card-ps-thumb${done ? " is-done" : ""}`}
+      href={href}
+      title={`${label}${done ? " (done)" : ""} · hold to preview`}
+      onClick={(event) => {
+        if (peekHandlers.consumeSuppressClick()) event.preventDefault();
+      }}
+      {...peekHandlers.bind}
+    >
+      <SlotPictureStack layers={layers} />
+    </a>
+  );
 }
 
 function MotionCardRow({
@@ -1071,132 +1454,148 @@ function MotionCardRow({
 
   return (
     <div className="models-card-list-row">
-      <div className="models-card-list-identity">
-        <Flex align="baseline" gap="2" wrap="wrap">
-          <Text size="2" weight="medium">
-            {index + 1}. {card.label}
-          </Text>
-          {isDraft ? (
-            <Badge color="amber" size="1" variant="soft">
-              draft
-            </Badge>
-          ) : null}
-          {card.theme ? (
-            <Badge color="iris" size="1" title="Theme" variant="soft">
-              {card.theme}
-            </Badge>
-          ) : null}
-        </Flex>
-        <CodeInline>{card.id}</CodeInline>
-      </div>
+      <div className="models-card-list-line models-card-list-line--motion">
+        <div className="models-card-list-identity">
+          <MotionCardThumb card={card} />
+          <div className="models-card-list-identity-text">
+            <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+              Motion card
+            </Text>
+            <Flex align="baseline" gap="2" wrap="wrap">
+              <Text size="2" weight="medium">
+                {index + 1}. {card.label}
+              </Text>
+              {isDraft ? (
+                <Badge color="amber" size="1" variant="soft">
+                  draft
+                </Badge>
+              ) : null}
+              {card.theme ? (
+                <Badge color="iris" size="1" title="Theme" variant="soft">
+                  {card.theme}
+                </Badge>
+              ) : null}
+            </Flex>
+            <CodeInline>{card.id}</CodeInline>
+          </div>
+        </div>
 
-      <div className="models-card-list-status">
-        <PhotoScratchStatus card={card} />
-      </div>
-
-      <div className="models-card-list-actions">
-        <Flex align="center" gap="1" justify="end">
-          {isDraft ? (
-            <>
-              <ActionSlot />
-              <ActionSlot />
-              <ActionSlot />
-            </>
-          ) : (
-            <>
-              <ActionSlot>
-                <Button
-                  color="gray"
-                  disabled={busy || publishedIndex <= 0}
-                  size="1"
-                  title="Move up"
-                  variant="ghost"
-                  onClick={onMoveUp}
-                >
-                  <ChevronUp {...iconProps} />
-                </Button>
-              </ActionSlot>
-              <ActionSlot>
-                <Button
-                  color="gray"
-                  disabled={busy || publishedIndex < 0 || publishedIndex >= publishedCount - 1}
-                  size="1"
-                  title="Move down"
-                  variant="ghost"
-                  onClick={onMoveDown}
-                >
-                  <ChevronDown {...iconProps} />
-                </Button>
-              </ActionSlot>
-              <ActionSlot>
-                <Button asChild size="1" variant="soft">
-                  <a href={playCardHref(modelId, card.id)} title={`Play ${card.label}`}>
-                    <Play {...iconProps} />
-                  </a>
-                </Button>
-              </ActionSlot>
-            </>
-          )}
-          <ActionSlot>
-            {hasPicture ? (
-              <Button asChild color="green" size="1" variant="soft">
-                <a
-                  href={pictureFlowHref(card.id)}
-                  title="Picture Flow"
-                >
-                  <Images {...iconProps} />
+        <div className="models-card-list-actions">
+          <Flex align="center" gap="1" justify="end">
+            {isDraft ? (
+              <>
+                <ActionSlot />
+                <ActionSlot />
+                <ActionSlot />
+              </>
+            ) : (
+              <>
+                <ActionSlot>
+                  <Button
+                    color="gray"
+                    disabled={busy || publishedIndex <= 0}
+                    size="1"
+                    title="Move up"
+                    variant="ghost"
+                    onClick={onMoveUp}
+                  >
+                    <ChevronUp {...iconProps} />
+                  </Button>
+                </ActionSlot>
+                <ActionSlot>
+                  <Button
+                    color="gray"
+                    disabled={busy || publishedIndex < 0 || publishedIndex >= publishedCount - 1}
+                    size="1"
+                    title="Move down"
+                    variant="ghost"
+                    onClick={onMoveDown}
+                  >
+                    <ChevronDown {...iconProps} />
+                  </Button>
+                </ActionSlot>
+                <ActionSlot>
+                  <Button asChild size="1" variant="soft">
+                    <a href={playCardHref(modelId, card.id)} title={`Play ${card.label}`}>
+                      <Play {...iconProps} />
+                    </a>
+                  </Button>
+                </ActionSlot>
+              </>
+            )}
+            <ActionSlot>
+              <Button asChild size="1" variant="soft">
+                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                  <Pencil {...iconProps} />
                 </a>
               </Button>
-            ) : null}
-          </ActionSlot>
-          <ActionSlot>
-            {hasGame ? (
+            </ActionSlot>
+            <ActionSlot>
+              {isDraft ? null : (
+                <Button
+                  color="gray"
+                  disabled={busy}
+                  size="1"
+                  title="Detach card from this model"
+                  variant="ghost"
+                  onClick={onDetach}
+                >
+                  <X {...iconProps} />
+                </Button>
+              )}
+            </ActionSlot>
+            <ActionSlot>
               <Button
-                color="green"
+                color="red"
                 disabled={busy}
                 size="1"
-                title="Publish photo-scratch game"
-                variant="soft"
-                onClick={onPublishGame}
-              >
-                <Gamepad2 {...iconProps} />
-              </Button>
-            ) : null}
-          </ActionSlot>
-          <ActionSlot>
-            <Button asChild size="1" variant="soft">
-              <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
-                <Pencil {...iconProps} />
-              </a>
-            </Button>
-          </ActionSlot>
-          <ActionSlot>
-            {isDraft ? null : (
-              <Button
-                color="gray"
-                disabled={busy}
-                size="1"
-                title="Detach card from this model"
+                title={isDraft ? "Delete draft motion card" : "Delete motion card"}
                 variant="ghost"
-                onClick={onDetach}
+                onClick={onDelete}
               >
-                <X {...iconProps} />
+                <Trash2 {...iconProps} />
               </Button>
-            )}
-          </ActionSlot>
-          <ActionSlot>
-            <Button
-              color="red"
-              disabled={busy}
-              size="1"
-              title={isDraft ? "Delete draft motion card" : "Delete motion card"}
-              variant="ghost"
-              onClick={onDelete}
-            >
-              <Trash2 {...iconProps} />
-            </Button>
-          </ActionSlot>
-        </Flex>
+            </ActionSlot>
+          </Flex>
+        </div>
+      </div>
+
+      <div className="models-card-list-line models-card-list-line--photos">
+        <div className="models-card-list-photos">
+          <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+            Photo Scratch
+          </Text>
+          <PhotoScratchThumbs card={card} />
+          <PhotoScratchStatus card={card} />
+        </div>
+
+        <div className="models-card-list-actions">
+          <Flex align="center" gap="1" justify="end">
+            <ActionSlot>
+              {hasPicture ? (
+                <Button asChild color="green" size="1" variant="soft">
+                  <a href={pictureFlowHref(card.id)} title="Picture Flow">
+                    <Images {...iconProps} />
+                  </a>
+                </Button>
+              ) : null}
+            </ActionSlot>
+            <ActionSlot>
+              {hasGame ? (
+                <Button
+                  color="green"
+                  disabled={busy}
+                  size="1"
+                  title="Publish photo-scratch game"
+                  variant="soft"
+                  onClick={onPublishGame}
+                >
+                  <Gamepad2 {...iconProps} />
+                </Button>
+              ) : null}
+            </ActionSlot>
+          </Flex>
+        </div>
       </div>
     </div>
   );

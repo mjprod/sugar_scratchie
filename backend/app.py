@@ -226,7 +226,7 @@ class VideoFlowRequest(BaseModel):
     resolution: str = "720p"
     enhance_dress_prompt: bool = True
     tracker: Literal["cotracker", "bootstapir", "blend", "all"] = "all"
-    write_webm: bool = True
+    write_webm: bool = False
     compress_preset: Literal["mobile", "hd", "master"] = "mobile"
     mesh_tune: MeshTuneOptions = Field(default_factory=MeshTuneOptions)
     model: str = "grok-imagine-video-1.5"
@@ -240,7 +240,7 @@ class VideoFlowRequest(BaseModel):
     provider: AiProvider = "xai"
     image_model: SourceImageModel = "grok-imagine"
     background_video_model: BackgroundVideoModel = "grok-imagine"
-    dress_video_model: DressVideoModel = "grok-imagine"
+    dress_video_model: DressVideoModel = "wan-2.2-video-edit"
 
 
 class GenerateSourceImageRequest(BaseModel):
@@ -295,7 +295,7 @@ class SymbolPointsRequest(BaseModel):
 
 
 class CompressCardRequest(BaseModel):
-    write_webm: bool = True
+    write_webm: bool = False
     compress_preset: Literal["mobile", "hd", "master"] = "mobile"
 
 

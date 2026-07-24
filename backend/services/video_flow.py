@@ -1021,7 +1021,7 @@ def save_flow_draft(
     ai_provider: str = "xai",
     source_image_model: str = "grok-imagine",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "grok-imagine",
+    dress_video_model: str = "wan-2.2-video-edit",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
@@ -1870,13 +1870,13 @@ def run_video_flow_step(
     video_field: str,
     enhance_dress_prompt: bool = True,
     tracker: str = "bootstapir",
-    write_webm: bool = True,
+    write_webm: bool = False,
     dress_reference_image: str = "",
     mesh_tune: dict | None = None,
     force: bool = False,
     provider: str = "xai",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "grok-imagine",
+    dress_video_model: str = "wan-2.2-video-edit",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
@@ -2182,7 +2182,7 @@ def video_flow(
     video_field: str,
     enhance_dress_prompt: bool = True,
     tracker: str = "bootstapir",
-    write_webm: bool = True,
+    write_webm: bool = False,
 ) -> None:
     """Run every step sequentially (CLI / legacy full pipeline)."""
     shared = {

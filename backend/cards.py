@@ -484,7 +484,7 @@ def compress_card(
     cards_dir: Path,
     card_id: str,
     *,
-    write_webm: bool = True,
+    write_webm: bool = False,
     compress_preset: str = "mobile",
 ) -> None:
     """Re-encode a card's background/foreground in place using the same settings

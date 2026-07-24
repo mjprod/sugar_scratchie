@@ -849,7 +849,7 @@ def finalize_card_videos(
     work_dir: Path,
     backup_dir: Path,
     preset: CompressPreset = DEFAULT_PRESET,
-    write_webm: bool = True,
+    write_webm: bool = False,
     report_path: Path | None = None,
 ) -> dict:
     """Align FG to BG, cover-crop both to a fixed prototype-aspect canvas, optional WebM."""
