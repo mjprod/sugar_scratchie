@@ -5,89 +5,7 @@
       "label": "Original",
       "bottom": "/cards/ai%20girl%202.mp4",
       "foreground": "/cards/Green%20bg%20sample%202%20swap.mp4",
-      "mesh": "tracked-mesh.json",
-      "chroma_key": true,
-      "sort_order": 0
-    },
-    {
-      "id": "julianaval_cop",
-      "label": "Julianaval Cop",
-      "bottom": "/cards/julianaval_cop/background.mp4",
-      "foreground": "/cards/julianaval_cop/foreground.mp4",
-      "mesh": "julianaval_cop.json",
-      "chroma_key": false,
-      "sort_order": 0,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "juliana_1",
-      "label": "Julianaval Cop 2",
-      "bottom": "/cards/juliana_1/background.mp4",
-      "foreground": "/cards/juliana_1/foreground.mp4",
-      "mesh": "juliana_1.json",
-      "chroma_key": false,
-      "sort_order": 1,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "thai_1",
-      "label": "Julianaval Cop 3",
-      "bottom": "/cards/thai_1/background.mp4",
-      "foreground": "/cards/thai_1/foreground.mp4",
-      "mesh": "thai_1.json",
-      "chroma_key": false,
-      "sort_order": 2,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "juliana_3",
-      "label": "Julianaval Teacher 2",
-      "bottom": "/cards/juliana_3/background.mp4",
-      "foreground": "/cards/juliana_3/foreground.mp4",
-      "mesh": "juliana_3.json",
-      "chroma_key": false,
-      "sort_order": 3,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "asian_2",
-      "label": "Julianaval Teacher 3",
-      "bottom": "/cards/asian_2/background.mp4",
-      "foreground": "/cards/asian_2/foreground.mp4",
-      "mesh": "asian_2.json",
-      "chroma_key": false,
-      "sort_order": 4,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "julianaval_teacher",
-      "label": "Julianaval Teacher",
-      "bottom": "/cards/julianaval_teacher/background.mp4",
-      "foreground": "/cards/julianaval_teacher/foreground.mp4",
-      "mesh": "julianaval_teacher.json",
-      "chroma_key": false,
-      "sort_order": 5,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "juliana_2",
-      "label": "Julianaval Nurse",
-      "bottom": "/cards/juliana_2/background.mp4",
-      "foreground": "/cards/juliana_2/foreground.mp4",
-      "mesh": "juliana_2.json",
-      "chroma_key": false,
-      "sort_order": 6,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "ju_gym",
-      "label": "Julianaval Nurse 2",
-      "bottom": "/cards/ju_gym/background.mp4",
-      "foreground": "/cards/ju_gym/foreground.mp4",
-      "mesh": "ju_gym.json",
-      "chroma_key": false,
-      "sort_order": 7,
-      "model_id": "julianaval"
+      "mesh": "tracked-mesh.json"
     },
     {
       "id": "asia_gym",
@@ -95,18 +13,6 @@
       "bottom": "/cards/asia_gym/background.mp4",
       "foreground": "/cards/asia_gym/foreground.mp4",
       "mesh": "asia_gym.json",
-      "chroma_key": false,
-      "sort_order": 8,
-      "model_id": "julianaval"
-    },
-    {
-      "id": "julianaval_gym",
-      "label": "Julianaval gym",
-      "bottom": "/cards/julianaval_gym/background.mp4",
-      "foreground": "/cards/julianaval_gym/foreground.mp4",
-      "mesh": "julianaval_gym.json",
-      "chroma_key": false,
-      "sort_order": 9,
       "model_id": "julianaval"
     },
     {
@@ -115,8 +21,14 @@
       "bottom": "/cards/asia_gym2/background.mp4",
       "foreground": "/cards/asia_gym2/foreground.mp4",
       "mesh": "asia_gym2.json",
-      "chroma_key": false,
-      "sort_order": 10,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "asian_2",
+      "label": "Julianaval Teacher 3",
+      "bottom": "/cards/asian_2/background.mp4",
+      "foreground": "/cards/asian_2/foreground.mp4",
+      "mesh": "asian_2.json",
       "model_id": "julianaval"
     },
     {
@@ -125,8 +37,46 @@
       "bottom": "/cards/glaucamp_1/background.mp4",
       "foreground": "/cards/glaucamp_1/foreground.mp4",
       "mesh": "glaucamp_1.json",
-      "chroma_key": false,
-      "sort_order": 11,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "ju_gym",
+      "label": "Julianaval Nurse 2",
+      "bottom": "/cards/ju_gym/background.mp4",
+      "foreground": "/cards/ju_gym/foreground.mp4",
+      "mesh": "ju_gym.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "juliana_1",
+      "label": "Julianaval Cop 2",
+      "bottom": "/cards/juliana_1/background.mp4",
+      "foreground": "/cards/juliana_1/foreground.mp4",
+      "mesh": "juliana_1.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "juliana_2",
+      "label": "Julianaval Nurse",
+      "bottom": "/cards/juliana_2/background.mp4",
+      "foreground": "/cards/juliana_2/foreground.mp4",
+      "mesh": "juliana_2.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "juliana_3",
+      "label": "Julianaval Teacher 2",
+      "bottom": "/cards/juliana_3/background.mp4",
+      "foreground": "/cards/juliana_3/foreground.mp4",
+      "mesh": "juliana_3.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_cop",
+      "label": "Julianaval Cop",
+      "bottom": "/cards/julianaval_cop/background.mp4",
+      "foreground": "/cards/julianaval_cop/foreground.mp4",
+      "mesh": "julianaval_cop.json",
       "model_id": "julianaval"
     },
     {
@@ -135,8 +85,30 @@
       "bottom": "/cards/julianaval_firegirl/background.mp4",
       "foreground": "/cards/julianaval_firegirl/foreground.mp4",
       "mesh": "julianaval_firegirl.json",
-      "chroma_key": false,
-      "sort_order": 12,
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_gym",
+      "label": "Julianaval gym",
+      "bottom": "/cards/julianaval_gym/background.mp4",
+      "foreground": "/cards/julianaval_gym/foreground.mp4",
+      "mesh": "julianaval_gym.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "julianaval_teacher",
+      "label": "Julianaval Teacher",
+      "bottom": "/cards/julianaval_teacher/background.mp4",
+      "foreground": "/cards/julianaval_teacher/foreground.mp4",
+      "mesh": "julianaval_teacher.json",
+      "model_id": "julianaval"
+    },
+    {
+      "id": "thai_1",
+      "label": "Julianaval Cop 3",
+      "bottom": "/cards/thai_1/background.mp4",
+      "foreground": "/cards/thai_1/foreground.mp4",
+      "mesh": "thai_1.json",
       "model_id": "julianaval"
     }
   ]
