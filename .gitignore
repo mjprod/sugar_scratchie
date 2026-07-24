@@ -35,6 +35,9 @@ build/
 /vite
 /sugar-scratchie@0.1.0
 
+# Nested frontend repo (own git history: sugar-scratch-merged2)
+frontend/
+
 # Generated ControlNet frames and output
 public/cards/controlnet-frames/
 public/cards/controlnet-output/
