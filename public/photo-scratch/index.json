@@ -847,33 +847,6 @@
       "mesh": "/cards/juliana_1/photo-scratch/slot_01/mesh.json"
     },
     {
-      "id": "juliana_1_slot_03",
-      "label": "Police \u2013 3",
-      "model_id": "julianaval",
-      "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg",
-      "bikini": "/cards/juliana_1/photo-scratch/slot_03/bikini.png",
-      "clothes": "/cards/juliana_1/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_03/mesh.json"
-    },
-    {
-      "id": "juliana_1_slot_04",
-      "label": "Police \u2013 4",
-      "model_id": "julianaval",
-      "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg",
-      "bikini": "/cards/juliana_1/photo-scratch/slot_04/bikini.png",
-      "clothes": "/cards/juliana_1/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_04/mesh.json"
-    },
-    {
-      "id": "juliana_1_slot_05",
-      "label": "Police \u2013 5",
-      "model_id": "julianaval",
-      "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg",
-      "bikini": "/cards/juliana_1/photo-scratch/slot_05/bikini.png",
-      "clothes": "/cards/juliana_1/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_05/mesh.json"
-    },
-    {
       "id": "juliana_1_slot_06",
       "label": "Police \u2013 6",
       "model_id": "julianaval",
@@ -917,15 +890,6 @@
       "bikini": "/cards/juliana_1/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_10/clothes.png",
       "mesh": "/cards/juliana_1/photo-scratch/slot_10/mesh.json"
-    },
-    {
-      "id": "juliana_1_slot_02",
-      "label": "Police \u2013 2",
-      "model_id": "julianaval",
-      "background": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg",
-      "bikini": "/cards/juliana_1/photo-scratch/slot_02/bikini.png",
-      "clothes": "/cards/juliana_1/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_02/mesh.json"
     },
     {
       "id": "julianaval_cop_slot_01",
@@ -1016,6 +980,42 @@
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_10/clothes.png",
       "mesh": "/cards/julianaval_cop/photo-scratch/slot_10/mesh.json"
+    },
+    {
+      "id": "juliana_1_slot_02",
+      "label": "Police \u2013 2",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg",
+      "bikini": "/cards/juliana_1/photo-scratch/slot_02/bikini.png",
+      "clothes": "/cards/juliana_1/photo-scratch/slot_02/clothes.png",
+      "mesh": "/cards/juliana_1/photo-scratch/slot_02/mesh.json"
+    },
+    {
+      "id": "juliana_1_slot_03",
+      "label": "Police \u2013 3",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg",
+      "bikini": "/cards/juliana_1/photo-scratch/slot_03/bikini.png",
+      "clothes": "/cards/juliana_1/photo-scratch/slot_03/clothes.png",
+      "mesh": "/cards/juliana_1/photo-scratch/slot_03/mesh.json"
+    },
+    {
+      "id": "juliana_1_slot_04",
+      "label": "Police \u2013 4",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg",
+      "bikini": "/cards/juliana_1/photo-scratch/slot_04/bikini.png",
+      "clothes": "/cards/juliana_1/photo-scratch/slot_04/clothes.png",
+      "mesh": "/cards/juliana_1/photo-scratch/slot_04/mesh.json"
+    },
+    {
+      "id": "juliana_1_slot_05",
+      "label": "Police \u2013 5",
+      "model_id": "julianaval",
+      "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg",
+      "bikini": "/cards/juliana_1/photo-scratch/slot_05/bikini.png",
+      "clothes": "/cards/juliana_1/photo-scratch/slot_05/clothes.png",
+      "mesh": "/cards/juliana_1/photo-scratch/slot_05/mesh.json"
     }
   ]
 }

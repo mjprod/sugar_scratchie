@@ -3037,6 +3037,12 @@ dd {
   display: block;
 }
 
+.game-hub-card-media--poster {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 200, 140, 0.2), transparent 50%),
+    #1a1410;
+}
+
 .game-hub-card-info {
   display: grid;
   gap: 6px;

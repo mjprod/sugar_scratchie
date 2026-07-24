@@ -1068,6 +1068,10 @@ export function PhotoScratchTest() {
     const fgCanvas = fgCanvasRef.current;
     if (!fgCanvas || !ready) return;
 
+    // Drop any prior renderer on this canvas before creating a new one.
+    fgRendererRef.current?.dispose({ loseContext: false });
+    fgRendererRef.current = null;
+
     let fgRenderer: GarmentGLRenderer;
     try {
       const pixelRatio = Math.min(
@@ -1266,6 +1270,8 @@ export function PhotoScratchTest() {
 
     return () => {
       cancelAnimationFrame(frameId);
+      // Same canvas may remount a renderer when showMesh toggles — don't loseContext.
+      fgRendererRef.current?.dispose({ loseContext: false });
       fgRendererRef.current = null;
     };
   }, [ready, showMesh]);

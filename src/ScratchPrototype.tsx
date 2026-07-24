@@ -1,6 +1,7 @@
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { fetchModels, type ModelInfo } from "./shared/models";
+import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
@@ -1070,6 +1071,9 @@ export function ScratchPrototype() {
   const [topBarRound, setTopBarRound] = useState(0);
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
+  const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
+  );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(18.8);
   const [isPaused, setIsPaused] = useState(false);
@@ -1388,7 +1392,11 @@ export function ScratchPrototype() {
     animationId = requestAnimationFrame(render);
     return () => {
       cancelAnimationFrame(animationId);
+      // Dispose only when the stage goes away — never mid-card.
+      glRendererRef.current?.dispose();
       glRendererRef.current = null;
+      releaseMediaElement(bottomVideoRef.current);
+      releaseMediaElement(foregroundVideoRef.current);
     };
     // Re-init when the player stage mounts after the girl picker (canvas is absent until then).
   }, [showModelPicker]);
@@ -1586,6 +1594,7 @@ export function ScratchPrototype() {
     setProgress(0);
     setClaimed(false);
     setRevealedSymbols(0);
+    setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setFlyingCoins([]);
     setGameResult(null);
     setAutoScratch((current) => ({ ...current, enabled: false }));
@@ -1643,14 +1652,12 @@ export function ScratchPrototype() {
     const foregroundVideo = foregroundVideoRef.current;
     if (!bottomVideo || !foregroundVideo || !card) return;
 
-    // New card always starts playing — don't inherit a paused flag from the
-    // previous clip (canplay often fires while the new src is still paused).
+    let cancelled = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
-    bottomVideo.currentTime = 0;
-    foregroundVideo.currentTime = 0;
 
     const kickPlayback = () => {
+      if (cancelled) return;
       // Wait until BOTH videos have at least HAVE_CURRENT_DATA so their first
       // decoded frame is ready. Firing play() on one while the other is still
       // buffering creates a startup offset that the soft-seek must then chase.
@@ -1662,24 +1669,41 @@ export function ScratchPrototype() {
         isPaused: false,
       };
       setDuration(nextDuration);
-      // Start both in the same microtask so the browser schedules their decode
-      // pipelines as close together as possible.
       void Promise.all([
         bottomVideo.play(),
         foregroundVideo.play(),
       ]).catch(() => undefined);
     };
 
-    bottomVideo.addEventListener("canplay", kickPlayback);
-    foregroundVideo.addEventListener("canplay", kickPlayback);
-    // Fire immediately if both are already ready (e.g. cached from a prior card).
-    kickPlayback();
+    // Reuse the same two <video> elements and swap src (no React key remount).
+    // Safari releases the previous decoder only when we unload before load.
+    void (async () => {
+      try {
+        await Promise.all([
+          loadVideoSrc(bottomVideo, card.bottom),
+          loadVideoSrc(foregroundVideo, card.foreground),
+        ]);
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      bottomVideo.addEventListener("canplay", kickPlayback);
+      foregroundVideo.addEventListener("canplay", kickPlayback);
+      kickPlayback();
+    })();
 
     return () => {
+      cancelled = true;
       bottomVideo.removeEventListener("canplay", kickPlayback);
       foregroundVideo.removeEventListener("canplay", kickPlayback);
+      try {
+        bottomVideo.pause();
+        foregroundVideo.pause();
+      } catch {
+        // ignore
+      }
     };
-  }, [card?.id]);
+  }, [card?.id, card?.bottom, card?.foreground]);
 
   // Mobile browsers (notably iOS Safari) will suspend a second, simultaneously
   // playing <video> after a few seconds to save power — which here drops the
@@ -2106,6 +2130,7 @@ export function ScratchPrototype() {
         const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
+        setBodyRevealed(revealedPointsRef.current.slice());
         playNewSymbolNotes(
           symbolAudioRef.current,
           prevCount,
@@ -2568,9 +2593,11 @@ export function ScratchPrototype() {
                   className="body-symbol-marker"
                   style={{ display: "none" }}
                 >
-                  <span className="body-symbol-icon">
-                    <GameSymbolIcon typeId={typeId} size={42} />
-                  </span>
+                  {bodyRevealed[index] ? (
+                    <span className="body-symbol-icon">
+                      <GameSymbolIcon typeId={typeId} size={42} />
+                    </span>
+                  ) : null}
                 </div>
               ))
             : null}
@@ -2599,26 +2626,20 @@ export function ScratchPrototype() {
           ))
             : null}
           <video
-            key={`bottom-${card.id}`}
             ref={bottomVideoRef}
             className="source-video"
-            autoPlay
             muted
             loop
             playsInline
             preload="auto"
-            src={card.bottom}
           />
           <video
-            key={`foreground-${card.id}`}
             ref={foregroundVideoRef}
             className="source-video"
-            autoPlay
             muted
             loop
             playsInline
             preload="auto"
-            src={card.foreground}
           />
           <canvas
             ref={canvasRef}

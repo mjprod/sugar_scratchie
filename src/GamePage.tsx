@@ -15,6 +15,7 @@ import {
   type PhotoCard,
   type ThemedMotionCard,
 } from "./game/session";
+import { releaseMediaElement } from "./shared/media";
 
 type Phase =
   | "loading"
@@ -44,15 +45,38 @@ function themeAccent(theme: string): string {
 }
 
 function MotionPreview({ card }: { card: ThemedMotionCard }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.src = card.bottom;
+    video.load();
+    const play = () => {
+      void video.play().catch(() => undefined);
+    };
+    video.addEventListener("loadeddata", play);
+    // Safari often suspends background <video>s in a row of five — nudge them.
+    const keepAlive = window.setInterval(() => {
+      if (video.paused) play();
+    }, 1200);
+    if (video.readyState >= 2) play();
+    return () => {
+      video.removeEventListener("loadeddata", play);
+      window.clearInterval(keepAlive);
+      releaseMediaElement(video);
+    };
+  }, [card.bottom, card.id]);
+
   return (
     <video
+      ref={videoRef}
       className="game-hub-card-media"
-      src={card.bottom}
       muted
       playsInline
       loop
       autoPlay
-      preload="metadata"
+      preload="auto"
     />
   );
 }
