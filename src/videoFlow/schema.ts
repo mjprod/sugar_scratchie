@@ -354,7 +354,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     dress_reference_image: "",
     resolution: "720p",
     tracker: "blend",
-    write_webm: true,
+    write_webm: false,
     compress_preset: "mobile",
     enhance_dress_prompt: true,
   },

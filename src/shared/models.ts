@@ -93,7 +93,7 @@ export async function createMotionCardDraft(
       resolution: "720p",
       enhance_dress_prompt: true,
       tracker: "all",
-      write_webm: true,
+      write_webm: false,
       compress_preset: "mobile",
       source_mode: "upload",
       source_prompt: "",

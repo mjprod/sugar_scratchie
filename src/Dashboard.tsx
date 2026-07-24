@@ -651,7 +651,7 @@ function VideoManagerPanel({
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [compressWebm, setCompressWebm] = useState(true);
+  const [compressWebm, setCompressWebm] = useState(false);
 
   const editingCard = useMemo(
     () => cards.find((card) => card.id === editingCardId) ?? cards[0],
