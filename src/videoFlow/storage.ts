@@ -25,14 +25,16 @@ export type DressVideoModel = "grok-imagine" | "wan-2.2-video-edit";
 
 export const DEFAULT_SOURCE_IMAGE_PROVIDER: AiProvider = "wavespeed";
 export const DEFAULT_SOURCE_IMAGE_MODEL: SourceImageModel = "seedream-v5-lite";
-export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "grok-imagine";
+export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "wan-2.2-video-edit";
 
 export function parseBackgroundVideoModel(value: unknown): BackgroundVideoModel {
   return value === "wan-2.2-spicy" ? "wan-2.2-spicy" : "grok-imagine";
 }
 
 export function parseDressVideoModel(value: unknown): DressVideoModel {
-  return value === "wan-2.2-video-edit" ? "wan-2.2-video-edit" : "grok-imagine";
+  if (value === "grok-imagine") return "grok-imagine";
+  if (value === "wan-2.2-video-edit") return "wan-2.2-video-edit";
+  return DEFAULT_DRESS_VIDEO_MODEL;
 }
 
 export function wavespeedPipelineModelValue(

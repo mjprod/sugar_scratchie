@@ -240,7 +240,7 @@ class VideoFlowRequest(BaseModel):
     provider: AiProvider = "xai"
     image_model: SourceImageModel = "grok-imagine"
     background_video_model: BackgroundVideoModel = "grok-imagine"
-    dress_video_model: DressVideoModel = "grok-imagine"
+    dress_video_model: DressVideoModel = "wan-2.2-video-edit"
 
 
 class GenerateSourceImageRequest(BaseModel):

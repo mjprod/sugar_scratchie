@@ -39,9 +39,9 @@ def normalize_background_video_model(model: str | None) -> BackgroundVideoModel:
 
 
 def normalize_dress_video_model(model: str | None) -> DressVideoModel:
-    if model in ("wan-2.2-video-edit", "wan-2.2/video-edit"):
-        return "wan-2.2-video-edit"
-    return "grok-imagine"
+    if model in ("grok-imagine", "grok-imagine-video"):
+        return "grok-imagine"
+    return "wan-2.2-video-edit"
 
 
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
@@ -352,7 +352,7 @@ def edit_video(
     enhance_system: str = grok.DRESS_ENHANCE_SYSTEM,
     reference_image: str | Path | None = None,
     reference_field: str = "image",
-    dress_video_model: DressVideoModel = "grok-imagine",
+    dress_video_model: DressVideoModel = "wan-2.2-video-edit",
 ) -> None:
     if dress_video_model == "wan-2.2-video-edit":
         final_prompt = prompt
