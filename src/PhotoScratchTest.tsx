@@ -8,6 +8,15 @@ import {
 } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
+  beginPhotoPhase,
+  finishPhotoHand,
+  isGameModeUrl,
+  loadGameSession,
+  navigateTo,
+  recordPhotoCardResult,
+  type GameSession,
+} from "./game/gameSession";
+import {
   buildBodySymbols,
   buildTopSymbols,
   matchResultDetail,
@@ -158,6 +167,19 @@ function playlistForParent(
     .sort((a, b) =>
       a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }),
     );
+}
+
+function playlistForGameSession(
+  cards: PhotoScratchCardEntry[],
+  session: GameSession,
+): PhotoScratchCardEntry[] {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const ordered: PhotoScratchCardEntry[] = [];
+  for (const id of session.wonPhotoIds) {
+    const card = byId.get(id);
+    if (card) ordered.push(card);
+  }
+  return ordered;
 }
 
 function loadSoundEnabled(): boolean {
@@ -877,6 +899,44 @@ export function PhotoScratchTest() {
   async function loadAssetsFromSample() {
     revokeObjectUrls();
     const cardId = readCardIdFromLocation();
+
+    if (isGameModeUrl()) {
+      const existing = loadGameSession();
+      if (
+        existing &&
+        (existing.phase === "photo_reveal" || existing.phase === "photo") &&
+        existing.wonPhotoIds.length > 0
+      ) {
+        const session = beginPhotoPhase() ?? existing;
+        const index = await fetchPhotoScratchIndex();
+        const hand = playlistForGameSession(index, session);
+        setPlaylist(hand);
+        setCompletedCardIds(session.completedPhotoIds);
+        completedCardIdsRef.current = session.completedPhotoIds;
+        const remaining = hand.filter(
+          (entry) => !session.completedPhotoIds.includes(entry.id),
+        );
+        const start =
+          (cardId && remaining.find((entry) => entry.id === cardId)) ||
+          remaining[0] ||
+          hand[0];
+        if (!start) {
+          setLoadError("No won photocards left to play.");
+          setReady(false);
+          return;
+        }
+        setSelectedCardId(start.id);
+        const url = new URL(window.location.href);
+        url.searchParams.set("card", start.id);
+        url.searchParams.set("game", "1");
+        window.history.replaceState({}, "", url.toString());
+        const assets = await loadCardAssets(start.id);
+        setUsingSample(false);
+        await applyLoadedAssets(assets);
+        return;
+      }
+    }
+
     if (!cardId) {
       const assets = await loadSampleAssets();
       setPlaylist([]);
@@ -1443,6 +1503,18 @@ export function PhotoScratchTest() {
       resetScratches();
       return;
     }
+
+    const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
+    let diamonds = 0;
+    if (matchOutcome) {
+      diamonds = matchOutcome.prize;
+    } else if (gameResult === "win") {
+      diamonds = 1;
+    }
+    if (inGame) {
+      recordPhotoCardResult(finishedId, diamonds);
+    }
+
     if (!completedCardIdsRef.current.includes(finishedId)) {
       const nextCompleted = [...completedCardIdsRef.current, finishedId];
       completedCardIdsRef.current = nextCompleted;
@@ -1457,11 +1529,16 @@ export function PhotoScratchTest() {
     setClaimed(false);
     if (!nextCard) {
       setSelectedCardId("");
+      if (inGame) {
+        finishPhotoHand();
+        navigateTo("/game");
+      }
       return;
     }
     setSelectedCardId(nextCard.id);
     const url = new URL(window.location.href);
     url.searchParams.set("card", nextCard.id);
+    if (inGame) url.searchParams.set("game", "1");
     window.history.replaceState({}, "", url.toString());
     void loadCardAssets(nextCard.id)
       .then((assets) => {
@@ -1595,12 +1672,21 @@ export function PhotoScratchTest() {
       <section className="prototype photo-scratch-prototype">
         <aside className="panel photo-scratch-panel">
           <header className="photo-scratch-header">
-            <h1>Photo scratch test</h1>
+            <h1>
+              {isGameModeUrl() ? "GAME · photo scratches" : "Photo scratch test"}
+            </h1>
             <p>
               {playlist.length > 0
-                ? `${activePlaylistLabel} · ${remainingCards.length}/${playlist.length} left`
+                ? `${activePlaylistLabel} · ${remainingCards.length}/${playlist.length} left${
+                    isGameModeUrl() ? " · win diamonds" : ""
+                  }`
                 : "Upload pictures, scratch the clothes layer, and drag or tilt to move the scene."}
             </p>
+            {isGameModeUrl() ? (
+              <p>
+                <a href="/game">Back to Game</a>
+              </p>
+            ) : null}
           </header>
 
           <section className="photo-scratch-flow" aria-label="Scratch flow">
@@ -1827,6 +1913,12 @@ export function PhotoScratchTest() {
           </section>
 
           <div className="photo-scratch-controls">
+            {isGameModeUrl() ? (
+              <a href="/game">
+                GAME {completedCardIds.length + (selectedCardId ? 1 : 0)}/
+                {playlist.length || "?"} · diamonds
+              </a>
+            ) : null}
             {parallax.showEnableButton ? (
               <button
                 type="button"
@@ -2043,7 +2135,11 @@ export function PhotoScratchTest() {
                 className="game-result-button"
                 onClick={() => advanceAfterScratchRef.current()}
               >
-                {remainingCards.length > 1 ? "Next card" : "Done"}
+                {remainingCards.length > 1
+                  ? "Next card"
+                  : isGameModeUrl()
+                    ? "See diamonds"
+                    : "Done"}
               </button>
             </div>
           ) : null}

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Theme } from "@radix-ui/themes";
 import { Dashboard } from "./Dashboard";
+import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
@@ -25,6 +26,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
+  if (path === "/game") return GamePage;
   return ScratchPrototype;
 }
 

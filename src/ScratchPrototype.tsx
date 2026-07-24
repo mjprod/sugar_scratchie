@@ -12,6 +12,14 @@ import {
   SYMBOL_TYPE_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
+import {
+  finishMotionHand,
+  isGameModeUrl,
+  loadGameSession,
+  navigateTo,
+  recordMotionCardResult,
+  type GameSession,
+} from "./game/gameSession";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -297,6 +305,19 @@ function playlistCardsForModel(cards: Card[], modelId: string): Card[] {
       if (orderA !== orderB) return orderA - orderB;
       return a.id.localeCompare(b.id);
     });
+}
+
+function playlistCardsForGameSession(
+  cards: Card[],
+  session: GameSession,
+): Card[] {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const ordered: Card[] = [];
+  for (const id of session.motionCardIds) {
+    const card = byId.get(id);
+    if (card) ordered.push(card);
+  }
+  return ordered;
 }
 
 async function loadCards(): Promise<Card[]> {
@@ -985,11 +1006,19 @@ export function ScratchPrototype() {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("card")?.trim() || "";
   });
-  const modelCards = useMemo(
-    () => (activeModelId ? playlistCardsForModel(cards, activeModelId) : []),
-    [cards, activeModelId],
+  const [gameSession, setGameSession] = useState<GameSession | null>(() => {
+    if (typeof window === "undefined" || !isGameModeUrl()) return null;
+    const session = loadGameSession();
+    return session?.phase === "motion" ? session : null;
+  });
+  const gameMode = Boolean(gameSession);
+  const modelCards = useMemo(() => {
+    if (gameSession) return playlistCardsForGameSession(cards, gameSession);
+    return activeModelId ? playlistCardsForModel(cards, activeModelId) : [];
+  }, [activeModelId, cards, gameSession]);
+  const [completedCardIds, setCompletedCardIds] = useState<string[]>(() =>
+    gameSession?.completedMotionIds ?? [],
   );
-  const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
   const completedCardIdsRef = useRef<string[]>([]);
   completedCardIdsRef.current = completedCardIds;
   const remainingCards = useMemo(
@@ -997,18 +1026,24 @@ export function ScratchPrototype() {
     [modelCards, completedCardIds],
   );
   const activeModel = models.find((entry) => entry.id === activeModelId) ?? null;
-  // Never fall back to another girl's card — only play cards owned by the active model.
+  // Never fall back to another girl's card — only play cards owned by the active model
+  // (or the curated game-session hand).
   const card = useMemo(() => {
-    if (!activeModelId || modelCards.length === 0) return null;
+    if (modelCards.length === 0) return null;
+    if (!gameMode && !activeModelId) return null;
     return (
       remainingCards.find((entry) => entry.id === selectedCardId) ??
       remainingCards[0] ??
       null
     );
-  }, [activeModelId, modelCards.length, remainingCards, selectedCardId]);
-  const showModelPicker = !cardsReady || !activeModelId || modelCards.length === 0;
+  }, [activeModelId, gameMode, modelCards.length, remainingCards, selectedCardId]);
+  const showModelPicker =
+    !cardsReady ||
+    (!gameMode && (!activeModelId || modelCards.length === 0));
   const playlistFinished =
-    Boolean(activeModelId) && modelCards.length > 0 && remainingCards.length === 0;
+    (gameMode || Boolean(activeModelId)) &&
+    modelCards.length > 0 &&
+    remainingCards.length === 0;
   const chromaKeyRef = useRef(card?.chromaKey ?? false);
   chromaKeyRef.current = card?.chromaKey ?? false;
   const advanceAfterScratchRef = useRef<() => void>(() => undefined);
@@ -1374,6 +1409,36 @@ export function ScratchPrototype() {
           // Card wins over a stale ?model= so Shine never opens Brazilian.
           if (cardModel) modelFromUrl = cardModel;
         }
+
+        if (isGameModeUrl()) {
+          const session = loadGameSession();
+          if (session?.phase === "motion") {
+            setGameSession(session);
+            setCompletedCardIds(session.completedMotionIds);
+            completedCardIdsRef.current = session.completedMotionIds;
+            const ordered = playlistCardsForGameSession(loaded, session);
+            const modelId =
+              modelFromUrl ||
+              session.modelId ||
+              ordered[0]?.model_id?.trim() ||
+              "";
+            setActiveModelId(modelId);
+            if (ordered.length === 0) {
+              setSelectedCardId("");
+              return;
+            }
+            const remaining = ordered.filter(
+              (entry) => !session.completedMotionIds.includes(entry.id),
+            );
+            const startId =
+              fromUrl && remaining.some((entry) => entry.id === fromUrl)
+                ? fromUrl
+                : remaining[0]?.id ?? ordered[0]!.id;
+            setSelectedCardId(startId);
+            return;
+          }
+        }
+
         if (!modelFromUrl) {
           setActiveModelId("");
           setSelectedCardId("");
@@ -1407,18 +1472,22 @@ export function ScratchPrototype() {
     } else {
       url.searchParams.delete("card");
     }
+    if (gameMode) url.searchParams.set("game", "1");
+    else url.searchParams.delete("game");
     url.searchParams.delete("playlist");
     const next = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ""}`;
     window.history.replaceState(null, "", next);
-  }, [activeModelId, cardsReady, modelCards, selectedCardId]);
+  }, [activeModelId, cardsReady, gameMode, modelCards, selectedCardId]);
 
   useEffect(() => {
+    if (gameMode) return;
     setCompletedCardIds([]);
     completedCardIdsRef.current = [];
-  }, [activeModelId]);
+  }, [activeModelId, gameMode]);
 
   useEffect(() => {
-    if (!cardsReady || !activeModelId) return;
+    if (!cardsReady) return;
+    if (!gameMode && !activeModelId) return;
     if (modelCards.length === 0) {
       if (selectedCardId) setSelectedCardId("");
       return;
@@ -1433,6 +1502,7 @@ export function ScratchPrototype() {
     activeModelId,
     cardsReady,
     completedCardIds,
+    gameMode,
     modelCards,
     remainingCards,
     selectedCardId,
@@ -1759,6 +1829,19 @@ export function ScratchPrototype() {
   function advanceAfterScratch() {
     const finishedId = selectedCardId;
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
+
+    let prize = 0;
+    if (matchOutcome) {
+      prize = matchOutcome.prize;
+    } else if (gameResult === "win") {
+      prize = 1;
+    }
+
+    if (gameMode) {
+      const updated = recordMotionCardResult(finishedId, prize);
+      if (updated) setGameSession(updated);
+    }
+
     const nextCompleted = [...completedCardIdsRef.current, finishedId];
     completedCardIdsRef.current = nextCompleted;
     setCompletedCardIds(nextCompleted);
@@ -1773,6 +1856,12 @@ export function ScratchPrototype() {
       return;
     }
     setSelectedCardId("");
+    if (gameMode) {
+      void finishMotionHand().then((finished) => {
+        if (finished) setGameSession(finished);
+        navigateTo("/game");
+      });
+    }
   }
   advanceAfterScratchRef.current = advanceAfterScratch;
 
@@ -2371,6 +2460,7 @@ export function ScratchPrototype() {
             </p>
           ) : null}
           <div className="home-picker-links">
+            <a href="/game">Game</a>
             <a href="/dashboard/models">Models</a>
             <a href="/dashboard">Dashboard</a>
           </div>
@@ -2600,6 +2690,12 @@ export function ScratchPrototype() {
               )}
             </button>
           </div>
+          {gameMode ? (
+            <a className="mobile-game-badge" href="/game">
+              GAME {completedCardIds.length + (card ? 1 : 0)}/{modelCards.length}
+              {gameSession ? ` · ${gameSession.photoPrizeTotal} photos` : ""}
+            </a>
+          ) : null}
           {/* Phones hide the dev panel, so surface compact controls on the stage
               itself. Hidden on desktop where the panel is used. */}
           <div className="mobile-controls-wrap">
@@ -2633,6 +2729,11 @@ export function ScratchPrototype() {
             </button>
             {mobileControlsOpen && (
               <div className="mobile-controls">
+                {gameMode ? (
+                  <a className="mobile-reset mobile-game-link" href="/game">
+                    Game
+                  </a>
+                ) : null}
                 <label className="mobile-card-switch">
                   <span className="visually-hidden">Card</span>
                   <select
@@ -2756,35 +2857,52 @@ export function ScratchPrototype() {
                 className="game-result-button"
                 onClick={() => advanceAfterScratchRef.current()}
               >
-                {remainingCards.length > 1 ? "Next card" : "Done"}
+                {remainingCards.length > 1
+                  ? "Next card"
+                  : gameMode
+                    ? "Claim photo scratches"
+                    : "Done"}
               </button>
             </div>
           ) : null}
         </div>
         <aside className="panel">
           <div>
-            <p className="eyebrow">{activeModel?.label ?? "Sugar Scratchie"}</p>
+            <p className="eyebrow">
+              {gameMode
+                ? "GAME · motion hand"
+                : (activeModel?.label ?? "Sugar Scratchie")}
+            </p>
             <h1>{card.label}</h1>
             <p className="eyebrow">
               Left {remainingCards.length}/{modelCards.length}
               {completedCardIds.length > 0
                 ? ` · scratched ${completedCardIds.length}`
                 : ""}
+              {gameMode && gameSession
+                ? ` · photos banked ${gameSession.photoPrizeTotal}`
+                : ""}
             </p>
           </div>
           <div className="button-row">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setActiveModelId("");
-                setSelectedCardId("");
-                setCompletedCardIds([]);
-                completedCardIdsRef.current = [];
-              }}
-            >
-              Girls
-            </button>
+            {gameMode ? (
+              <a className="secondary-button" href="/game">
+                Game
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setActiveModelId("");
+                  setSelectedCardId("");
+                  setCompletedCardIds([]);
+                  completedCardIdsRef.current = [];
+                }}
+              >
+                Girls
+              </button>
+            )}
             <a className="secondary-button" href="/dashboard/models">
               Models
             </a>
