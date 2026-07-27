@@ -73,6 +73,7 @@ const MANUAL_SCRATCH_PATH_STEP = SCRATCH_RADIUS * 0.65 * CANVAS_HEIGHT;
 const MANUAL_SCRATCH_MAX_POINTS = 40;
 const AUTO_SCRATCH_STORAGE_KEY = "sugar-scratchie:auto-scratch";
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
+const COIN_SOUND_SRC = "/sounds/coin.wav";
 const AUTO_SCRATCH_RADIUS = 0.092;
 const AUTO_SCRATCH_DIAGONAL_LINES = 18;
 const AUTO_SCRATCH_PATH_STEP_UV = AUTO_SCRATCH_RADIUS * 0.72;
@@ -200,6 +201,9 @@ const AUTO_SCRATCH_DEFAULTS: AutoScratchSettings = {
 
 type SymbolAudioState = {
   ctx: AudioContext | null;
+  coinBuffer: AudioBuffer | null;
+  coinBufferLoading: boolean;
+  coinBufferFailed: boolean;
 };
 
 type GameResult = "win" | "lose";
@@ -298,6 +302,64 @@ function ensureSymbolAudio(state: SymbolAudioState) {
   return state.ctx;
 }
 
+function ensureCoinBuffer(state: SymbolAudioState) {
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx || state.coinBuffer || state.coinBufferLoading || state.coinBufferFailed) {
+    return;
+  }
+  state.coinBufferLoading = true;
+  void fetch(COIN_SOUND_SRC)
+    .then((response) => {
+      if (!response.ok) throw new Error(`coin sound HTTP ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then((data) => ctx.decodeAudioData(data.slice(0)))
+    .then((buffer) => {
+      state.coinBuffer = buffer;
+      state.coinBufferFailed = false;
+    })
+    .catch(() => {
+      state.coinBufferFailed = true;
+    })
+    .finally(() => {
+      state.coinBufferLoading = false;
+    });
+}
+
+function playCoinSample(
+  ctx: AudioContext,
+  buffer: AudioBuffer,
+  when: number,
+  playbackRate: number,
+  volume: number,
+) {
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  source.buffer = buffer;
+  source.playbackRate.value = playbackRate;
+  gain.gain.value = volume;
+  source.connect(gain);
+  gain.connect(ctx.destination);
+  const startAt = Math.max(when, ctx.currentTime);
+  source.start(startAt);
+  source.stop(startAt + buffer.duration / playbackRate + 0.02);
+}
+
+function playCoinWavFile(delayMs: number, playbackRate: number, volume: number) {
+  if (typeof window === "undefined") return;
+  const audio = new Audio(COIN_SOUND_SRC);
+  audio.preload = "auto";
+  audio.playbackRate = Math.min(2, Math.max(0.5, playbackRate));
+  audio.volume = Math.min(1, Math.max(0, volume));
+  const start = () => {
+    void audio.play().catch(() => {
+      // Autoplay / gesture restrictions — ignore.
+    });
+  };
+  if (delayMs <= 0) start();
+  else window.setTimeout(start, delayMs);
+}
+
 function symbolSlotFrequency(slotIndex: number) {
   return SYMBOL_NOTE_BASE_HZ * 2 ** (slotIndex / SYMBOL_POINT_COUNT);
 }
@@ -338,22 +400,29 @@ function playProgressFallCoinSound(
   enabled: boolean,
 ) {
   if (!enabled) return;
-  const ctx = ensureSymbolAudio(state);
-  if (!ctx) return;
+  ensureSymbolAudio(state);
+  ensureCoinBuffer(state);
 
-  const now = ctx.currentTime;
-  // Bright metallic “ching” — higher pitch per milestone so 10%→100% climbs.
-  const baseHz = 980 + milestone * 55;
+  const rateBase = 0.98 + milestone * 0.02;
 
   for (let i = 0; i < coins.length; i += 1) {
     const coin = coins[i];
-    const startAt = now + coin.delayMs / 1000;
-    const pitch = baseHz * (0.92 + (i % 4) * 0.05);
+    const rate = rateBase * (0.97 + (i % 4) * 0.02);
+    const volume = 0.55;
+    const ctx = state.ctx;
+    const buffer = state.coinBuffer;
 
-    scheduleTone(ctx, startAt, pitch, 0.11, 0.28, "square");
-    scheduleTone(ctx, startAt, pitch * 1.5, 0.14, 0.18, "sine");
-    scheduleTone(ctx, startAt + 0.01, pitch * 2.2, 0.09, 0.12, "triangle");
-    scheduleTone(ctx, startAt + 0.03, pitch * 3.1, 0.12, 0.07, "sine");
+    if (buffer && ctx) {
+      playCoinSample(
+        ctx,
+        buffer,
+        ctx.currentTime + coin.delayMs / 1000,
+        rate,
+        volume,
+      );
+    } else {
+      playCoinWavFile(coin.delayMs, rate, volume);
+    }
   }
 }
 
@@ -814,7 +883,12 @@ export function PhotoScratchTest() {
   const autoPathIndexRef = useRef(0);
   const autoPathProgressRef = useRef(0);
   const lastFrameTimeRef = useRef(0);
-  const symbolAudioRef = useRef<SymbolAudioState>({ ctx: null });
+  const symbolAudioRef = useRef<SymbolAudioState>({
+    ctx: null,
+    coinBuffer: null,
+    coinBufferLoading: false,
+    coinBufferFailed: false,
+  });
   const claimedRef = useRef(false);
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1604,7 +1678,10 @@ export function PhotoScratchTest() {
   }
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      ensureCoinBuffer(symbolAudioRef.current);
+    }
     setSoundEnabled(enabled);
   }
 
@@ -1824,7 +1901,10 @@ export function PhotoScratchTest() {
   }
 
   function onPointerDown(clientX: number, clientY: number) {
-    if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
+    if (soundEnabledRef.current) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      ensureCoinBuffer(symbolAudioRef.current);
+    }
     if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
       return;
     }

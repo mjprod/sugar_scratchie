@@ -415,6 +415,7 @@ const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
 const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom";
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
+const COIN_SOUND_SRC = "/sounds/coin.wav";
 // Slightly larger than the manual brush so a scratch that covers the mark counts.
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 
@@ -473,6 +474,9 @@ const SYMBOL_NOTE_DURATION_S = 0.32;
 
 type SymbolAudioState = {
   ctx: AudioContext | null;
+  coinBuffer: AudioBuffer | null;
+  coinBufferLoading: boolean;
+  coinBufferFailed: boolean;
 };
 
 function ensureSymbolAudio(state: SymbolAudioState) {
@@ -487,6 +491,66 @@ function ensureSymbolAudio(state: SymbolAudioState) {
   }
   if (state.ctx.state === "suspended") void state.ctx.resume();
   return state.ctx;
+}
+
+function ensureCoinBuffer(state: SymbolAudioState) {
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx || state.coinBuffer || state.coinBufferLoading || state.coinBufferFailed) {
+    return;
+  }
+  state.coinBufferLoading = true;
+  void fetch(COIN_SOUND_SRC)
+    .then((response) => {
+      if (!response.ok) throw new Error(`coin sound HTTP ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then((data) => ctx.decodeAudioData(data.slice(0)))
+    .then((buffer) => {
+      state.coinBuffer = buffer;
+      state.coinBufferFailed = false;
+    })
+    .catch(() => {
+      state.coinBufferFailed = true;
+    })
+    .finally(() => {
+      state.coinBufferLoading = false;
+    });
+}
+
+function playCoinSample(
+  ctx: AudioContext,
+  buffer: AudioBuffer,
+  when: number,
+  playbackRate: number,
+  volume: number,
+) {
+  const source = ctx.createBufferSource();
+  const gain = ctx.createGain();
+  source.buffer = buffer;
+  source.playbackRate.value = playbackRate;
+  // Play the file as-is — no extra fade that changes the character.
+  gain.gain.value = volume;
+  source.connect(gain);
+  gain.connect(ctx.destination);
+  const startAt = Math.max(when, ctx.currentTime);
+  source.start(startAt);
+  source.stop(startAt + buffer.duration / playbackRate + 0.02);
+}
+
+/** Play the real coin.wav (cloned per hit so overlaps work). */
+function playCoinWavFile(delayMs: number, playbackRate: number, volume: number) {
+  if (typeof window === "undefined") return;
+  const audio = new Audio(COIN_SOUND_SRC);
+  audio.preload = "auto";
+  audio.playbackRate = Math.min(2, Math.max(0.5, playbackRate));
+  audio.volume = Math.min(1, Math.max(0, volume));
+  const start = () => {
+    void audio.play().catch(() => {
+      // Autoplay / gesture restrictions — ignore; next user gesture unlocks audio.
+    });
+  };
+  if (delayMs <= 0) start();
+  else window.setTimeout(start, delayMs);
 }
 
 function symbolSlotFrequency(slotIndex: number) {
@@ -529,24 +593,26 @@ function playProgressFallCoinSound(
   enabled: boolean,
 ) {
   if (!enabled) return;
-  const ctx = ensureSymbolAudio(state);
-  if (!ctx) return;
+  // Unlock AudioContext for other game sounds; preload decoded buffer too.
+  ensureSymbolAudio(state);
+  ensureCoinBuffer(state);
 
-  const now = ctx.currentTime;
-  // Bright metallic “ching” — higher pitch per milestone so 10%→100% climbs.
-  const baseHz = 980 + milestone * 55;
+  // Slight pitch climb per milestone; keep close to the raw coin.wav.
+  const rateBase = 0.98 + milestone * 0.02;
 
   for (let i = 0; i < coins.length; i += 1) {
     const coin = coins[i];
-    const startAt = now + coin.delayMs / 1000;
-    const pitch = baseHz * (0.92 + (i % 4) * 0.05);
+    const rate = rateBase * (0.97 + (i % 4) * 0.02);
+    const volume = 0.55;
+    const ctx = state.ctx;
+    const buffer = state.coinBuffer;
 
-    // Hard attack + short ring (coin hit).
-    scheduleTone(ctx, startAt, pitch, 0.11, 0.28, "square");
-    scheduleTone(ctx, startAt, pitch * 1.5, 0.14, 0.18, "sine");
-    scheduleTone(ctx, startAt + 0.01, pitch * 2.2, 0.09, 0.12, "triangle");
-    // Soft shimmer tail.
-    scheduleTone(ctx, startAt + 0.03, pitch * 3.1, 0.12, 0.07, "sine");
+    if (buffer && ctx) {
+      playCoinSample(ctx, buffer, ctx.currentTime + coin.delayMs / 1000, rate, volume);
+    } else {
+      // Direct file playback — same sound as opening public/sounds/coin.wav.
+      playCoinWavFile(coin.delayMs, rate, volume);
+    }
   }
 }
 
@@ -1219,7 +1285,12 @@ export function ScratchPrototype() {
   >(() => undefined);
   const tryResolveGameRef = useRef<() => void>(() => undefined);
   const resetScratchRef = useRef<() => void>(() => undefined);
-  const symbolAudioRef = useRef<SymbolAudioState>({ ctx: null });
+  const symbolAudioRef = useRef<SymbolAudioState>({
+    ctx: null,
+    coinBuffer: null,
+    coinBufferLoading: false,
+    coinBufferFailed: false,
+  });
   // Phones hide the side panel, so the scratch-zoom config lives behind a gear
   // button that opens this sheet.
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
@@ -1913,7 +1984,10 @@ export function ScratchPrototype() {
   }, [autoScratchLocked, autoScratch.enabled]);
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      ensureCoinBuffer(symbolAudioRef.current);
+    }
     setSoundEnabled(enabled);
   }
 
@@ -2850,8 +2924,10 @@ export function ScratchPrototype() {
             width={CANVAS_WIDTH}
             height={CANVAS_HEIGHT}
             onPointerDown={(event) => {
-              if (soundEnabledRef.current)
+              if (soundEnabledRef.current) {
                 ensureSymbolAudio(symbolAudioRef.current);
+                ensureCoinBuffer(symbolAudioRef.current);
+              }
               const bottomVideo = bottomVideoRef.current;
               const foregroundVideo = foregroundVideoRef.current;
               if (bottomVideo?.paused)

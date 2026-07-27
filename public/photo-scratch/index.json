@@ -910,15 +910,6 @@
       "mesh": "/cards/julianaval_cop/photo-scratch/slot_02/mesh.json"
     },
     {
-      "id": "julianaval_cop_slot_03",
-      "label": "warm beach \u2013 3",
-      "model_id": "julianaval",
-      "background": "/cards/julianaval_cop/photo-scratch/pending/slot_03_background.jpg",
-      "bikini": "/cards/julianaval_cop/photo-scratch/slot_03/bikini.png",
-      "clothes": "/cards/julianaval_cop/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_03/mesh.json"
-    },
-    {
       "id": "julianaval_cop_slot_04",
       "label": "warm beach \u2013 4",
       "model_id": "julianaval",
@@ -1016,6 +1007,15 @@
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_08/clothes.png",
       "mesh": "/cards/julianaval_cop/photo-scratch/slot_08/mesh.json"
+    },
+    {
+      "id": "julianaval_cop_slot_03",
+      "label": "warm beach \u2013 3",
+      "model_id": "julianaval",
+      "background": "/cards/julianaval_cop/photo-scratch/pending/slot_03_background.jpg",
+      "bikini": "/cards/julianaval_cop/photo-scratch/slot_03/bikini.png",
+      "clothes": "/cards/julianaval_cop/photo-scratch/slot_03/clothes.png",
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_03/mesh.json"
     }
   ]
 }
