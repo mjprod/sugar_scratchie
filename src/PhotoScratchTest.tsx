@@ -17,6 +17,7 @@ import {
   type GameSession,
 } from "./game/gameSession";
 import {
+  bodyMatchFlags,
   buildBodySymbols,
   buildTopSymbols,
   matchResultDetail,
@@ -1936,6 +1937,8 @@ export function PhotoScratchTest() {
   const autoScratchLocked =
     hasBodySymbols &&
     (!symbolsHuntComplete || topBarPhase === "center");
+  // Body icons not in the top bar render as black silhouettes (see UNMATCHED_SYMBOL_COLOR).
+  const bodyMatched = bodyMatchFlags(topSymbols, sessionSymbols);
   const remainingCards = playlist.filter(
     (entry) => !completedCardIds.includes(entry.id),
   );
@@ -2364,11 +2367,17 @@ export function PhotoScratchTest() {
                     ref={(el) => {
                       bodyMarkerRefs.current[index] = el;
                     }}
-                    className="body-symbol-marker"
+                    className={`body-symbol-marker${
+                      bodyMatched[index] ? " is-match-hit" : " is-match-miss"
+                    }`}
                     style={{ display: "none" }}
                   >
                     <span className="body-symbol-icon">
-                      <GameSymbolIcon typeId={typeId} size={42} />
+                      <GameSymbolIcon
+                        typeId={typeId}
+                        size={42}
+                        matched={bodyMatched[index]}
+                      />
                     </span>
                   </div>
                 ))

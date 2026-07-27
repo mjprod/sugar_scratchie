@@ -61,6 +61,15 @@ export function countMatches(top: number[], body: number[]): number {
   return matches;
 }
 
+/** True for each body slot whose type appears at least once in the top bar. */
+export function bodyMatchFlags(top: number[], body: number[]): boolean[] {
+  const inTop = new Set<number>();
+  for (const id of top) {
+    if (id >= 0 && id < SYMBOL_TYPE_COUNT) inTop.add(id);
+  }
+  return body.map((id) => inTop.has(id));
+}
+
 export function prizeForMatches(matches: number): number {
   const clamped = Math.max(0, Math.min(TOP_SYMBOL_COUNT, Math.floor(matches)));
   return PRIZE_BY_MATCHES[clamped] ?? 0;

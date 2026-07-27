@@ -5,6 +5,7 @@ import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
+  bodyMatchFlags,
   buildBodySymbols,
   buildTopSymbols,
   matchResultDetail,
@@ -2763,6 +2764,9 @@ export function ScratchPrototype() {
     );
   }
 
+  // Body icons not in the top bar render as black silhouettes (see UNMATCHED_SYMBOL_COLOR).
+  const bodyMatched = bodyMatchFlags(topSymbols, sessionSymbols);
+
   return (
     <main className="app-shell">
       <section className="prototype">
@@ -2828,12 +2832,18 @@ export function ScratchPrototype() {
                   ref={(el) => {
                     bodyMarkerRefs.current[index] = el;
                   }}
-                  className="body-symbol-marker"
+                  className={`body-symbol-marker${
+                    bodyMatched[index] ? " is-match-hit" : " is-match-miss"
+                  }`}
                   style={{ display: "none" }}
                 >
                   {bodyRevealed[index] ? (
                     <span className="body-symbol-icon">
-                      <GameSymbolIcon typeId={typeId} size={42} />
+                      <GameSymbolIcon
+                        typeId={typeId}
+                        size={42}
+                        matched={bodyMatched[index]}
+                      />
                     </span>
                   ) : null}
                 </div>

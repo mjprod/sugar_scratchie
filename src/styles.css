@@ -293,6 +293,27 @@ textarea:focus-visible {
   pointer-events: none;
 }
 
+.game-symbol-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 0;
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
+}
+
+/* Unmatched tint lives on the wrap via UNMATCHED_SYMBOL_COLOR in GameSymbolIcon.tsx */
+.game-symbol-wrap.is-unmatched {
+  z-index: 0;
+}
+
+.game-symbol-wrap.is-matched {
+  z-index: 1;
+}
+
 .symbol-bar.is-symbols-complete:not(.is-fully-revealed) {
   border-color: rgba(255, 217, 120, 0.75);
   box-shadow: 0 0 0 1px rgba(255, 217, 120, 0.35);
@@ -2121,13 +2142,31 @@ dd {
   animation: none;
 }
 
+.body-symbol-marker.is-match-hit .body-symbol-icon {
+  animation: symbolReveal 320ms cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+
+.body-symbol-marker.is-match-miss .body-symbol-icon {
+  animation: symbolRevealMuted 260ms ease-out;
+}
+
 .body-symbol-icon {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   height: 100%;
-  animation: symbolReveal 280ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes symbolRevealMuted {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .models-photo-cards-cell {
