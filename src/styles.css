@@ -439,6 +439,84 @@ textarea:focus-visible {
   }
 }
 
+/* Coin shower from the scratch point when progress crosses each 10%. */
+.ambient-fall {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ambient-fall-coin {
+  position: absolute;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, #fff8d6, #ffd56a 45%, #e89a1c 78%, #b86a0e);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    0 2px 8px rgba(255, 180, 40, 0.45),
+    inset 0 -2px 4px rgba(140, 80, 0, 0.35);
+  will-change: transform, opacity;
+  animation-name: ambientCoinFall;
+  animation-timing-function: cubic-bezier(0.33, 0.02, 0.55, 1);
+  animation-fill-mode: both;
+  transform: translate(-50%, -50%);
+}
+
+.ambient-fall-particle {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6c8 0%, #ffc94a 55%, transparent 75%);
+  box-shadow: 0 0 6px rgba(255, 210, 90, 0.85);
+  will-change: transform, opacity;
+  animation-name: ambientParticleBurst;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes ambientCoinFall {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) translate3d(0, 0, 0) rotate(0deg) scale(0.45);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-50%, -50%)
+      translate3d(calc(var(--ambient-drift) * 0.2), 12px, 0)
+      rotate(calc(var(--ambient-spin) * 0.18)) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%)
+      translate3d(var(--ambient-drift), 72vh, 0)
+      rotate(var(--ambient-spin)) scale(0.8);
+  }
+}
+
+@keyframes ambientParticleBurst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(0.35);
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%)
+      translate3d(var(--ambient-drift), calc(var(--ambient-rise) * -1), 0)
+      scale(0.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-fall {
+    display: none;
+  }
+}
+
 .game-result {
   position: absolute;
   inset: 0;

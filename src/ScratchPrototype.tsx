@@ -182,6 +182,74 @@ type FlyingCoin = {
 
 const COIN_FLIGHT_DURATION_MS = 620;
 const COIN_FLIGHT_STAGGER_MS = 80;
+
+// Coin shower + sparkles when scratch progress crosses each 10% milestone.
+const PROGRESS_FALL_STEP = 0.1;
+const AMBIENT_COINS_PER_BURST = 7;
+const AMBIENT_PARTICLES_PER_BURST = 18;
+const AMBIENT_COIN_FALL_MS = 1800;
+const AMBIENT_PARTICLE_LIFE_MS = 1100;
+
+type AmbientFallCoin = {
+  id: number;
+  originX: number;
+  originY: number;
+  delayMs: number;
+  durationMs: number;
+  sizePx: number;
+  driftPx: number;
+  spinTurns: number;
+};
+
+type AmbientFallParticle = {
+  id: number;
+  originX: number;
+  originY: number;
+  delayMs: number;
+  durationMs: number;
+  sizePx: number;
+  driftPx: number;
+  risePx: number;
+};
+
+type AmbientFallBurst = {
+  id: number;
+  coins: AmbientFallCoin[];
+  particles: AmbientFallParticle[];
+};
+
+function buildAmbientFallBurst(
+  nextId: () => number,
+  origin: Vec2,
+): AmbientFallBurst {
+  const coins: AmbientFallCoin[] = [];
+  for (let i = 0; i < AMBIENT_COINS_PER_BURST; i += 1) {
+    coins.push({
+      id: nextId(),
+      originX: origin.x + (Math.random() - 0.5) * 28,
+      originY: origin.y + (Math.random() - 0.5) * 18,
+      delayMs: Math.floor(Math.random() * 180),
+      durationMs: AMBIENT_COIN_FALL_MS + Math.floor(Math.random() * 500),
+      sizePx: 16 + Math.floor(Math.random() * 12),
+      driftPx: Math.round((Math.random() - 0.5) * 110),
+      spinTurns: 1.1 + Math.random() * 1.8,
+    });
+  }
+  const particles: AmbientFallParticle[] = [];
+  for (let i = 0; i < AMBIENT_PARTICLES_PER_BURST; i += 1) {
+    particles.push({
+      id: nextId(),
+      originX: origin.x + (Math.random() - 0.5) * 36,
+      originY: origin.y + (Math.random() - 0.5) * 28,
+      delayMs: Math.floor(Math.random() * 200),
+      durationMs: AMBIENT_PARTICLE_LIFE_MS + Math.floor(Math.random() * 400),
+      sizePx: 3 + Math.floor(Math.random() * 5),
+      driftPx: Math.round((Math.random() - 0.5) * 100),
+      risePx: 30 + Math.floor(Math.random() * 90),
+    });
+  }
+  return { id: nextId(), coins, particles };
+}
 // A card pairs the reveal (bottom) video, the green-screen foreground video, and
 // the tracked mesh generated from that foreground. Switching cards swaps all
 // three together so the scratch holes line up with the right clip.
@@ -448,6 +516,34 @@ function playNewSymbolNotes(
   if (!enabled) return;
   for (let slot = prevCount; slot < nextCount; slot += 1) {
     playSymbolSlotNote(state, slot);
+  }
+}
+
+function playProgressFallCoinSound(
+  state: SymbolAudioState,
+  milestone: number,
+  coins: AmbientFallCoin[],
+  enabled: boolean,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  // Bright metallic “ching” — higher pitch per milestone so 10%→100% climbs.
+  const baseHz = 980 + milestone * 55;
+
+  for (let i = 0; i < coins.length; i += 1) {
+    const coin = coins[i];
+    const startAt = now + coin.delayMs / 1000;
+    const pitch = baseHz * (0.92 + (i % 4) * 0.05);
+
+    // Hard attack + short ring (coin hit).
+    scheduleTone(ctx, startAt, pitch, 0.11, 0.28, "square");
+    scheduleTone(ctx, startAt, pitch * 1.5, 0.14, 0.18, "sine");
+    scheduleTone(ctx, startAt + 0.01, pitch * 2.2, 0.09, 0.12, "triangle");
+    // Soft shimmer tail.
+    scheduleTone(ctx, startAt + 0.03, pitch * 3.1, 0.12, 0.07, "sine");
   }
 }
 
@@ -971,7 +1067,9 @@ export function ScratchPrototype() {
   // flying-coin animation for manual scratches.
   const lastPointerClientRef = useRef<Vec2 | null>(null);
   const coinIdRef = useRef(0);
+  const ambientFallIdRef = useRef(0);
   const [flyingCoins, setFlyingCoins] = useState<FlyingCoin[]>([]);
+  const [ambientFalls, setAmbientFalls] = useState<AmbientFallBurst[]>([]);
   const bottomVideoRef = useRef<HTMLVideoElement | null>(null);
   const foregroundVideoRef = useRef<HTMLVideoElement | null>(null);
   const glRendererRef = useRef<GarmentGLRenderer | null>(null);
@@ -1596,6 +1694,7 @@ export function ScratchPrototype() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setFlyingCoins([]);
+    setAmbientFalls([]);
     setGameResult(null);
     setAutoScratch((current) => ({ ...current, enabled: false }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1846,6 +1945,7 @@ export function ScratchPrototype() {
     setClaimed(false);
     setRevealedSymbols(0);
     setFlyingCoins([]);
+    setAmbientFalls([]);
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
   resetScratchRef.current = resetScratch;
@@ -2068,6 +2168,61 @@ export function ScratchPrototype() {
     setFlyingCoins((current) => current.filter((coin) => coin.id !== id));
   }
 
+  function removeAmbientFall(id: number) {
+    setAmbientFalls((current) => current.filter((burst) => burst.id !== id));
+  }
+
+  function resolveScratchStageOrigin(worldPoint?: Vec2 | null): Vec2 | null {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const stageRect = stage.getBoundingClientRect();
+    const autoMode = autoScratchRef.current.enabled;
+    const autoOrigin =
+      autoMode && worldPoint ? worldToStagePoint(worldPoint) : null;
+    if (autoOrigin) return autoOrigin;
+    if (worldPoint) {
+      const fromWorld = worldToStagePoint(worldPoint);
+      if (fromWorld) return fromWorld;
+    }
+    if (autoMode || !lastPointerClientRef.current) {
+      return { x: stageRect.width / 2, y: stageRect.height / 2 };
+    }
+    return {
+      x: lastPointerClientRef.current.x - stageRect.left,
+      y: lastPointerClientRef.current.y - stageRect.top,
+    };
+  }
+
+  function spawnProgressFall(worldPoint?: Vec2 | null, milestone = 1) {
+    const origin = resolveScratchStageOrigin(worldPoint);
+    if (!origin) return;
+    const burst = buildAmbientFallBurst(
+      () => (ambientFallIdRef.current += 1),
+      origin,
+    );
+    playProgressFallCoinSound(
+      symbolAudioRef.current,
+      milestone,
+      burst.coins,
+      soundEnabledRef.current,
+    );
+
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) return;
+
+    setAmbientFalls((current) => [...current.slice(-3), burst]);
+    let maxLife = 0;
+    for (const coin of burst.coins) {
+      maxLife = Math.max(maxLife, coin.delayMs + coin.durationMs);
+    }
+    for (const particle of burst.particles) {
+      maxLife = Math.max(maxLife, particle.delayMs + particle.durationMs);
+    }
+    window.setTimeout(() => removeAmbientFall(burst.id), maxLife + 80);
+  }
+
   function applyScratchAtUv(
     u: number,
     v: number,
@@ -2108,8 +2263,14 @@ export function ScratchPrototype() {
     const nextProgress = samples.length
       ? revealedCountRef.current / samples.length
       : 0;
+    const prevProgress = progressRef.current;
     progressRef.current = nextProgress;
     setProgress(nextProgress);
+    const prevMilestone = Math.floor(prevProgress / PROGRESS_FALL_STEP + 1e-9);
+    const nextMilestone = Math.floor(nextProgress / PROGRESS_FALL_STEP + 1e-9);
+    for (let milestone = prevMilestone + 1; milestone <= nextMilestone; milestone += 1) {
+      if (milestone >= 1) spawnProgressFall(worldPoint, milestone);
+    }
     const autoMode = autoScratchRef.current.enabled;
     if (useBodySymbolsRef.current && trackedMeshRef.current?.symbolPoints) {
       const bodyPoints = trackedMeshRef.current.symbolPoints;
@@ -2625,6 +2786,46 @@ export function ScratchPrototype() {
             </div>
           ))
             : null}
+          {ambientFalls.map((burst) => (
+            <div key={burst.id} className="ambient-fall" aria-hidden="true">
+              {burst.coins.map((coin) => (
+                <span
+                  key={coin.id}
+                  className="ambient-fall-coin"
+                  style={
+                    {
+                      left: `${coin.originX}px`,
+                      top: `${coin.originY}px`,
+                      width: `${coin.sizePx}px`,
+                      height: `${coin.sizePx}px`,
+                      animationDuration: `${coin.durationMs}ms`,
+                      animationDelay: `${coin.delayMs}ms`,
+                      "--ambient-drift": `${coin.driftPx}px`,
+                      "--ambient-spin": `${coin.spinTurns}turn`,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+              {burst.particles.map((particle) => (
+                <span
+                  key={particle.id}
+                  className="ambient-fall-particle"
+                  style={
+                    {
+                      left: `${particle.originX}px`,
+                      top: `${particle.originY}px`,
+                      width: `${particle.sizePx}px`,
+                      height: `${particle.sizePx}px`,
+                      animationDuration: `${particle.durationMs}ms`,
+                      animationDelay: `${particle.delayMs}ms`,
+                      "--ambient-drift": `${particle.driftPx}px`,
+                      "--ambient-rise": `${particle.risePx}px`,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+            </div>
+          ))}
           <video
             ref={bottomVideoRef}
             className="source-video"

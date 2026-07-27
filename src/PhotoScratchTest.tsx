@@ -1,5 +1,5 @@
 import { Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   GarmentGLRenderer,
   MAX_PIXEL_RATIO,
@@ -112,6 +112,74 @@ const BG_BRIGHTNESS_DIM = 0.8;
 type ScratchMark = { u: number; v: number; radius: number };
 
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
+
+// Coin shower + sparkles when scratch progress crosses each 10% milestone.
+const PROGRESS_FALL_STEP = 0.1;
+const AMBIENT_COINS_PER_BURST = 7;
+const AMBIENT_PARTICLES_PER_BURST = 18;
+const AMBIENT_COIN_FALL_MS = 1800;
+const AMBIENT_PARTICLE_LIFE_MS = 1100;
+
+type AmbientFallCoin = {
+  id: number;
+  originX: number;
+  originY: number;
+  delayMs: number;
+  durationMs: number;
+  sizePx: number;
+  driftPx: number;
+  spinTurns: number;
+};
+
+type AmbientFallParticle = {
+  id: number;
+  originX: number;
+  originY: number;
+  delayMs: number;
+  durationMs: number;
+  sizePx: number;
+  driftPx: number;
+  risePx: number;
+};
+
+type AmbientFallBurst = {
+  id: number;
+  coins: AmbientFallCoin[];
+  particles: AmbientFallParticle[];
+};
+
+function buildAmbientFallBurst(
+  nextId: () => number,
+  origin: Vec2,
+): AmbientFallBurst {
+  const coins: AmbientFallCoin[] = [];
+  for (let i = 0; i < AMBIENT_COINS_PER_BURST; i += 1) {
+    coins.push({
+      id: nextId(),
+      originX: origin.x + (Math.random() - 0.5) * 28,
+      originY: origin.y + (Math.random() - 0.5) * 18,
+      delayMs: Math.floor(Math.random() * 180),
+      durationMs: AMBIENT_COIN_FALL_MS + Math.floor(Math.random() * 500),
+      sizePx: 16 + Math.floor(Math.random() * 12),
+      driftPx: Math.round((Math.random() - 0.5) * 110),
+      spinTurns: 1.1 + Math.random() * 1.8,
+    });
+  }
+  const particles: AmbientFallParticle[] = [];
+  for (let i = 0; i < AMBIENT_PARTICLES_PER_BURST; i += 1) {
+    particles.push({
+      id: nextId(),
+      originX: origin.x + (Math.random() - 0.5) * 36,
+      originY: origin.y + (Math.random() - 0.5) * 28,
+      delayMs: Math.floor(Math.random() * 200),
+      durationMs: AMBIENT_PARTICLE_LIFE_MS + Math.floor(Math.random() * 400),
+      sizePx: 3 + Math.floor(Math.random() * 5),
+      driftPx: Math.round((Math.random() - 0.5) * 100),
+      risePx: 30 + Math.floor(Math.random() * 90),
+    });
+  }
+  return { id: nextId(), coins, particles };
+}
 
 function clamp(value: number, lo: number, hi: number) {
   return value < lo ? lo : value > hi ? hi : value;
@@ -257,6 +325,32 @@ function playNewSymbolNotes(
   if (!enabled) return;
   for (let slot = prevCount; slot < nextCount; slot += 1) {
     playSymbolSlotNote(state, slot);
+  }
+}
+
+function playProgressFallCoinSound(
+  state: SymbolAudioState,
+  milestone: number,
+  coins: AmbientFallCoin[],
+  enabled: boolean,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  // Bright metallic “ching” — higher pitch per milestone so 10%→100% climbs.
+  const baseHz = 980 + milestone * 55;
+
+  for (let i = 0; i < coins.length; i += 1) {
+    const coin = coins[i];
+    const startAt = now + coin.delayMs / 1000;
+    const pitch = baseHz * (0.92 + (i % 4) * 0.05);
+
+    scheduleTone(ctx, startAt, pitch, 0.11, 0.28, "square");
+    scheduleTone(ctx, startAt, pitch * 1.5, 0.14, 0.18, "sine");
+    scheduleTone(ctx, startAt + 0.01, pitch * 2.2, 0.09, 0.12, "triangle");
+    scheduleTone(ctx, startAt + 0.03, pitch * 3.1, 0.12, 0.07, "sine");
   }
 }
 
@@ -711,6 +805,8 @@ export function PhotoScratchTest() {
   const revealSamplesRef = useRef<Vec2[]>([]);
   const revealedRef = useRef<boolean[]>([]);
   const revealedCountRef = useRef(0);
+  const progressRef = useRef(0);
+  const ambientFallIdRef = useRef(0);
   const autoPathRef = useRef<Vec2[]>([]);
   const autoPathIndexRef = useRef(0);
   const autoPathProgressRef = useRef(0);
@@ -798,6 +894,7 @@ export function PhotoScratchTest() {
   const hasBodySymbolsRef = useRef(false);
   hasBodySymbolsRef.current = hasBodySymbols;
   const [claimed, setClaimed] = useState(false);
+  const [ambientFalls, setAmbientFalls] = useState<AmbientFallBurst[]>([]);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
   const [playlist, setPlaylist] = useState<PhotoScratchCardEntry[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
@@ -858,11 +955,13 @@ export function PhotoScratchTest() {
       false,
     );
     revealedCountRef.current = 0;
+    progressRef.current = 0;
     autoPathRef.current = buildAutoScratchPath(mesh);
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
     claimedRef.current = false;
     setClaimed(false);
+    setAmbientFalls([]);
     resetGameOutcome();
     resetMatchRound();
     setRevealedSymbols(0);
@@ -1316,6 +1415,66 @@ export function PhotoScratchTest() {
     };
   }
 
+  function removeAmbientFall(id: number) {
+    setAmbientFalls((current) => current.filter((burst) => burst.id !== id));
+  }
+
+  function resolveScratchStageOrigin(u: number, v: number): Vec2 | null {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const stageRect = stage.getBoundingClientRect();
+    const canvas = fgCanvasRef.current;
+    const sample = trackedSampleRef.current;
+    if (canvas && sample) {
+      const world = sampleMeshUvToWorld(sample, u, v);
+      if (world) {
+        const frontCam = fgRendererRef.current?.getFrontPresentCamera() ?? {
+          x: 0,
+          y: 0,
+        };
+        return worldPointToStage(world, canvas, stage, frontCam);
+      }
+    }
+    const pointer = lastPointerRef.current;
+    if (pointer) {
+      return {
+        x: pointer.x - stageRect.left,
+        y: pointer.y - stageRect.top,
+      };
+    }
+    return { x: stageRect.width / 2, y: stageRect.height / 2 };
+  }
+
+  function spawnProgressFall(u: number, v: number, milestone = 1) {
+    const origin = resolveScratchStageOrigin(u, v);
+    if (!origin) return;
+    const burst = buildAmbientFallBurst(
+      () => (ambientFallIdRef.current += 1),
+      origin,
+    );
+    playProgressFallCoinSound(
+      symbolAudioRef.current,
+      milestone,
+      burst.coins,
+      soundEnabledRef.current,
+    );
+
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) return;
+
+    setAmbientFalls((current) => [...current.slice(-3), burst]);
+    let maxLife = 0;
+    for (const coin of burst.coins) {
+      maxLife = Math.max(maxLife, coin.delayMs + coin.durationMs);
+    }
+    for (const particle of burst.particles) {
+      maxLife = Math.max(maxLife, particle.delayMs + particle.durationMs);
+    }
+    window.setTimeout(() => removeAmbientFall(burst.id), maxLife + 80);
+  }
+
   function applyScratchAtUv(u: number, v: number, radius: number) {
     if (gameResultPendingRef.current !== null || claimedRef.current) return;
     if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
@@ -1338,6 +1497,21 @@ export function PhotoScratchTest() {
         revealed[i] = true;
         revealedCountRef.current += 1;
       }
+    }
+
+    const nextProgress = samples.length
+      ? revealedCountRef.current / samples.length
+      : 0;
+    const prevProgress = progressRef.current;
+    progressRef.current = nextProgress;
+    const prevMilestone = Math.floor(prevProgress / PROGRESS_FALL_STEP + 1e-9);
+    const nextMilestone = Math.floor(nextProgress / PROGRESS_FALL_STEP + 1e-9);
+    for (
+      let milestone = prevMilestone + 1;
+      milestone <= nextMilestone;
+      milestone += 1
+    ) {
+      if (milestone >= 1) spawnProgressFall(u, v, milestone);
     }
 
     const bodyPoints = trackedMeshRef.current?.symbolPoints;
@@ -1574,10 +1748,12 @@ export function PhotoScratchTest() {
       false,
     );
     revealedCountRef.current = 0;
+    progressRef.current = 0;
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
     claimedRef.current = false;
     setClaimed(false);
+    setAmbientFalls([]);
     resetGameOutcome();
     resetMatchRound();
     setRevealedSymbols(0);
@@ -2105,6 +2281,46 @@ export function PhotoScratchTest() {
                 ))
               : null}
           </div>
+          {ambientFalls.map((burst) => (
+            <div key={burst.id} className="ambient-fall" aria-hidden="true">
+              {burst.coins.map((coin) => (
+                <span
+                  key={coin.id}
+                  className="ambient-fall-coin"
+                  style={
+                    {
+                      left: `${coin.originX}px`,
+                      top: `${coin.originY}px`,
+                      width: `${coin.sizePx}px`,
+                      height: `${coin.sizePx}px`,
+                      animationDuration: `${coin.durationMs}ms`,
+                      animationDelay: `${coin.delayMs}ms`,
+                      "--ambient-drift": `${coin.driftPx}px`,
+                      "--ambient-spin": `${coin.spinTurns}turn`,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+              {burst.particles.map((particle) => (
+                <span
+                  key={particle.id}
+                  className="ambient-fall-particle"
+                  style={
+                    {
+                      left: `${particle.originX}px`,
+                      top: `${particle.originY}px`,
+                      width: `${particle.sizePx}px`,
+                      height: `${particle.sizePx}px`,
+                      animationDuration: `${particle.durationMs}ms`,
+                      animationDelay: `${particle.delayMs}ms`,
+                      "--ambient-drift": `${particle.driftPx}px`,
+                      "--ambient-rise": `${particle.risePx}px`,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+            </div>
+          ))}
           <div className="mobile-sound-wrap">
             <button
               type="button"
