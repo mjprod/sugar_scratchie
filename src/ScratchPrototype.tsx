@@ -186,9 +186,9 @@ const COIN_FLIGHT_STAGGER_MS = 80;
 // Coin shower + sparkles when scratch progress crosses each 10% milestone.
 const PROGRESS_FALL_STEP = 0.1;
 const AMBIENT_COINS_PER_BURST = 7;
-const AMBIENT_PARTICLES_PER_BURST = 18;
+const AMBIENT_PARTICLES_PER_BURST = 0;
 const AMBIENT_COIN_FALL_MS = 1800;
-const AMBIENT_PARTICLE_LIFE_MS = 1100;
+const AMBIENT_PARTICLE_LIFE_MS = 1400;
 
 type AmbientFallCoin = {
   id: number;
@@ -210,6 +210,7 @@ type AmbientFallParticle = {
   sizePx: number;
   driftPx: number;
   risePx: number;
+  fallPx: number;
 };
 
 type AmbientFallBurst = {
@@ -237,15 +238,17 @@ function buildAmbientFallBurst(
   }
   const particles: AmbientFallParticle[] = [];
   for (let i = 0; i < AMBIENT_PARTICLES_PER_BURST; i += 1) {
+    const fallWithCoins = i % 3 !== 0;
     particles.push({
       id: nextId(),
-      originX: origin.x + (Math.random() - 0.5) * 36,
-      originY: origin.y + (Math.random() - 0.5) * 28,
-      delayMs: Math.floor(Math.random() * 200),
-      durationMs: AMBIENT_PARTICLE_LIFE_MS + Math.floor(Math.random() * 400),
-      sizePx: 3 + Math.floor(Math.random() * 5),
-      driftPx: Math.round((Math.random() - 0.5) * 100),
-      risePx: 30 + Math.floor(Math.random() * 90),
+      originX: origin.x + (Math.random() - 0.5) * 48,
+      originY: origin.y + (Math.random() - 0.5) * 36,
+      delayMs: Math.floor(Math.random() * 280),
+      durationMs: AMBIENT_PARTICLE_LIFE_MS + Math.floor(Math.random() * 600),
+      sizePx: 5 + Math.floor(Math.random() * 9),
+      driftPx: Math.round((Math.random() - 0.5) * 140),
+      risePx: fallWithCoins ? 0 : 40 + Math.floor(Math.random() * 100),
+      fallPx: fallWithCoins ? 80 + Math.floor(Math.random() * 220) : 0,
     });
   }
   return { id: nextId(), coins, particles };
@@ -2819,7 +2822,7 @@ export function ScratchPrototype() {
                       animationDuration: `${particle.durationMs}ms`,
                       animationDelay: `${particle.delayMs}ms`,
                       "--ambient-drift": `${particle.driftPx}px`,
-                      "--ambient-rise": `${particle.risePx}px`,
+                      "--ambient-dy": `${particle.fallPx - particle.risePx}px`,
                     } as CSSProperties
                   }
                 />

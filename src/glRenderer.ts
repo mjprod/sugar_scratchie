@@ -427,15 +427,22 @@ export class GarmentGLRenderer {
     this.flakes = [];
   }
 
-  spawnFlakes(refX: number, refY: number, count = FLAKE_COUNT_PER_SCRATCH) {
+  spawnFlakes(
+    refX: number,
+    refY: number,
+    count = FLAKE_COUNT_PER_SCRATCH,
+    spawnUV?: { u: number; v: number },
+  ) {
+    const spawnU = spawnUV?.u ?? refX / this.width;
+    const spawnV = spawnUV?.v ?? refY / this.height;
     for (let i = 0; i < count; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 40 + Math.random() * 60;
       this.flakes.push({
         x: refX + (Math.random() - 0.5) * 8,
         y: refY + (Math.random() - 0.5) * 8,
-        spawnU: refX / this.width,
-        spawnV: refY / this.height,
+        spawnU: spawnU + (Math.random() - 0.5) * 0.02,
+        spawnV: spawnV + (Math.random() - 0.5) * 0.02,
         baseSize: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
         rotation: Math.random() * Math.PI * 2,
         angularVel: (Math.random() - 0.5) * 10,
@@ -735,6 +742,14 @@ export class GarmentGLRenderer {
     };
     this.lastFrontPresentCamera = cam;
 
+    const now = performance.now();
+    const dt =
+      this.lastRenderTime > 0
+        ? Math.min(0.05, (now - this.lastRenderTime) / 1000)
+        : 0;
+    this.lastRenderTime = now;
+    this.updateFlakes(dt);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.setBufferViewport();
     gl.disable(gl.BLEND);
@@ -749,6 +764,8 @@ export class GarmentGLRenderer {
     const frontReady =
       !!frontImage && frontImage.complete && frontImage.naturalWidth > 0;
     if (!frontReady) {
+      // Still draw leftover flakes after clothes are claimed/hidden.
+      this.drawFlakes(cam.x, cam.y);
       if (showMesh && sample) {
         this.drawMeshLines(sample);
       }
@@ -789,6 +806,8 @@ export class GarmentGLRenderer {
     gl.uniform2f(gl.getUniformLocation(this.composite, "uOffset"), cam.x, cam.y);
     this.bindQuad(this.composite);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    this.drawFlakes(cam.x, cam.y);
 
     if (showMesh && sample) {
       this.drawMeshLines(sample);
