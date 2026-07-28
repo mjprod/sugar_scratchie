@@ -7,8 +7,8 @@
       "influencerName": "Juliana",
       "influencerCity": "Buenos Aires",
       "influencerCountry": "Argentina",
-      "influencerFlag": "\ud83c\udde6\ud83c\uddf7",
-      "influencerFlagSvg": null,
+      "influencerFlag": null,
+      "influencerFlagSvg": "/models/julianaval/flag.svg",
       "cardOverlayColorStart": null,
       "cardOverlayColorEnd": null
     }
