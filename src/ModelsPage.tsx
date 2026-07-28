@@ -37,6 +37,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, 
 import { createPortal } from "react-dom";
 import { api } from "./shared/api";
 import { suggestCardId } from "./shared/groupCards";
+import { inferThemeFromLabel, themeKey } from "./game/session";
 import {
   assignCardToModel,
   createModel,
@@ -57,6 +58,7 @@ import {
   type PhotoInfo,
   type PhotoScratchSlot,
 } from "./shared/models";
+import { fetchThemes, type ThemeInfo } from "./shared/themes";
 import {
   labelFromProjectId,
   PROJECT_ID_PATTERN,
@@ -314,6 +316,58 @@ function sortModelCards(cards: CardInfo[]): CardInfo[] {
   });
 }
 
+const PREFERRED_THEME_ORDER = ["Police", "Teacher", "Nurse", "Gym", "Firegirl"] as const;
+const UNTHEMED_LABEL = "Unthemed";
+
+/** Resolve a card's THEME category for grouping (draft theme → label hints → Unthemed). */
+function resolveCardTheme(card: CardInfo): string {
+  const fromDraft = card.theme?.trim();
+  if (fromDraft) return fromDraft;
+  return inferThemeFromLabel(card.label) ?? UNTHEMED_LABEL;
+}
+
+type ThemeCardGroup = {
+  theme: string;
+  cards: CardInfo[];
+};
+
+function groupCardsByTheme(
+  cards: CardInfo[],
+  preferredOrder: string[] = [...PREFERRED_THEME_ORDER],
+): ThemeCardGroup[] {
+  const groups = new Map<string, ThemeCardGroup>();
+  const order: string[] = [];
+
+  for (const card of cards) {
+    const theme = resolveCardTheme(card);
+    const key = themeKey(theme);
+    let group = groups.get(key);
+    if (!group) {
+      group = { theme, cards: [] };
+      groups.set(key, group);
+      order.push(key);
+    }
+    group.cards.push(card);
+  }
+
+  const preferredKeys = preferredOrder.map((theme) => themeKey(theme));
+  const preferredRank = new Map(preferredKeys.map((key, index) => [key, index]));
+
+  order.sort((a, b) => {
+    const unthemedKey = themeKey(UNTHEMED_LABEL);
+    if (a === unthemedKey) return 1;
+    if (b === unthemedKey) return -1;
+    const rankA = preferredRank.get(a);
+    const rankB = preferredRank.get(b);
+    if (rankA != null && rankB != null) return rankA - rankB;
+    if (rankA != null) return -1;
+    if (rankB != null) return 1;
+    return (groups.get(a)?.theme ?? a).localeCompare(groups.get(b)?.theme ?? b);
+  });
+
+  return order.map((key) => groups.get(key)!);
+}
+
 function draftCardsFromFlows(flows: VideoFlowProject[], publishedIds: Set<string>): CardInfo[] {
   const drafts: CardInfo[] = [];
   for (const flow of flows) {
@@ -362,6 +416,23 @@ function themesByCardId(flows: VideoFlowProject[]): Map<string, string> {
   return map;
 }
 
+function formatLoadError(caught: unknown): string {
+  if (caught instanceof Error) {
+    const message = caught.message.trim();
+    if (!message || message === "Error") {
+      return "Could not reach the API. Try Refresh — the server may still be starting.";
+    }
+    if (/failed to fetch|networkerror|load failed|etimedout|econnrefused/i.test(message)) {
+      return "Could not reach the API. Try Refresh — the server may still be starting.";
+    }
+    return message;
+  }
+  const text = String(caught).trim();
+  return text && text !== "Error"
+    ? text
+    : "Could not reach the API. Try Refresh — the server may still be starting.";
+}
+
 export function ModelsPage() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [cards, setCards] = useState<CardInfo[]>([]);
@@ -387,6 +458,7 @@ export function ModelsPage() {
   const [creatingCardFor, setCreatingCardFor] = useState("");
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
+  const [themeCatalog, setThemeCatalog] = useState<ThemeInfo[]>([]);
   const [createModelOpen, setCreateModelOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -406,10 +478,11 @@ export function ModelsPage() {
   }, []);
 
   async function refresh() {
-    const [nextModels, assets, flowData] = await Promise.all([
+    const [nextModels, assets, flowData, nextThemes] = await Promise.all([
       fetchModels(),
       api<{ cards: CardInfo[] }>("/api/cards"),
       api<{ flows: VideoFlowProject[] }>("/api/video-flow").catch(() => ({ flows: [] as VideoFlowProject[] })),
+      fetchThemes().catch(() => [] as ThemeInfo[]),
     ]);
     const themes = themesByCardId(flowData.flows);
     const published = assets.cards.map((card) => ({
@@ -426,10 +499,12 @@ export function ModelsPage() {
     setModels(nextModels);
     setCards(published);
     setDraftCards(drafts);
+    setThemeCatalog(nextThemes);
+    setError("");
   }
 
   useEffect(() => {
-    refresh().catch((caught) => setError(String(caught)));
+    refresh().catch((caught) => setError(formatLoadError(caught)));
   }, []);
 
   const allKnownCardIds = useMemo(
@@ -614,11 +689,19 @@ export function ModelsPage() {
   async function handleMoveCard(modelId: string, cardId: string, direction: -1 | 1) {
     const modelCards = (cardsByModel.get(modelId) ?? []).filter((card) => !card.draft);
     const index = modelCards.findIndex((card) => card.id === cardId);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= modelCards.length) return;
+    if (index < 0) return;
+    const theme = themeKey(resolveCardTheme(modelCards[index]!));
+    const themeIndexes = modelCards
+      .map((card, cardIndex) => ({ card, cardIndex }))
+      .filter(({ card }) => themeKey(resolveCardTheme(card)) === theme)
+      .map(({ cardIndex }) => cardIndex);
+    const posInTheme = themeIndexes.indexOf(index);
+    const swapWith = themeIndexes[posInTheme + direction];
+    if (posInTheme < 0 || swapWith == null) return;
     const nextIds = modelCards.map((card) => card.id);
-    const [moved] = nextIds.splice(index, 1);
-    nextIds.splice(nextIndex, 0, moved!);
+    const tmp = nextIds[index]!;
+    nextIds[index] = nextIds[swapWith]!;
+    nextIds[swapWith] = tmp;
     setBusy(true);
     setError("");
     try {
@@ -724,10 +807,13 @@ export function ModelsPage() {
               <Button
                 color="gray"
                 variant="soft"
-                onClick={() => refresh().catch((caught) => setError(String(caught)))}
+                onClick={() => refresh().catch((caught) => setError(formatLoadError(caught)))}
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
+              </Button>
+              <Button asChild variant="soft">
+                <a href="/dashboard/themes">Themes</a>
               </Button>
               <Button asChild variant="soft">
                 <a href="/dashboard">
@@ -771,6 +857,11 @@ export function ModelsPage() {
               models={models}
               newCardId={newCardId}
               newCardLabel={newCardLabel}
+              preferredThemeOrder={
+                themeCatalog.length > 0
+                  ? themeCatalog.map((theme) => theme.label)
+                  : [...PREFERRED_THEME_ORDER]
+              }
               onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
               onAvatarClick={() => {
                 setAvatarTargetId(selectedModel.id);
@@ -1171,6 +1262,7 @@ function ModelDetail({
   models,
   newCardId,
   newCardLabel,
+  preferredThemeOrder,
   onAssignCard,
   onAvatarClick,
   onCancelCreateCard,
@@ -1212,6 +1304,7 @@ function ModelDetail({
   models: ModelInfo[];
   newCardId: string;
   newCardLabel: string;
+  preferredThemeOrder: string[];
   onAssignCard: (cardId: string, modelId: string) => void;
   onAvatarClick: () => void;
   onCancelCreateCard: () => void;
@@ -1482,23 +1575,43 @@ function ModelDetail({
 
         {modelCards.length > 0 ? (
           <Box className="models-card-list">
-            {modelCards.map((card, index) => {
-              const publishedIndex = publishedCards.findIndex((entry) => entry.id === card.id);
+            {groupCardsByTheme(modelCards, preferredThemeOrder).map((group) => {
+              const publishedInTheme = group.cards.filter((card) => !card.draft);
               return (
-                <MotionCardRow
-                  key={card.id}
-                  busy={busy}
-                  card={card}
-                  index={index}
-                  modelId={model.id}
-                  publishedIndex={publishedIndex}
-                  publishedCount={publishedCards.length}
-                  onDelete={() => onDeleteCard(card)}
-                  onDetach={() => onDetachCard(card.id)}
-                  onMoveDown={() => onMoveCard(card.id, 1)}
-                  onMoveUp={() => onMoveCard(card.id, -1)}
-                  onPublishGame={() => onPublishGame(card.id)}
-                />
+                <div key={themeKey(group.theme)} className="models-theme-group">
+                  <div className="models-theme-group-header">
+                    <Text className="models-theme-group-eyebrow" color="gray" size="1" weight="medium">
+                      Theme
+                    </Text>
+                    <Flex align="center" gap="2" wrap="wrap">
+                      <Heading as="h3" size="3">
+                        {group.theme}
+                      </Heading>
+                      <Badge color="iris" size="1" variant="soft">
+                        {group.cards.length}
+                      </Badge>
+                    </Flex>
+                  </div>
+                  {group.cards.map((card, index) => {
+                    const publishedIndex = publishedInTheme.findIndex((entry) => entry.id === card.id);
+                    return (
+                      <MotionCardRow
+                        key={card.id}
+                        busy={busy}
+                        card={card}
+                        index={index}
+                        modelId={model.id}
+                        publishedIndex={publishedIndex}
+                        publishedCount={publishedInTheme.length}
+                        onDelete={() => onDeleteCard(card)}
+                        onDetach={() => onDetachCard(card.id)}
+                        onMoveDown={() => onMoveCard(card.id, 1)}
+                        onMoveUp={() => onMoveCard(card.id, -1)}
+                        onPublishGame={() => onPublishGame(card.id)}
+                      />
+                    );
+                  })}
+                </div>
               );
             })}
           </Box>
@@ -1981,11 +2094,6 @@ function MotionCardRow({
               {isDraft ? (
                 <Badge color="amber" size="1" variant="soft">
                   draft
-                </Badge>
-              ) : null}
-              {card.theme ? (
-                <Badge color="iris" size="1" title="Theme" variant="soft">
-                  {card.theme}
                 </Badge>
               ) : null}
             </Flex>

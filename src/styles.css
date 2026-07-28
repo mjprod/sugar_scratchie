@@ -2101,6 +2101,24 @@ dd {
   background: var(--color-background);
 }
 
+.models-theme-group + .models-theme-group {
+  border-top: 1px solid var(--gray-5);
+}
+
+.models-theme-group-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 12px 8px;
+  background: var(--gray-2);
+  border-bottom: 1px solid var(--gray-4);
+}
+
+.models-theme-group-eyebrow {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .models-card-list-row {
   display: flex;
   flex-direction: column;
@@ -2108,7 +2126,7 @@ dd {
   padding: 10px 12px;
 }
 
-.models-card-list-row + .models-card-list-row {
+.models-theme-group .models-card-list-row + .models-card-list-row {
   border-top: 1px solid var(--gray-4);
 }
 

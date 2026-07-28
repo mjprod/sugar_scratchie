@@ -33,6 +33,7 @@ import {
   type PhotoScratchLayerType,
   type PhotoScratchSlot,
 } from "../shared/models";
+import { fetchThemes, type ThemeInfo } from "../shared/themes";
 import { flowStepBadge, type FlowNodeRuntime } from "./flowCanvas";
 import {
   COMPRESS_PRESETS,
@@ -50,6 +51,42 @@ import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, type MeshTracker, type MeshTrackerMode } from "./ui";
 import { isStockPortraitPrompt, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
+
+function ThemeSelect({
+  themes,
+  value,
+  onChange,
+}: {
+  themes: ThemeInfo[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const trimmed = value.trim();
+  const matched = themes.find((entry) => entry.label.toLowerCase() === trimmed.toLowerCase());
+  const selectValue = matched?.label ?? (trimmed || themes[0]!.label);
+  const showLegacy = Boolean(trimmed && !matched);
+
+  return (
+    <>
+      <Select.Root value={selectValue} onValueChange={onChange}>
+        <Select.Trigger placeholder="Select a theme" />
+        <Select.Content>
+          {themes.map((entry) => (
+            <Select.Item key={entry.id} value={entry.label}>
+              {entry.label}
+            </Select.Item>
+          ))}
+          {showLegacy ? (
+            <Select.Item value={trimmed}>{trimmed} (not in catalog)</Select.Item>
+          ) : null}
+        </Select.Content>
+      </Select.Root>
+      <Text as="div" color="gray" mt="1" size="1">
+        Manage themes at <a href="/dashboard/themes">Dashboard → Themes</a>.
+      </Text>
+    </>
+  );
+}
 
 type JobInfo = {
   id: string;
@@ -1988,6 +2025,21 @@ export function RunMode(props: RunModeProps) {
   const [showMeshAdvanced, setShowMeshAdvanced] = useState(false);
   const [sourceJobHandledId, setSourceJobHandledId] = useState("");
   const [compareTracker, setCompareTracker] = useState<MeshTracker>("cotracker");
+  const [themes, setThemes] = useState<ThemeInfo[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchThemes()
+      .then((next) => {
+        if (!cancelled) setThemes(next);
+      })
+      .catch(() => {
+        if (!cancelled) setThemes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sourceImageJob = useMemo(() => {
     const scoped = jobs.filter(
@@ -2956,11 +3008,14 @@ export function RunMode(props: RunModeProps) {
               </Field>
             </Grid>
             <Field label="Theme (scenery + dress-up costume)">
-              <TextField.Root
-                placeholder="warm beach, police, neon city night…"
-                value={theme}
-                onChange={(event) => onThemeChange(event.currentTarget.value)}
-              />
+              {themes.length > 0 ? (
+                <ThemeSelect themes={themes} value={theme} onChange={onThemeChange} />
+              ) : (
+                <Text color="gray" size="2">
+                  Loading themes… or create one at{" "}
+                  <a href="/dashboard/themes">Dashboard → Themes</a>.
+                </Text>
+              )}
             </Field>
             <Flex gap="2" align="center" wrap="wrap">
               <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
