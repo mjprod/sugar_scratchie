@@ -1,0 +1,76 @@
+{
+  "symbols": [
+    {
+      "id": "01",
+      "file": "01-Heart.lottie",
+      "label": "Heart",
+      "updated_at": 0.0
+    },
+    {
+      "id": "02",
+      "file": "02-Lock.lottie",
+      "label": "Lock",
+      "updated_at": 0.0
+    },
+    {
+      "id": "03",
+      "file": "03-GemDiamond.lottie",
+      "label": "Gem",
+      "updated_at": 0.0
+    },
+    {
+      "id": "04",
+      "file": "04-Star.lottie",
+      "label": "Star",
+      "updated_at": 0.0
+    },
+    {
+      "id": "05",
+      "file": "05-Diamond.lottie",
+      "label": "Diamond",
+      "updated_at": 0.0
+    },
+    {
+      "id": "06",
+      "file": "06-Magnet.lottie",
+      "label": "Magnet",
+      "updated_at": 0.0
+    },
+    {
+      "id": "07",
+      "file": "07-Crown.lottie",
+      "label": "Crown",
+      "updated_at": 0.0
+    },
+    {
+      "id": "08",
+      "file": "08-Gold Coins.lottie",
+      "label": "Gold Coins",
+      "updated_at": 0.0
+    },
+    {
+      "id": "09",
+      "file": "09-Key.lottie",
+      "label": "Key",
+      "updated_at": 0.0
+    },
+    {
+      "id": "10",
+      "file": "10-Treasure Chest.lottie",
+      "label": "Treasure Chest",
+      "updated_at": 0.0
+    },
+    {
+      "id": "11",
+      "file": "11-Diamond Cards.lottie",
+      "label": "Diamond Cards",
+      "updated_at": 0.0
+    },
+    {
+      "id": "12",
+      "file": "12-WinnerTrophy.lottie",
+      "label": "Trophy",
+      "updated_at": 0.0
+    }
+  ]
+}

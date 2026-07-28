@@ -157,6 +157,9 @@ export function ThemesPage() {
                 <a href="/dashboard/models">Models</a>
               </Button>
               <Button asChild variant="soft">
+                <a href="/symbols">Symbols</a>
+              </Button>
+              <Button asChild variant="soft">
                 <a href="/dashboard">
                   <ExternalLink {...iconProps} />
                   Dashboard

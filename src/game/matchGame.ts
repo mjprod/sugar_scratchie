@@ -15,7 +15,9 @@ export type MatchGameOutcome = {
   result: "win" | "lose";
 };
 
-export const SYMBOL_TYPES: { src: string; label: string }[] = [
+export type SymbolTypeEntry = { src: string; label: string };
+
+export const DEFAULT_SYMBOL_TYPES: SymbolTypeEntry[] = [
   { src: "/lotties/01-Heart.lottie", label: "Heart" },
   { src: "/lotties/02-Lock.lottie", label: "Lock" },
   { src: "/lotties/03-GemDiamond.lottie", label: "Gem" },
@@ -29,6 +31,101 @@ export const SYMBOL_TYPES: { src: string; label: string }[] = [
   { src: "/lotties/11-Diamond%20Cards.lottie", label: "Diamond Cards" },
   { src: "/lotties/12-WinnerTrophy.lottie", label: "Trophy" },
 ];
+
+/** Live catalog used by the match game (mutated when index loads / admin saves). */
+export const SYMBOL_TYPES: SymbolTypeEntry[] = DEFAULT_SYMBOL_TYPES.map((entry) => ({
+  ...entry,
+}));
+
+type CatalogRow = {
+  id?: string;
+  file?: string;
+  label?: string;
+  src?: string;
+  updated_at?: number;
+};
+
+function encodeLottiePath(file: string, updatedAt = 0): string {
+  const encoded = encodeURIComponent(file);
+  const base = `/lotties/${encoded}`;
+  if (updatedAt > 0) return `${base}?v=${Math.floor(updatedAt)}`;
+  return base;
+}
+
+function rowsToEntries(rows: CatalogRow[]): SymbolTypeEntry[] | null {
+  if (!Array.isArray(rows) || rows.length < SYMBOL_TYPE_COUNT) return null;
+  const byId = new Map<string, CatalogRow>();
+  for (const row of rows) {
+    if (row && typeof row.id === "string") byId.set(row.id, row);
+  }
+  const next: SymbolTypeEntry[] = [];
+  for (let i = 0; i < SYMBOL_TYPE_COUNT; i += 1) {
+    const id = String(i + 1).padStart(2, "0");
+    const row = byId.get(id) ?? rows[i];
+    if (!row) return null;
+    const label =
+      typeof row.label === "string" && row.label.trim()
+        ? row.label.trim()
+        : DEFAULT_SYMBOL_TYPES[i]!.label;
+    const updatedAt =
+      typeof row.updated_at === "number" && Number.isFinite(row.updated_at)
+        ? row.updated_at
+        : 0;
+    let src =
+      typeof row.src === "string" && row.src.trim()
+        ? row.src.trim()
+        : typeof row.file === "string" && row.file.trim()
+          ? encodeLottiePath(row.file.trim(), updatedAt)
+          : DEFAULT_SYMBOL_TYPES[i]!.src;
+    if (updatedAt > 0 && !src.includes("?v=")) {
+      src = `${src}${src.includes("?") ? "&" : "?"}v=${Math.floor(updatedAt)}`;
+    }
+    next.push({ src, label });
+  }
+  return next;
+}
+
+export function applySymbolCatalog(rows: CatalogRow[]): boolean {
+  const next = rowsToEntries(rows);
+  if (!next) return false;
+  for (let i = 0; i < SYMBOL_TYPE_COUNT; i += 1) {
+    SYMBOL_TYPES[i] = next[i]!;
+  }
+  return true;
+}
+
+let loadPromise: Promise<boolean> | null = null;
+
+/** Fetch `/lotties/index.json` (or API) and update SYMBOL_TYPES. */
+export async function loadSymbolTypes(): Promise<boolean> {
+  if (loadPromise) return loadPromise;
+  loadPromise = (async () => {
+    try {
+      try {
+        const response = await fetch("/lotties/index.json", { cache: "no-store" });
+        if (response.ok) {
+          const data = (await response.json()) as { symbols?: CatalogRow[] };
+          if (applySymbolCatalog(Array.isArray(data.symbols) ? data.symbols : [])) {
+            return true;
+          }
+        }
+      } catch {
+        // fall through to API
+      }
+      try {
+        const response = await fetch("/api/symbols", { cache: "no-store" });
+        if (!response.ok) return false;
+        const data = (await response.json()) as { symbols?: CatalogRow[] };
+        return applySymbolCatalog(Array.isArray(data.symbols) ? data.symbols : []);
+      } catch {
+        return false;
+      }
+    } finally {
+      loadPromise = null;
+    }
+  })();
+  return loadPromise;
+}
 
 function randomSymbolIds(count: number): number[] {
   return Array.from({ length: count }, () =>

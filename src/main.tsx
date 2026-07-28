@@ -7,6 +7,7 @@ import { ModelsPage } from "./ModelsPage";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
 import { ThemesPage } from "./ThemesPage";
+import { SymbolsPage } from "./SymbolsPage";
 import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
@@ -25,6 +26,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return PictureFlowPage;
   if (path === "/dashboard/models") return ModelsPage;
   if (path === "/dashboard/themes") return ThemesPage;
+  if (path === "/symbols" || path === "/dashboard/symbols") return SymbolsPage;
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;

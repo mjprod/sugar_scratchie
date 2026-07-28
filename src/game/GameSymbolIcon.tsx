@@ -11,6 +11,7 @@ export function GameSymbolIcon({
   const entry = SYMBOL_TYPES[typeId] ?? SYMBOL_TYPES[0];
   return (
     <DotLottieReact
+      key={entry.src}
       src={entry.src}
       autoplay
       loop

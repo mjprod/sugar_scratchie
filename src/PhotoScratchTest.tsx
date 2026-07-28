@@ -19,6 +19,7 @@ import {
 import {
   buildBodySymbols,
   buildTopSymbols,
+  loadSymbolTypes,
   matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPE_COUNT,
@@ -1029,6 +1030,10 @@ export function PhotoScratchTest() {
 
   useEffect(() => {
     setPageOrigin(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    loadSymbolTypes().catch(() => undefined);
   }, []);
 
   useEffect(() => {
