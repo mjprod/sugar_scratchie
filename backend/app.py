@@ -62,6 +62,7 @@ from backend.models_store import (
     update_model,
     upload_model_avatar,
     upload_model_flag_svg,
+    upload_model_video,
     write_models_index,
 )
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
@@ -914,6 +915,24 @@ async def post_model_avatar(model_id: str, file: UploadFile = File(...)) -> dict
 @app.post("/api/models/{model_id}/flag")
 async def post_model_flag(model_id: str, file: UploadFile = File(...)) -> dict:
     model = await upload_model_flag_svg(MODELS_DIR, model_id, file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/pack-face")
+async def post_model_pack_face(model_id: str, file: UploadFile = File(...)) -> dict:
+    model = await upload_model_video(MODELS_DIR, model_id, "pack-face", file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/pack-face-2")
+async def post_model_pack_face_2(model_id: str, file: UploadFile = File(...)) -> dict:
+    model = await upload_model_video(MODELS_DIR, model_id, "pack-face-2", file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/swipe")
+async def post_model_swipe(model_id: str, file: UploadFile = File(...)) -> dict:
+    model = await upload_model_video(MODELS_DIR, model_id, "swipe", file)
     return model.dict()
 
 

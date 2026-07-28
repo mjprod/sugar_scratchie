@@ -18,12 +18,24 @@ export type ModelInfluencerProfile = {
   cardOverlayColorEnd?: string | null;
 };
 
+export type ModelGlobalMedia = {
+  /** Foil 3D pack video 1, e.g. "/models/julianaval/pack-face.mp4". */
+  packFaceVideoUrl?: string | null;
+  /** Foil 3D pack video 2. */
+  packFaceVideoUrl2?: string | null;
+  /** Home swipe motion video. */
+  swipeVideoUrl?: string | null;
+};
+
 export type ModelInfo = {
   id: string;
   label: string;
   avatar: string | null;
   created_at?: number | null;
-} & ModelInfluencerProfile;
+} & ModelInfluencerProfile &
+  ModelGlobalMedia;
+
+export type ModelVideoKind = "pack-face" | "pack-face-2" | "swipe";
 
 export type UpdateModelPayload = {
   label?: string;
@@ -161,6 +173,39 @@ export async function uploadModelFlagSvg(modelId: string, file: File): Promise<M
     throw new Error(text || response.statusText);
   }
   return response.json() as Promise<ModelInfo>;
+}
+
+export async function uploadModelVideo(
+  modelId: string,
+  kind: ModelVideoKind,
+  file: File,
+): Promise<ModelInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(
+    `/api/models/${encodeURIComponent(modelId)}/${kind}`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<ModelInfo>;
+}
+
+export async function uploadModelPackFace(modelId: string, file: File): Promise<ModelInfo> {
+  return uploadModelVideo(modelId, "pack-face", file);
+}
+
+export async function uploadModelPackFace2(modelId: string, file: File): Promise<ModelInfo> {
+  return uploadModelVideo(modelId, "pack-face-2", file);
+}
+
+export async function uploadModelSwipe(modelId: string, file: File): Promise<ModelInfo> {
+  return uploadModelVideo(modelId, "swipe", file);
 }
 
 export async function uploadCardPhoto(cardId: string, file: File): Promise<PhotoInfo> {

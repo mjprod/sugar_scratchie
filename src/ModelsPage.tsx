@@ -51,7 +51,9 @@ import {
   updateModel,
   uploadModelAvatar,
   uploadModelFlagSvg,
+  uploadModelVideo,
   type ModelInfo,
+  type ModelVideoKind,
   type PhotoInfo,
   type PhotoScratchSlot,
 } from "./shared/models";
@@ -389,8 +391,13 @@ export function ModelsPage() {
   const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const flagInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
   const [flagTargetId, setFlagTargetId] = useState("");
+  const [videoTarget, setVideoTarget] = useState<{
+    modelId: string;
+    kind: ModelVideoKind;
+  } | null>(null);
 
   useEffect(() => {
     const sync = () => setSelectedModelId(readSelectedModelId());
@@ -650,6 +657,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleVideoUpload(modelId: string, kind: ModelVideoKind, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelVideo(modelId, kind, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openCreateCard(modelId: string) {
     const suggested = suggestCardId(modelId, allKnownCardIds);
     setCreatingCardFor(modelId);
@@ -759,6 +779,10 @@ export function ModelsPage() {
               onFlagClick={() => {
                 setFlagTargetId(selectedModel.id);
                 flagInputRef.current?.click();
+              }}
+              onVideoClick={(kind) => {
+                setVideoTarget({ modelId: selectedModel.id, kind });
+                videoInputRef.current?.click();
               }}
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
@@ -988,6 +1012,19 @@ export function ModelsPage() {
           if (file && flagTargetId) void handleFlagUpload(flagTargetId, file);
         }}
       />
+      <input
+        ref={videoInputRef}
+        accept="video/mp4,video/webm,.mp4,.webm"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && videoTarget) {
+            void handleVideoUpload(videoTarget.modelId, videoTarget.kind, file);
+          }
+        }}
+      />
     </main>
   );
 }
@@ -1044,6 +1081,79 @@ function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
   );
 }
 
+function ModelVideoSlot({
+  busy,
+  label,
+  pathHint,
+  url,
+  onUpload,
+}: {
+  busy: boolean;
+  label: string;
+  pathHint: string;
+  url?: string | null;
+  onUpload: () => void;
+}) {
+  const src = url?.trim() || "";
+  return (
+    <Box
+      style={{
+        border: "1px solid var(--gray-a6)",
+        borderRadius: 12,
+        padding: 12,
+        background: "var(--gray-a2)",
+      }}
+    >
+      <Text as="div" mb="2" size="1" weight="medium">
+        {label}
+      </Text>
+      {src ? (
+        <video
+          key={src}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          src={src}
+          style={{
+            width: 72,
+            height: 128,
+            objectFit: "cover",
+            borderRadius: 8,
+            background: "#111",
+            display: "block",
+            marginBottom: 8,
+          }}
+        />
+      ) : (
+        <Box
+          style={{
+            width: 72,
+            height: 128,
+            borderRadius: 8,
+            background: "var(--gray-a3)",
+            display: "grid",
+            placeItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          <Text color="gray" size="1">
+            —
+          </Text>
+        </Box>
+      )}
+      <Text as="div" color="gray" mb="2" size="1" style={{ wordBreak: "break-all" }}>
+        {src || `Saves to public/${pathHint}`}
+      </Text>
+      <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
+        <Upload {...iconProps} />
+        {src ? "Replace" : "Upload"}
+      </Button>
+    </Box>
+  );
+}
+
 function ModelDetail({
   busy,
   creatingCardFor,
@@ -1084,6 +1194,7 @@ function ModelDetail({
   onPublishGame,
   onRename,
   onStartRename,
+  onVideoClick,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -1124,6 +1235,7 @@ function ModelDetail({
   onPublishGame: (cardId: string) => void;
   onRename: () => void;
   onStartRename: () => void;
+  onVideoClick: (kind: ModelVideoKind) => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
@@ -1320,6 +1432,39 @@ function ModelDetail({
             Delete
           </Button>
         </Flex>
+
+        <Box mb="3">
+          <Text as="div" mb="1" size="2" weight="bold">
+            Global media
+          </Text>
+          <Text as="div" color="gray" mb="2" size="1">
+            Foil pack and home swipe videos for this model — served to the product app via{" "}
+            <CodeInline>/api/models</CodeInline>.
+          </Text>
+          <Grid columns={{ initial: "1", sm: "3" }} gap="3">
+            <ModelVideoSlot
+              busy={busy}
+              label="Foil 3D pack video"
+              pathHint={`models/${model.id}/pack-face.*`}
+              url={model.packFaceVideoUrl}
+              onUpload={() => onVideoClick("pack-face")}
+            />
+            <ModelVideoSlot
+              busy={busy}
+              label="Foil 3D pack video 2"
+              pathHint={`models/${model.id}/pack-face-2.*`}
+              url={model.packFaceVideoUrl2}
+              onUpload={() => onVideoClick("pack-face-2")}
+            />
+            <ModelVideoSlot
+              busy={busy}
+              label="Swipe motion video"
+              pathHint={`models/${model.id}/swipe.*`}
+              url={model.swipeVideoUrl}
+              onUpload={() => onVideoClick("swipe")}
+            />
+          </Grid>
+        </Box>
 
         {creatingCardFor === model.id ? (
           <Box mb="3">
