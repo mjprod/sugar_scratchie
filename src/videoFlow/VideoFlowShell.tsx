@@ -1,4 +1,4 @@
-import { ExternalLink, LoaderCircle, UserRound } from "lucide-react";
+import { ExternalLink, LoaderCircle, Tags, UserRound } from "lucide-react";
 import { Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
 import type { ReactNode } from "react";
 import { iconProps } from "./ui";
@@ -62,6 +62,12 @@ export function VideoFlowShell({
               <a href="/dashboard/models">
                 <UserRound {...iconProps} />
                 Models
+              </a>
+            </Button>
+            <Button asChild color="gray" variant="soft">
+              <a href="/dashboard/themes">
+                <Tags {...iconProps} />
+                Themes
               </a>
             </Button>
             <Button asChild color="gray" variant="soft">

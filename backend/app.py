@@ -65,6 +65,17 @@ from backend.models_store import (
     upload_model_video,
     write_models_index,
 )
+from backend.themes_store import (
+    CreateThemeRequest,
+    ReorderThemesRequest,
+    UpdateThemeRequest,
+    create_theme,
+    delete_theme,
+    list_themes,
+    reorder_themes,
+    update_theme,
+    write_themes_index,
+)
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
 from backend.services.grok import edit_video, image_dress_flow as run_image_dress_flow, image_to_video as run_image_to_video
 from backend.services.garment_mask import generate_garment_mask as run_generate_garment_mask
@@ -104,6 +115,7 @@ PUBLIC = ROOT / "public"
 CARDS_DIR = PUBLIC / "cards"
 MESH_DIR = PUBLIC / "mesh"
 MODELS_DIR = PUBLIC / "models"
+THEMES_DIR = PUBLIC / "themes"
 UPLOADS_DIR = ROOT / ".tmp" / "uploads"
 PYTHON = ROOT / ".venv" / "bin" / "python"
 PYTHON_CMD = str(PYTHON if PYTHON.exists() else Path(sys.executable))
@@ -401,6 +413,7 @@ app.add_middleware(
 def ensure_indexes() -> None:
     write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
     write_models_index(MODELS_DIR)
+    write_themes_index(THEMES_DIR)
 
 
 class JobLogWriter(TextIOBase):
@@ -934,6 +947,36 @@ async def post_model_pack_face_2(model_id: str, file: UploadFile = File(...)) ->
 async def post_model_swipe(model_id: str, file: UploadFile = File(...)) -> dict:
     model = await upload_model_video(MODELS_DIR, model_id, "swipe", file)
     return model.dict()
+
+
+@app.get("/api/themes")
+def get_themes() -> dict:
+    themes = list_themes(THEMES_DIR)
+    return {"themes": [theme.dict() for theme in themes]}
+
+
+@app.post("/api/themes")
+def post_theme(request: CreateThemeRequest) -> dict:
+    theme = create_theme(THEMES_DIR, request)
+    return theme.dict()
+
+
+@app.put("/api/themes/order")
+def put_themes_order(request: ReorderThemesRequest) -> dict:
+    themes = reorder_themes(THEMES_DIR, request.theme_ids)
+    return {"themes": [theme.dict() for theme in themes]}
+
+
+@app.put("/api/themes/{theme_id}")
+def put_theme(theme_id: str, request: UpdateThemeRequest) -> dict:
+    theme = update_theme(THEMES_DIR, theme_id, request)
+    return theme.dict()
+
+
+@app.delete("/api/themes/{theme_id}")
+def remove_theme(theme_id: str) -> dict:
+    delete_theme(THEMES_DIR, theme_id)
+    return {"ok": True, "id": theme_id}
 
 
 @app.post("/api/jobs/cards/{card_id}/compress")
