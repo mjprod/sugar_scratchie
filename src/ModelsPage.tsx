@@ -50,6 +50,7 @@ import {
   reorderModelCards,
   updateModel,
   uploadModelAvatar,
+  uploadModelFlagSvg,
   type ModelInfo,
   type PhotoInfo,
   type PhotoScratchSlot,
@@ -218,6 +219,88 @@ function modelInitial(label: string, id: string): string {
   return source.toLowerCase();
 }
 
+function modelDisplayTitle(model: ModelInfo): string {
+  return model.influencerName?.trim() || model.label;
+}
+
+/** Plain-text title with emoji flag for selects / strings (no SVG). */
+function modelDisplayTitleWithFlag(model: ModelInfo): string {
+  const name = modelDisplayTitle(model);
+  if (model.influencerFlagSvg) return name;
+  const flag = model.influencerFlag?.trim();
+  return flag ? `${flag} ${name}` : name;
+}
+
+function modelLocationLine(model: ModelInfo): string {
+  const city = model.influencerCity?.trim() ?? "";
+  const country = model.influencerCountry?.trim() ?? "";
+  if (city && country) return `${city}, ${country}`;
+  return city || country;
+}
+
+function modelGradientCss(model: Pick<ModelInfo, "cardOverlayColorStart" | "cardOverlayColorEnd">): string {
+  const start = model.cardOverlayColorStart?.trim() ?? "";
+  const end = model.cardOverlayColorEnd?.trim() ?? "";
+  if (!start && !end) return "";
+  if (start && end) return `linear-gradient(90deg, ${start}, ${end})`;
+  return start || end;
+}
+
+function normalizeHexColor(value: string): string {
+  const raw = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    const [, a, b, c] = raw;
+    return `#${a}${a}${b}${b}${c}${c}`.toLowerCase();
+  }
+  return "#000000";
+}
+
+function ColorField({
+  busy,
+  label,
+  value,
+  onChange,
+}: {
+  busy: boolean;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const pickerValue = normalizeHexColor(value || "#000000");
+  return (
+    <label>
+      <Text as="div" mb="1" size="1" weight="medium">
+        {label}
+      </Text>
+      <Flex align="center" gap="2">
+        <input
+          disabled={busy}
+          type="color"
+          value={pickerValue}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          style={{
+            width: 36,
+            height: 32,
+            padding: 0,
+            border: "1px solid var(--gray-a6)",
+            borderRadius: 6,
+            background: "transparent",
+            cursor: busy ? "not-allowed" : "pointer",
+          }}
+        />
+        <TextField.Root
+          disabled={busy}
+          placeholder="#ff8fab"
+          style={{ flex: 1 }}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+      </Flex>
+    </label>
+  );
+}
+
 function sortModelCards(cards: CardInfo[]): CardInfo[] {
   return [...cards].sort((a, b) => {
     // Published cards keep sort_order; drafts sort after them by id.
@@ -287,13 +370,27 @@ export function ModelsPage() {
   const [newModelLabel, setNewModelLabel] = useState("");
   const [editingId, setEditingId] = useState("");
   const [editingLabel, setEditingLabel] = useState("");
+  const [editingName, setEditingName] = useState("");
+  const [editingCity, setEditingCity] = useState("");
+  const [editingCountry, setEditingCountry] = useState("");
+  const [editingFlag, setEditingFlag] = useState("");
+  const [editingColorStart, setEditingColorStart] = useState("");
+  const [editingColorEnd, setEditingColorEnd] = useState("");
+  const [newModelName, setNewModelName] = useState("");
+  const [newModelCity, setNewModelCity] = useState("");
+  const [newModelCountry, setNewModelCountry] = useState("");
+  const [newModelFlag, setNewModelFlag] = useState("");
+  const [newModelColorStart, setNewModelColorStart] = useState("");
+  const [newModelColorEnd, setNewModelColorEnd] = useState("");
   const [creatingCardFor, setCreatingCardFor] = useState("");
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
   const [createModelOpen, setCreateModelOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const flagInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
+  const [flagTargetId, setFlagTargetId] = useState("");
 
   useEffect(() => {
     const sync = () => setSelectedModelId(readSelectedModelId());
@@ -365,13 +462,30 @@ export function ModelsPage() {
     [models, selectedModelId],
   );
 
+  function clearNewModelForm() {
+    setNewModelId("");
+    setNewModelLabel("");
+    setNewModelName("");
+    setNewModelCity("");
+    setNewModelCountry("");
+    setNewModelFlag("");
+    setNewModelColorStart("");
+    setNewModelColorEnd("");
+  }
+
   async function handleCreateModel() {
     setBusy(true);
     setError("");
     try {
-      await createModel(newModelId.trim(), newModelLabel.trim() || newModelId.trim());
-      setNewModelId("");
-      setNewModelLabel("");
+      await createModel(newModelId.trim(), newModelLabel.trim() || newModelId.trim(), {
+        influencerName: newModelName.trim() || null,
+        influencerCity: newModelCity.trim() || null,
+        influencerCountry: newModelCountry.trim() || null,
+        influencerFlag: newModelFlag.trim() || null,
+        cardOverlayColorStart: newModelColorStart.trim() || null,
+        cardOverlayColorEnd: newModelColorEnd.trim() || null,
+      });
+      clearNewModelForm();
       setCreateModelOpen(false);
       await refresh();
     } catch (caught) {
@@ -385,9 +499,23 @@ export function ModelsPage() {
     setBusy(true);
     setError("");
     try {
-      await updateModel(modelId, editingLabel.trim());
+      await updateModel(modelId, {
+        label: editingLabel.trim(),
+        influencerName: editingName.trim(),
+        influencerCity: editingCity.trim(),
+        influencerCountry: editingCountry.trim(),
+        influencerFlag: editingFlag.trim(),
+        cardOverlayColorStart: editingColorStart.trim(),
+        cardOverlayColorEnd: editingColorEnd.trim(),
+      });
       setEditingId("");
       setEditingLabel("");
+      setEditingName("");
+      setEditingCity("");
+      setEditingCountry("");
+      setEditingFlag("");
+      setEditingColorStart("");
+      setEditingColorEnd("");
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -503,6 +631,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleFlagUpload(modelId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelFlagSvg(modelId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openCreateCard(modelId: string) {
     const suggested = suggestCardId(modelId, allKnownCardIds);
     setCreatingCardFor(modelId);
@@ -590,8 +731,14 @@ export function ModelsPage() {
             <ModelDetail
               busy={busy}
               creatingCardFor={creatingCardFor}
+              editingCity={editingCity}
+              editingColorEnd={editingColorEnd}
+              editingColorStart={editingColorStart}
+              editingCountry={editingCountry}
+              editingFlag={editingFlag}
               editingId={editingId}
               editingLabel={editingLabel}
+              editingName={editingName}
               importableCards={importableCards}
               model={selectedModel}
               modelCards={cardsByModel.get(selectedModel.id) ?? []}
@@ -603,10 +750,20 @@ export function ModelsPage() {
                 setAvatarTargetId(selectedModel.id);
                 avatarInputRef.current?.click();
               }}
+              onFlagClick={() => {
+                setFlagTargetId(selectedModel.id);
+                flagInputRef.current?.click();
+              }}
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
                 setEditingLabel("");
+                setEditingName("");
+                setEditingCity("");
+                setEditingCountry("");
+                setEditingFlag("");
+                setEditingColorStart("");
+                setEditingColorEnd("");
               }}
               onCardIdChange={setNewCardId}
               onCardLabelChange={setNewCardLabel}
@@ -614,7 +771,13 @@ export function ModelsPage() {
               onDeleteCard={(card) => void handleDeleteCard(card)}
               onDeleteModel={() => void handleDeleteModel(selectedModel.id)}
               onDetachCard={(cardId) => void handleAssignCard(cardId, "")}
+              onEditingCityChange={setEditingCity}
+              onEditingColorEndChange={setEditingColorEnd}
+              onEditingColorStartChange={setEditingColorStart}
+              onEditingCountryChange={setEditingCountry}
+              onEditingFlagChange={setEditingFlag}
               onEditingLabelChange={setEditingLabel}
+              onEditingNameChange={setEditingName}
               onMoveCard={(cardId, direction) => void handleMoveCard(selectedModel.id, cardId, direction)}
               onOpenCreateCard={() => openCreateCard(selectedModel.id)}
               onPublishGame={(cardId) => void handlePublishGame(cardId)}
@@ -622,6 +785,12 @@ export function ModelsPage() {
               onStartRename={() => {
                 setEditingId(selectedModel.id);
                 setEditingLabel(selectedModel.label);
+                setEditingName(selectedModel.influencerName ?? "");
+                setEditingCity(selectedModel.influencerCity ?? "");
+                setEditingCountry(selectedModel.influencerCountry ?? "");
+                setEditingFlag(selectedModel.influencerFlag ?? "");
+                setEditingColorStart(selectedModel.cardOverlayColorStart ?? "");
+                setEditingColorEnd(selectedModel.cardOverlayColorEnd ?? "");
               }}
             />
           ) : (
@@ -632,10 +801,22 @@ export function ModelsPage() {
                 </Heading>
                 <CreateModelFields
                   busy={busy}
+                  modelCity={newModelCity}
+                  modelColorEnd={newModelColorEnd}
+                  modelColorStart={newModelColorStart}
+                  modelCountry={newModelCountry}
+                  modelFlag={newModelFlag}
                   modelId={newModelId}
                   modelLabel={newModelLabel}
+                  modelName={newModelName}
+                  onModelCityChange={setNewModelCity}
+                  onModelColorEndChange={setNewModelColorEnd}
+                  onModelColorStartChange={setNewModelColorStart}
+                  onModelCountryChange={setNewModelCountry}
+                  onModelFlagChange={setNewModelFlag}
                   onModelIdChange={setNewModelId}
                   onModelLabelChange={setNewModelLabel}
+                  onModelNameChange={setNewModelName}
                   onSubmit={() => void handleCreateModel()}
                 />
               </Card>
@@ -655,11 +836,23 @@ export function ModelsPage() {
                     </Dialog.Description>
                     <CreateModelFields
                       busy={busy}
+                      modelCity={newModelCity}
+                      modelColorEnd={newModelColorEnd}
+                      modelColorStart={newModelColorStart}
+                      modelCountry={newModelCountry}
+                      modelFlag={newModelFlag}
                       modelId={newModelId}
                       modelLabel={newModelLabel}
+                      modelName={newModelName}
                       stacked
+                      onModelCityChange={setNewModelCity}
+                      onModelColorEndChange={setNewModelColorEnd}
+                      onModelColorStartChange={setNewModelColorStart}
+                      onModelCountryChange={setNewModelCountry}
+                      onModelFlagChange={setNewModelFlag}
                       onModelIdChange={setNewModelId}
                       onModelLabelChange={setNewModelLabel}
+                      onModelNameChange={setNewModelName}
                       onSubmit={() => void handleCreateModel()}
                     />
                     <Flex gap="2" mt="3" justify="end">
@@ -678,16 +871,27 @@ export function ModelsPage() {
                   <Heading size="4">Models</Heading>
                   {models.map((model) => {
                     const count = (cardsByModel.get(model.id) ?? []).length;
+                    const location = modelLocationLine(model);
                     return (
                       <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
                         <ModelAvatar model={model} size={44} />
                         <Box style={{ minWidth: 0 }}>
                           <Text as="div" size="3" weight="bold" truncate>
-                            {model.label}
+                            <Flex align="center" gap="2" asChild>
+                              <span>
+                                <ModelFlagMark model={model} size={16} />
+                                {modelDisplayTitle(model)}
+                              </span>
+                            </Flex>
                           </Text>
                           <Text as="div" color="gray" size="2">
-                            {count} motion card{count === 1 ? "" : "s"}
+                            {location || `${count} motion card${count === 1 ? "" : "s"}`}
                           </Text>
+                          {location ? (
+                            <Text as="div" color="gray" size="1">
+                              {count} motion card{count === 1 ? "" : "s"}
+                            </Text>
+                          ) : null}
                         </Box>
                       </a>
                     );
@@ -736,7 +940,7 @@ export function ModelsPage() {
                                 <Select.Content>
                                   {models.map((model) => (
                                     <Select.Item key={model.id} value={model.id}>
-                                      {model.label}
+                                      {modelDisplayTitleWithFlag(model)}
                                       {(cardsByModel.get(model.id) ?? []).length === 0 ? " (empty)" : ""}
                                     </Select.Item>
                                   ))}
@@ -795,6 +999,17 @@ export function ModelsPage() {
           if (file && avatarTargetId) void handleAvatarUpload(avatarTargetId, file);
         }}
       />
+      <input
+        ref={flagInputRef}
+        accept="image/svg+xml,.svg"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && flagTargetId) void handleFlagUpload(flagTargetId, file);
+        }}
+      />
     </main>
   );
 }
@@ -803,6 +1018,31 @@ function CodeInline({ children }: { children: ReactNode }) {
   return (
     <Text as="span" color="gray" size="1">
       <code>{children}</code>
+    </Text>
+  );
+}
+
+function ModelFlagMark({ model, size = 18 }: { model: ModelInfo; size?: number }) {
+  if (model.influencerFlagSvg) {
+    return (
+      <img
+        alt=""
+        src={model.influencerFlagSvg}
+        style={{
+          width: size,
+          height: size,
+          objectFit: "contain",
+          display: "block",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  const emoji = model.influencerFlag?.trim();
+  if (!emoji) return null;
+  return (
+    <Text as="span" size="3" style={{ lineHeight: 1 }}>
+      {emoji}
     </Text>
   );
 }
@@ -829,8 +1069,14 @@ function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
 function ModelDetail({
   busy,
   creatingCardFor,
+  editingCity,
+  editingColorEnd,
+  editingColorStart,
+  editingCountry,
+  editingFlag,
   editingId,
   editingLabel,
+  editingName,
   importableCards,
   model,
   modelCards,
@@ -847,7 +1093,14 @@ function ModelDetail({
   onDeleteCard,
   onDeleteModel,
   onDetachCard,
+  onEditingCityChange,
+  onEditingColorEndChange,
+  onEditingColorStartChange,
+  onEditingCountryChange,
+  onEditingFlagChange,
   onEditingLabelChange,
+  onEditingNameChange,
+  onFlagClick,
   onMoveCard,
   onOpenCreateCard,
   onPublishGame,
@@ -856,8 +1109,14 @@ function ModelDetail({
 }: {
   busy: boolean;
   creatingCardFor: string;
+  editingCity: string;
+  editingColorEnd: string;
+  editingColorStart: string;
+  editingCountry: string;
+  editingFlag: string;
   editingId: string;
   editingLabel: string;
+  editingName: string;
   importableCards: CardInfo[];
   model: ModelInfo;
   modelCards: CardInfo[];
@@ -874,7 +1133,14 @@ function ModelDetail({
   onDeleteCard: (card: CardInfo) => void;
   onDeleteModel: () => void;
   onDetachCard: (cardId: string) => void;
+  onEditingCityChange: (value: string) => void;
+  onEditingColorEndChange: (value: string) => void;
+  onEditingColorStartChange: (value: string) => void;
+  onEditingCountryChange: (value: string) => void;
+  onEditingFlagChange: (value: string) => void;
   onEditingLabelChange: (value: string) => void;
+  onEditingNameChange: (value: string) => void;
+  onFlagClick: () => void;
   onMoveCard: (cardId: string, direction: -1 | 1) => void;
   onOpenCreateCard: () => void;
   onPublishGame: (cardId: string) => void;
@@ -883,6 +1149,8 @@ function ModelDetail({
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
+  const locationLine = modelLocationLine(model);
+  const gradientCss = modelGradientCss(model);
 
   return (
     <Flex direction="column" gap="3">
@@ -898,33 +1166,148 @@ function ModelDetail({
           <ModelAvatar model={model} size={72} />
           <Box style={{ flex: 1 }}>
             {editingId === model.id ? (
-              <Flex align="center" gap="2" wrap="wrap">
-                <TextField.Root
-                  disabled={busy}
-                  value={editingLabel}
-                  onChange={(event) => onEditingLabelChange(event.currentTarget.value)}
-                />
-                <Button disabled={busy} size="1" onClick={onRename}>
-                  Save
-                </Button>
-                <Button disabled={busy} size="1" variant="soft" onClick={onCancelRename}>
-                  Cancel
-                </Button>
+              <Flex direction="column" gap="2">
+                <Grid columns={{ initial: "1", sm: "2" }} gap="2">
+                  <label>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      Label
+                    </Text>
+                    <TextField.Root
+                      disabled={busy}
+                      value={editingLabel}
+                      onChange={(event) => onEditingLabelChange(event.currentTarget.value)}
+                    />
+                  </label>
+                  <label>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      Influencer name
+                    </Text>
+                    <TextField.Root
+                      disabled={busy}
+                      placeholder="Juliana"
+                      value={editingName}
+                      onChange={(event) => onEditingNameChange(event.currentTarget.value)}
+                    />
+                  </label>
+                  <label>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      City
+                    </Text>
+                    <TextField.Root
+                      disabled={busy}
+                      placeholder="Buenos Aires"
+                      value={editingCity}
+                      onChange={(event) => onEditingCityChange(event.currentTarget.value)}
+                    />
+                  </label>
+                  <label>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      Country
+                    </Text>
+                    <TextField.Root
+                      disabled={busy}
+                      placeholder="Argentina"
+                      value={editingCountry}
+                      onChange={(event) => onEditingCountryChange(event.currentTarget.value)}
+                    />
+                  </label>
+                  <label>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      Flag emoji (optional fallback)
+                    </Text>
+                    <TextField.Root
+                      disabled={busy}
+                      placeholder="🇦🇷"
+                      value={editingFlag}
+                      onChange={(event) => onEditingFlagChange(event.currentTarget.value)}
+                    />
+                  </label>
+                  <Box>
+                    <Text as="div" mb="1" size="1" weight="medium">
+                      Flag SVG
+                    </Text>
+                    <Flex align="center" gap="2">
+                      {model.influencerFlagSvg ? (
+                        <img
+                          alt=""
+                          src={model.influencerFlagSvg}
+                          style={{ width: 28, height: 28, objectFit: "contain" }}
+                        />
+                      ) : (
+                        <Text color="gray" size="1">
+                          No SVG yet
+                        </Text>
+                      )}
+                      <Button disabled={busy} size="1" variant="soft" onClick={onFlagClick}>
+                        <Upload {...iconProps} />
+                        Upload SVG
+                      </Button>
+                    </Flex>
+                  </Box>
+                </Grid>
+                <Box>
+                  <Text as="div" mb="2" size="1" weight="bold">
+                    Card overlay
+                  </Text>
+                  <Grid columns={{ initial: "1", sm: "2" }} gap="2">
+                    <ColorField
+                      busy={busy}
+                      label="Start"
+                      value={editingColorStart}
+                      onChange={onEditingColorStartChange}
+                    />
+                    <ColorField
+                      busy={busy}
+                      label="End"
+                      value={editingColorEnd}
+                      onChange={onEditingColorEndChange}
+                    />
+                  </Grid>
+                </Box>
+                <Flex align="center" gap="2" wrap="wrap">
+                  <Button disabled={busy} size="1" onClick={onRename}>
+                    Save
+                  </Button>
+                  <Button disabled={busy} size="1" variant="soft" onClick={onCancelRename}>
+                    Cancel
+                  </Button>
+                </Flex>
               </Flex>
             ) : (
-              <Flex align="center" gap="2" wrap="wrap">
-                <Heading size="4">{model.label}</Heading>
-                <Badge color="plum" variant="soft">
-                  {model.id}
-                </Badge>
-              </Flex>
+              <>
+                <Flex align="center" gap="2" wrap="wrap">
+                  <ModelFlagMark model={model} size={22} />
+                  <Heading size="4">{modelDisplayTitle(model)}</Heading>
+                  <Badge color="plum" variant="soft">
+                    {model.id}
+                  </Badge>
+                  {gradientCss ? (
+                    <Box
+                      aria-hidden
+                      style={{
+                        width: 56,
+                        height: 18,
+                        borderRadius: 999,
+                        background: gradientCss,
+                        border: "1px solid var(--gray-a6)",
+                      }}
+                      title={`${model.cardOverlayColorStart} → ${model.cardOverlayColorEnd}`}
+                    />
+                  ) : null}
+                </Flex>
+                <Text as="div" color="gray" mt="1" size="2">
+                  {[
+                    locationLine || null,
+                    `${publishedCards.length} published`,
+                    modelCards.some((card) => card.draft)
+                      ? `${modelCards.filter((card) => card.draft).length} draft`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+              </>
             )}
-            <Text color="gray" mt="1" size="2">
-              {publishedCards.length} published
-              {modelCards.some((card) => card.draft)
-                ? ` · ${modelCards.filter((card) => card.draft).length} draft`
-                : ""}
-            </Text>
           </Box>
         </Flex>
 
@@ -944,11 +1327,15 @@ function ModelDetail({
             </Button>
           )}
           <Button disabled={busy} size="1" variant="soft" onClick={onStartRename}>
-            Rename
+            Edit profile
           </Button>
           <Button disabled={busy} size="1" variant="soft" onClick={onAvatarClick}>
             <Upload {...iconProps} />
             Avatar
+          </Button>
+          <Button disabled={busy} size="1" variant="soft" onClick={onFlagClick}>
+            <Upload {...iconProps} />
+            Flag SVG
           </Button>
           <Button color="red" disabled={busy} size="1" variant="soft" onClick={onDeleteModel}>
             <Trash2 {...iconProps} />
@@ -1009,7 +1396,10 @@ function ModelDetail({
                   .sort((a, b) => Number(Boolean(a.model_id)) - Number(Boolean(b.model_id)))
                   .map((card) => {
                     const owner = card.model_id
-                      ? models.find((entry) => entry.id === card.model_id)?.label ?? card.model_id
+                      ? (() => {
+                          const entry = models.find((item) => item.id === card.model_id);
+                          return entry ? modelDisplayTitleWithFlag(entry) : card.model_id;
+                        })()
                       : null;
                     return (
                       <Select.Item key={card.id} value={card.id}>
@@ -1603,45 +1993,137 @@ function MotionCardRow({
 
 function CreateModelFields({
   busy,
+  modelCity,
+  modelColorEnd,
+  modelColorStart,
+  modelCountry,
+  modelFlag,
   modelId,
   modelLabel,
+  modelName,
   stacked = false,
+  onModelCityChange,
+  onModelColorEndChange,
+  onModelColorStartChange,
+  onModelCountryChange,
+  onModelFlagChange,
   onModelIdChange,
   onModelLabelChange,
+  onModelNameChange,
   onSubmit,
 }: {
   busy: boolean;
+  modelCity: string;
+  modelColorEnd: string;
+  modelColorStart: string;
+  modelCountry: string;
+  modelFlag: string;
   modelId: string;
   modelLabel: string;
+  modelName: string;
   stacked?: boolean;
+  onModelCityChange: (value: string) => void;
+  onModelColorEndChange: (value: string) => void;
+  onModelColorStartChange: (value: string) => void;
+  onModelCountryChange: (value: string) => void;
+  onModelFlagChange: (value: string) => void;
   onModelIdChange: (value: string) => void;
   onModelLabelChange: (value: string) => void;
+  onModelNameChange: (value: string) => void;
   onSubmit: () => void;
 }) {
   return (
-    <Grid columns={stacked ? "1" : { initial: "1", md: "3" }} gap="3">
-      <label>
-        <Text as="div" mb="1" size="2" weight="medium">
-          Model id
+    <Flex direction="column" gap="3">
+      <Grid columns={stacked ? "1" : { initial: "1", md: "2" }} gap="3">
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            Model id
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="janja"
+            value={modelId}
+            onChange={(event) => onModelIdChange(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            Label
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="janja"
+            value={modelLabel}
+            onChange={(event) => onModelLabelChange(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            Influencer name
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="Juliana"
+            value={modelName}
+            onChange={(event) => onModelNameChange(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            Flag emoji (optional)
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="🇦🇷"
+            value={modelFlag}
+            onChange={(event) => onModelFlagChange(event.currentTarget.value)}
+          />
+        </label>
+        <Text color="gray" size="1" style={{ alignSelf: "end", paddingBottom: 8 }}>
+          Upload a flag SVG after creating the model.
         </Text>
-        <TextField.Root
-          disabled={busy}
-          placeholder="janja"
-          value={modelId}
-          onChange={(event) => onModelIdChange(event.currentTarget.value)}
-        />
-      </label>
-      <label>
-        <Text as="div" mb="1" size="2" weight="medium">
-          Display name
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            City
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="Buenos Aires"
+            value={modelCity}
+            onChange={(event) => onModelCityChange(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <Text as="div" mb="1" size="2" weight="medium">
+            Country
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            placeholder="Argentina"
+            value={modelCountry}
+            onChange={(event) => onModelCountryChange(event.currentTarget.value)}
+          />
+        </label>
+      </Grid>
+      <Box>
+        <Text as="div" mb="2" size="2" weight="bold">
+          Card overlay
         </Text>
-        <TextField.Root
-          disabled={busy}
-          placeholder="Janja"
-          value={modelLabel}
-          onChange={(event) => onModelLabelChange(event.currentTarget.value)}
-        />
-      </label>
+        <Grid columns={stacked ? "1" : { initial: "1", md: "2" }} gap="3">
+          <ColorField
+            busy={busy}
+            label="Start"
+            value={modelColorStart}
+            onChange={onModelColorStartChange}
+          />
+          <ColorField
+            busy={busy}
+            label="End"
+            value={modelColorEnd}
+            onChange={onModelColorEndChange}
+          />
+        </Grid>
+      </Box>
       <Flex align={stacked ? "stretch" : "end"}>
         <Button
           disabled={busy || !modelId.trim()}
@@ -1652,7 +2134,7 @@ function CreateModelFields({
           Create model
         </Button>
       </Flex>
-    </Grid>
+    </Flex>
   );
 }
 

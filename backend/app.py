@@ -61,6 +61,7 @@ from backend.models_store import (
     list_models,
     update_model,
     upload_model_avatar,
+    upload_model_flag_svg,
     write_models_index,
 )
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
@@ -907,6 +908,12 @@ def remove_model(model_id: str) -> dict:
 @app.post("/api/models/{model_id}/avatar")
 async def post_model_avatar(model_id: str, file: UploadFile = File(...)) -> dict:
     model = await upload_model_avatar(MODELS_DIR, model_id, file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/flag")
+async def post_model_flag(model_id: str, file: UploadFile = File(...)) -> dict:
+    model = await upload_model_flag_svg(MODELS_DIR, model_id, file)
     return model.dict()
 
 
