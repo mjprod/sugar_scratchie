@@ -16,6 +16,14 @@ MODEL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 FLAG_EXTENSIONS = {".svg"}
+VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
+# Stem → ModelInfo field for per-model foil/swipe videos (Global media).
+MODEL_VIDEO_STEMS: dict[str, str] = {
+    "pack-face": "packFaceVideoUrl",
+    "pack-face-2": "packFaceVideoUrl2",
+    "swipe": "swipeVideoUrl",
+}
 
 INFLUENCER_META_KEYS = (
     "influencerName",
@@ -39,6 +47,9 @@ class ModelInfo(BaseModel):
     influencerFlagSvg: str | None = None
     cardOverlayColorStart: str | None = None
     cardOverlayColorEnd: str | None = None
+    packFaceVideoUrl: str | None = None
+    packFaceVideoUrl2: str | None = None
+    swipeVideoUrl: str | None = None
 
 
 class CreateModelRequest(BaseModel):
@@ -91,6 +102,9 @@ def _model_info(
     created_at: float | None,
     influencer: dict[str, str | None] | None = None,
     influencer_flag_svg: str | None = None,
+    pack_face_video_url: str | None = None,
+    pack_face_video_url_2: str | None = None,
+    swipe_video_url: str | None = None,
 ) -> ModelInfo:
     fields = influencer or {key: None for key in INFLUENCER_META_KEYS}
     return ModelInfo(
@@ -105,6 +119,25 @@ def _model_info(
         influencerFlagSvg=influencer_flag_svg,
         cardOverlayColorStart=fields.get("cardOverlayColorStart"),
         cardOverlayColorEnd=fields.get("cardOverlayColorEnd"),
+        packFaceVideoUrl=pack_face_video_url,
+        packFaceVideoUrl2=pack_face_video_url_2,
+        swipeVideoUrl=swipe_video_url,
+    )
+
+
+def _model_info_from_dir(model_dir: Path, *, label: str, created_at: float | None) -> ModelInfo:
+    meta = read_model_meta(model_dir, label)
+    videos = find_model_videos(model_dir)
+    return _model_info(
+        model_dir.name,
+        label=label,
+        avatar=find_avatar(model_dir),
+        created_at=created_at,
+        influencer=_influencer_from_meta(meta),
+        influencer_flag_svg=find_flag_svg(model_dir),
+        pack_face_video_url=videos.get("packFaceVideoUrl"),
+        pack_face_video_url_2=videos.get("packFaceVideoUrl2"),
+        swipe_video_url=videos.get("swipeVideoUrl"),
     )
 
 
@@ -196,6 +229,21 @@ def find_flag_svg(model_dir: Path) -> str | None:
     return None
 
 
+def find_model_video(model_dir: Path, stem: str) -> str | None:
+    for ext in VIDEO_EXTENSIONS:
+        candidate = model_dir / f"{stem}{ext}"
+        if candidate.is_file():
+            return public_url(f"models/{model_dir.name}/{stem}{ext}")
+    return None
+
+
+def find_model_videos(model_dir: Path) -> dict[str, str | None]:
+    return {
+        field: find_model_video(model_dir, stem)
+        for stem, field in MODEL_VIDEO_STEMS.items()
+    }
+
+
 def list_models(models_dir: Path) -> list[ModelInfo]:
     if not models_dir.exists():
         return []
@@ -207,13 +255,10 @@ def list_models(models_dir: Path) -> list[ModelInfo]:
             label = directory.name.replace("_", " ").title()
         created_at = meta.get("created_at")
         models.append(
-            _model_info(
-                directory.name,
+            _model_info_from_dir(
+                directory,
                 label=label.strip(),
-                avatar=find_avatar(directory),
                 created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-                influencer=_influencer_from_meta(meta),
-                influencer_flag_svg=find_flag_svg(directory),
             )
         )
     return models
@@ -234,6 +279,9 @@ def write_models_index(models_dir: Path) -> None:
                 "influencerFlagSvg": model.influencerFlagSvg,
                 "cardOverlayColorStart": model.cardOverlayColorStart,
                 "cardOverlayColorEnd": model.cardOverlayColorEnd,
+                "packFaceVideoUrl": model.packFaceVideoUrl,
+                "packFaceVideoUrl2": model.packFaceVideoUrl2,
+                "swipeVideoUrl": model.swipeVideoUrl,
             }
             for model in models
         ]
@@ -270,6 +318,9 @@ def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
         created_at=created_at,
         influencer=influencer,
         influencer_flag_svg=None,
+        pack_face_video_url=None,
+        pack_face_video_url_2=None,
+        swipe_video_url=None,
     )
 
 
@@ -294,13 +345,10 @@ def update_model(models_dir: Path, model_id: str, request: UpdateModelRequest) -
     write_model_meta(model_dir, label=label, **influencer)
     write_models_index(models_dir)
     created_at = meta.get("created_at")
-    return _model_info(
-        model_id,
+    return _model_info_from_dir(
+        model_dir,
         label=label,
-        avatar=find_avatar(model_dir),
         created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-        influencer=influencer,
-        influencer_flag_svg=find_flag_svg(model_dir),
     )
 
 
@@ -376,13 +424,10 @@ async def upload_model_avatar(models_dir: Path, model_id: str, upload: UploadFil
     meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
     label = str(meta.get("label", model_id))
     created_at = meta.get("created_at")
-    return _model_info(
-        model_id,
+    return _model_info_from_dir(
+        model_dir,
         label=label,
-        avatar=public_url(f"models/{model_id}/avatar{ext}"),
         created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-        influencer=_influencer_from_meta(meta),
-        influencer_flag_svg=find_flag_svg(model_dir),
     )
 
 
@@ -411,11 +456,43 @@ async def upload_model_flag_svg(models_dir: Path, model_id: str, upload: UploadF
     meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
     label = str(meta.get("label", model_id))
     created_at = meta.get("created_at")
-    return _model_info(
-        model_id,
+    return _model_info_from_dir(
+        model_dir,
         label=label,
-        avatar=find_avatar(model_dir),
         created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-        influencer=_influencer_from_meta(meta),
-        influencer_flag_svg=public_url(f"models/{model_id}/flag{ext}"),
+    )
+
+
+async def upload_model_video(
+    models_dir: Path,
+    model_id: str,
+    stem: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    if stem not in MODEL_VIDEO_STEMS:
+        raise HTTPException(status_code=400, detail=f"Unknown video kind: {stem}")
+    model_dir = models_dir / model_id
+    if not model_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Video must be MP4 or WebM")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+    for old_ext in VIDEO_EXTENSIONS:
+        old = model_dir / f"{stem}{old_ext}"
+        if old.exists():
+            old.unlink()
+    target = model_dir / f"{stem}{ext}"
+    target.write_bytes(data)
+    write_models_index(models_dir)
+    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
+    label = str(meta.get("label", model_id))
+    created_at = meta.get("created_at")
+    return _model_info_from_dir(
+        model_dir,
+        label=label,
+        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
     )
