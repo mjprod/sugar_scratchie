@@ -71,6 +71,9 @@ export function VideoFlowShell({
               </a>
             </Button>
             <Button asChild color="gray" variant="soft">
+              <a href="/symbols">Symbols</a>
+            </Button>
+            <Button asChild color="gray" variant="soft">
               <a href="/dashboard">
                 <ExternalLink {...iconProps} />
                 Dashboard

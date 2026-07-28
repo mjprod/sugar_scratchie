@@ -7,6 +7,7 @@ import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
   buildBodySymbols,
   buildTopSymbols,
+  loadSymbolTypes,
   matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPES,
@@ -972,6 +973,15 @@ export function ScratchPrototype() {
   const lastPointerClientRef = useRef<Vec2 | null>(null);
   const coinIdRef = useRef(0);
   const [flyingCoins, setFlyingCoins] = useState<FlyingCoin[]>([]);
+  const [, setSymbolCatalogTick] = useState(0);
+
+  useEffect(() => {
+    loadSymbolTypes()
+      .then((ok) => {
+        if (ok) setSymbolCatalogTick((n) => n + 1);
+      })
+      .catch(() => undefined);
+  }, []);
   const bottomVideoRef = useRef<HTMLVideoElement | null>(null);
   const foregroundVideoRef = useRef<HTMLVideoElement | null>(null);
   const glRendererRef = useRef<GarmentGLRenderer | null>(null);

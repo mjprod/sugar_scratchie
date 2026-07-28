@@ -76,6 +76,16 @@ from backend.themes_store import (
     update_theme,
     write_themes_index,
 )
+from backend.symbols_store import (
+    RewriteSymbolJsonRequest,
+    UpdateSymbolRequest,
+    list_symbols,
+    read_symbol_json,
+    rewrite_symbol_json,
+    update_symbol,
+    upload_symbol_lottie,
+    write_symbols_index,
+)
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
 from backend.services.grok import edit_video, image_dress_flow as run_image_dress_flow, image_to_video as run_image_to_video
 from backend.services.garment_mask import generate_garment_mask as run_generate_garment_mask
@@ -116,6 +126,7 @@ CARDS_DIR = PUBLIC / "cards"
 MESH_DIR = PUBLIC / "mesh"
 MODELS_DIR = PUBLIC / "models"
 THEMES_DIR = PUBLIC / "themes"
+LOTTIES_DIR = PUBLIC / "lotties"
 UPLOADS_DIR = ROOT / ".tmp" / "uploads"
 PYTHON = ROOT / ".venv" / "bin" / "python"
 PYTHON_CMD = str(PYTHON if PYTHON.exists() else Path(sys.executable))
@@ -414,6 +425,7 @@ def ensure_indexes() -> None:
     write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
     write_models_index(MODELS_DIR)
     write_themes_index(THEMES_DIR)
+    write_symbols_index(LOTTIES_DIR)
 
 
 class JobLogWriter(TextIOBase):
@@ -977,6 +989,36 @@ def put_theme(theme_id: str, request: UpdateThemeRequest) -> dict:
 def remove_theme(theme_id: str) -> dict:
     delete_theme(THEMES_DIR, theme_id)
     return {"ok": True, "id": theme_id}
+
+
+@app.get("/api/symbols")
+def get_symbols() -> dict:
+    symbols = list_symbols(LOTTIES_DIR)
+    return {"symbols": [symbol.dict() for symbol in symbols]}
+
+
+@app.put("/api/symbols/{symbol_id}")
+def put_symbol(symbol_id: str, request: UpdateSymbolRequest) -> dict:
+    symbol = update_symbol(LOTTIES_DIR, symbol_id, request)
+    return symbol.dict()
+
+
+@app.post("/api/symbols/{symbol_id}/lottie")
+async def post_symbol_lottie(symbol_id: str, file: UploadFile = File(...)) -> dict:
+    symbol = await upload_symbol_lottie(LOTTIES_DIR, symbol_id, file)
+    return symbol.dict()
+
+
+@app.get("/api/symbols/{symbol_id}/json")
+def get_symbol_json(symbol_id: str) -> dict:
+    payload = read_symbol_json(LOTTIES_DIR, symbol_id)
+    return payload.dict()
+
+
+@app.put("/api/symbols/{symbol_id}/json")
+def put_symbol_json(symbol_id: str, request: RewriteSymbolJsonRequest) -> dict:
+    symbol = rewrite_symbol_json(LOTTIES_DIR, symbol_id, request)
+    return symbol.dict()
 
 
 @app.post("/api/jobs/cards/{card_id}/compress")
