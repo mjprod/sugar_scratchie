@@ -2044,24 +2044,6 @@ dd {
   padding-bottom: 12px !important;
 }
 
-.models-create-inline {
-  display: none;
-}
-
-.models-create-mobile {
-  display: block;
-}
-
-@media (min-width: 768px) {
-  .models-create-inline {
-    display: block;
-  }
-
-  .models-create-mobile {
-    display: none;
-  }
-}
-
 .models-list-card {
   display: flex;
   align-items: center;

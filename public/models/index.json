@@ -3,7 +3,14 @@
     {
       "id": "julianaval",
       "label": "julianaval",
-      "avatar": "/models/julianaval/avatar.jpeg"
+      "avatar": "/models/julianaval/avatar.jpeg",
+      "influencerName": "Juliana",
+      "influencerCity": "Buenos Aires",
+      "influencerCountry": "Argentina",
+      "influencerFlag": null,
+      "influencerFlagSvg": "/models/julianaval/flag.svg",
+      "cardOverlayColorStart": null,
+      "cardOverlayColorEnd": null
     }
   ]
 }

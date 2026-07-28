@@ -123,18 +123,65 @@ function findModelAvatar(modelId: string) {
   return null;
 }
 
+function findModelFlagSvg(modelId: string) {
+  const candidate = resolve(modelsDirectory, modelId, "flag.svg");
+  if (existsSync(candidate)) return publicCardUrl(`models/${modelId}/flag.svg`);
+  return null;
+}
+
+function optionalMetaString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 function getModelsIndexPayload() {
-  const models: Array<{ id: string; label: string; avatar: string | null }> = [];
+  const models: Array<{
+    id: string;
+    label: string;
+    avatar: string | null;
+    influencerName: string | null;
+    influencerCity: string | null;
+    influencerCountry: string | null;
+    influencerFlag: string | null;
+    influencerFlagSvg: string | null;
+    cardOverlayColorStart: string | null;
+    cardOverlayColorEnd: string | null;
+  }> = [];
   try {
     for (const entry of readdirSync(modelsDirectory, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const modelDir = resolve(modelsDirectory, entry.name);
       const metaPath = resolve(modelDir, "meta.json");
       let label = entry.name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      let influencerName: string | null = null;
+      let influencerCity: string | null = null;
+      let influencerCountry: string | null = null;
+      let influencerFlag: string | null = null;
+      let cardOverlayColorStart: string | null = null;
+      let cardOverlayColorEnd: string | null = null;
       if (existsSync(metaPath)) {
         try {
-          const data = JSON.parse(readFileSync(metaPath, "utf8")) as { label?: string };
+          const data = JSON.parse(readFileSync(metaPath, "utf8")) as {
+            label?: string;
+            influencerName?: string;
+            influencerCity?: string;
+            influencerCountry?: string;
+            influencerFlag?: string;
+            cardOverlayColorStart?: string;
+            cardOverlayColorEnd?: string;
+            influencerColorStart?: string;
+            influencerColorEnd?: string;
+          };
           if (typeof data.label === "string" && data.label.trim()) label = data.label.trim();
+          influencerName = optionalMetaString(data.influencerName);
+          influencerCity = optionalMetaString(data.influencerCity);
+          influencerCountry = optionalMetaString(data.influencerCountry);
+          influencerFlag = optionalMetaString(data.influencerFlag);
+          cardOverlayColorStart = optionalMetaString(
+            data.cardOverlayColorStart ?? data.influencerColorStart,
+          );
+          cardOverlayColorEnd = optionalMetaString(
+            data.cardOverlayColorEnd ?? data.influencerColorEnd,
+          );
         } catch {
           // keep fallback label
         }
@@ -143,6 +190,13 @@ function getModelsIndexPayload() {
         id: entry.name,
         label,
         avatar: findModelAvatar(entry.name),
+        influencerName,
+        influencerCity,
+        influencerCountry,
+        influencerFlag,
+        influencerFlagSvg: findModelFlagSvg(entry.name),
+        cardOverlayColorStart,
+        cardOverlayColorEnd,
       });
     }
   } catch {

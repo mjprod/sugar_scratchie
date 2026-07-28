@@ -5,12 +5,29 @@ import {
   DEFAULT_THEME,
 } from "../videoFlow/schema";
 
+export type ModelInfluencerProfile = {
+  influencerName?: string | null;
+  influencerCity?: string | null;
+  influencerCountry?: string | null;
+  influencerFlag?: string | null;
+  /** Uploaded SVG flag URL, e.g. "/models/julianaval/flag.svg". */
+  influencerFlagSvg?: string | null;
+  /** Card overlay gradient start, e.g. "#ff8fab". */
+  cardOverlayColorStart?: string | null;
+  /** Card overlay gradient end, e.g. "#ff0a54". */
+  cardOverlayColorEnd?: string | null;
+};
+
 export type ModelInfo = {
   id: string;
   label: string;
   avatar: string | null;
   created_at?: number | null;
-};
+} & ModelInfluencerProfile;
+
+export type UpdateModelPayload = {
+  label?: string;
+} & ModelInfluencerProfile;
 
 export type PhotoInfo = {
   id: string;
@@ -40,17 +57,25 @@ export async function fetchModels(): Promise<ModelInfo[]> {
   }
 }
 
-export async function createModel(id: string, label: string): Promise<ModelInfo> {
+export async function createModel(
+  id: string,
+  label: string,
+  profile?: ModelInfluencerProfile,
+): Promise<ModelInfo> {
   return api<ModelInfo>("/api/models", {
     method: "POST",
-    body: JSON.stringify({ id, label }),
+    body: JSON.stringify({ id, label, ...profile }),
   });
 }
 
-export async function updateModel(modelId: string, label: string): Promise<ModelInfo> {
+export async function updateModel(
+  modelId: string,
+  payload: UpdateModelPayload | string,
+): Promise<ModelInfo> {
+  const body = typeof payload === "string" ? { label: payload } : payload;
   return api<ModelInfo>(`/api/models/${encodeURIComponent(modelId)}`, {
     method: "PUT",
-    body: JSON.stringify({ label }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -114,6 +139,20 @@ export async function uploadModelAvatar(modelId: string, file: File): Promise<Mo
   const form = new FormData();
   form.append("file", file);
   const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/avatar`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<ModelInfo>;
+}
+
+export async function uploadModelFlagSvg(modelId: string, file: File): Promise<ModelInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/flag`, {
     method: "POST",
     body: form,
   });
