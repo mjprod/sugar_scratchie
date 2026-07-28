@@ -1295,19 +1295,19 @@ function ModelDetail({
                     />
                   ) : null}
                 </Flex>
-                <Text as="div" color="gray" mt="1" size="2">
-                  {[
-                    locationLine || null,
-                    `${publishedCards.length} published`,
-                    modelCards.some((card) => card.draft)
-                      ? `${modelCards.filter((card) => card.draft).length} draft`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </Text>
               </>
             )}
+            <Text as="div" color="gray" mt="1" size="2">
+              {[
+                editingId === model.id ? null : locationLine || null,
+                `${publishedCards.length} published`,
+                modelCards.some((card) => card.draft)
+                  ? `${modelCards.filter((card) => card.draft).length} draft`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
           </Box>
         </Flex>
 
