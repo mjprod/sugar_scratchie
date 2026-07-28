@@ -379,7 +379,7 @@ export function ModelsPage() {
   const [newModelName, setNewModelName] = useState("");
   const [newModelCity, setNewModelCity] = useState("");
   const [newModelCountry, setNewModelCountry] = useState("");
-  const [newModelFlag, setNewModelFlag] = useState("");
+  const [newModelFlagFile, setNewModelFlagFile] = useState<File | null>(null);
   const [newModelColorStart, setNewModelColorStart] = useState("");
   const [newModelColorEnd, setNewModelColorEnd] = useState("");
   const [creatingCardFor, setCreatingCardFor] = useState("");
@@ -468,7 +468,7 @@ export function ModelsPage() {
     setNewModelName("");
     setNewModelCity("");
     setNewModelCountry("");
-    setNewModelFlag("");
+    setNewModelFlagFile(null);
     setNewModelColorStart("");
     setNewModelColorEnd("");
   }
@@ -477,14 +477,20 @@ export function ModelsPage() {
     setBusy(true);
     setError("");
     try {
-      await createModel(newModelId.trim(), newModelLabel.trim() || newModelId.trim(), {
-        influencerName: newModelName.trim() || null,
-        influencerCity: newModelCity.trim() || null,
-        influencerCountry: newModelCountry.trim() || null,
-        influencerFlag: newModelFlag.trim() || null,
-        cardOverlayColorStart: newModelColorStart.trim() || null,
-        cardOverlayColorEnd: newModelColorEnd.trim() || null,
-      });
+      const created = await createModel(
+        newModelId.trim(),
+        newModelLabel.trim() || newModelId.trim(),
+        {
+          influencerName: newModelName.trim() || null,
+          influencerCity: newModelCity.trim() || null,
+          influencerCountry: newModelCountry.trim() || null,
+          cardOverlayColorStart: newModelColorStart.trim() || null,
+          cardOverlayColorEnd: newModelColorEnd.trim() || null,
+        },
+      );
+      if (newModelFlagFile) {
+        await uploadModelFlagSvg(created.id, newModelFlagFile);
+      }
       clearNewModelForm();
       setCreateModelOpen(false);
       await refresh();
@@ -805,7 +811,7 @@ export function ModelsPage() {
                   modelColorEnd={newModelColorEnd}
                   modelColorStart={newModelColorStart}
                   modelCountry={newModelCountry}
-                  modelFlag={newModelFlag}
+                  modelFlagFile={newModelFlagFile}
                   modelId={newModelId}
                   modelLabel={newModelLabel}
                   modelName={newModelName}
@@ -813,7 +819,7 @@ export function ModelsPage() {
                   onModelColorEndChange={setNewModelColorEnd}
                   onModelColorStartChange={setNewModelColorStart}
                   onModelCountryChange={setNewModelCountry}
-                  onModelFlagChange={setNewModelFlag}
+                  onModelFlagFileChange={setNewModelFlagFile}
                   onModelIdChange={setNewModelId}
                   onModelLabelChange={setNewModelLabel}
                   onModelNameChange={setNewModelName}
@@ -840,7 +846,7 @@ export function ModelsPage() {
                       modelColorEnd={newModelColorEnd}
                       modelColorStart={newModelColorStart}
                       modelCountry={newModelCountry}
-                      modelFlag={newModelFlag}
+                      modelFlagFile={newModelFlagFile}
                       modelId={newModelId}
                       modelLabel={newModelLabel}
                       modelName={newModelName}
@@ -849,7 +855,7 @@ export function ModelsPage() {
                       onModelColorEndChange={setNewModelColorEnd}
                       onModelColorStartChange={setNewModelColorStart}
                       onModelCountryChange={setNewModelCountry}
-                      onModelFlagChange={setNewModelFlag}
+                      onModelFlagFileChange={setNewModelFlagFile}
                       onModelIdChange={setNewModelId}
                       onModelLabelChange={setNewModelLabel}
                       onModelNameChange={setNewModelName}
@@ -1991,13 +1997,41 @@ function MotionCardRow({
   );
 }
 
+function FlagSvgFilePreview({ file, size = 28 }: { file: File; size?: number }) {
+  const [src, setSrc] = useState("");
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  if (!src) return null;
+  return (
+    <img
+      alt=""
+      src={src}
+      style={{
+        width: size,
+        height: size,
+        objectFit: "contain",
+        display: "block",
+        flexShrink: 0,
+        borderRadius: 4,
+        border: "1px solid var(--gray-a6)",
+        background: "var(--gray-a2)",
+      }}
+    />
+  );
+}
+
 function CreateModelFields({
   busy,
   modelCity,
   modelColorEnd,
   modelColorStart,
   modelCountry,
-  modelFlag,
+  modelFlagFile,
   modelId,
   modelLabel,
   modelName,
@@ -2006,7 +2040,7 @@ function CreateModelFields({
   onModelColorEndChange,
   onModelColorStartChange,
   onModelCountryChange,
-  onModelFlagChange,
+  onModelFlagFileChange,
   onModelIdChange,
   onModelLabelChange,
   onModelNameChange,
@@ -2017,7 +2051,7 @@ function CreateModelFields({
   modelColorEnd: string;
   modelColorStart: string;
   modelCountry: string;
-  modelFlag: string;
+  modelFlagFile: File | null;
   modelId: string;
   modelLabel: string;
   modelName: string;
@@ -2026,7 +2060,7 @@ function CreateModelFields({
   onModelColorEndChange: (value: string) => void;
   onModelColorStartChange: (value: string) => void;
   onModelCountryChange: (value: string) => void;
-  onModelFlagChange: (value: string) => void;
+  onModelFlagFileChange: (file: File | null) => void;
   onModelIdChange: (value: string) => void;
   onModelLabelChange: (value: string) => void;
   onModelNameChange: (value: string) => void;
@@ -2068,20 +2102,47 @@ function CreateModelFields({
             onChange={(event) => onModelNameChange(event.currentTarget.value)}
           />
         </label>
-        <label>
+        <Box>
           <Text as="div" mb="1" size="2" weight="medium">
-            Flag emoji (optional)
+            Flag SVG
           </Text>
-          <TextField.Root
-            disabled={busy}
-            placeholder="🇦🇷"
-            value={modelFlag}
-            onChange={(event) => onModelFlagChange(event.currentTarget.value)}
-          />
-        </label>
-        <Text color="gray" size="1" style={{ alignSelf: "end", paddingBottom: 8 }}>
-          Upload a flag SVG after creating the model.
-        </Text>
+          <Flex align="center" gap="2" wrap="wrap">
+            {modelFlagFile ? <FlagSvgFilePreview file={modelFlagFile} size={32} /> : null}
+            <Button asChild disabled={busy} size="2" variant="soft">
+              <label style={{ cursor: busy ? "not-allowed" : "pointer" }}>
+                <Upload {...iconProps} />
+                {modelFlagFile ? "Change SVG" : "Choose SVG"}
+                <input
+                  accept="image/svg+xml,.svg"
+                  disabled={busy}
+                  hidden
+                  type="file"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0] ?? null;
+                    event.currentTarget.value = "";
+                    onModelFlagFileChange(file);
+                  }}
+                />
+              </label>
+            </Button>
+            {modelFlagFile ? (
+              <>
+                <Text color="gray" size="1" truncate style={{ maxWidth: 160 }}>
+                  {modelFlagFile.name}
+                </Text>
+                <Button
+                  color="gray"
+                  disabled={busy}
+                  size="1"
+                  variant="ghost"
+                  onClick={() => onModelFlagFileChange(null)}
+                >
+                  Clear
+                </Button>
+              </>
+            ) : null}
+          </Flex>
+        </Box>
         <label>
           <Text as="div" mb="1" size="2" weight="medium">
             City
