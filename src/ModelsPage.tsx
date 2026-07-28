@@ -801,76 +801,48 @@ export function ModelsPage() {
             />
           ) : (
             <>
-              <Card size="3" className="models-create-inline">
-                <Heading size="4" mb="3">
-                  Create model
-                </Heading>
-                <CreateModelFields
-                  busy={busy}
-                  modelCity={newModelCity}
-                  modelColorEnd={newModelColorEnd}
-                  modelColorStart={newModelColorStart}
-                  modelCountry={newModelCountry}
-                  modelFlagFile={newModelFlagFile}
-                  modelId={newModelId}
-                  modelLabel={newModelLabel}
-                  modelName={newModelName}
-                  onModelCityChange={setNewModelCity}
-                  onModelColorEndChange={setNewModelColorEnd}
-                  onModelColorStartChange={setNewModelColorStart}
-                  onModelCountryChange={setNewModelCountry}
-                  onModelFlagFileChange={setNewModelFlagFile}
-                  onModelIdChange={setNewModelId}
-                  onModelLabelChange={setNewModelLabel}
-                  onModelNameChange={setNewModelName}
-                  onSubmit={() => void handleCreateModel()}
-                />
-              </Card>
-
-              <Box className="models-create-mobile">
-                <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
-                  <Dialog.Trigger>
-                    <Button size="3" style={{ width: "100%" }} variant="soft">
-                      <Plus {...iconProps} />
-                      Create model
-                    </Button>
-                  </Dialog.Trigger>
-                  <Dialog.Content style={{ maxWidth: 420 }}>
-                    <Dialog.Title>Create model</Dialog.Title>
-                    <Dialog.Description size="2" mb="3">
-                      Add a girl/persona. You can attach motion cards after.
-                    </Dialog.Description>
-                    <CreateModelFields
-                      busy={busy}
-                      modelCity={newModelCity}
-                      modelColorEnd={newModelColorEnd}
-                      modelColorStart={newModelColorStart}
-                      modelCountry={newModelCountry}
-                      modelFlagFile={newModelFlagFile}
-                      modelId={newModelId}
-                      modelLabel={newModelLabel}
-                      modelName={newModelName}
-                      stacked
-                      onModelCityChange={setNewModelCity}
-                      onModelColorEndChange={setNewModelColorEnd}
-                      onModelColorStartChange={setNewModelColorStart}
-                      onModelCountryChange={setNewModelCountry}
-                      onModelFlagFileChange={setNewModelFlagFile}
-                      onModelIdChange={setNewModelId}
-                      onModelLabelChange={setNewModelLabel}
-                      onModelNameChange={setNewModelName}
-                      onSubmit={() => void handleCreateModel()}
-                    />
-                    <Flex gap="2" mt="3" justify="end">
-                      <Dialog.Close>
-                        <Button color="gray" disabled={busy} variant="soft">
-                          Cancel
-                        </Button>
-                      </Dialog.Close>
-                    </Flex>
-                  </Dialog.Content>
-                </Dialog.Root>
-              </Box>
+              <Dialog.Root open={createModelOpen} onOpenChange={setCreateModelOpen}>
+                <Dialog.Trigger>
+                  <Button size="3" variant="soft">
+                    <Plus {...iconProps} />
+                    Create model
+                  </Button>
+                </Dialog.Trigger>
+                <Dialog.Content style={{ maxWidth: 520 }}>
+                  <Dialog.Title>Create model</Dialog.Title>
+                  <Dialog.Description size="2" mb="3">
+                    Add a girl/persona. You can attach motion cards after.
+                  </Dialog.Description>
+                  <CreateModelFields
+                    busy={busy}
+                    modelCity={newModelCity}
+                    modelColorEnd={newModelColorEnd}
+                    modelColorStart={newModelColorStart}
+                    modelCountry={newModelCountry}
+                    modelFlagFile={newModelFlagFile}
+                    modelId={newModelId}
+                    modelLabel={newModelLabel}
+                    modelName={newModelName}
+                    stacked
+                    onModelCityChange={setNewModelCity}
+                    onModelColorEndChange={setNewModelColorEnd}
+                    onModelColorStartChange={setNewModelColorStart}
+                    onModelCountryChange={setNewModelCountry}
+                    onModelFlagFileChange={setNewModelFlagFile}
+                    onModelIdChange={setNewModelId}
+                    onModelLabelChange={setNewModelLabel}
+                    onModelNameChange={setNewModelName}
+                    onSubmit={() => void handleCreateModel()}
+                  />
+                  <Flex gap="2" mt="3" justify="end">
+                    <Dialog.Close>
+                      <Button color="gray" disabled={busy} variant="soft">
+                        Cancel
+                      </Button>
+                    </Dialog.Close>
+                  </Flex>
+                </Dialog.Content>
+              </Dialog.Root>
 
               {models.length > 0 ? (
                 <Flex direction="column" gap="3">
