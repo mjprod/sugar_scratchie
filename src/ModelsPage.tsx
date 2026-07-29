@@ -1696,10 +1696,10 @@ function ModelDetail({
                       </Flex>
                       {themeId ? (
                         <button
+                          aria-label={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
                           className="models-theme-avatar-btn"
                           disabled={busy}
                           title={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
-                          type="button"
                           onClick={() => onThemeAvatarClick(themeId)}
                         >
                           {themeAvatarUrl ? (
