@@ -32,6 +32,8 @@ export type ModelInfo = {
   label: string;
   avatar: string | null;
   created_at?: number | null;
+  /** theme_id → public URL for model×theme collection avatar. */
+  theme_avatars?: Record<string, string>;
 } & ModelInfluencerProfile &
   ModelGlobalMedia;
 
@@ -159,6 +161,65 @@ export async function uploadModelAvatar(modelId: string, file: File): Promise<Mo
     throw new Error(text || response.statusText);
   }
   return response.json() as Promise<ModelInfo>;
+}
+
+export async function uploadModelThemeAvatar(
+  modelId: string,
+  themeId: string,
+  file: File,
+): Promise<ModelInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(
+    `/api/models/${encodeURIComponent(modelId)}/themes/${encodeURIComponent(themeId)}/avatar`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<ModelInfo>;
+}
+
+export async function deleteModelThemeAvatar(
+  modelId: string,
+  themeId: string,
+): Promise<ModelInfo> {
+  return api<ModelInfo>(
+    `/api/models/${encodeURIComponent(modelId)}/themes/${encodeURIComponent(themeId)}/avatar`,
+    { method: "DELETE" },
+  );
+}
+
+export async function uploadCardTrailer(cardId: string, file: File): Promise<{
+  id: string;
+  trailer?: string | null;
+  theme_id?: string | null;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/trailer`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<{ id: string; trailer?: string | null; theme_id?: string | null }>;
+}
+
+export async function deleteCardTrailer(cardId: string): Promise<{
+  id: string;
+  trailer?: string | null;
+}> {
+  return api<{ id: string; trailer?: string | null }>(
+    `/api/cards/${encodeURIComponent(cardId)}/trailer`,
+    { method: "DELETE" },
+  );
 }
 
 export async function uploadModelFlagSvg(modelId: string, file: File): Promise<ModelInfo> {

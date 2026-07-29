@@ -32,6 +32,7 @@ from backend.cards import (
     create_card,
     delete_card,
     delete_card_photo,
+    delete_card_trailer,
     delete_photo_scratch_layer,
     list_cards,
     list_photo_scratch_slots,
@@ -47,21 +48,25 @@ from backend.cards import (
     set_photo_scratch_slot_prompt,
     update_card,
     upload_card_photo,
+    upload_card_trailer,
     upload_photo_scratch_layer,
     write_cards_index,
     write_photo_scratch_slot_symbols,
     zoom_photo_scratch_slot,
 )
+from backend.collection import build_collection_catalog
 from backend.models_store import (
     CreateModelRequest,
     ModelInfo,
     UpdateModelRequest,
     create_model,
     delete_model,
+    delete_model_theme_avatar,
     list_models,
     update_model,
     upload_model_avatar,
     upload_model_flag_svg,
+    upload_model_theme_avatar,
     upload_model_video,
     write_models_index,
 )
@@ -611,6 +616,18 @@ def remove_card_photo(card_id: str, photo_id: str) -> dict:
     return {"ok": True, "id": photo_id}
 
 
+@app.post("/api/cards/{card_id}/trailer")
+async def post_card_trailer(card_id: str, file: UploadFile = File(...)) -> dict:
+    card = await upload_card_trailer(ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+    return card.dict()
+
+
+@app.delete("/api/cards/{card_id}/trailer")
+def remove_card_trailer(card_id: str) -> dict:
+    card = delete_card_trailer(ROOT, CARDS_DIR, MESH_DIR, card_id)
+    return card.dict()
+
+
 # ── Photo-scratch slot endpoints ──────────────────────────────────────────────
 
 class GeneratePhotoScratchRequest(BaseModel):
@@ -959,6 +976,44 @@ async def post_model_pack_face_2(model_id: str, file: UploadFile = File(...)) ->
 async def post_model_swipe(model_id: str, file: UploadFile = File(...)) -> dict:
     model = await upload_model_video(MODELS_DIR, model_id, "swipe", file)
     return model.dict()
+
+
+@app.post("/api/models/{model_id}/themes/{theme_id}/avatar")
+async def post_model_theme_avatar(
+    model_id: str,
+    theme_id: str,
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_theme_avatar(MODELS_DIR, model_id, theme_id, file)
+    return model.dict()
+
+
+@app.delete("/api/models/{model_id}/themes/{theme_id}/avatar")
+def remove_model_theme_avatar(model_id: str, theme_id: str) -> dict:
+    model = delete_model_theme_avatar(MODELS_DIR, model_id, theme_id)
+    return model.dict()
+
+
+@app.get("/api/collection")
+def get_collection(model: str = "") -> dict:
+    draft_themes: dict[str, str] = {}
+    for flow in list_flows():
+        card_id = str(flow.get("card_id") or "").strip()
+        draft = flow.get("draft")
+        theme = ""
+        if isinstance(draft, dict):
+            theme = str(draft.get("theme") or "").strip()
+        if card_id and theme:
+            draft_themes[card_id] = theme
+    return build_collection_catalog(
+        ROOT,
+        CARDS_DIR,
+        MESH_DIR,
+        MODELS_DIR,
+        THEMES_DIR,
+        draft_themes=draft_themes,
+        model_filter=model or None,
+    )
 
 
 @app.get("/api/themes")

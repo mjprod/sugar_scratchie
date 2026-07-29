@@ -50,8 +50,10 @@ import {
   publishPhotoScratchGame,
   reorderModelCards,
   updateModel,
+  uploadCardTrailer,
   uploadModelAvatar,
   uploadModelFlagSvg,
+  uploadModelThemeAvatar,
   uploadModelVideo,
   type ModelInfo,
   type ModelVideoKind,
@@ -89,6 +91,10 @@ type CardInfo = {
   draft?: boolean;
   /** Theme from the card's Video Flow draft (scenery + costume), when one exists. */
   theme?: string;
+  /** Catalog theme id persisted on card meta (e.g. "police"). */
+  theme_id?: string | null;
+  /** Collection trailer preview URL when uploaded. */
+  trailer?: string | null;
 };
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
@@ -326,6 +332,14 @@ function resolveCardTheme(card: CardInfo): string {
   return inferThemeFromLabel(card.label) ?? UNTHEMED_LABEL;
 }
 
+function resolveThemeCatalogId(themeLabel: string, catalog: ThemeInfo[]): string | null {
+  const key = themeKey(themeLabel);
+  const match = catalog.find(
+    (theme) => theme.id === key || themeKey(theme.label) === key,
+  );
+  return match?.id ?? null;
+}
+
 type ThemeCardGroup = {
   theme: string;
   cards: CardInfo[];
@@ -462,9 +476,16 @@ export function ModelsPage() {
   const [createModelOpen, setCreateModelOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const themeAvatarInputRef = useRef<HTMLInputElement>(null);
+  const trailerInputRef = useRef<HTMLInputElement>(null);
   const flagInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
+  const [themeAvatarTarget, setThemeAvatarTarget] = useState<{
+    modelId: string;
+    themeId: string;
+  } | null>(null);
+  const [trailerTargetId, setTrailerTargetId] = useState("");
   const [flagTargetId, setFlagTargetId] = useState("");
   const [videoTarget, setVideoTarget] = useState<{
     modelId: string;
@@ -485,9 +506,13 @@ export function ModelsPage() {
       fetchThemes().catch(() => [] as ThemeInfo[]),
     ]);
     const themes = themesByCardId(flowData.flows);
+    const themeLabelById = new Map(nextThemes.map((theme) => [theme.id, theme.label]));
     const published = assets.cards.map((card) => ({
       ...card,
-      theme: card.theme ?? themes.get(card.id),
+      theme:
+        card.theme ??
+        (card.theme_id ? themeLabelById.get(card.theme_id) : undefined) ??
+        themes.get(card.id),
       photo_scratch_done: card.photo_scratch_done ?? 0,
       photo_scratch_draft: card.photo_scratch_draft ?? 0,
       photo_scratch_mesh_count: card.photo_scratch_mesh_count ?? 0,
@@ -727,6 +752,32 @@ export function ModelsPage() {
     }
   }
 
+  async function handleThemeAvatarUpload(modelId: string, themeId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelThemeAvatar(modelId, themeId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTrailerUpload(cardId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadCardTrailer(cardId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleFlagUpload(modelId: string, file: File) {
     setBusy(true);
     setError("");
@@ -865,10 +916,19 @@ export function ModelsPage() {
                   ? themeCatalog.map((theme) => theme.label)
                   : [...PREFERRED_THEME_ORDER]
               }
+              themeCatalog={themeCatalog}
               onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
               onAvatarClick={() => {
                 setAvatarTargetId(selectedModel.id);
                 avatarInputRef.current?.click();
+              }}
+              onThemeAvatarClick={(themeId) => {
+                setThemeAvatarTarget({ modelId: selectedModel.id, themeId });
+                themeAvatarInputRef.current?.click();
+              }}
+              onTrailerClick={(cardId) => {
+                setTrailerTargetId(cardId);
+                trailerInputRef.current?.click();
               }}
               onFlagClick={() => {
                 setFlagTargetId(selectedModel.id);
@@ -1096,6 +1156,34 @@ export function ModelsPage() {
         }}
       />
       <input
+        ref={themeAvatarInputRef}
+        accept="image/jpeg,image/png,image/webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && themeAvatarTarget) {
+            void handleThemeAvatarUpload(
+              themeAvatarTarget.modelId,
+              themeAvatarTarget.themeId,
+              file,
+            );
+          }
+        }}
+      />
+      <input
+        ref={trailerInputRef}
+        accept="video/mp4,video/webm,.mp4,.webm"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && trailerTargetId) void handleTrailerUpload(trailerTargetId, file);
+        }}
+      />
+      <input
         ref={flagInputRef}
         accept="image/svg+xml,.svg"
         hidden
@@ -1266,8 +1354,11 @@ function ModelDetail({
   newCardId,
   newCardLabel,
   preferredThemeOrder,
+  themeCatalog,
   onAssignCard,
   onAvatarClick,
+  onThemeAvatarClick,
+  onTrailerClick,
   onCancelCreateCard,
   onCancelRename,
   onCardIdChange,
@@ -1308,8 +1399,11 @@ function ModelDetail({
   newCardId: string;
   newCardLabel: string;
   preferredThemeOrder: string[];
+  themeCatalog: ThemeInfo[];
   onAssignCard: (cardId: string, modelId: string) => void;
   onAvatarClick: () => void;
+  onThemeAvatarClick: (themeId: string) => void;
+  onTrailerClick: (cardId: string) => void;
   onCancelCreateCard: () => void;
   onCancelRename: () => void;
   onCardIdChange: (value: string) => void;
@@ -1580,19 +1674,43 @@ function ModelDetail({
           <Box className="models-card-list">
             {groupCardsByTheme(modelCards, preferredThemeOrder).map((group) => {
               const publishedInTheme = group.cards.filter((card) => !card.draft);
+              const themeId =
+                group.cards.find((card) => card.theme_id)?.theme_id ??
+                resolveThemeCatalogId(group.theme, themeCatalog);
+              const themeAvatarUrl =
+                themeId && model.theme_avatars ? model.theme_avatars[themeId] : undefined;
               return (
                 <div key={themeKey(group.theme)} className="models-theme-group">
                   <div className="models-theme-group-header">
                     <Text className="models-theme-group-eyebrow" color="gray" size="1" weight="medium">
                       Theme
                     </Text>
-                    <Flex align="center" gap="2" wrap="wrap">
-                      <Heading as="h3" size="3">
-                        {group.theme}
-                      </Heading>
-                      <Badge color="iris" size="1" variant="soft">
-                        {group.cards.length}
-                      </Badge>
+                    <Flex align="center" gap="3" justify="between" wrap="wrap">
+                      <Flex align="center" gap="2" wrap="wrap">
+                        <Heading as="h3" size="3">
+                          {group.theme}
+                        </Heading>
+                        <Badge color="iris" size="1" variant="soft">
+                          {group.cards.length}
+                        </Badge>
+                      </Flex>
+                      {themeId ? (
+                        <button
+                          className="models-theme-avatar-btn"
+                          disabled={busy}
+                          title={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
+                          type="button"
+                          onClick={() => onThemeAvatarClick(themeId)}
+                        >
+                          {themeAvatarUrl ? (
+                            <img alt="" className="models-theme-avatar" src={themeAvatarUrl} />
+                          ) : (
+                            <span className="models-theme-avatar models-theme-avatar--empty">
+                              <Upload size={14} strokeWidth={2} />
+                            </span>
+                          )}
+                        </button>
+                      ) : null}
                     </Flex>
                   </div>
                   {group.cards.map((card, index) => {
@@ -1611,6 +1729,7 @@ function ModelDetail({
                         onMoveDown={() => onMoveCard(card.id, 1)}
                         onMoveUp={() => onMoveCard(card.id, -1)}
                         onPublishGame={() => onPublishGame(card.id)}
+                        onTrailerClick={() => onTrailerClick(card.id)}
                       />
                     );
                   })}
@@ -1886,24 +2005,37 @@ function ActionSlot({ children }: { children?: ReactNode }) {
 }
 
 function MotionCardThumb({ card }: { card: CardInfo }) {
-  const videoSrc = motionCardVideoSrc(card);
+  return <CardVideoThumb label={card.label} src={motionCardVideoSrc(card)} />;
+}
+
+function TrailerThumb({ card }: { card: CardInfo }) {
+  const raw = card.trailer?.trim() || "";
+  return (
+    <CardVideoThumb
+      label={`${card.label} trailer`}
+      src={raw ? previewSource(raw) : ""}
+    />
+  );
+}
+
+function CardVideoThumb({ label, src }: { label: string; src: string }) {
   const [peek, setPeek] = useState<{ point: PeekPoint } | null>(null);
   const peekHandlers = useInstagramPeek(
     (point) => setPeek({ point }),
     () => setPeek(null),
   );
 
-  if (!videoSrc) {
+  if (!src) {
     return <div aria-hidden className="models-card-thumb models-card-thumb--empty" />;
   }
 
   return (
     <>
       <button
-        aria-label={`Hold to preview ${card.label}`}
+        aria-label={`Hold to preview ${label}`}
         className="models-card-thumb models-card-thumb--button"
         type="button"
-        title="Hold to preview motion card · release to close"
+        title="Hold to preview · release to close"
         onClick={(event) => {
           if (peekHandlers.consumeSuppressClick()) event.preventDefault();
         }}
@@ -1915,7 +2047,7 @@ function MotionCardThumb({ card }: { card: CardInfo }) {
           muted
           playsInline
           preload="metadata"
-          src={videoSrc}
+          src={src}
           onLoadedData={(event) => {
             const video = event.currentTarget;
             if (video.readyState >= 2 && video.currentTime < 0.05) {
@@ -1929,7 +2061,7 @@ function MotionCardThumb({ card }: { card: CardInfo }) {
         />
       </button>
       {peek ? (
-        <MiniMediaOverlay label={card.label} point={peek.point} src={videoSrc} type="video" />
+        <MiniMediaOverlay label={label} point={peek.point} src={src} type="video" />
       ) : null}
     </>
   );
@@ -2063,6 +2195,7 @@ function MotionCardRow({
   onMoveDown,
   onMoveUp,
   onPublishGame,
+  onTrailerClick,
 }: {
   busy: boolean;
   card: CardInfo;
@@ -2075,11 +2208,13 @@ function MotionCardRow({
   onMoveDown: () => void;
   onMoveUp: () => void;
   onPublishGame: () => void;
+  onTrailerClick: () => void;
 }) {
   const hasPicture =
     (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
   const hasGame = (card.photo_scratch_done ?? 0) > 0;
   const isDraft = Boolean(card.draft);
+  const hasTrailer = Boolean(card.trailer?.trim());
 
   return (
     <div className="models-card-list-row">
@@ -2097,6 +2232,11 @@ function MotionCardRow({
               {isDraft ? (
                 <Badge color="amber" size="1" variant="soft">
                   draft
+                </Badge>
+              ) : null}
+              {!isDraft ? (
+                <Badge color={hasTrailer ? "green" : "gray"} size="1" variant="soft">
+                  {hasTrailer ? "trailer" : "no trailer"}
                 </Badge>
               ) : null}
             </Flex>
@@ -2183,6 +2323,28 @@ function MotionCardRow({
           </Flex>
         </div>
       </div>
+
+      {!isDraft ? (
+        <div className="models-card-list-line models-card-list-line--trailer">
+          <div className="models-card-list-identity">
+            <TrailerThumb card={card} />
+            <div className="models-card-list-identity-text">
+              <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+                Trailer
+              </Text>
+              <Text color="gray" size="1">
+                {hasTrailer ? "Ready for collection preview" : "Upload a short trailer video"}
+              </Text>
+            </div>
+          </div>
+          <div className="models-card-list-actions">
+            <Button disabled={busy} size="1" variant="soft" onClick={onTrailerClick}>
+              <Upload {...iconProps} />
+              {hasTrailer ? "Replace trailer" : "Upload trailer"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="models-card-list-line models-card-list-line--photos">
         <div className="models-card-list-photos">

@@ -2114,6 +2114,38 @@ dd {
   border-bottom: 1px solid var(--gray-4);
 }
 
+.models-theme-avatar-btn {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.models-theme-avatar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.models-theme-avatar {
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: var(--gray-4);
+  border: 1px solid var(--gray-6);
+}
+
+.models-theme-avatar--empty {
+  display: grid;
+  place-items: center;
+  color: var(--gray-9);
+}
+
 .models-theme-group-eyebrow {
   letter-spacing: 0.06em;
   text-transform: uppercase;

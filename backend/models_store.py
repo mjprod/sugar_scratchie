@@ -50,6 +50,8 @@ class ModelInfo(BaseModel):
     packFaceVideoUrl: str | None = None
     packFaceVideoUrl2: str | None = None
     swipeVideoUrl: str | None = None
+    # theme_id → public URL for model×theme collection avatar.
+    theme_avatars: dict[str, str] = Field(default_factory=dict)
 
 
 class CreateModelRequest(BaseModel):
@@ -105,6 +107,7 @@ def _model_info(
     pack_face_video_url: str | None = None,
     pack_face_video_url_2: str | None = None,
     swipe_video_url: str | None = None,
+    theme_avatars: dict[str, str] | None = None,
 ) -> ModelInfo:
     fields = influencer or {key: None for key in INFLUENCER_META_KEYS}
     return ModelInfo(
@@ -122,6 +125,7 @@ def _model_info(
         packFaceVideoUrl=pack_face_video_url,
         packFaceVideoUrl2=pack_face_video_url_2,
         swipeVideoUrl=swipe_video_url,
+        theme_avatars=theme_avatars or {},
     )
 
 
@@ -138,6 +142,7 @@ def _model_info_from_dir(model_dir: Path, *, label: str, created_at: float | Non
         pack_face_video_url=videos.get("packFaceVideoUrl"),
         pack_face_video_url_2=videos.get("packFaceVideoUrl2"),
         swipe_video_url=videos.get("swipeVideoUrl"),
+        theme_avatars=find_theme_avatars(model_dir),
     )
 
 
@@ -221,6 +226,26 @@ def find_avatar(model_dir: Path) -> str | None:
     return None
 
 
+def find_theme_avatars(model_dir: Path) -> dict[str, str]:
+    """Discover per-theme avatars under models/{id}/themes/{theme_id}/avatar.*."""
+    themes_root = model_dir / "themes"
+    if not themes_root.is_dir():
+        return {}
+    found: dict[str, str] = {}
+    for theme_dir in sorted(path for path in themes_root.iterdir() if path.is_dir()):
+        theme_id = theme_dir.name
+        if not MODEL_ID_PATTERN.match(theme_id):
+            continue
+        for ext in AVATAR_EXTENSIONS:
+            candidate = theme_dir / f"avatar{ext}"
+            if candidate.is_file():
+                found[theme_id] = public_url(
+                    f"models/{model_dir.name}/themes/{theme_id}/avatar{ext}"
+                )
+                break
+    return found
+
+
 def find_flag_svg(model_dir: Path) -> str | None:
     for ext in FLAG_EXTENSIONS:
         candidate = model_dir / f"flag{ext}"
@@ -282,6 +307,7 @@ def write_models_index(models_dir: Path) -> None:
                 "packFaceVideoUrl": model.packFaceVideoUrl,
                 "packFaceVideoUrl2": model.packFaceVideoUrl2,
                 "swipeVideoUrl": model.swipeVideoUrl,
+                "theme_avatars": model.theme_avatars,
             }
             for model in models
         ]
@@ -487,6 +513,76 @@ async def upload_model_video(
             old.unlink()
     target = model_dir / f"{stem}{ext}"
     target.write_bytes(data)
+    write_models_index(models_dir)
+    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
+    label = str(meta.get("label", model_id))
+    created_at = meta.get("created_at")
+    return _model_info_from_dir(
+        model_dir,
+        label=label,
+        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
+    )
+
+
+async def upload_model_theme_avatar(
+    models_dir: Path,
+    model_id: str,
+    theme_id: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    model_dir = models_dir / model_id
+    if not model_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    slug = safe_model_id(theme_id)
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in AVATAR_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Avatar must be JPG, PNG, or WebP")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded avatar is empty")
+    theme_dir = model_dir / "themes" / slug
+    theme_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in AVATAR_EXTENSIONS:
+        old = theme_dir / f"avatar{old_ext}"
+        if old.exists():
+            old.unlink()
+    target = theme_dir / f"avatar{ext}"
+    target.write_bytes(data)
+    write_models_index(models_dir)
+    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
+    label = str(meta.get("label", model_id))
+    created_at = meta.get("created_at")
+    return _model_info_from_dir(
+        model_dir,
+        label=label,
+        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
+    )
+
+
+def delete_model_theme_avatar(
+    models_dir: Path,
+    model_id: str,
+    theme_id: str,
+) -> ModelInfo:
+    model_dir = models_dir / model_id
+    if not model_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    slug = safe_model_id(theme_id)
+    theme_dir = model_dir / "themes" / slug
+    removed = False
+    for ext in AVATAR_EXTENSIONS:
+        path = theme_dir / f"avatar{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if not removed:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Theme avatar not found for model {model_id} / theme {slug}",
+        )
+    if theme_dir.is_dir() and not any(theme_dir.iterdir()):
+        theme_dir.rmdir()
     write_models_index(models_dir)
     meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
     label = str(meta.get("label", model_id))
