@@ -9,11 +9,14 @@ import {
 import { GameSymbolIcon } from "./GameSymbolIcon";
 import { SYMBOL_TYPES, TOP_SYMBOL_COUNT } from "./matchGame";
 
-const BRUSH_RADIUS_CSS = 15;
-const SLOT_REVEAL_THRESHOLD = 0.32;
+const BRUSH_RADIUS_CSS = 10;
+/** Need most of each circle cleared before it counts as revealed. */
+const SLOT_REVEAL_THRESHOLD = 0.58;
 const SCRATCH_TEXTURE_URL = "/scratch/scratchTexture.jpg";
 const FALLBACK_CSS_W = 332;
 const FALLBACK_CSS_H = 64;
+/** Distance between soft brush stamps along a stroke (fraction of brush radius). */
+const BRUSH_STEP_RATIO = 0.35;
 
 export type TopBarPhase = "center" | "docked";
 
@@ -124,6 +127,48 @@ function applyCanvasOverlayStyles(el: HTMLCanvasElement): void {
   el.style.pointerEvents = "none";
   el.style.zIndex = "2";
   el.style.display = "block";
+}
+
+/** Soft round eraser — feathered edge instead of a hard jagged stamp. */
+function stampSoftBrush(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+): void {
+  const gradient = ctx.createRadialGradient(
+    x,
+    y,
+    radius * 0.12,
+    x,
+    y,
+    radius,
+  );
+  gradient.addColorStop(0, "rgba(0,0,0,1)");
+  gradient.addColorStop(0.45, "rgba(0,0,0,0.9)");
+  gradient.addColorStop(0.75, "rgba(0,0,0,0.45)");
+  gradient.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function stampSoftBrushStroke(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  radius: number,
+): void {
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const step = Math.max(1, radius * BRUSH_STEP_RATIO);
+  const stamps = Math.max(1, Math.ceil(dist / step));
+  for (let i = 0; i <= stamps; i += 1) {
+    const t = i / stamps;
+    stampSoftBrush(ctx, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, radius);
+  }
 }
 
 function measureSlotErasedRatio(
@@ -324,18 +369,11 @@ export function TopSymbolBar({
 
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalCompositeOperation = "destination-out";
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.lineWidth = brush * 2;
-      ctx.beginPath();
       const last = lastPointRef.current;
       if (last) {
-        ctx.moveTo(last.x, last.y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+        stampSoftBrushStroke(ctx, last.x, last.y, x, y, brush);
       } else {
-        ctx.arc(x, y, brush, 0, Math.PI * 2);
-        ctx.fill();
+        stampSoftBrush(ctx, x, y, brush);
       }
       ctx.globalCompositeOperation = "source-over";
       lastPointRef.current = { x, y };
