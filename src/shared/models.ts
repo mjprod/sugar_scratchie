@@ -236,6 +236,12 @@ export async function uploadModelFlagSvg(modelId: string, file: File): Promise<M
   return response.json() as Promise<ModelInfo>;
 }
 
+export async function deleteModelFlagSvg(modelId: string): Promise<ModelInfo> {
+  return api<ModelInfo>(`/api/models/${encodeURIComponent(modelId)}/flag`, {
+    method: "DELETE",
+  });
+}
+
 export async function uploadModelVideo(
   modelId: string,
   kind: ModelVideoKind,

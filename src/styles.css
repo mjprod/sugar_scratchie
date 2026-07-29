@@ -2183,6 +2183,9 @@ dd {
 
 .models-card-list-identity-text {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .models-card-list-identity code {

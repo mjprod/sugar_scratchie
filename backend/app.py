@@ -61,6 +61,7 @@ from backend.models_store import (
     UpdateModelRequest,
     create_model,
     delete_model,
+    delete_model_flag_svg,
     delete_model_theme_avatar,
     list_models,
     update_model,
@@ -957,6 +958,12 @@ async def post_model_avatar(model_id: str, file: UploadFile = File(...)) -> dict
 @app.post("/api/models/{model_id}/flag")
 async def post_model_flag(model_id: str, file: UploadFile = File(...)) -> dict:
     model = await upload_model_flag_svg(MODELS_DIR, model_id, file)
+    return model.dict()
+
+
+@app.delete("/api/models/{model_id}/flag")
+def remove_model_flag(model_id: str) -> dict:
+    model = delete_model_flag_svg(MODELS_DIR, model_id)
     return model.dict()
 
 

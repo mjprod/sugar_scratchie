@@ -44,6 +44,7 @@ import {
   createMotionCardDraft,
   deleteCard,
   deleteModel,
+  deleteModelFlagSvg,
   fetchModels,
   fetchPhotoScratchSlots,
   photoScratchPlayHref,
@@ -791,6 +792,22 @@ export function ModelsPage() {
     }
   }
 
+  async function handleFlagDelete(modelId: string) {
+    if (!window.confirm("Remove this flag SVG? The emoji fallback will be used instead.")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await deleteModelFlagSvg(modelId);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleVideoUpload(modelId: string, kind: ModelVideoKind, file: File) {
     setBusy(true);
     setError("");
@@ -934,6 +951,7 @@ export function ModelsPage() {
                 setFlagTargetId(selectedModel.id);
                 flagInputRef.current?.click();
               }}
+              onFlagDelete={() => void handleFlagDelete(selectedModel.id)}
               onVideoClick={(kind) => {
                 setVideoTarget({ modelId: selectedModel.id, kind });
                 videoInputRef.current?.click();
@@ -1375,6 +1393,7 @@ function ModelDetail({
   onEditingLabelChange,
   onEditingNameChange,
   onFlagClick,
+  onFlagDelete,
   onMoveCard,
   onOpenCreateCard,
   onPublishGame,
@@ -1420,6 +1439,7 @@ function ModelDetail({
   onEditingLabelChange: (value: string) => void;
   onEditingNameChange: (value: string) => void;
   onFlagClick: () => void;
+  onFlagDelete: () => void;
   onMoveCard: (cardId: string, direction: -1 | 1) => void;
   onOpenCreateCard: () => void;
   onPublishGame: (cardId: string) => void;
@@ -1522,6 +1542,18 @@ function ModelDetail({
                         <Upload {...iconProps} />
                         Upload SVG
                       </Button>
+                      {model.influencerFlagSvg ? (
+                        <Button
+                          color="red"
+                          disabled={busy}
+                          size="1"
+                          variant="soft"
+                          onClick={onFlagDelete}
+                        >
+                          <Trash2 {...iconProps} />
+                          Remove
+                        </Button>
+                      ) : null}
                     </Flex>
                   </Box>
                 </Grid>
@@ -2234,9 +2266,9 @@ function MotionCardRow({
                   draft
                 </Badge>
               ) : null}
-              {!isDraft ? (
-                <Badge color={hasTrailer ? "green" : "gray"} size="1" variant="soft">
-                  {hasTrailer ? "trailer" : "no trailer"}
+              {!isDraft && hasTrailer ? (
+                <Badge color="green" size="1" variant="soft">
+                  trailer
                 </Badge>
               ) : null}
             </Flex>
@@ -2326,17 +2358,25 @@ function MotionCardRow({
 
       {!isDraft ? (
         <div className="models-card-list-line models-card-list-line--trailer">
-          <div className="models-card-list-identity">
-            <TrailerThumb card={card} />
+          {hasTrailer ? (
+            <div className="models-card-list-identity">
+              <TrailerThumb card={card} />
+              <div className="models-card-list-identity-text">
+                <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
+                  Trailer
+                </Text>
+                <Text as="div" color="gray" size="1">
+                  Ready for collection preview
+                </Text>
+              </div>
+            </div>
+          ) : (
             <div className="models-card-list-identity-text">
-              <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
+              <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
                 Trailer
               </Text>
-              <Text color="gray" size="1">
-                {hasTrailer ? "Ready for collection preview" : "Upload a short trailer video"}
-              </Text>
             </div>
-          </div>
+          )}
           <div className="models-card-list-actions">
             <Button disabled={busy} size="1" variant="soft" onClick={onTrailerClick}>
               <Upload {...iconProps} />

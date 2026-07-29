@@ -489,6 +489,29 @@ async def upload_model_flag_svg(models_dir: Path, model_id: str, upload: UploadF
     )
 
 
+def delete_model_flag_svg(models_dir: Path, model_id: str) -> ModelInfo:
+    model_dir = models_dir / model_id
+    if not model_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    removed = False
+    for ext in FLAG_EXTENSIONS:
+        path = model_dir / f"flag{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Flag SVG not found for model {model_id}")
+    write_models_index(models_dir)
+    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
+    label = str(meta.get("label", model_id))
+    created_at = meta.get("created_at")
+    return _model_info_from_dir(
+        model_dir,
+        label=label,
+        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
+    )
+
+
 async def upload_model_video(
     models_dir: Path,
     model_id: str,
