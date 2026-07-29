@@ -22,8 +22,6 @@ def _normalize_media_url(value: str | None) -> str:
     if not raw:
         return ""
     if raw.startswith(("http://", "https://", "/", "blob:", "data:")):
-        if raw.startswith("public/"):
-            return public_url(raw)
         return raw
     if raw.startswith("public/"):
         return public_url(raw)
