@@ -17,7 +17,8 @@
       "mesh": "julianaval_cop.json",
       "chroma_key": false,
       "sort_order": 0,
-      "model_id": "julianaval"
+      "model_id": "julianaval",
+      "trailer": "/cards/julianaval_cop/trailer.mp4"
     },
     {
       "id": "juliana_1",

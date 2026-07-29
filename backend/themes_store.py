@@ -240,3 +240,25 @@ def reorder_themes(themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
     ]
     _write_index(themes_dir, rewritten)
     return rewritten
+
+
+def resolve_theme_id(themes_dir: Path, theme_or_label: str) -> str | None:
+    """Map a theme id or display label to a catalog theme id."""
+    raw = (theme_or_label or "").strip()
+    if not raw:
+        return None
+    themes = list_themes(themes_dir)
+    lower = raw.lower()
+    for theme in themes:
+        if theme.id == lower or theme.id == raw:
+            return theme.id
+    for theme in themes:
+        if theme.label.lower() == lower:
+            return theme.id
+    # Best-effort slug if it already looks like a theme id.
+    slug = re.sub(r"[^a-z0-9_]+", "_", lower).strip("_")
+    if slug and THEME_ID_PATTERN.match(slug):
+        for theme in themes:
+            if theme.id == slug:
+                return theme.id
+    return None

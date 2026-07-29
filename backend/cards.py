@@ -41,6 +41,10 @@ class CardInfo(BaseModel):
     # How many slots have a photo-scratch mesh / full symbols (not motion-card mesh).
     photo_scratch_mesh_count: int = 0
     photo_scratch_symbols_count: int = 0
+    # Catalog theme id (e.g. "police"), persisted on card meta.
+    theme_id: str | None = None
+    # Collection trailer preview clip (separate from game background/foreground).
+    trailer: str | None = None
 
 
 class CreateCardRequest(BaseModel):
@@ -64,6 +68,7 @@ class ReorderCardsRequest(BaseModel):
 
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+TRAILER_EXTENSIONS = {".mp4", ".webm"}
 
 
 def relative(root: Path, path: Path) -> str:
@@ -119,6 +124,32 @@ def read_card_sort_order(card_dir: Path) -> int:
     if isinstance(value, float):
         return int(value)
     return 0
+
+
+def read_card_theme_id(card_dir: Path) -> str | None:
+    meta = read_card_meta(card_dir, "")
+    theme_id = meta.get("theme_id")
+    if isinstance(theme_id, str) and theme_id.strip():
+        return theme_id.strip()
+    return None
+
+
+def write_card_theme_id(card_dir: Path, theme_id: str | None) -> None:
+    if theme_id and theme_id.strip():
+        write_card_meta(card_dir, theme_id=theme_id.strip())
+    else:
+        data = read_card_meta(card_dir, card_dir.name.replace("_", " ").title())
+        data.pop("theme_id", None)
+        card_dir.mkdir(parents=True, exist_ok=True)
+        (card_dir / "meta.json").write_text(json.dumps(data, indent=2) + "\n")
+
+
+def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
+    for ext in TRAILER_EXTENSIONS:
+        candidate = card_dir / f"trailer{ext}"
+        if candidate.is_file():
+            return public_url(f"cards/{card_id}/trailer{ext}")
+    return None
 
 
 def write_card_sort_order(card_dir: Path, sort_order: int) -> None:
@@ -236,6 +267,8 @@ def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
                 photo_scratch_draft=draft,
                 photo_scratch_mesh_count=mesh_count,
                 photo_scratch_symbols_count=symbols_count,
+                theme_id=read_card_theme_id(directory),
+                trailer=find_card_trailer(directory, card_id),
             )
         )
     discovered.sort(key=lambda card: (card.model_id or "", card.sort_order, card.id))
@@ -256,6 +289,8 @@ def write_cards_index(root: Path, cards_dir: Path, mesh_dir: Path) -> None:
                 "chroma_key": card.id == ORIGINAL_ID,
                 "sort_order": card.sort_order,
                 **({"model_id": card.model_id} if card.model_id else {}),
+                **({"theme_id": card.theme_id} if card.theme_id else {}),
+                **({"trailer": card.trailer} if card.trailer else {}),
                 **(
                     {"photos": [{"id": photo.id, "src": photo.src} for photo in card.photos]}
                     if card.photos
@@ -373,6 +408,8 @@ def create_card(root: Path, cards_dir: Path, mesh_dir: Path, request: CreateCard
         photo_scratch_draft=count_draft_photo_scratch_slots(cards_dir, card_id),
         photo_scratch_mesh_count=count_photo_scratch_mesh_slots(cards_dir, card_id),
         photo_scratch_symbols_count=count_photo_scratch_symbols_slots(cards_dir, card_id),
+        theme_id=read_card_theme_id(card_dir),
+        trailer=find_card_trailer(card_dir, card_id),
     )
 
 
@@ -418,6 +455,8 @@ def update_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str, reque
         photo_scratch_draft=count_draft_photo_scratch_slots(cards_dir, card.id),
         photo_scratch_mesh_count=count_photo_scratch_mesh_slots(cards_dir, card.id),
         photo_scratch_symbols_count=count_photo_scratch_symbols_slots(cards_dir, card.id),
+        theme_id=read_card_theme_id(card_dir),
+        trailer=find_card_trailer(card_dir, card.id),
     )
 
 
@@ -1847,3 +1886,66 @@ def delete_card_photo(
     remaining = [entry for entry in card.photos if entry.id != photo_id]
     write_card_photos(cards_dir / card_id, remaining)
     write_cards_index(root, cards_dir, mesh_dir)
+
+
+async def upload_card_trailer(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+    upload: UploadFile,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot upload a trailer for the original card")
+    cards = list_cards(root, cards_dir, mesh_dir)
+    card = next((entry for entry in cards if entry.id == card_id), None)
+    if not card:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in TRAILER_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Trailer must be MP4 or WebM")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded trailer is empty")
+    card_dir = cards_dir / card_id
+    card_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in TRAILER_EXTENSIONS:
+        old = card_dir / f"trailer{old_ext}"
+        if old.exists():
+            old.unlink()
+    target = card_dir / f"trailer{ext}"
+    target.write_bytes(data)
+    write_cards_index(root, cards_dir, mesh_dir)
+    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    return refreshed
+
+
+def delete_card_trailer(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot delete a trailer for the original card")
+    cards = list_cards(root, cards_dir, mesh_dir)
+    card = next((entry for entry in cards if entry.id == card_id), None)
+    if not card:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    card_dir = cards_dir / card_id
+    removed = False
+    for ext in TRAILER_EXTENSIONS:
+        path = card_dir / f"trailer{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Trailer not found for card: {card_id}")
+    write_cards_index(root, cards_dir, mesh_dir)
+    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    return refreshed
