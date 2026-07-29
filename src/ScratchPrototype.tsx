@@ -22,6 +22,10 @@ import {
   recordMotionCardResult,
   type GameSession,
 } from "./game/gameSession";
+import {
+  InitialCountdown,
+  TOP_BAR_DOCK_MS,
+} from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -1079,6 +1083,9 @@ export function ScratchPrototype() {
   const [topSymbols, setTopSymbols] = useState(buildTopSymbols);
   const [topBarPhase, setTopBarPhase] = useState<TopBarPhase>("center");
   const [topBarRound, setTopBarRound] = useState(0);
+  /** Locks body scratch / video from dock through countdown end. */
+  const [introGateActive, setIntroGateActive] = useState(false);
+  const [showIntroCountdown, setShowIntroCountdown] = useState(false);
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
@@ -1093,10 +1100,13 @@ export function ScratchPrototype() {
   gameResultRef.current = gameResult;
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const introDockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topSymbolsRef = useRef(topSymbols);
   topSymbolsRef.current = topSymbols;
   const topBarPhaseRef = useRef(topBarPhase);
   topBarPhaseRef.current = topBarPhase;
+  const introGateActiveRef = useRef(introGateActive);
+  introGateActiveRef.current = introGateActive;
   const sessionSymbolsRef = useRef(sessionSymbols);
   sessionSymbolsRef.current = sessionSymbols;
   const revealedSymbolsRef = useRef(revealedSymbols);
@@ -1144,6 +1154,20 @@ export function ScratchPrototype() {
     }
   }
 
+  function clearIntroDockTimer() {
+    if (introDockTimerRef.current !== null) {
+      window.clearTimeout(introDockTimerRef.current);
+      introDockTimerRef.current = null;
+    }
+  }
+
+  function isBodyScratchLocked() {
+    return (
+      useBodySymbolsRef.current &&
+      (topBarPhaseRef.current === "center" || introGateActiveRef.current)
+    );
+  }
+
   function resetGameOutcome() {
     clearGameResultTimer();
     gameResultPendingRef.current = null;
@@ -1153,9 +1177,13 @@ export function ScratchPrototype() {
   }
 
   function resetMatchRound() {
+    clearIntroDockTimer();
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
+    setIntroGateActive(false);
+    introGateActiveRef.current = false;
+    setShowIntroCountdown(false);
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
@@ -1164,9 +1192,29 @@ export function ScratchPrototype() {
   function onTopBarAllRevealed() {
     setTopBarPhase("docked");
     topBarPhaseRef.current = "docked";
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(false);
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setShowIntroCountdown(true);
+    }, TOP_BAR_DOCK_MS);
   }
 
-  useEffect(() => () => clearGameResultTimer(), []);
+  function onIntroCountdownComplete() {
+    setShowIntroCountdown(false);
+    setIntroGateActive(false);
+    introGateActiveRef.current = false;
+  }
+
+  useEffect(
+    () => () => {
+      clearGameResultTimer();
+      clearIntroDockTimer();
+    },
+    [],
+  );
   // / showMesh changes (those are read live via refs).
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1249,6 +1297,7 @@ export function ScratchPrototype() {
       if (
         autoSettings.enabled &&
         huntComplete &&
+        !isBodyScratchLocked() &&
         trackedSample &&
         gameResultPendingRef.current === null
       ) {
@@ -1782,9 +1831,9 @@ export function ScratchPrototype() {
   function updateAutoScratch(patch: Partial<AutoScratchSettings>) {
     if (
       patch.enabled &&
-      useBodySymbolsRef.current &&
-      (revealedSymbolsRef.current < SYMBOL_SLOT_COUNT ||
-        topBarPhaseRef.current === "center")
+      (isBodyScratchLocked() ||
+        (useBodySymbolsRef.current &&
+          revealedSymbolsRef.current < SYMBOL_SLOT_COUNT))
     ) {
       return;
     }
@@ -1808,7 +1857,7 @@ export function ScratchPrototype() {
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
   const autoScratchLocked =
     useBodySymbols &&
-    (!symbolsHuntComplete || topBarPhase === "center");
+    (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
 
   // Drop a persisted/stale auto-scratch enable while the hunt is still locked.
   useEffect(() => {
@@ -2086,10 +2135,7 @@ export function ScratchPrototype() {
     finalize = true,
   ) {
     if (gameResultPendingRef.current !== null) return;
-    if (
-      useBodySymbolsRef.current &&
-      topBarPhaseRef.current === "center"
-    ) {
+    if (isBodyScratchLocked()) {
       return;
     }
 
@@ -2186,10 +2232,7 @@ export function ScratchPrototype() {
   applyScratchAtUvRef.current = applyScratchAtUv;
 
   function addScratch(clientX: number, clientY: number) {
-    if (
-      useBodySymbolsRef.current &&
-      topBarPhaseRef.current === "center"
-    ) {
+    if (isBodyScratchLocked()) {
       return;
     }
     const point = getCanvasPoint(clientX, clientY);
@@ -2347,7 +2390,9 @@ export function ScratchPrototype() {
         <p className="auto-scratch-hint">
           {topBarPhase === "center"
             ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
-            : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+            : introGateActive
+              ? "Get ready — play starts after the countdown."
+              : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2542,7 +2587,7 @@ export function ScratchPrototype() {
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
             useBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
-          }`}
+          }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}`}
         >
           {glError ? (
             <div
@@ -2593,6 +2638,12 @@ export function ScratchPrototype() {
               ))}
             </div>
           )}
+          {showIntroCountdown ? (
+            <InitialCountdown
+              onComplete={onIntroCountdownComplete}
+              soundEnabled={soundEnabled}
+            />
+          ) : null}
           {useBodySymbols
             ? sessionSymbols.map((typeId, index) => (
                 <div
