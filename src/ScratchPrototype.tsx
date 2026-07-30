@@ -1107,6 +1107,8 @@ export function ScratchPrototype() {
   topBarPhaseRef.current = topBarPhase;
   const introGateActiveRef = useRef(introGateActive);
   introGateActiveRef.current = introGateActive;
+  const showIntroCountdownRef = useRef(showIntroCountdown);
+  showIntroCountdownRef.current = showIntroCountdown;
   const sessionSymbolsRef = useRef(sessionSymbols);
   sessionSymbolsRef.current = sessionSymbols;
   const revealedSymbolsRef = useRef(revealedSymbols);
@@ -1419,10 +1421,14 @@ export function ScratchPrototype() {
         chromaKeyRef.current,
       );
 
+      // Skip body-marker transforms while the intro countdown covers the stage —
+      // markers aren't visible under the overlay, and recomputing 12 DOM styles
+      // every frame stacks on top of video decode + WebGL + the countdown Lottie.
       const bodyPoints = trackedMeshNow?.symbolPoints;
       const stage = stageRef.current;
       const canvas = canvasRef.current;
       if (
+        !showIntroCountdownRef.current &&
         bodyPoints &&
         bodyPoints.length === SYMBOL_SLOT_COUNT &&
         trackedSample &&

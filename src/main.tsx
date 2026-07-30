@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
 import { Dashboard } from "./Dashboard";
 import { GamePage } from "./GamePage";
@@ -14,6 +15,13 @@ import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
+
+// Self-hosted (see scripts/copy-dotlottie-wasm.mjs) so every Lottie —
+// e.g. GameSymbolIcon and InitialCountdown — loads its WASM
+// from this origin instead of the library's default cdn.jsdelivr.net, which
+// can silently break rendering (nothing renders, no error) on
+// networks that can't reach that CDN.
+setWasmUrl(new URL("/wasm/dotlottie-player.wasm", window.location.origin).href);
 
 function normalizePath(pathname: string): string {
   return pathname.replace(/\/+$/, "") || "/";
