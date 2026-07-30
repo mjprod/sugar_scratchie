@@ -68,9 +68,9 @@ export function InitialCountdown({
   // Keep the countdown on DotLottieReact (main thread), not DotLottieWorkerReact:
   // this asset is plain Lottie JSON (not .lottie), played once at ~260², and the
   // worker/OffscreenCanvas path was leaving a blank canvas here even with
-  // self-hosted WASM. Symbol icons stay on the shared worker; this one-shot
-  // overlay is short enough that main-thread decode is acceptable, and
-  // setWasmUrl in main.tsx still points both players at /wasm/dotlottie-player.wasm.
+  // self-hosted WASM. This one-shot overlay is short enough that main-thread
+  // decode is acceptable, and setWasmUrl in main.tsx points the player at
+  // /wasm/dotlottie-player.wasm.
   return (
     <div className="initial-countdown" aria-live="polite" aria-label="Get ready">
       <DotLottieReact
