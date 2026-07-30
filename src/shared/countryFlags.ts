@@ -1,0 +1,37 @@
+import countryNames from "./countries.json";
+
+export interface CountryFlagOption {
+  /** ISO-3166 country code (or special code like "GB-ENG", "EU", "XK"). */
+  code: string;
+  name: string;
+}
+
+/** All bundled country flags (`public/flags/svg/{code}.svg`), sorted by name. */
+export const COUNTRY_FLAG_OPTIONS: CountryFlagOption[] = Object.entries(
+  countryNames as Record<string, string>,
+)
+  .map(([code, name]) => ({ code, name }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+/** Public URL for a bundled country flag SVG. */
+export function countryFlagSvgUrl(code: string): string {
+  const normalized = code.trim().toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    throw new Error(`Invalid country code: "${code}"`);
+  }
+  return `/flags/svg/${encodeURIComponent(normalized)}.svg`;
+}
+
+/** Fetches a bundled country flag SVG and wraps it as a File, ready to upload. */
+export async function fetchCountryFlagFile(code: string): Promise<File> {
+  const normalized = code.trim().toLowerCase();
+  const url = countryFlagSvgUrl(normalized);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Could not load flag for "${code}"`);
+  }
+  const blob = await response.blob();
+  return new File([blob], `${normalized}.svg`, {
+    type: "image/svg+xml",
+  });
+}

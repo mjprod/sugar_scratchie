@@ -8,9 +8,17 @@
       "influencerCity": "Buenos Aires",
       "influencerCountry": "Argentina",
       "influencerFlag": null,
-      "influencerFlagSvg": "/models/julianaval/flag.svg",
+      "influencerFlagSvg": "/models/julianaval/flag.svg?v=1785409781",
       "cardOverlayColorStart": null,
-      "cardOverlayColorEnd": null
+      "cardOverlayColorEnd": null,
+      "cardPackName": null,
+      "cardPackName2": null,
+      "packFaceVideoUrl": "/models/julianaval/pack-face.mp4",
+      "packFaceVideoUrl2": "/models/julianaval/pack-face-2.mp4",
+      "swipeVideoUrl": "/models/julianaval/swipe.mp4",
+      "theme_avatars": {
+        "police": "/models/julianaval/themes/police/avatar.jpg"
+      }
     }
   ]
 }

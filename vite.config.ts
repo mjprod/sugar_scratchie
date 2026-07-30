@@ -1,8 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { resolve, extname } from "node:path";
 
 const meshDirectory = resolve("public/mesh");
 const meshIndexFile = resolve(meshDirectory, "index.json");
@@ -125,8 +125,41 @@ function findModelAvatar(modelId: string) {
 
 function findModelFlagSvg(modelId: string) {
   const candidate = resolve(modelsDirectory, modelId, "flag.svg");
-  if (existsSync(candidate)) return publicCardUrl(`models/${modelId}/flag.svg`);
-  return null;
+  if (!existsSync(candidate)) return null;
+  let version = 0;
+  try {
+    version = Math.floor(statSync(candidate).mtimeMs / 1000);
+  } catch {
+    // file may have disappeared between existsSync and statSync
+  }
+  return `${publicCardUrl(`models/${modelId}/flag.svg`)}?v=${version}`;
+}
+
+function findModelVideo(modelId: string, filename: string): string | null {
+  const candidate = resolve(modelsDirectory, modelId, filename);
+  return existsSync(candidate) ? publicCardUrl(`models/${modelId}/${filename}`) : null;
+}
+
+function findModelThemeAvatars(modelId: string): Record<string, string> | undefined {
+  const themesDir = resolve(modelsDirectory, modelId, "themes");
+  if (!existsSync(themesDir)) return undefined;
+  const avatars: Record<string, string> = {};
+  try {
+    for (const entry of readdirSync(themesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const themeDir = resolve(themesDir, entry.name);
+      for (const avatarFile of readdirSync(themeDir)) {
+        const ext = extname(avatarFile).toLowerCase();
+        if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext) && avatarFile.startsWith("avatar")) {
+          avatars[entry.name] = publicCardUrl(`models/${modelId}/themes/${entry.name}/${avatarFile}`);
+          break;
+        }
+      }
+    }
+  } catch {
+    // ignore FS errors
+  }
+  return Object.keys(avatars).length > 0 ? avatars : undefined;
 }
 
 function optionalMetaString(value: unknown) {
@@ -145,6 +178,12 @@ function getModelsIndexPayload() {
     influencerFlagSvg: string | null;
     cardOverlayColorStart: string | null;
     cardOverlayColorEnd: string | null;
+    cardPackName: string | null;
+    cardPackName2: string | null;
+    packFaceVideoUrl: string | null;
+    packFaceVideoUrl2: string | null;
+    swipeVideoUrl: string | null;
+    theme_avatars?: Record<string, string>;
   }> = [];
   try {
     for (const entry of readdirSync(modelsDirectory, { withFileTypes: true })) {
@@ -158,6 +197,8 @@ function getModelsIndexPayload() {
       let influencerFlag: string | null = null;
       let cardOverlayColorStart: string | null = null;
       let cardOverlayColorEnd: string | null = null;
+      let cardPackName: string | null = null;
+      let cardPackName2: string | null = null;
       if (existsSync(metaPath)) {
         try {
           const data = JSON.parse(readFileSync(metaPath, "utf8")) as {
@@ -170,6 +211,8 @@ function getModelsIndexPayload() {
             cardOverlayColorEnd?: string;
             influencerColorStart?: string;
             influencerColorEnd?: string;
+            cardPackName?: string;
+            cardPackName2?: string;
           };
           if (typeof data.label === "string" && data.label.trim()) label = data.label.trim();
           influencerName = optionalMetaString(data.influencerName);
@@ -182,10 +225,13 @@ function getModelsIndexPayload() {
           cardOverlayColorEnd = optionalMetaString(
             data.cardOverlayColorEnd ?? data.influencerColorEnd,
           );
+          cardPackName = optionalMetaString(data.cardPackName);
+          cardPackName2 = optionalMetaString(data.cardPackName2);
         } catch {
           // keep fallback label
         }
       }
+      const themeAvatars = findModelThemeAvatars(entry.name);
       models.push({
         id: entry.name,
         label,
@@ -197,6 +243,12 @@ function getModelsIndexPayload() {
         influencerFlagSvg: findModelFlagSvg(entry.name),
         cardOverlayColorStart,
         cardOverlayColorEnd,
+        cardPackName,
+        cardPackName2,
+        packFaceVideoUrl: findModelVideo(entry.name, "pack-face.mp4"),
+        packFaceVideoUrl2: findModelVideo(entry.name, "pack-face-2.mp4"),
+        swipeVideoUrl: findModelVideo(entry.name, "swipe.mp4"),
+        ...(themeAvatars ? { theme_avatars: themeAvatars } : {}),
       });
     }
   } catch {
