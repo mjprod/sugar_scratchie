@@ -1107,6 +1107,8 @@ export function ScratchPrototype() {
   topBarPhaseRef.current = topBarPhase;
   const introGateActiveRef = useRef(introGateActive);
   introGateActiveRef.current = introGateActive;
+  const showIntroCountdownRef = useRef(showIntroCountdown);
+  showIntroCountdownRef.current = showIntroCountdown;
   const sessionSymbolsRef = useRef(sessionSymbols);
   sessionSymbolsRef.current = sessionSymbols;
   const revealedSymbolsRef = useRef(revealedSymbols);
@@ -1426,7 +1428,7 @@ export function ScratchPrototype() {
       const stage = stageRef.current;
       const canvas = canvasRef.current;
       if (
-        !introGateActiveRef.current &&
+        !showIntroCountdownRef.current &&
         bodyPoints &&
         bodyPoints.length === SYMBOL_SLOT_COUNT &&
         trackedSample &&
