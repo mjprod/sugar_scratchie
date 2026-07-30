@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const meshDirectory = resolve("public/mesh");
@@ -125,8 +125,9 @@ function findModelAvatar(modelId: string) {
 
 function findModelFlagSvg(modelId: string) {
   const candidate = resolve(modelsDirectory, modelId, "flag.svg");
-  if (existsSync(candidate)) return publicCardUrl(`models/${modelId}/flag.svg`);
-  return null;
+  if (!existsSync(candidate)) return null;
+  const version = Math.floor(statSync(candidate).mtimeMs);
+  return `${publicCardUrl(`models/${modelId}/flag.svg`)}?v=${version}`;
 }
 
 function optionalMetaString(value: unknown) {

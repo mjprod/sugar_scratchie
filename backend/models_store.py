@@ -265,7 +265,14 @@ def find_flag_svg(model_dir: Path) -> str | None:
     for ext in FLAG_EXTENSIONS:
         candidate = model_dir / f"flag{ext}"
         if candidate.is_file():
-            return public_url(f"models/{model_dir.name}/flag{ext}")
+            url = public_url(f"models/{model_dir.name}/flag{ext}")
+            # Cache-bust with mtime so the browser refetches after a re-upload —
+            # the filename ("flag.svg") never changes, only its contents.
+            try:
+                version = int(candidate.stat().st_mtime)
+            except OSError:
+                version = 0
+            return f"{url}?v={version}"
     return None
 
 

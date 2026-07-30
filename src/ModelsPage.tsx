@@ -12,6 +12,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Search,
   Trash2,
   Upload,
   UserRound,
@@ -28,6 +29,7 @@ import {
   Flex,
   Grid,
   Heading,
+  Popover,
   Select,
   Table,
   Text,
@@ -36,6 +38,11 @@ import {
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./shared/api";
+import {
+  COUNTRY_FLAG_OPTIONS,
+  countryFlagSvgUrl,
+  fetchCountryFlagFile,
+} from "./shared/countryFlags";
 import { suggestCardId } from "./shared/groupCards";
 import { inferThemeFromLabel, themeKey } from "./game/session";
 import {
@@ -570,6 +577,20 @@ export function ModelsPage() {
     [models, selectedModelId],
   );
 
+  async function handleNewModelFlagCountrySelect(countryCode: string) {
+    setError("");
+    try {
+      const file = await fetchCountryFlagFile(countryCode);
+      setNewModelFlagFile(file);
+      if (!newModelCountry.trim()) {
+        const option = COUNTRY_FLAG_OPTIONS.find((item) => item.code === countryCode);
+        if (option) setNewModelCountry(option.name);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   function clearNewModelForm() {
     setNewModelId("");
     setNewModelLabel("");
@@ -812,6 +833,20 @@ export function ModelsPage() {
     }
   }
 
+  async function handleFlagCountrySelect(modelId: string, countryCode: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const file = await fetchCountryFlagFile(countryCode);
+      await uploadModelFlagSvg(modelId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleFlagDelete(modelId: string) {
     if (!window.confirm("Remove this flag SVG? The emoji fallback will be used instead.")) {
       return;
@@ -972,6 +1007,9 @@ export function ModelsPage() {
                 flagInputRef.current?.click();
               }}
               onFlagDelete={() => void handleFlagDelete(selectedModel.id)}
+              onFlagCountrySelect={(countryCode) =>
+                void handleFlagCountrySelect(selectedModel.id, countryCode)
+              }
               onVideoClick={(kind) => {
                 setVideoTarget({ modelId: selectedModel.id, kind });
                 videoInputRef.current?.click();
@@ -1047,6 +1085,9 @@ export function ModelsPage() {
                     onModelColorEndChange={setNewModelColorEnd}
                     onModelColorStartChange={setNewModelColorStart}
                     onModelCountryChange={setNewModelCountry}
+                    onModelFlagCountrySelect={(countryCode) =>
+                      void handleNewModelFlagCountrySelect(countryCode)
+                    }
                     onModelFlagFileChange={setNewModelFlagFile}
                     onModelIdChange={setNewModelId}
                     onModelLabelChange={setNewModelLabel}
@@ -1285,6 +1326,97 @@ function ModelFlagMark({ model, size = 18 }: { model: ModelInfo; size?: number }
   );
 }
 
+function CountryFlagPicker({
+  busy,
+  size = "1",
+  triggerLabel = "Pick a country flag…",
+  onSelect,
+}: {
+  busy: boolean;
+  size?: "1" | "2";
+  triggerLabel?: string;
+  onSelect: (countryCode: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const filteredOptions = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return COUNTRY_FLAG_OPTIONS;
+    return COUNTRY_FLAG_OPTIONS.filter((option) => option.name.toLowerCase().includes(normalized));
+  }, [query]);
+
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
+      <Popover.Trigger>
+        <Button disabled={busy} size={size} type="button" variant="soft">
+          <Search {...iconProps} />
+          {triggerLabel}
+        </Button>
+      </Popover.Trigger>
+      <Popover.Content align="start" style={{ width: 260, padding: 8 }}>
+        <Flex direction="column" gap="2">
+          <TextField.Root
+            autoFocus
+            placeholder="Search countries…"
+            size="1"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          >
+            <TextField.Slot>
+              <Search {...iconProps} />
+            </TextField.Slot>
+          </TextField.Root>
+          <Box style={{ maxHeight: 260, overflowY: "auto" }}>
+            {filteredOptions.length === 0 ? (
+              <Text color="gray" size="1">
+                No countries found
+              </Text>
+            ) : (
+              <Flex direction="column" gap="1">
+                {filteredOptions.map((option) => (
+                  <Button
+                    key={option.code}
+                    size="1"
+                    style={{ justifyContent: "flex-start" }}
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      onSelect(option.code);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                  >
+                    <img
+                      alt=""
+                      src={countryFlagSvgUrl(option.code)}
+                      style={{
+                        width: 20,
+                        height: 15,
+                        objectFit: "cover",
+                        borderRadius: 2,
+                        border: "1px solid var(--gray-a5)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Text truncate>{option.name}</Text>
+                  </Button>
+                ))}
+              </Flex>
+            )}
+          </Box>
+        </Flex>
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
 function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
   return (
     <Box
@@ -1432,6 +1564,7 @@ function ModelDetail({
   onEditingLabelChange,
   onEditingNameChange,
   onFlagClick,
+  onFlagCountrySelect,
   onFlagDelete,
   onMoveCard,
   onOpenCreateCard,
@@ -1479,6 +1612,7 @@ function ModelDetail({
   onEditingLabelChange: (value: string) => void;
   onEditingNameChange: (value: string) => void;
   onFlagClick: () => void;
+  onFlagCountrySelect: (countryCode: string) => void;
   onFlagDelete: () => void;
   onMoveCard: (cardId: string, direction: -1 | 1) => void;
   onOpenCreateCard: () => void;
@@ -1578,18 +1712,27 @@ function ModelDetail({
                     <Text as="div" mb="1" size="1" weight="medium">
                       Flag SVG
                     </Text>
-                    <Flex align="center" gap="2">
+                    <Flex align="center" gap="2" wrap="wrap">
                       {model.influencerFlagSvg ? (
                         <img
                           alt=""
                           src={model.influencerFlagSvg}
-                          style={{ width: 28, height: 28, objectFit: "contain" }}
+                          style={{
+                            width: 36,
+                            height: 27,
+                            objectFit: "cover",
+                            borderRadius: 4,
+                            border: "1px solid var(--gray-a6)",
+                            background: "var(--gray-a2)",
+                            flexShrink: 0,
+                          }}
                         />
                       ) : (
                         <Text color="gray" size="1">
                           No SVG yet
                         </Text>
                       )}
+                      <CountryFlagPicker busy={busy} size="1" onSelect={onFlagCountrySelect} />
                       <Button disabled={busy} size="1" variant="soft" onClick={onFlagClick}>
                         <Upload {...iconProps} />
                         Upload SVG
@@ -2514,8 +2657,8 @@ function FlagSvgFilePreview({ file, size = 28 }: { file: File; size?: number }) 
       src={src}
       style={{
         width: size,
-        height: size,
-        objectFit: "contain",
+        height: Math.round((size * 3) / 4),
+        objectFit: "cover",
         display: "block",
         flexShrink: 0,
         borderRadius: 4,
@@ -2541,6 +2684,7 @@ function CreateModelFields({
   onModelColorEndChange,
   onModelColorStartChange,
   onModelCountryChange,
+  onModelFlagCountrySelect,
   onModelFlagFileChange,
   onModelIdChange,
   onModelLabelChange,
@@ -2561,6 +2705,7 @@ function CreateModelFields({
   onModelColorEndChange: (value: string) => void;
   onModelColorStartChange: (value: string) => void;
   onModelCountryChange: (value: string) => void;
+  onModelFlagCountrySelect: (countryCode: string) => void;
   onModelFlagFileChange: (file: File | null) => void;
   onModelIdChange: (value: string) => void;
   onModelLabelChange: (value: string) => void;
@@ -2609,6 +2754,7 @@ function CreateModelFields({
           </Text>
           <Flex align="center" gap="2" wrap="wrap">
             {modelFlagFile ? <FlagSvgFilePreview file={modelFlagFile} size={32} /> : null}
+            <CountryFlagPicker busy={busy} size="2" onSelect={onModelFlagCountrySelect} />
             <Button asChild disabled={busy} size="2" variant="soft">
               <label style={{ cursor: busy ? "not-allowed" : "pointer" }}>
                 <Upload {...iconProps} />
