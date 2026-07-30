@@ -126,7 +126,12 @@ function findModelAvatar(modelId: string) {
 function findModelFlagSvg(modelId: string) {
   const candidate = resolve(modelsDirectory, modelId, "flag.svg");
   if (!existsSync(candidate)) return null;
-  const version = Math.floor(statSync(candidate).mtimeMs);
+  let version = 0;
+  try {
+    version = Math.floor(statSync(candidate).mtimeMs / 1000);
+  } catch {
+    // file may have disappeared between existsSync and statSync
+  }
   return `${publicCardUrl(`models/${modelId}/flag.svg`)}?v=${version}`;
 }
 
