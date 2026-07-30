@@ -15,7 +15,11 @@ export const COUNTRY_FLAG_OPTIONS: CountryFlagOption[] = Object.entries(
 
 /** Public URL for a bundled country flag SVG. */
 export function countryFlagSvgUrl(code: string): string {
-  return `/flags/svg/${code.toLowerCase()}.svg`;
+  const normalized = code.trim().toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    throw new Error(`Invalid country code: "${code}"`);
+  }
+  return `/flags/svg/${encodeURIComponent(normalized)}.svg`;
 }
 
 /** Fetches a bundled country flag SVG and wraps it as a File, ready to upload. */
