@@ -42,6 +42,10 @@ frontend/
 public/cards/controlnet-frames/
 public/cards/controlnet-output/
 
+# Self-hosted dotlottie WASM, copied from node_modules by `postinstall`
+# (scripts/copy-dotlottie-wasm.mjs) — don't commit the binary.
+public/wasm/
+
 # Editor / OS
 .idea/
 .vscode/

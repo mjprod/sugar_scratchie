@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/copy-dotlottie-wasm.mjs",
     "dev": "vite",
     "dev:api": ".venv/bin/uvicorn backend.app:app --host 127.0.0.1 --port 8090 --reload",
     "dev:all": "concurrently -k --kill-others-on-fail -n api,web -c blue,green \"npm run dev:api\" \"npm run dev\"",
