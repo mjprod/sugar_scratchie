@@ -25,6 +25,10 @@ export type ModelGlobalMedia = {
   packFaceVideoUrl2?: string | null;
   /** Home swipe motion video. */
   swipeVideoUrl?: string | null;
+  /** Product label for foil pack 1 (replaces "Pack Nº …" when set). */
+  cardPackName?: string | null;
+  /** Product label for foil pack 2. */
+  cardPackName2?: string | null;
 };
 
 export type ModelInfo = {
@@ -41,7 +45,8 @@ export type ModelVideoKind = "pack-face" | "pack-face-2" | "swipe";
 
 export type UpdateModelPayload = {
   label?: string;
-} & ModelInfluencerProfile;
+} & ModelInfluencerProfile &
+  Pick<ModelGlobalMedia, "cardPackName" | "cardPackName2">;
 
 export type PhotoInfo = {
   id: string;

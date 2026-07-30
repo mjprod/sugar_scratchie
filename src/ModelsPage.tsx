@@ -638,6 +638,26 @@ export function ModelsPage() {
     }
   }
 
+  async function handleSavePackNames(
+    modelId: string,
+    cardPackName: string,
+    cardPackName2: string,
+  ) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateModel(modelId, {
+        cardPackName: cardPackName.trim(),
+        cardPackName2: cardPackName2.trim(),
+      });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteModel(modelId: string) {
     const linked = cardsByModel.get(modelId) ?? [];
     const cardNote =
@@ -956,6 +976,9 @@ export function ModelsPage() {
                 setVideoTarget({ modelId: selectedModel.id, kind });
                 videoInputRef.current?.click();
               }}
+              onSavePackNames={(cardPackName, cardPackName2) =>
+                void handleSavePackNames(selectedModel.id, cardPackName, cardPackName2)
+              }
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
@@ -1287,12 +1310,16 @@ function ModelVideoSlot({
   pathHint,
   url,
   onUpload,
+  packName,
+  onPackNameChange,
 }: {
   busy: boolean;
   label: string;
   pathHint: string;
   url?: string | null;
   onUpload: () => void;
+  packName?: string;
+  onPackNameChange?: (value: string) => void;
 }) {
   const src = url?.trim() || "";
   return (
@@ -1346,6 +1373,18 @@ function ModelVideoSlot({
       <Text as="div" color="gray" mb="2" size="1" style={{ wordBreak: "break-all" }}>
         {src || `Saves to public/${pathHint}`}
       </Text>
+      {onPackNameChange ? (
+        <label style={{ display: "block", marginBottom: 8 }}>
+          <Text as="div" mb="1" size="1" weight="medium">
+            Card pack name
+          </Text>
+          <TextField.Root
+            disabled={busy}
+            value={packName ?? ""}
+            onChange={(event) => onPackNameChange(event.currentTarget.value)}
+          />
+        </label>
+      ) : null}
       <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
         <Upload {...iconProps} />
         {src ? "Replace" : "Upload"}
@@ -1400,6 +1439,7 @@ function ModelDetail({
   onRename,
   onStartRename,
   onVideoClick,
+  onSavePackNames,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -1446,11 +1486,23 @@ function ModelDetail({
   onRename: () => void;
   onStartRename: () => void;
   onVideoClick: (kind: ModelVideoKind) => void;
+  onSavePackNames: (cardPackName: string, cardPackName2: string) => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
   const locationLine = modelLocationLine(model);
   const gradientCss = modelGradientCss(model);
+  const [packNameDraft, setPackNameDraft] = useState(model.cardPackName ?? "");
+  const [packName2Draft, setPackName2Draft] = useState(model.cardPackName2 ?? "");
+
+  useEffect(() => {
+    setPackNameDraft(model.cardPackName ?? "");
+    setPackName2Draft(model.cardPackName2 ?? "");
+  }, [model.id, model.cardPackName, model.cardPackName2]);
+
+  const packNamesDirty =
+    packNameDraft.trim() !== (model.cardPackName ?? "").trim() ||
+    packName2Draft.trim() !== (model.cardPackName2 ?? "").trim();
 
   return (
     <Flex direction="column" gap="3">
@@ -1661,7 +1713,8 @@ function ModelDetail({
           </Text>
           <Text as="div" color="gray" mb="2" size="1">
             Foil pack and home swipe videos for this model — served to the product app via{" "}
-            <CodeInline>/api/models</CodeInline>.
+            <CodeInline>/api/models</CodeInline>. Card pack names replace “Pack Nº …” under the
+            foil packs in the product app.
           </Text>
           <Grid columns={{ initial: "1", sm: "3" }} gap="3">
             <ModelVideoSlot
@@ -1669,6 +1722,8 @@ function ModelDetail({
               label="Foil 3D pack video"
               pathHint={`models/${model.id}/pack-face.*`}
               url={model.packFaceVideoUrl}
+              packName={packNameDraft}
+              onPackNameChange={setPackNameDraft}
               onUpload={() => onVideoClick("pack-face")}
             />
             <ModelVideoSlot
@@ -1676,6 +1731,8 @@ function ModelDetail({
               label="Foil 3D pack video 2"
               pathHint={`models/${model.id}/pack-face-2.*`}
               url={model.packFaceVideoUrl2}
+              packName={packName2Draft}
+              onPackNameChange={setPackName2Draft}
               onUpload={() => onVideoClick("pack-face-2")}
             />
             <ModelVideoSlot
@@ -1686,6 +1743,20 @@ function ModelDetail({
               onUpload={() => onVideoClick("swipe")}
             />
           </Grid>
+          <Flex align="center" gap="2" mt="2" wrap="wrap">
+            <Button
+              disabled={busy || !packNamesDirty}
+              size="1"
+              onClick={() => onSavePackNames(packNameDraft, packName2Draft)}
+            >
+              Save pack names
+            </Button>
+            {packNamesDirty ? (
+              <Text color="gray" size="1">
+                Unsaved name changes
+              </Text>
+            ) : null}
+          </Flex>
         </Box>
 
         {creatingCardFor === model.id ? (

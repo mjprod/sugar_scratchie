@@ -32,6 +32,9 @@ INFLUENCER_META_KEYS = (
     "influencerFlag",
     "cardOverlayColorStart",
     "cardOverlayColorEnd",
+    # Display names for the two foil pack slots (product label prefers these over pack Nº).
+    "cardPackName",
+    "cardPackName2",
 )
 
 
@@ -47,6 +50,8 @@ class ModelInfo(BaseModel):
     influencerFlagSvg: str | None = None
     cardOverlayColorStart: str | None = None
     cardOverlayColorEnd: str | None = None
+    cardPackName: str | None = None
+    cardPackName2: str | None = None
     packFaceVideoUrl: str | None = None
     packFaceVideoUrl2: str | None = None
     swipeVideoUrl: str | None = None
@@ -63,6 +68,8 @@ class CreateModelRequest(BaseModel):
     influencerFlag: str | None = Field(default=None, max_length=16)
     cardOverlayColorStart: str | None = Field(default=None, max_length=32)
     cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardPackName: str | None = Field(default=None, max_length=120)
+    cardPackName2: str | None = Field(default=None, max_length=120)
 
 
 class UpdateModelRequest(BaseModel):
@@ -73,6 +80,8 @@ class UpdateModelRequest(BaseModel):
     influencerFlag: str | None = Field(default=None, max_length=16)
     cardOverlayColorStart: str | None = Field(default=None, max_length=32)
     cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardPackName: str | None = Field(default=None, max_length=120)
+    cardPackName2: str | None = Field(default=None, max_length=120)
 
 
 def safe_model_id(value: str) -> str:
@@ -122,6 +131,8 @@ def _model_info(
         influencerFlagSvg=influencer_flag_svg,
         cardOverlayColorStart=fields.get("cardOverlayColorStart"),
         cardOverlayColorEnd=fields.get("cardOverlayColorEnd"),
+        cardPackName=fields.get("cardPackName"),
+        cardPackName2=fields.get("cardPackName2"),
         packFaceVideoUrl=pack_face_video_url,
         packFaceVideoUrl2=pack_face_video_url_2,
         swipeVideoUrl=swipe_video_url,
@@ -179,6 +190,8 @@ def write_model_meta(
     influencerFlag: str | None = None,
     cardOverlayColorStart: str | None = None,
     cardOverlayColorEnd: str | None = None,
+    cardPackName: str | None = None,
+    cardPackName2: str | None = None,
 ) -> None:
     meta = model_dir / "meta.json"
     data: dict = {}
@@ -206,6 +219,8 @@ def write_model_meta(
         "influencerFlag": influencerFlag,
         "cardOverlayColorStart": cardOverlayColorStart,
         "cardOverlayColorEnd": cardOverlayColorEnd,
+        "cardPackName": cardPackName,
+        "cardPackName2": cardPackName2,
     }
     for key, value in influencer.items():
         cleaned = _clean_optional_str(value)
@@ -304,6 +319,8 @@ def write_models_index(models_dir: Path) -> None:
                 "influencerFlagSvg": model.influencerFlagSvg,
                 "cardOverlayColorStart": model.cardOverlayColorStart,
                 "cardOverlayColorEnd": model.cardOverlayColorEnd,
+                "cardPackName": model.cardPackName,
+                "cardPackName2": model.cardPackName2,
                 "packFaceVideoUrl": model.packFaceVideoUrl,
                 "packFaceVideoUrl2": model.packFaceVideoUrl2,
                 "swipeVideoUrl": model.swipeVideoUrl,
@@ -329,6 +346,8 @@ def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
         "influencerFlag": _clean_optional_str(request.influencerFlag),
         "cardOverlayColorStart": _clean_optional_str(request.cardOverlayColorStart),
         "cardOverlayColorEnd": _clean_optional_str(request.cardOverlayColorEnd),
+        "cardPackName": _clean_optional_str(request.cardPackName),
+        "cardPackName2": _clean_optional_str(request.cardPackName2),
     }
     write_model_meta(
         model_dir,
