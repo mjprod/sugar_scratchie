@@ -298,8 +298,7 @@ textarea:focus-visible {
 }
 
 /* Flying foil flakes fly in front of the coating (and the revealed icons).
-   No rounded-corner clip here (unlike the coating canvas) so flakes drifting
-   past the pill's edge as they fall aren't chopped off. */
+   Particle canvas itself is un-rounded; the pill container may still clip via overflow/border-radius. */
 .top-symbol-bar-particle-canvas {
   z-index: 3 !important;
   border-radius: 0 !important;
