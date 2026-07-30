@@ -14,6 +14,18 @@ const SLOT_REVEAL_THRESHOLD = 0.55;
 const SCRATCH_TEXTURE_URL = "/scratch/scratchTexture.jpg";
 const BRUSH_STEP_RATIO = 0.35;
 
+// Flying foil flakes on scratch — same feel as the main game's fabric flakes
+// (glRenderer's spawnFlakes/drawFlakes), but colored by sampling the actual
+// scratch-coating texture instead of the video fabric.
+const FLAKE_COUNT_PER_SCRATCH = 2;
+const FLAKE_MAX = 90;
+const FLAKE_LIFE = 0.6;
+const FLAKE_SCALE_MIN = 0.5;
+const FLAKE_SCALE_MAX = 1.1;
+const FLAKE_BASE_SIZE = 4.5;
+const FLAKE_GRAVITY = 160;
+const FLAKE_FALLBACK_COLORS = ["#d4d0cb", "#b5b0aa", "#9a9590", "#847f7a", "#6a6662"];
+
 export type TopBarPhase = "center" | "docked";
 
 type TopSymbolBarProps = {
@@ -26,6 +38,7 @@ type TopSymbolBarProps = {
 
 let scratchTexture: HTMLImageElement | null = null;
 let scratchTextureReady = false;
+let scratchTextureSampler: CanvasRenderingContext2D | null = null;
 const scratchTextureWaiters: Array<() => void> = [];
 
 function loadScratchTexture(): void {
@@ -35,6 +48,16 @@ function loadScratchTexture(): void {
   img.decoding = "async";
   img.onload = () => {
     scratchTextureReady = true;
+    // Cached offscreen copy so flake spawns can read a pixel color back
+    // without re-drawing/reading from the live pattern each time.
+    const off = document.createElement("canvas");
+    off.width = Math.max(1, img.naturalWidth);
+    off.height = Math.max(1, img.naturalHeight);
+    const offCtx = off.getContext("2d", { willReadFrequently: true });
+    if (offCtx) {
+      offCtx.drawImage(img, 0, 0);
+      scratchTextureSampler = offCtx;
+    }
     for (const notify of scratchTextureWaiters.splice(0)) notify();
   };
   img.onerror = () => {
@@ -42,6 +65,37 @@ function loadScratchTexture(): void {
     scratchTextureReady = false;
   };
   img.src = SCRATCH_TEXTURE_URL;
+}
+
+/** Same tone as the coating at canvas-pixel (px, py) — mirrors the pattern's
+ * `paintBarCoating` scale so flakes look torn straight off the foil there. */
+function sampleScratchTextureColor(
+  px: number,
+  py: number,
+  canvasHeight: number,
+): string {
+  const tex = scratchTexture;
+  if (!scratchTextureReady || !tex || !scratchTextureSampler || tex.naturalWidth <= 0) {
+    return FLAKE_FALLBACK_COLORS[
+      Math.floor(Math.random() * FLAKE_FALLBACK_COLORS.length)
+    ];
+  }
+  const scale = Math.max((canvasHeight / tex.naturalHeight) * 1.15, 1);
+  const sx = (((px / scale) % tex.naturalWidth) + tex.naturalWidth) % tex.naturalWidth;
+  const sy = (((py / scale) % tex.naturalHeight) + tex.naturalHeight) % tex.naturalHeight;
+  try {
+    const [r, g, b] = scratchTextureSampler.getImageData(
+      Math.floor(sx),
+      Math.floor(sy),
+      1,
+      1,
+    ).data;
+    return `rgb(${r}, ${g}, ${b})`;
+  } catch {
+    return FLAKE_FALLBACK_COLORS[
+      Math.floor(Math.random() * FLAKE_FALLBACK_COLORS.length)
+    ];
+  }
 }
 
 function whenScratchTextureReady(notify: () => void): void {
@@ -53,6 +107,19 @@ function whenScratchTextureReady(notify: () => void): void {
 loadScratchTexture();
 
 type CoatingCanvas = HTMLCanvasElement & { __locked?: boolean };
+
+type Flake = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  size: number;
+  rotation: number;
+  angularVel: number;
+  color: string;
+};
 
 function paintBarCoating(canvas: CoatingCanvas): boolean {
   if (canvas.__locked) return true;
@@ -176,6 +243,10 @@ export function TopSymbolBar({
 }: TopSymbolBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<CoatingCanvas | null>(null);
+  const particleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const flakesRef = useRef<Flake[]>([]);
+  const flakeRafRef = useRef<number | null>(null);
+  const flakeLastTsRef = useRef<number | null>(null);
   const slotElsRef = useRef<(HTMLDivElement | null)[]>(
     Array.from({ length: TOP_SYMBOL_COUNT }, () => null),
   );
@@ -218,12 +289,30 @@ export function TopSymbolBar({
     });
   }, []);
 
+  /** Particle canvas always mirrors the coating canvas's pixel size 1:1 so
+   * flake coordinates (computed from the coating canvas) line up exactly. */
+  const syncParticleCanvasSize = useCallback((w: number, h: number) => {
+    const pc = particleCanvasRef.current;
+    if (!pc) return;
+    pc.style.position = "absolute";
+    pc.style.inset = "0";
+    pc.style.width = "100%";
+    pc.style.height = "100%";
+    pc.style.pointerEvents = "none";
+    pc.style.display = "block";
+    if (pc.width !== w || pc.height !== h) {
+      pc.width = w;
+      pc.height = h;
+    }
+  }, []);
+
   const syncAndPaint = useCallback(() => {
     const bar = barRef.current;
     const canvas = canvasRef.current;
     if (!bar || !canvas || forceRevealed) return false;
     if (canvas.__locked) {
       paintedRef.current = true;
+      syncParticleCanvasSize(canvas.width, canvas.height);
       return true;
     }
 
@@ -245,6 +334,7 @@ export function TopSymbolBar({
     canvas.style.pointerEvents = "none";
     canvas.style.zIndex = "2";
     canvas.style.display = "block";
+    syncParticleCanvasSize(nextW, nextH);
 
     if (canvas.width !== nextW || canvas.height !== nextH) {
       canvas.width = nextW;
@@ -255,7 +345,7 @@ export function TopSymbolBar({
       paintedRef.current = paintBarCoating(canvas);
     }
     return paintedRef.current;
-  }, [forceRevealed]);
+  }, [forceRevealed, syncParticleCanvasSize]);
 
   useEffect(() => {
     revealedMaskRef.current = Array.from(
@@ -271,7 +361,108 @@ export function TopSymbolBar({
     lastPtRef.current = null;
     paintedRef.current = false;
     if (canvasRef.current) canvasRef.current.__locked = false;
+    flakesRef.current = [];
+    if (flakeRafRef.current !== null) {
+      cancelAnimationFrame(flakeRafRef.current);
+      flakeRafRef.current = null;
+    }
+    flakeLastTsRef.current = null;
+    const pc = particleCanvasRef.current;
+    if (pc) pc.getContext("2d")?.clearRect(0, 0, pc.width, pc.height);
   }, [symbols, forceRevealed, roundKey]);
+
+  useEffect(() => {
+    return () => {
+      if (flakeRafRef.current !== null) cancelAnimationFrame(flakeRafRef.current);
+    };
+  }, []);
+
+  const stepFlakes = useCallback((ts: number) => {
+    const pc = particleCanvasRef.current;
+    if (!pc) {
+      flakeRafRef.current = null;
+      flakeLastTsRef.current = null;
+      return;
+    }
+    const last = flakeLastTsRef.current;
+    const dt = last === null ? 0 : Math.min(0.05, (ts - last) / 1000);
+    flakeLastTsRef.current = ts;
+
+    const next: Flake[] = [];
+    for (const f of flakesRef.current) {
+      const age = f.age + dt;
+      if (age < f.life) {
+        f.age = age;
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+        f.vy += FLAKE_GRAVITY * dt;
+        f.rotation += f.angularVel * dt;
+        next.push(f);
+      }
+    }
+    flakesRef.current = next;
+
+    const ctx = pc.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, pc.width, pc.height);
+      for (const f of next) {
+        const t = f.age / f.life;
+        const ease = 1 - (1 - t) * (1 - t);
+        const size = f.size * (FLAKE_SCALE_MIN + (FLAKE_SCALE_MAX - FLAKE_SCALE_MIN) * ease);
+        const alpha = t < 0.65 ? 1 : Math.max(0, 1 - (t - 0.65) / 0.35);
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.rotate(f.rotation);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = f.color;
+        ctx.beginPath();
+        // Slightly irregular quad (not a perfect square) to read as a torn
+        // fleck of foil rather than a clean particle.
+        ctx.moveTo(-size, -size * 0.75);
+        ctx.lineTo(size * 0.85, -size);
+        ctx.lineTo(size, size * 0.7);
+        ctx.lineTo(-size * 0.7, size);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    if (next.length > 0) {
+      flakeRafRef.current = requestAnimationFrame(stepFlakes);
+    } else {
+      flakeRafRef.current = null;
+      flakeLastTsRef.current = null;
+    }
+  }, []);
+
+  const spawnFlakes = useCallback(
+    (x: number, y: number, canvasHeight: number, count = FLAKE_COUNT_PER_SCRATCH) => {
+      for (let i = 0; i < count; i += 1) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 60;
+        flakesRef.current.push({
+          x: x + (Math.random() - 0.5) * 6,
+          y: y + (Math.random() - 0.5) * 6,
+          vx: Math.cos(angle) * speed * 0.35,
+          vy: Math.sin(angle) * speed * 0.35 - 30,
+          age: 0,
+          life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
+          size: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
+          rotation: Math.random() * Math.PI * 2,
+          angularVel: (Math.random() - 0.5) * 10,
+          color: sampleScratchTextureColor(x, y, canvasHeight),
+        });
+      }
+      while (flakesRef.current.length > FLAKE_MAX) flakesRef.current.shift();
+      if (flakeRafRef.current === null) {
+        flakeLastTsRef.current = null;
+        flakeRafRef.current = requestAnimationFrame(stepFlakes);
+      }
+    },
+    [stepFlakes],
+  );
 
   useLayoutEffect(() => {
     if (!showCoating) return;
@@ -379,9 +570,10 @@ export function TopSymbolBar({
 
       lastPtRef.current = { x, y };
       canvas.__locked = true;
+      spawnFlakes(x, y, canvas.height);
       checkReveals();
     },
-    [checkReveals, coatingDone, phase, syncAndPaint],
+    [checkReveals, coatingDone, phase, spawnFlakes, syncAndPaint],
   );
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
@@ -445,6 +637,13 @@ export function TopSymbolBar({
         <canvas
           ref={canvasRef}
           className="top-symbol-bar-scratch-canvas"
+          aria-hidden="true"
+        />
+      ) : null}
+      {showCoating ? (
+        <canvas
+          ref={particleCanvasRef}
+          className="top-symbol-bar-particle-canvas"
           aria-hidden="true"
         />
       ) : null}

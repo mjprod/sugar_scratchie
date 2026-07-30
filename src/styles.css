@@ -273,7 +273,8 @@ textarea:focus-visible {
   cursor: default;
 }
 
-.top-symbol-bar-scratch-canvas {
+.top-symbol-bar-scratch-canvas,
+.top-symbol-bar-particle-canvas {
   position: absolute !important;
   inset: 0 !important;
   top: 0 !important;
@@ -288,9 +289,20 @@ textarea:focus-visible {
   transform: none !important;
   border-radius: inherit !important;
   pointer-events: none !important;
-  z-index: 2 !important;
   display: block !important;
   flex: none !important;
+}
+
+.top-symbol-bar-scratch-canvas {
+  z-index: 2 !important;
+}
+
+/* Flying foil flakes fly in front of the coating (and the revealed icons).
+   No rounded-corner clip here (unlike the coating canvas) so flakes drifting
+   past the pill's edge as they fall aren't chopped off. */
+.top-symbol-bar-particle-canvas {
+  z-index: 3 !important;
+  border-radius: 0 !important;
 }
 
 .symbol-slot {
