@@ -25,6 +25,10 @@ import {
   SYMBOL_TYPE_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
+import {
+  InitialCountdown,
+  TOP_BAR_DOCK_MS,
+} from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -781,6 +785,11 @@ export function PhotoScratchTest() {
   const topBarPhaseRef = useRef(topBarPhase);
   topBarPhaseRef.current = topBarPhase;
   const [topBarRound, setTopBarRound] = useState(0);
+  const [introGateActive, setIntroGateActive] = useState(false);
+  const introGateActiveRef = useRef(introGateActive);
+  introGateActiveRef.current = introGateActive;
+  const [showIntroCountdown, setShowIntroCountdown] = useState(false);
+  const introDockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
@@ -826,6 +835,20 @@ export function PhotoScratchTest() {
     }
   }
 
+  function clearIntroDockTimer() {
+    if (introDockTimerRef.current !== null) {
+      window.clearTimeout(introDockTimerRef.current);
+      introDockTimerRef.current = null;
+    }
+  }
+
+  function isBodyScratchLocked() {
+    return (
+      hasBodySymbolsRef.current &&
+      (topBarPhaseRef.current === "center" || introGateActiveRef.current)
+    );
+  }
+
   function resetGameOutcome() {
     clearGameResultTimer();
     gameResultPendingRef.current = null;
@@ -834,9 +857,13 @@ export function PhotoScratchTest() {
   }
 
   function resetMatchRound() {
+    clearIntroDockTimer();
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
+    setIntroGateActive(false);
+    introGateActiveRef.current = false;
+    setShowIntroCountdown(false);
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
@@ -845,6 +872,20 @@ export function PhotoScratchTest() {
   function onTopBarAllRevealed() {
     setTopBarPhase("docked");
     topBarPhaseRef.current = "docked";
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(false);
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setShowIntroCountdown(true);
+    }, TOP_BAR_DOCK_MS);
+  }
+
+  function onIntroCountdownComplete() {
+    setShowIntroCountdown(false);
+    setIntroGateActive(false);
+    introGateActiveRef.current = false;
   }
 
   function applyMesh(mesh: TrackedMesh) {
@@ -1126,6 +1167,7 @@ export function PhotoScratchTest() {
       if (
         autoSettings.enabled &&
         huntComplete &&
+        !isBodyScratchLocked() &&
         sample &&
         gameResultPendingRef.current === null &&
         !claimedRef.current
@@ -1323,7 +1365,7 @@ export function PhotoScratchTest() {
 
   function applyScratchAtUv(u: number, v: number, radius: number) {
     if (gameResultPendingRef.current !== null || claimedRef.current) return;
-    if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
+    if (isBodyScratchLocked()) {
       return;
     }
 
@@ -1430,9 +1472,9 @@ export function PhotoScratchTest() {
   function updateAutoScratch(patch: Partial<AutoScratchSettings>) {
     if (
       patch.enabled &&
-      hasBodySymbolsRef.current &&
-      (revealedSymbolsRef.current < SYMBOL_POINT_COUNT ||
-        topBarPhaseRef.current === "center")
+      (isBodyScratchLocked() ||
+        (hasBodySymbolsRef.current &&
+          revealedSymbolsRef.current < SYMBOL_POINT_COUNT))
     ) {
       return;
     }
@@ -1589,7 +1631,10 @@ export function PhotoScratchTest() {
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
 
-  useEffect(() => () => clearGameResultTimer(), []);
+  useEffect(() => () => {
+    clearGameResultTimer();
+    clearIntroDockTimer();
+  }, []);
 
   useEffect(() => {
     try {
@@ -1641,7 +1686,7 @@ export function PhotoScratchTest() {
 
   function onPointerDown(clientX: number, clientY: number) {
     if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
-    if (hasBodySymbolsRef.current && topBarPhaseRef.current === "center") {
+    if (isBodyScratchLocked()) {
       return;
     }
     isScratchingRef.current = true;
@@ -1671,7 +1716,7 @@ export function PhotoScratchTest() {
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
   const autoScratchLocked =
     hasBodySymbols &&
-    (!symbolsHuntComplete || topBarPhase === "center");
+    (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
   const remainingCards = playlist.filter(
     (entry) => !completedCardIds.includes(entry.id),
   );
@@ -1984,7 +2029,9 @@ export function PhotoScratchTest() {
               <p className="auto-scratch-hint">
                 {topBarPhase === "center"
                   ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
-                  : `Find all ${SYMBOL_POINT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+                  : introGateActive
+                    ? "Get ready — play starts after the countdown."
+                    : `Find all ${SYMBOL_POINT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
               </p>
             ) : null}
             <label className="checkbox-label">
@@ -2047,7 +2094,7 @@ export function PhotoScratchTest() {
           ref={stageRef}
           className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
             hasBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
-          }`}
+          }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}`}
         >
           {hasBodySymbols ? (
             <TopSymbolBar
@@ -2055,6 +2102,12 @@ export function PhotoScratchTest() {
               phase={topBarPhase}
               roundKey={topBarRound}
               onAllRevealed={onTopBarAllRevealed}
+            />
+          ) : null}
+          {showIntroCountdown ? (
+            <InitialCountdown
+              onComplete={onIntroCountdownComplete}
+              soundEnabled={soundEnabled}
             />
           ) : null}
           <div
