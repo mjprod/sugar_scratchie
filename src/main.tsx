@@ -17,10 +17,10 @@ import "@radix-ui/themes/styles.css";
 import "./styles.css";
 
 // Self-hosted (see scripts/copy-dotlottie-wasm.mjs) so every Lottie —
-// GameSymbolIcon's shared worker, InitialCountdown's worker — loads its WASM
+// e.g. GameSymbolIcon and InitialCountdown — loads its WASM
 // from this origin instead of the library's default cdn.jsdelivr.net, which
-// silently breaks every worker-based Lottie (nothing renders, no error) on
-// any network that can't reach that CDN.
+// can silently break rendering (nothing renders, no error) on
+// networks that can't reach that CDN.
 setWasmUrl(new URL("/wasm/dotlottie-player.wasm", window.location.origin).href);
 
 function normalizePath(pathname: string): string {
