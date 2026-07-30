@@ -24,13 +24,14 @@ export function countryFlagSvgUrl(code: string): string {
 
 /** Fetches a bundled country flag SVG and wraps it as a File, ready to upload. */
 export async function fetchCountryFlagFile(code: string): Promise<File> {
-  const url = countryFlagSvgUrl(code);
+  const normalized = code.trim().toLowerCase();
+  const url = countryFlagSvgUrl(normalized);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Could not load flag for "${code}"`);
   }
   const blob = await response.blob();
-  return new File([blob], `${code.toLowerCase()}.svg`, {
+  return new File([blob], `${normalized}.svg`, {
     type: "image/svg+xml",
   });
 }
