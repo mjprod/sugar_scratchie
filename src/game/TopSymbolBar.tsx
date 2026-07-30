@@ -19,11 +19,14 @@ const BRUSH_STEP_RATIO = 0.35;
 // scratch-coating texture instead of the video fabric.
 const FLAKE_COUNT_PER_SCRATCH = 2;
 const FLAKE_MAX = 90;
-const FLAKE_LIFE = 0.6;
+const FLAKE_LIFE = 0.85;
 const FLAKE_SCALE_MIN = 0.5;
 const FLAKE_SCALE_MAX = 1.1;
 const FLAKE_BASE_SIZE = 4.5;
-const FLAKE_GRAVITY = 160;
+const FLAKE_GRAVITY = 420;
+/** Extra canvas height below the bar (as a multiple of bar height) so flakes
+ * stay drawable while gravity pulls them past the pill. */
+const FLAKE_FALL_EXTEND_RATIO = 1.2;
 const FLAKE_FALLBACK_COLORS = ["#d4d0cb", "#b5b0aa", "#9a9590", "#847f7a", "#6a6662"];
 
 export type TopBarPhase = "center" | "docked";
@@ -289,20 +292,23 @@ export function TopSymbolBar({
     });
   }, []);
 
-  /** Particle canvas always mirrors the coating canvas's pixel size 1:1 so
-   * flake coordinates (computed from the coating canvas) line up exactly. */
+  /** Particle canvas matches coating width and X/Y origin, but extends below
+   * the bar so falling flakes aren't clipped at the pill edge. */
   const syncParticleCanvasSize = useCallback((w: number, h: number) => {
     const pc = particleCanvasRef.current;
     if (!pc) return;
+    const ph = Math.max(1, Math.round(h * (1 + FLAKE_FALL_EXTEND_RATIO)));
     pc.style.position = "absolute";
-    pc.style.inset = "0";
+    pc.style.inset = "auto";
+    pc.style.top = "0";
+    pc.style.left = "0";
     pc.style.width = "100%";
-    pc.style.height = "100%";
+    pc.style.height = `${(ph / Math.max(1, h)) * 100}%`;
     pc.style.pointerEvents = "none";
     pc.style.display = "block";
-    if (pc.width !== w || pc.height !== h) {
+    if (pc.width !== w || pc.height !== ph) {
       pc.width = w;
-      pc.height = h;
+      pc.height = ph;
     }
   }, []);
 
@@ -440,13 +446,14 @@ export function TopSymbolBar({
   const spawnFlakes = useCallback(
     (x: number, y: number, canvasHeight: number, count = FLAKE_COUNT_PER_SCRATCH) => {
       for (let i = 0; i < count; i += 1) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 40 + Math.random() * 60;
+        const angle = (Math.random() - 0.5) * Math.PI * 0.9;
+        const speed = 50 + Math.random() * 70;
         flakesRef.current.push({
           x: x + (Math.random() - 0.5) * 6,
           y: y + (Math.random() - 0.5) * 6,
-          vx: Math.cos(angle) * speed * 0.35,
-          vy: Math.sin(angle) * speed * 0.35 - 30,
+          // Bias outward/down: small side scatter, then gravity takes over.
+          vx: Math.sin(angle) * speed * 0.55,
+          vy: 25 + Math.random() * 55,
           age: 0,
           life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
           size: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),

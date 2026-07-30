@@ -238,7 +238,9 @@ textarea:focus-visible {
 
 .top-symbol-bar.is-phase-center.is-scratchable {
   cursor: crosshair;
-  overflow: hidden;
+  /* Visible so gravity flakes can fall past the pill; the coating canvas
+     still clips itself via border-radius. */
+  overflow: visible;
   position: absolute;
   /* Dark plate under the continuous foil canvas. */
   background: #1a1816;
@@ -297,11 +299,18 @@ textarea:focus-visible {
   z-index: 2 !important;
 }
 
-/* Flying foil flakes fly in front of the coating (and the revealed icons).
-   Particle canvas itself is un-rounded; the pill container may still clip via overflow/border-radius. */
+/* Flying foil flakes: taller than the bar so gravity can carry them downward
+   past the pill before they fade. Coating canvas stays pill-clipped via radius. */
 .top-symbol-bar-particle-canvas {
   z-index: 3 !important;
   border-radius: 0 !important;
+  inset: auto !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  /* Extra fall room below the bar (~2.2× bar height). */
+  height: 220% !important;
+  overflow: visible !important;
 }
 
 .symbol-slot {

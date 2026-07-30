@@ -10,15 +10,7 @@
       "influencerFlag": null,
       "influencerFlagSvg": "/models/julianaval/flag.svg",
       "cardOverlayColorStart": null,
-      "cardOverlayColorEnd": null,
-      "cardPackName": null,
-      "cardPackName2": null,
-      "packFaceVideoUrl": "/models/julianaval/pack-face.mp4",
-      "packFaceVideoUrl2": "/models/julianaval/pack-face-2.mp4",
-      "swipeVideoUrl": "/models/julianaval/swipe.mp4",
-      "theme_avatars": {
-        "police": "/models/julianaval/themes/police/avatar.jpg"
-      }
+      "cardOverlayColorEnd": null
     }
   ]
 }
