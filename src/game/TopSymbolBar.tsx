@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { GameSymbolIcon } from "./GameSymbolIcon";
 import { SYMBOL_TYPES, TOP_SYMBOL_COUNT } from "./matchGame";
 
@@ -13,6 +14,9 @@ const BRUSH_RADIUS_CSS = 12;
 const SLOT_REVEAL_THRESHOLD = 0.55;
 const SCRATCH_TEXTURE_URL = "/scratch/scratchTexture.jpg";
 const BRUSH_STEP_RATIO = 0.35;
+/** Decorative peel cue on the left edge of the centered scratch bar. */
+const PEEL_LOTTIE_SRC = "/lotties/Peel.lottie";
+const PEEL_LOTTIE_WIDTH = 52;
 
 // Flying foil flakes on scratch — same feel as the main game's fabric flakes
 // (glRenderer's spawnFlakes/drawFlakes), but colored by sampling the actual
@@ -267,6 +271,7 @@ export function TopSymbolBar({
     Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
   );
   const [coatingDone, setCoatingDone] = useState(forceRevealed);
+  const [peelHidden, setPeelHidden] = useState(false);
 
   const slots = symbols.slice(0, TOP_SYMBOL_COUNT);
   while (slots.length < TOP_SYMBOL_COUNT) slots.push(0);
@@ -363,6 +368,7 @@ export function TopSymbolBar({
       Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
     );
     setCoatingDone(forceRevealed);
+    setPeelHidden(false);
     drawingRef.current = false;
     lastPtRef.current = null;
     paintedRef.current = false;
@@ -577,6 +583,8 @@ export function TopSymbolBar({
 
       lastPtRef.current = { x, y };
       canvas.__locked = true;
+      // First scratch stroke — peel cue gets out of the way immediately.
+      setPeelHidden(true);
       spawnFlakes(x, y, canvas.height);
       checkReveals();
     },
@@ -653,6 +661,28 @@ export function TopSymbolBar({
           className="top-symbol-bar-particle-canvas"
           aria-hidden="true"
         />
+      ) : null}
+      {showCoating ? (
+        <div
+          className={`lottie-clipper${peelHidden ? " is-faded" : ""}`}
+          aria-hidden="true"
+        >
+          <div className="lottie-clipper-peel">
+            <DotLottieReact
+              src={PEEL_LOTTIE_SRC}
+              autoplay
+              loop
+              width={PEEL_LOTTIE_WIDTH}
+              height={PEEL_LOTTIE_WIDTH}
+              className="lottie-clipper-peel-player"
+              style={{
+                width: "100%",
+                height: "100%",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+        </div>
       ) : null}
     </div>
   );
