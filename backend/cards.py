@@ -45,6 +45,8 @@ class CardInfo(BaseModel):
     theme_id: str | None = None
     # Collection trailer preview clip (separate from game background/foreground).
     trailer: str | None = None
+    # One-time intro clip played in-game before the player's first scratch.
+    intro: str | None = None
 
 
 class CreateCardRequest(BaseModel):
@@ -69,6 +71,7 @@ class ReorderCardsRequest(BaseModel):
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 TRAILER_EXTENSIONS = {".mp4", ".webm"}
+INTRO_EXTENSIONS = {".mp4", ".webm"}
 
 
 def relative(root: Path, path: Path) -> str:
@@ -149,6 +152,14 @@ def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
         candidate = card_dir / f"trailer{ext}"
         if candidate.is_file():
             return public_url(f"cards/{card_id}/trailer{ext}")
+    return None
+
+
+def find_card_intro(card_dir: Path, card_id: str) -> str | None:
+    for ext in INTRO_EXTENSIONS:
+        candidate = card_dir / f"intro{ext}"
+        if candidate.is_file():
+            return public_url(f"cards/{card_id}/intro{ext}")
     return None
 
 
@@ -269,6 +280,7 @@ def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
                 photo_scratch_symbols_count=symbols_count,
                 theme_id=read_card_theme_id(directory),
                 trailer=find_card_trailer(directory, card_id),
+                intro=find_card_intro(directory, card_id),
             )
         )
     discovered.sort(key=lambda card: (card.model_id or "", card.sort_order, card.id))
@@ -291,6 +303,7 @@ def write_cards_index(root: Path, cards_dir: Path, mesh_dir: Path) -> None:
                 **({"model_id": card.model_id} if card.model_id else {}),
                 **({"theme_id": card.theme_id} if card.theme_id else {}),
                 **({"trailer": card.trailer} if card.trailer else {}),
+                **({"intro": card.intro} if card.intro else {}),
                 **(
                     {"photos": [{"id": photo.id, "src": photo.src} for photo in card.photos]}
                     if card.photos
@@ -1761,6 +1774,7 @@ def publish_photo_scratch_game(
             )
 
     model_id = read_card_model_id(card_dir)
+    intro_url = find_card_intro(card_dir, card_id)
     prefix = f"{card_id}_"
     new_entries = []
     for slot in done:
@@ -1776,6 +1790,7 @@ def publish_photo_scratch_game(
                 "bikini": bikini_url,
                 "clothes": clothes_url,
                 "mesh": slot.mesh or photo_scratch_slot_mesh_url(card_id, slot.id),
+                **({"intro": intro_url} if intro_url else {}),
             }
         )
 
@@ -1944,6 +1959,69 @@ def delete_card_trailer(
             removed = True
     if not removed:
         raise HTTPException(status_code=404, detail=f"Trailer not found for card: {card_id}")
+    write_cards_index(root, cards_dir, mesh_dir)
+    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    return refreshed
+
+
+async def upload_card_intro(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+    upload: UploadFile,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot upload an intro for the original card")
+    cards = list_cards(root, cards_dir, mesh_dir)
+    card = next((entry for entry in cards if entry.id == card_id), None)
+    if not card:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in INTRO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Intro must be MP4 or WebM")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded intro is empty")
+    card_dir = cards_dir / card_id
+    card_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in INTRO_EXTENSIONS:
+        old = card_dir / f"intro{old_ext}"
+        if old.exists():
+            old.unlink()
+    target = card_dir / f"intro{ext}"
+    target.write_bytes(data)
+    write_cards_index(root, cards_dir, mesh_dir)
+    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    return refreshed
+
+
+def delete_card_intro(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot delete an intro for the original card")
+    cards = list_cards(root, cards_dir, mesh_dir)
+    card = next((entry for entry in cards if entry.id == card_id), None)
+    if not card:
+        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
+    card_dir = cards_dir / card_id
+    removed = False
+    for ext in INTRO_EXTENSIONS:
+        path = card_dir / f"intro{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Intro not found for card: {card_id}")
     write_cards_index(root, cards_dir, mesh_dir)
     refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
     if not refreshed:

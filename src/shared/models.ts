@@ -227,6 +227,35 @@ export async function deleteCardTrailer(cardId: string): Promise<{
   );
 }
 
+/** Uploads the one-time intro clip played in-game before the player's first scratch. */
+export async function uploadCardIntro(cardId: string, file: File): Promise<{
+  id: string;
+  intro?: string | null;
+  theme_id?: string | null;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/intro`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<{ id: string; intro?: string | null; theme_id?: string | null }>;
+}
+
+export async function deleteCardIntro(cardId: string): Promise<{
+  id: string;
+  intro?: string | null;
+}> {
+  return api<{ id: string; intro?: string | null }>(
+    `/api/cards/${encodeURIComponent(cardId)}/intro`,
+    { method: "DELETE" },
+  );
+}
+
 export async function uploadModelFlagSvg(modelId: string, file: File): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);

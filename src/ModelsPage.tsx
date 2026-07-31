@@ -58,6 +58,7 @@ import {
   publishPhotoScratchGame,
   reorderModelCards,
   updateModel,
+  uploadCardIntro,
   uploadCardTrailer,
   uploadModelAvatar,
   uploadModelFlagSvg,
@@ -103,6 +104,8 @@ type CardInfo = {
   theme_id?: string | null;
   /** Collection trailer preview URL when uploaded. */
   trailer?: string | null;
+  /** One-time in-game intro clip, played before the player's first scratch. */
+  intro?: string | null;
 };
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
@@ -486,6 +489,7 @@ export function ModelsPage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const themeAvatarInputRef = useRef<HTMLInputElement>(null);
   const trailerInputRef = useRef<HTMLInputElement>(null);
+  const introInputRef = useRef<HTMLInputElement>(null);
   const flagInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
@@ -494,6 +498,7 @@ export function ModelsPage() {
     themeId: string;
   } | null>(null);
   const [trailerTargetId, setTrailerTargetId] = useState("");
+  const [introTargetId, setIntroTargetId] = useState("");
   const [flagTargetId, setFlagTargetId] = useState("");
   const [videoTarget, setVideoTarget] = useState<{
     modelId: string;
@@ -820,6 +825,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleIntroUpload(cardId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadCardIntro(cardId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleFlagUpload(modelId: string, file: File) {
     setBusy(true);
     setError("");
@@ -1001,6 +1019,10 @@ export function ModelsPage() {
               onTrailerClick={(cardId) => {
                 setTrailerTargetId(cardId);
                 trailerInputRef.current?.click();
+              }}
+              onIntroClick={(cardId) => {
+                setIntroTargetId(cardId);
+                introInputRef.current?.click();
               }}
               onFlagClick={() => {
                 setFlagTargetId(selectedModel.id);
@@ -1263,6 +1285,17 @@ export function ModelsPage() {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";
           if (file && trailerTargetId) void handleTrailerUpload(trailerTargetId, file);
+        }}
+      />
+      <input
+        ref={introInputRef}
+        accept="video/mp4,video/webm,.mp4,.webm"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && introTargetId) void handleIntroUpload(introTargetId, file);
         }}
       />
       <input
@@ -1548,6 +1581,7 @@ function ModelDetail({
   onAvatarClick,
   onThemeAvatarClick,
   onTrailerClick,
+  onIntroClick,
   onCancelCreateCard,
   onCancelRename,
   onCardIdChange,
@@ -1596,6 +1630,7 @@ function ModelDetail({
   onAvatarClick: () => void;
   onThemeAvatarClick: (themeId: string) => void;
   onTrailerClick: (cardId: string) => void;
+  onIntroClick: (cardId: string) => void;
   onCancelCreateCard: () => void;
   onCancelRename: () => void;
   onCardIdChange: (value: string) => void;
@@ -1976,6 +2011,7 @@ function ModelDetail({
                         onMoveUp={() => onMoveCard(card.id, -1)}
                         onPublishGame={() => onPublishGame(card.id)}
                         onTrailerClick={() => onTrailerClick(card.id)}
+                        onIntroClick={() => onIntroClick(card.id)}
                       />
                     );
                   })}
@@ -2264,6 +2300,16 @@ function TrailerThumb({ card }: { card: CardInfo }) {
   );
 }
 
+function IntroThumb({ card }: { card: CardInfo }) {
+  const raw = card.intro?.trim() || "";
+  return (
+    <CardVideoThumb
+      label={`${card.label} intro`}
+      src={raw ? previewSource(raw) : ""}
+    />
+  );
+}
+
 function CardVideoThumb({ label, src }: { label: string; src: string }) {
   const [peek, setPeek] = useState<{ point: PeekPoint } | null>(null);
   const peekHandlers = useInstagramPeek(
@@ -2442,6 +2488,7 @@ function MotionCardRow({
   onMoveUp,
   onPublishGame,
   onTrailerClick,
+  onIntroClick,
 }: {
   busy: boolean;
   card: CardInfo;
@@ -2455,12 +2502,14 @@ function MotionCardRow({
   onMoveUp: () => void;
   onPublishGame: () => void;
   onTrailerClick: () => void;
+  onIntroClick: () => void;
 }) {
   const hasPicture =
     (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
   const hasGame = (card.photo_scratch_done ?? 0) > 0;
   const isDraft = Boolean(card.draft);
   const hasTrailer = Boolean(card.trailer?.trim());
+  const hasIntro = Boolean(card.intro?.trim());
 
   return (
     <div className="models-card-list-row">
@@ -2483,6 +2532,11 @@ function MotionCardRow({
               {!isDraft && hasTrailer ? (
                 <Badge color="green" size="1" variant="soft">
                   trailer
+                </Badge>
+              ) : null}
+              {!isDraft && hasIntro ? (
+                <Badge color="blue" size="1" variant="soft">
+                  intro
                 </Badge>
               ) : null}
             </Flex>
@@ -2595,6 +2649,36 @@ function MotionCardRow({
             <Button disabled={busy} size="1" variant="soft" onClick={onTrailerClick}>
               <Upload {...iconProps} />
               {hasTrailer ? "Replace trailer" : "Upload trailer"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!isDraft ? (
+        <div className="models-card-list-line models-card-list-line--intro">
+          {hasIntro ? (
+            <div className="models-card-list-identity">
+              <IntroThumb card={card} />
+              <div className="models-card-list-identity-text">
+                <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
+                  Intro
+                </Text>
+                <Text as="div" color="gray" size="1">
+                  Plays once before the first scratch
+                </Text>
+              </div>
+            </div>
+          ) : (
+            <div className="models-card-list-identity-text">
+              <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
+                Intro
+              </Text>
+            </div>
+          )}
+          <div className="models-card-list-actions">
+            <Button disabled={busy} size="1" variant="soft" onClick={onIntroClick}>
+              <Upload {...iconProps} />
+              {hasIntro ? "Replace intro" : "Upload intro"}
             </Button>
           </div>
         </div>
