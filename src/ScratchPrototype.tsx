@@ -714,8 +714,6 @@ const CURSOR_FX_DEFAULTS: CursorFxSettings = {
 
 const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
   { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
-  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
-  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
   { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
 ];
 
