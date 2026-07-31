@@ -1,5 +1,6 @@
 {
   "label": "Julianaval Cop",
   "model_id": "julianaval",
-  "sort_order": 0
+  "sort_order": 0,
+  "theme_id": "police"
 }

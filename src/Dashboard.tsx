@@ -1073,45 +1073,57 @@ export function Dashboard() {
                 Sugar Scratchie Tools
               </Heading>
             </Box>
-            <Flex gap="2">
-              <Button
-                color="gray"
-                variant="soft"
-                onClick={() => {
-                  refreshHealth().catch((caught) => setError(String(caught)));
-                  refreshAssets().catch((caught) => setError(String(caught)));
-                  refreshJobs().catch(() => undefined);
-                }}
-              >
-                <LoaderCircle {...iconProps} />
-                Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/models">
-                  <UserRound {...iconProps} />
-                  Models
-                </a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/video-flow">
-                  <Clapperboard {...iconProps} />
-                  Video Flow
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <ExternalLink {...iconProps} />
-                  Open prototype
-                </a>
-              </Button>
-            </Flex>
           </Flex>
+
+          <Card>
+            <Flex
+              direction="column"
+              gap="3"
+            >
+              <Heading size="4">Quick links</Heading>
+              <Flex
+                gap="2"
+                wrap="wrap"
+              >
+                <Button
+                  color="gray"
+                  variant="soft"
+                  onClick={() => {
+                    refreshHealth().catch((caught) => setError(String(caught)));
+                    refreshAssets().catch((caught) => setError(String(caught)));
+                    refreshJobs().catch(() => undefined);
+                  }}
+                >
+                  <LoaderCircle {...iconProps} />
+                  Refresh
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/dashboard/models">
+                    <UserRound {...iconProps} />
+                    Models
+                  </a>
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/dashboard/themes">Themes</a>
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/symbols">Symbols</a>
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/dashboard/video-flow">
+                    <Clapperboard {...iconProps} />
+                    Video Flow
+                  </a>
+                </Button>
+                <Button asChild>
+                  <a href="/">
+                    <ExternalLink {...iconProps} />
+                    Open prototype
+                  </a>
+                </Button>
+              </Flex>
+            </Flex>
+          </Card>
 
           {error ? (
             <Callout.Root color="red">
