@@ -188,6 +188,8 @@ export function FairyDustCursor({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (prefersReducedMotion.matches) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
