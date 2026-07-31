@@ -1,5 +1,11 @@
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  FairyDustCursor,
+  type ParticleType,
+} from "./cursorFx/FairyDustCursor";
+import { RainbowCursor } from "./cursorFx/RainbowCursor";
+import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
 import { fetchModels, type ModelInfo } from "./shared/models";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
@@ -397,6 +403,7 @@ const DESKTOP_SETTINGS_TABS = [
   { id: "scratch-zoom", label: "Scratch zoom" },
   { id: "sound", label: "Sound" },
   { id: "auto-scratch", label: "Auto scratch" },
+  { id: "cursor-fx", label: "Cursor FX" },
 ] as const;
 
 type DesktopSettingsTab = (typeof DESKTOP_SETTINGS_TABS)[number]["id"];
@@ -682,6 +689,68 @@ function loadAutoScratchSettings(): AutoScratchSettings {
     };
   } catch {
     return AUTO_SCRATCH_DEFAULTS;
+  }
+}
+
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx";
+
+type CursorFxSettings = {
+  rainbow: boolean;
+  fairyDust: boolean;
+  particleSize: number;
+  particleCount: number;
+  gravity: number;
+  fadeSpeed: number;
+};
+
+const CURSOR_FX_DEFAULTS: CursorFxSettings = {
+  rainbow: true,
+  fairyDust: true,
+  particleSize: 64,
+  particleCount: 2,
+  gravity: 0.1,
+  fadeSpeed: 0.98,
+};
+
+const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
+  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
+  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
+  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
+  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
+];
+
+function loadCursorFxSettings(): CursorFxSettings {
+  if (typeof window === "undefined") return CURSOR_FX_DEFAULTS;
+  try {
+    const raw = localStorage.getItem(CURSOR_FX_STORAGE_KEY);
+    if (!raw) return CURSOR_FX_DEFAULTS;
+    const parsed = JSON.parse(raw) as Partial<CursorFxSettings>;
+    return {
+      rainbow: parsed.rainbow ?? CURSOR_FX_DEFAULTS.rainbow,
+      fairyDust: parsed.fairyDust ?? CURSOR_FX_DEFAULTS.fairyDust,
+      particleSize: clampValue(
+        Number(parsed.particleSize) || CURSOR_FX_DEFAULTS.particleSize,
+        10,
+        64,
+      ),
+      particleCount: clampValue(
+        Number(parsed.particleCount) || CURSOR_FX_DEFAULTS.particleCount,
+        1,
+        8,
+      ),
+      gravity: clampValue(
+        Number(parsed.gravity) || CURSOR_FX_DEFAULTS.gravity,
+        0,
+        0.1,
+      ),
+      fadeSpeed: clampValue(
+        Number(parsed.fadeSpeed) || CURSOR_FX_DEFAULTS.fadeSpeed,
+        0.9,
+        0.99,
+      ),
+    };
+  } catch {
+    return CURSOR_FX_DEFAULTS;
   }
 }
 
@@ -1129,6 +1198,12 @@ export function ScratchPrototype() {
   );
   const autoScratchRef = useRef(autoScratch);
   autoScratchRef.current = autoScratch;
+  const [cursorFx, setCursorFx] = useState<CursorFxSettings>(
+    loadCursorFxSettings,
+  );
+  const [cursorFxParticleTypes, setCursorFxParticleTypes] = useState<
+    ParticleType[]
+  >([]);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
@@ -1805,6 +1880,35 @@ export function ScratchPrototype() {
   }, [autoScratch]);
 
   useEffect(() => {
+    localStorage.setItem(CURSOR_FX_STORAGE_KEY, JSON.stringify(cursorFx));
+  }, [cursorFx]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const loaded = await Promise.all(
+          CURSOR_FX_LOTTIE_PRESETS.map(async (preset, i) => {
+            const result = await loadLottieUrlSource(preset.url, preset.name);
+            return {
+              id: `cursor-fx-lottie-${i}`,
+              kind: "lottie" as const,
+              name: result.name,
+              source: result.source,
+            };
+          }),
+        );
+        if (!cancelled) setCursorFxParticleTypes(loaded);
+      } catch {
+        if (!cancelled) setCursorFxParticleTypes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(
       SOUND_STORAGE_KEY,
       JSON.stringify({ enabled: soundEnabled }),
@@ -1846,6 +1950,10 @@ export function ScratchPrototype() {
     if (patch.enabled && soundEnabledRef.current)
       ensureSymbolAudio(symbolAudioRef.current);
     setAutoScratch((current) => ({ ...current, ...patch }));
+  }
+
+  function updateCursorFx(patch: Partial<CursorFxSettings>) {
+    setCursorFx((current) => ({ ...current, ...patch }));
   }
 
   function beginFinishAutoScratch() {
@@ -2439,6 +2547,88 @@ export function ScratchPrototype() {
     </fieldset>
   );
 
+  const cursorFxControls = (
+    <fieldset className="scratch-zoom-settings">
+      <legend>Cursor FX</legend>
+      <label className="checkbox-label">
+        <input
+          checked={cursorFx.rainbow}
+          onChange={(event) =>
+            updateCursorFx({ rainbow: event.currentTarget.checked })
+          }
+          type="checkbox"
+        />
+        Rainbow
+      </label>
+      <label className="checkbox-label">
+        <input
+          checked={cursorFx.fairyDust}
+          onChange={(event) =>
+            updateCursorFx({ fairyDust: event.currentTarget.checked })
+          }
+          type="checkbox"
+        />
+        Fairy Dust
+      </label>
+      <label>
+        Particle size ({cursorFx.particleSize})
+        <input
+          disabled={!cursorFx.fairyDust}
+          max={64}
+          min={10}
+          onChange={(event) =>
+            updateCursorFx({ particleSize: Number(event.currentTarget.value) })
+          }
+          step={1}
+          type="range"
+          value={cursorFx.particleSize}
+        />
+      </label>
+      <label>
+        Particles per move ({cursorFx.particleCount})
+        <input
+          disabled={!cursorFx.fairyDust}
+          max={8}
+          min={1}
+          onChange={(event) =>
+            updateCursorFx({ particleCount: Number(event.currentTarget.value) })
+          }
+          step={1}
+          type="range"
+          value={cursorFx.particleCount}
+        />
+      </label>
+      <label>
+        Gravity ({cursorFx.gravity.toFixed(3)})
+        <input
+          disabled={!cursorFx.fairyDust}
+          max={0.1}
+          min={0}
+          onChange={(event) =>
+            updateCursorFx({ gravity: Number(event.currentTarget.value) })
+          }
+          step={0.005}
+          type="range"
+          value={cursorFx.gravity}
+        />
+      </label>
+      <label>
+        Fade speed ({cursorFx.fadeSpeed.toFixed(2)})
+        <input
+          disabled={!cursorFx.fairyDust}
+          max={0.99}
+          min={0.9}
+          onChange={(event) =>
+            updateCursorFx({ fadeSpeed: Number(event.currentTarget.value) })
+          }
+          step={0.01}
+          type="range"
+          value={cursorFx.fadeSpeed}
+        />
+      </label>
+    </fieldset>
+  );
+
   const desktopSettingsTabs = (
     <div className="panel-settings-tabs">
       <div
@@ -2487,6 +2677,15 @@ export function ScratchPrototype() {
         className="panel-settings-tabpanel"
       >
         {autoScratchControls}
+      </div>
+      <div
+        id="panel-tabpanel-cursor-fx"
+        role="tabpanel"
+        aria-labelledby="panel-tab-cursor-fx"
+        hidden={desktopSettingsTab !== "cursor-fx"}
+        className="panel-settings-tabpanel"
+      >
+        {cursorFxControls}
       </div>
     </div>
   );
@@ -2588,6 +2787,28 @@ export function ScratchPrototype() {
 
   return (
     <main className="app-shell">
+      {cursorFx.rainbow ? (
+        <RainbowCursor
+          length={20}
+          trailSpeed={0.4}
+          blur={0}
+          outerColor="#ffc800"
+          innerColor="#ffffff"
+          outerWidth={2}
+          innerWidth={3}
+          zIndex={1}
+        />
+      ) : null}
+      {cursorFx.fairyDust ? (
+        <FairyDustCursor
+          particleTypes={cursorFxParticleTypes}
+          particleSize={cursorFx.particleSize}
+          particleCount={cursorFx.particleCount}
+          gravity={cursorFx.gravity}
+          fadeSpeed={cursorFx.fadeSpeed}
+          initialVelocity={{ min: 0.5, max: 1.5 }}
+        />
+      ) : null}
       <section className="prototype">
         <div
           ref={stageRef}
@@ -2921,6 +3142,7 @@ export function ScratchPrototype() {
               >
                 {scratchZoomControls}
                 {autoScratchControls}
+                {cursorFxControls}
               </div>
             )}
           </div>
