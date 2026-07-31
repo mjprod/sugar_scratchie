@@ -669,7 +669,7 @@ type AutoScratchSettings = {
 const AUTO_SCRATCH_DEFAULTS: AutoScratchSettings = {
   enabled: false,
   speed: 58,
-  flakes: true,
+  flakes: false,
 };
 
 function loadAutoScratchSettings(): AutoScratchSettings {
@@ -692,7 +692,7 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v2";
 
 type CursorFxSettings = {
   rainbow: boolean;
@@ -705,7 +705,7 @@ type CursorFxSettings = {
 
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
   rainbow: true,
-  fairyDust: true,
+  fairyDust: false,
   particleSize: 64,
   particleCount: 2,
   gravity: 0.1,
@@ -714,6 +714,8 @@ const CURSOR_FX_DEFAULTS: CursorFxSettings = {
 
 const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
   { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
+  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
+  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
   { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
 ];
 
