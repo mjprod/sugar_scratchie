@@ -350,7 +350,7 @@ textarea:focus-visible {
   height: 100%;
   overflow: hidden;
   pointer-events: none;
-  scale: 1.15;
+  scale: 1.25;
   left: 3px;
 }
 
