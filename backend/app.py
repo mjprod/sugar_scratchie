@@ -31,6 +31,7 @@ from backend.cards import (
     compress_card,
     create_card,
     delete_card,
+    delete_card_intro,
     delete_card_photo,
     delete_card_trailer,
     delete_photo_scratch_layer,
@@ -47,6 +48,7 @@ from backend.cards import (
     reorder_model_cards,
     set_photo_scratch_slot_prompt,
     update_card,
+    upload_card_intro,
     upload_card_photo,
     upload_card_trailer,
     upload_photo_scratch_layer,
@@ -626,6 +628,18 @@ async def post_card_trailer(card_id: str, file: UploadFile = File(...)) -> dict:
 @app.delete("/api/cards/{card_id}/trailer")
 def remove_card_trailer(card_id: str) -> dict:
     card = delete_card_trailer(ROOT, CARDS_DIR, MESH_DIR, card_id)
+    return card.dict()
+
+
+@app.post("/api/cards/{card_id}/intro")
+async def post_card_intro(card_id: str, file: UploadFile = File(...)) -> dict:
+    card = await upload_card_intro(ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+    return card.dict()
+
+
+@app.delete("/api/cards/{card_id}/intro")
+def remove_card_intro(card_id: str) -> dict:
+    card = delete_card_intro(ROOT, CARDS_DIR, MESH_DIR, card_id)
     return card.dict()
 
 

@@ -57,6 +57,8 @@ type PhotoScratchCardEntry = {
   clothes: string;
   mesh: string;
   model_id?: string;
+  /** One-time clip played before the player's first scratch on this card. */
+  intro?: string;
 };
 
 function readCardIdFromLocation(): string {
@@ -693,6 +695,7 @@ export function PhotoScratchTest() {
   const bgImageRef = useRef<HTMLImageElement>(null);
   const fgCanvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const introVideoElRef = useRef<HTMLVideoElement>(null);
   const fgRendererRef = useRef<GarmentGLRenderer | null>(null);
   const trackedMeshRef = useRef<TrackedMesh | null>(null);
   const trackedSampleRef = useRef<TrackedMeshSample | null>(null);
@@ -813,6 +816,13 @@ export function PhotoScratchTest() {
   const [selectedCardId, setSelectedCardId] = useState("");
   const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
   completedCardIdsRef.current = completedCardIds;
+  const [introVideoUrl, setIntroVideoUrl] = useState("");
+  const [introActive, setIntroActive] = useState(false);
+  const introActiveRef = useRef(false);
+  introActiveRef.current = introActive;
+  // Motion-card ids whose intro clip has already played this session — one
+  // playthrough per card, even across its multiple published photo slots.
+  const introShownForCardRef = useRef<Set<string>>(new Set());
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -847,6 +857,26 @@ export function PhotoScratchTest() {
       hasBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
+  }
+
+  function armIntroForEntry(entry: PhotoScratchCardEntry | undefined) {
+    const url = entry ? entry.intro?.trim() : "";
+    const parentId = entry ? parentMotionCardId(entry.id) : "";
+    if (!url || introShownForCardRef.current.has(parentId)) {
+      setIntroVideoUrl("");
+      setIntroActive(false);
+      introActiveRef.current = false;
+      return;
+    }
+    introShownForCardRef.current.add(parentId);
+    setIntroVideoUrl(url);
+    setIntroActive(true);
+    introActiveRef.current = true;
+  }
+
+  function dismissIntro() {
+    setIntroActive(false);
+    introActiveRef.current = false;
   }
 
   function resetGameOutcome() {
@@ -975,6 +1005,7 @@ export function PhotoScratchTest() {
         const assets = await loadCardAssets(start.id);
         setUsingSample(false);
         await applyLoadedAssets(assets);
+        armIntroForEntry(start);
         return;
       }
     }
@@ -986,6 +1017,7 @@ export function PhotoScratchTest() {
       setCompletedCardIds([]);
       setUsingSample(true);
       await applyLoadedAssets(assets);
+      armIntroForEntry(undefined);
       return;
     }
 
@@ -1004,6 +1036,7 @@ export function PhotoScratchTest() {
       const assets = await loadCardAssets(entry.id);
       setUsingSample(false);
       await applyLoadedAssets(assets);
+      armIntroForEntry(entry);
       return;
     }
 
@@ -1168,6 +1201,7 @@ export function PhotoScratchTest() {
         autoSettings.enabled &&
         huntComplete &&
         !isBodyScratchLocked() &&
+        !introActiveRef.current &&
         sample &&
         gameResultPendingRef.current === null &&
         !claimedRef.current
@@ -1598,6 +1632,9 @@ export function PhotoScratchTest() {
         revokeObjectUrls();
         return applyLoadedAssets(assets);
       })
+      .then(() => {
+        armIntroForEntry(nextCard);
+      })
       .catch((error) => {
         setLoadError(
           error instanceof Error ? error.message : "Failed to load next card",
@@ -1685,6 +1722,7 @@ export function PhotoScratchTest() {
   }
 
   function onPointerDown(clientX: number, clientY: number) {
+    if (introActiveRef.current) return;
     if (soundEnabledRef.current) ensureSymbolAudio(symbolAudioRef.current);
     if (isBodyScratchLocked()) {
       return;
@@ -1715,8 +1753,9 @@ export function PhotoScratchTest() {
   const symbolsHuntComplete =
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
   const autoScratchLocked =
-    hasBodySymbols &&
-    (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
+    introActive ||
+    (hasBodySymbols &&
+      (!symbolsHuntComplete || topBarPhase === "center" || introGateActive));
   const remainingCards = playlist.filter(
     (entry) => !completedCardIds.includes(entry.id),
   );
@@ -2094,8 +2133,31 @@ export function PhotoScratchTest() {
           ref={stageRef}
           className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
             hasBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
-          }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}`}
+          }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}${introActive ? " is-intro-video-phase" : ""}`}
         >
+          {introActive && introVideoUrl ? (
+            <div
+              className="photo-scratch-intro-video"
+              role="button"
+              tabIndex={0}
+              aria-label="Skip intro"
+              onClick={dismissIntro}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") dismissIntro();
+              }}
+            >
+              <video
+                ref={introVideoElRef}
+                autoPlay
+                muted={!soundEnabled}
+                playsInline
+                src={introVideoUrl}
+                onEnded={dismissIntro}
+                onError={dismissIntro}
+              />
+              <span className="photo-scratch-intro-video-skip">Tap to skip</span>
+            </div>
+          ) : null}
           {hasBodySymbols ? (
             <TopSymbolBar
               symbols={topSymbols}
