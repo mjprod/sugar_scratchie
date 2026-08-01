@@ -355,6 +355,43 @@ const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
 const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom";
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
+const SCRATCH_SOUND_URLS = [
+  "/scratch/scratch_short.mp3",
+  "/scratch/scratch_short2.mp3",
+  "/scratch/scratch_short3.mp3",
+] as const;
+const COIN_SOUND_URLS = [
+  "/scratch/coins_amount_small.mp3",
+  "/scratch/coins_amount_medium.mp3",
+  "/scratch/coins_amount_large.mp3",
+] as const;
+const SCRATCH_SOUND_MIN_INTERVAL_MS = 120;
+const REWARD_TIER_STEP = 0.2;
+const SOUND_VOLUME_CONTROLS = [
+  { url: "/scratch/scratch_short.mp3", label: "Scratch short 1", defaultVolume: 0.5 },
+  { url: "/scratch/scratch_short2.mp3", label: "Scratch short 2", defaultVolume: 0.5 },
+  { url: "/scratch/scratch_short3.mp3", label: "Scratch short 3", defaultVolume: 0.5 },
+  { url: "/scratch/coins_amount_small.mp3", label: "Coins small", defaultVolume: 0.7 },
+  { url: "/scratch/coins_amount_medium.mp3", label: "Coins medium", defaultVolume: 0.7 },
+  { url: "/scratch/coins_amount_large.mp3", label: "Coins large", defaultVolume: 0.7 },
+] as const;
+type SoundVolumeUrl = (typeof SOUND_VOLUME_CONTROLS)[number]["url"];
+type SoundVolumes = Record<SoundVolumeUrl, number>;
+type SoundSettings = {
+  enabled: boolean;
+  volumes: SoundVolumes;
+};
+
+function defaultSoundVolumes(): SoundVolumes {
+  return Object.fromEntries(
+    SOUND_VOLUME_CONTROLS.map((entry) => [entry.url, entry.defaultVolume]),
+  ) as SoundVolumes;
+}
+
+const SOUND_SETTINGS_DEFAULTS: SoundSettings = {
+  enabled: true,
+  volumes: defaultSoundVolumes(),
+};
 // Slightly larger than the manual brush so a scratch that covers the mark counts.
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 
@@ -414,6 +451,7 @@ const SYMBOL_NOTE_DURATION_S = 0.32;
 
 type SymbolAudioState = {
   ctx: AudioContext | null;
+  buffers: Map<string, Promise<AudioBuffer | null>>;
 };
 
 function ensureSymbolAudio(state: SymbolAudioState) {
@@ -428,6 +466,59 @@ function ensureSymbolAudio(state: SymbolAudioState) {
   }
   if (state.ctx.state === "suspended") void state.ctx.resume();
   return state.ctx;
+}
+
+function loadSampleBuffer(
+  ctx: AudioContext,
+  state: SymbolAudioState,
+  url: string,
+): Promise<AudioBuffer | null> {
+  const cached = state.buffers.get(url);
+  if (cached) return cached;
+  const promise = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Failed to load ${url}`);
+      return response.arrayBuffer();
+    })
+    .then((data) => ctx.decodeAudioData(data))
+    .catch(() => null);
+  state.buffers.set(url, promise);
+  return promise;
+}
+
+function preloadSamples(
+  state: SymbolAudioState,
+  urls: readonly string[],
+) {
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  for (const url of urls) {
+    void loadSampleBuffer(ctx, state, url);
+  }
+}
+
+function playRandomSample(
+  state: SymbolAudioState,
+  urls: readonly string[],
+  enabled: boolean,
+  volumes: SoundVolumes,
+) {
+  if (!enabled || urls.length === 0) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  const url = urls[Math.floor(Math.random() * urls.length)]!;
+  const volume = volumes[url as SoundVolumeUrl] ?? 0.5;
+  if (volume <= 0) return;
+  void loadSampleBuffer(ctx, state, url).then((buffer) => {
+    if (!buffer) return;
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+  });
 }
 
 function symbolSlotFrequency(slotIndex: number) {
@@ -591,15 +682,28 @@ function scratchZoomEasing(bounce: boolean) {
   return bounce ? "cubic-bezier(0.34, 1.56, 0.64, 1)" : "ease-out";
 }
 
-function loadSoundEnabled(): boolean {
-  if (typeof window === "undefined") return true;
+function loadSoundSettings(): SoundSettings {
+  if (typeof window === "undefined") return SOUND_SETTINGS_DEFAULTS;
   try {
     const raw = localStorage.getItem(SOUND_STORAGE_KEY);
-    if (!raw) return true;
-    const parsed = JSON.parse(raw) as { enabled?: boolean };
-    return parsed.enabled ?? true;
+    if (!raw) return SOUND_SETTINGS_DEFAULTS;
+    const parsed = JSON.parse(raw) as {
+      enabled?: boolean;
+      volumes?: Partial<Record<string, number>>;
+    };
+    const volumes = defaultSoundVolumes();
+    for (const entry of SOUND_VOLUME_CONTROLS) {
+      const stored = parsed.volumes?.[entry.url];
+      if (typeof stored === "number" && Number.isFinite(stored)) {
+        volumes[entry.url] = clampValue(stored, 0, 1);
+      }
+    }
+    return {
+      enabled: parsed.enabled ?? SOUND_SETTINGS_DEFAULTS.enabled,
+      volumes,
+    };
   } catch {
-    return true;
+    return SOUND_SETTINGS_DEFAULTS;
   }
 }
 
@@ -1204,9 +1308,16 @@ export function ScratchPrototype() {
   const [cursorFxParticleTypes, setCursorFxParticleTypes] = useState<
     ParticleType[]
   >([]);
-  const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    return loadSoundSettings().enabled;
+  });
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
+  const [soundVolumes, setSoundVolumes] = useState(() => {
+    return loadSoundSettings().volumes;
+  });
+  const soundVolumesRef = useRef(soundVolumes);
+  soundVolumesRef.current = soundVolumes;
   const autoPathRef = useRef<Vec2[]>([]);
   const autoPathIndexRef = useRef(0);
   const autoPathProgressRef = useRef(0);
@@ -1215,7 +1326,12 @@ export function ScratchPrototype() {
   >(() => undefined);
   const tryResolveGameRef = useRef<() => void>(() => undefined);
   const resetScratchRef = useRef<() => void>(() => undefined);
-  const symbolAudioRef = useRef<SymbolAudioState>({ ctx: null });
+  const symbolAudioRef = useRef<SymbolAudioState>({
+    ctx: null,
+    buffers: new Map(),
+  });
+  const lastScratchSoundAtRef = useRef(0);
+  const rewardTierRef = useRef(0);
   // Phones hide the side panel, so the scratch-zoom config lives behind a gear
   // button that opens this sheet.
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
@@ -1730,6 +1846,7 @@ export function ScratchPrototype() {
     );
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
+    rewardTierRef.current = 0;
     resetMatchRound();
     setProgress(0);
     setClaimed(false);
@@ -1756,6 +1873,7 @@ export function ScratchPrototype() {
     revealedCountRef.current = revealed.reduce((n, r) => n + (r ? 1 : 0), 0);
     const next = samples.length ? revealedCountRef.current / samples.length : 0;
     progressRef.current = next;
+    rewardTierRef.current = Math.floor(next / REWARD_TIER_STEP);
     setProgress(next);
     const hasBodySymbols = trackedMesh?.symbolPoints?.length === SYMBOL_SLOT_COUNT;
     const nextSymbolCount = hasBodySymbols
@@ -1909,11 +2027,25 @@ export function ScratchPrototype() {
   }, []);
 
   useEffect(() => {
+    const state = symbolAudioRef.current;
+    ensureSymbolAudio(state);
+    preloadSamples(state, SCRATCH_SOUND_URLS);
+    preloadSamples(state, COIN_SOUND_URLS);
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(
       SOUND_STORAGE_KEY,
-      JSON.stringify({ enabled: soundEnabled }),
+      JSON.stringify({ enabled: soundEnabled, volumes: soundVolumes }),
     );
-  }, [soundEnabled]);
+  }, [soundEnabled, soundVolumes]);
+
+  function updateSoundVolume(url: SoundVolumeUrl, volume: number) {
+    setSoundVolumes((current) => ({
+      ...current,
+      [url]: clampValue(volume, 0, 1),
+    }));
+  }
 
   function syncScratchZoomTransition(
     canvas: HTMLCanvasElement,
@@ -2014,6 +2146,7 @@ export function ScratchPrototype() {
     );
     autoPathIndexRef.current = 0;
     autoPathProgressRef.current = 0;
+    rewardTierRef.current = 0;
     resetMatchRound();
     setProgress(0);
     setClaimed(false);
@@ -2280,6 +2413,16 @@ export function ScratchPrototype() {
       : 0;
     progressRef.current = nextProgress;
     setProgress(nextProgress);
+    const nextTier = Math.floor(nextProgress / REWARD_TIER_STEP);
+    if (nextTier > rewardTierRef.current) {
+      rewardTierRef.current = nextTier;
+      playRandomSample(
+        symbolAudioRef.current,
+        COIN_SOUND_URLS,
+        soundEnabledRef.current,
+        soundVolumesRef.current,
+      );
+    }
     const autoMode = autoScratchRef.current.enabled;
     if (useBodySymbolsRef.current && trackedMeshRef.current?.symbolPoints) {
       const bodyPoints = trackedMeshRef.current.symbolPoints;
@@ -2382,7 +2525,21 @@ export function ScratchPrototype() {
       applied = true;
     }
 
-    if (applied) lastScratchWorldRef.current = point;
+    if (applied) {
+      lastScratchWorldRef.current = point;
+      const now = performance.now();
+      if (
+        now - lastScratchSoundAtRef.current >= SCRATCH_SOUND_MIN_INTERVAL_MS
+      ) {
+        lastScratchSoundAtRef.current = now;
+        playRandomSample(
+          symbolAudioRef.current,
+          SCRATCH_SOUND_URLS,
+          soundEnabledRef.current,
+          soundVolumesRef.current,
+        );
+      }
+    }
   }
 
   function setVideoTime(time: number) {
@@ -2494,6 +2651,22 @@ export function ScratchPrototype() {
         />
         Game sounds
       </label>
+      {SOUND_VOLUME_CONTROLS.map((entry) => (
+        <label key={entry.url}>
+          {entry.label} ({Math.round(soundVolumes[entry.url] * 100)}%)
+          <input
+            disabled={!soundEnabled}
+            max={1}
+            min={0}
+            onChange={(event) =>
+              updateSoundVolume(entry.url, Number(event.currentTarget.value))
+            }
+            step={0.05}
+            type="range"
+            value={soundVolumes[entry.url]}
+          />
+        </label>
+      ))}
     </fieldset>
   );
 
@@ -3141,6 +3314,7 @@ export function ScratchPrototype() {
                 aria-label="Animation settings"
               >
                 {scratchZoomControls}
+                {soundControls}
                 {autoScratchControls}
                 {cursorFxControls}
               </div>
