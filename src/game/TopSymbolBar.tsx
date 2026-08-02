@@ -285,7 +285,7 @@ export function TopSymbolBar({
 
   const showCoating = phase === "center" && !coatingDone && !forceRevealed;
 
-  // Timed remount loop: play 3s → hold last frame 500ms → remount + autoplay.
+  // Timed remount loop: play 3s → hold last frame 1.8s → remount + autoplay.
   // Does not rely on DotLottie's `complete` event (unreliable with this player).
   useEffect(() => {
     if (!showCoating || peelHidden) return;
