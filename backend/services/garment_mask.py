@@ -13,8 +13,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from scipy import ndimage
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "add-garment-mask.py"
 
@@ -58,6 +56,7 @@ def _shrink_to_cap(data: dict[str, Any], max_coverage: float) -> None:
         return
 
     import numpy as np
+    from scipy import ndimage
 
     grid = np.array([1 if flag else 0 for flag in garment], dtype=bool).reshape(rows, cols)
     print(

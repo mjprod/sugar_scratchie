@@ -224,6 +224,7 @@ textarea:focus-visible {
     transform 480ms cubic-bezier(0.33, 1.15, 0.4, 1),
     box-shadow 320ms ease;
   will-change: top, transform;
+ 
 }
 
 .top-symbol-bar.is-phase-center {
@@ -311,6 +312,60 @@ textarea:focus-visible {
   /* Extra fall room below the bar (~2.2× bar height). */
   height: 220% !important;
   overflow: visible !important;
+}
+
+/* Full-bar clip mask: same box + pill radius as the scratchable symbol bar.
+   Peels/Lotties inside cannot paint outside the gray pill. */
+.lottie-clipper {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 1;
+  transition: opacity 160ms ease-out;
+}
+
+.lottie-clipper.is-faded {
+  opacity: 0;
+}
+
+.lottie-clipper-peel {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 52px;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  transform: scale(1.25);
+  left: 3px;
+}
+
+.lottie-clipper-peel-player,
+.lottie-clipper-peel-player canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none;
+  max-height: none;
+  pointer-events: none;
+  /* Cancel the mobile `.stage canvas` centering transform. */
+  transform: none !important;
+  left: auto !important;
+  top: auto !important;
 }
 
 .symbol-slot {

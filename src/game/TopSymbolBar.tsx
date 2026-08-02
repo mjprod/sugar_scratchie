@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { GameSymbolIcon } from "./GameSymbolIcon";
 import { SYMBOL_TYPES, TOP_SYMBOL_COUNT } from "./matchGame";
 
@@ -13,6 +14,14 @@ const BRUSH_RADIUS_CSS = 12;
 const SLOT_REVEAL_THRESHOLD = 0.55;
 const SCRATCH_TEXTURE_URL = "/scratch/scratchTexture.jpg";
 const BRUSH_STEP_RATIO = 0.35;
+/** Decorative peel cue on the left edge of the centered scratch bar. */
+const PEEL_LOTTIE_SRC = "/lotties/Peel.lottie";
+const PEEL_LOTTIE_WIDTH = 52;
+/** Peel.lottie is 180 frames @ 60fps (see public/lotties/Peel.lottie). */
+const PEEL_LOTTIE_DURATION_MS = Math.round((180 / 60) * 1000);
+/** Hold the last frame this long before remounting for the next play. */
+const PEEL_LOTTIE_PAUSE_MS = 1800;
+const PEEL_LOTTIE_CYCLE_MS = PEEL_LOTTIE_DURATION_MS + PEEL_LOTTIE_PAUSE_MS;
 
 // Flying foil flakes on scratch — same feel as the main game's fabric flakes
 // (glRenderer's spawnFlakes/drawFlakes), but colored by sampling the actual
@@ -267,11 +276,36 @@ export function TopSymbolBar({
     Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
   );
   const [coatingDone, setCoatingDone] = useState(forceRevealed);
+  const [peelHidden, setPeelHidden] = useState(false);
+  // Bumping this remounts DotLottieReact for the next peel cycle.
+  const [peelPlayKey, setPeelPlayKey] = useState(0);
 
   const slots = symbols.slice(0, TOP_SYMBOL_COUNT);
   while (slots.length < TOP_SYMBOL_COUNT) slots.push(0);
 
   const showCoating = phase === "center" && !coatingDone && !forceRevealed;
+
+  // Timed remount loop: play 3s → hold last frame 1.8s → remount + autoplay.
+  // Does not rely on DotLottie's `complete` event (unreliable with this player).
+  useEffect(() => {
+    if (!showCoating || peelHidden) return;
+    let cancelled = false;
+    let cycleId = 0;
+
+    const scheduleNextCycle = () => {
+      cycleId = window.setTimeout(() => {
+        if (cancelled) return;
+        setPeelPlayKey((key) => key + 1);
+        scheduleNextCycle();
+      }, PEEL_LOTTIE_CYCLE_MS);
+    };
+    scheduleNextCycle();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(cycleId);
+    };
+  }, [showCoating, peelHidden, roundKey]);
 
   /** Slot circles in canvas-pixel space (from on-screen rects — mobile safe). */
   const slotGeometry = useCallback(() => {
@@ -363,6 +397,8 @@ export function TopSymbolBar({
       Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
     );
     setCoatingDone(forceRevealed);
+    setPeelHidden(false);
+    setPeelPlayKey(0);
     drawingRef.current = false;
     lastPtRef.current = null;
     paintedRef.current = false;
@@ -577,6 +613,8 @@ export function TopSymbolBar({
 
       lastPtRef.current = { x, y };
       canvas.__locked = true;
+      // First scratch stroke — peel cue gets out of the way immediately.
+      setPeelHidden(true);
       spawnFlakes(x, y, canvas.height);
       checkReveals();
     },
@@ -613,9 +651,8 @@ export function TopSymbolBar({
   return (
     <div
       ref={barRef}
-      className={`symbol-bar top-symbol-bar is-phase-${phase}${
-        revealedCount >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""
-      }${showCoating ? " is-scratchable" : ""}`}
+      className={`symbol-bar top-symbol-bar is-phase-${phase}${revealedCount >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""
+        }${showCoating ? " is-scratchable" : ""}`}
       aria-label="Match symbols — scratch to reveal"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -631,9 +668,8 @@ export function TopSymbolBar({
             ref={(el) => {
               slotElsRef.current[index] = el;
             }}
-            className={`symbol-slot top-symbol-slot${
-              revealed ? " is-revealed" : ""
-            }`}
+            className={`symbol-slot top-symbol-slot${revealed ? " is-revealed" : ""
+              }`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
             <GameSymbolIcon typeId={typeId} size={28} />
@@ -653,6 +689,29 @@ export function TopSymbolBar({
           className="top-symbol-bar-particle-canvas"
           aria-hidden="true"
         />
+      ) : null}
+      {showCoating ? (
+        <div
+          className={`lottie-clipper${peelHidden ? " is-faded" : ""}`}
+          aria-hidden="true"
+        >
+          <div className="lottie-clipper-peel">
+            <DotLottieReact
+              key={`peel-${roundKey}-${peelPlayKey}`}
+              src={PEEL_LOTTIE_SRC}
+              autoplay
+              loop={false}
+              width={PEEL_LOTTIE_WIDTH}
+              height={PEEL_LOTTIE_WIDTH}
+              className="lottie-clipper-peel-player"
+              style={{
+                width: "100%",
+                height: "100%",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+        </div>
       ) : null}
     </div>
   );
