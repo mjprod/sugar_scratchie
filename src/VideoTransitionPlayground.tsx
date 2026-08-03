@@ -12,7 +12,7 @@ const CARDS_INDEX_SRC = "/cards/index.json";
 const STAGE_WIDTH = 390;
 const STAGE_HEIGHT = 672;
 const KEYFRAME_EPSILON = 0.01;
-/** Tuned lab default from hand-authored preset. */
+/** Tuned lab default / "shift left" template. */
 const DEFAULT_DURATION_MS = 500;
 const DEFAULT_CARD_A_ID = "original";
 const DEFAULT_CARD_B_ID = "asia_gym";
@@ -24,11 +24,11 @@ const TILE_COUNT = 4;
 const STRIP_WIDTH = STAGE_WIDTH * TILE_COUNT;
 
 /** Blur-only motion FX while the strip is sliding. */
-const DEFAULT_BLUR_PEAK = 2.5;
-const DEFAULT_BLUR_WINDOW = { startPct: 5, stopPct: 98 } as const;
+const DEFAULT_BLUR_PEAK = 12.5;
+const DEFAULT_BLUR_WINDOW = { startPct: 5, stopPct: 99 } as const;
 /** Fallback only used when importing legacy global windows. */
 const DEFAULT_FX_START_PCT = 5;
-const DEFAULT_FX_STOP_PCT = 98;
+const DEFAULT_FX_STOP_PCT = 99;
 /**
  * Within the blur start→stop window, relative ramp positions
  * (0–1 of that window). Fade in early, hold, then clear before stop.
@@ -88,6 +88,12 @@ type TransitionPreset = {
   keyframes: TransitionKeyframe[];
 };
 
+type TransitionTemplate = {
+  id: string;
+  label: string;
+  preset: TransitionPreset;
+};
+
 type CardsIndexResponse = {
   cards?: Array<{
     id?: unknown;
@@ -144,12 +150,12 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/** Default CSS ease-in-out. */
+/** Default easing from the "shift left" template. */
 const DEFAULT_EASING: CubicBezier = {
-  x1: 0.42,
-  y1: 0,
-  x2: 0.58,
-  y2: 1,
+  x1: 0.51,
+  y1: 0.02,
+  x2: 0.44,
+  y2: 1.14,
 };
 
 const EASING_PRESETS: Array<{ id: string; label: string; bezier: CubicBezier }> = [
@@ -331,6 +337,58 @@ function defaultMotionFx(): MotionFxSettings {
   };
 }
 
+function buildShiftLeftPreset(): TransitionPreset {
+  return {
+    version: 2,
+    pattern: "mirror-slide-strip",
+    durationMs: DEFAULT_DURATION_MS,
+    cardAId: DEFAULT_CARD_A_ID,
+    cardBId: DEFAULT_CARD_B_ID,
+    stageWidth: STAGE_WIDTH,
+    easing: defaultEasing(),
+    motionFx: defaultMotionFx(),
+    keyframes: defaultKeyframes(),
+  };
+}
+
+const TRANSITION_TEMPLATES: TransitionTemplate[] = [
+  {
+    id: "shift-left",
+    label: "Shift left",
+    preset: buildShiftLeftPreset(),
+  },
+];
+
+const DEFAULT_TEMPLATE_ID = "shift-left";
+
+function getTemplate(id: string): TransitionTemplate | null {
+  return TRANSITION_TEMPLATES.find((entry) => entry.id === id) ?? null;
+}
+
+function clonePreset(preset: TransitionPreset): TransitionPreset {
+  return {
+    version: 2,
+    pattern: "mirror-slide-strip",
+    durationMs: preset.durationMs,
+    cardAId: preset.cardAId,
+    cardBId: preset.cardBId,
+    stageWidth: preset.stageWidth,
+    easing: sanitizeEasing(preset.easing ?? defaultEasing()),
+    motionFx: {
+      enabled: preset.motionFx?.enabled ?? true,
+      blurPeak: preset.motionFx?.blurPeak ?? DEFAULT_BLUR_PEAK,
+      blur: {
+        startPct: preset.motionFx?.blur.startPct ?? DEFAULT_BLUR_WINDOW.startPct,
+        stopPct: preset.motionFx?.blur.stopPct ?? DEFAULT_BLUR_WINDOW.stopPct,
+      },
+    },
+    keyframes: sortKeyframes(preset.keyframes).map((frame) => ({
+      t: frame.t,
+      strip: cloneStrip(frame.strip),
+    })),
+  };
+}
+
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = clamp((x - edge0) / Math.max(edge1 - edge0, 1e-6), 0, 1);
   return t * t * (3 - 2 * t);
@@ -503,6 +561,8 @@ function parsePreset(raw: unknown): TransitionPreset | null {
     };
   }
 
+  const easing = parseEasing(data.easing) ?? defaultEasing();
+
   return {
     version: 2,
     pattern: "mirror-slide-strip",
@@ -510,6 +570,7 @@ function parsePreset(raw: unknown): TransitionPreset | null {
     cardAId: data.cardAId,
     cardBId: data.cardBId,
     stageWidth: STAGE_WIDTH,
+    easing,
     motionFx,
     keyframes: sortKeyframes(keyframes),
   };
@@ -614,8 +675,11 @@ export function VideoTransitionPlayground() {
   const keyframesRef = useRef<TransitionKeyframe[]>(defaultKeyframes());
   const durationMsRef = useRef(DEFAULT_DURATION_MS);
   const motionFxRef = useRef<MotionFxSettings>(defaultMotionFx());
-  /** Base keyframed pose without procedural shake/blur (for editing/export). */
+  const easingRef = useRef<CubicBezier>(defaultEasing());
+  /** Base keyframed pose without procedural blur (for editing/export). */
   const basePoseRef = useRef<StripProps>(defaultKeyframes()[0].strip);
+  const curveSvgRef = useRef<SVGSVGElement | null>(null);
+  const dragHandleRef = useRef<"p1" | "p2" | null>(null);
 
   const [cards, setCards] = useState<TransitionCard[]>([]);
   const [cardAId, setCardAId] = useState("");
@@ -633,9 +697,11 @@ export function VideoTransitionPlayground() {
   );
   const [pose, setPose] = useState<StripProps>(() => defaultKeyframes()[0].strip);
   const [motionFx, setMotionFx] = useState<MotionFxSettings>(() => defaultMotionFx());
+  const [easing, setEasing] = useState<CubicBezier>(() => defaultEasing());
   const [status, setStatus] = useState("Loading cards…");
   const [importText, setImportText] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [activeTemplateId, setActiveTemplateId] = useState(DEFAULT_TEMPLATE_ID);
 
   useEffect(() => {
     playheadTRef.current = playheadT;
@@ -652,6 +718,10 @@ export function VideoTransitionPlayground() {
   useEffect(() => {
     motionFxRef.current = motionFx;
   }, [motionFx]);
+
+  useEffect(() => {
+    easingRef.current = easing;
+  }, [easing]);
 
   useEffect(() => {
     basePoseRef.current = basePose;
@@ -672,9 +742,28 @@ export function VideoTransitionPlayground() {
 
   const sortedKeyframes = useMemo(() => sortKeyframes(keyframes), [keyframes]);
 
+  const curvePath = useMemo(() => {
+    const parts: string[] = [];
+    const samples = 48;
+    for (let i = 0; i <= samples; i += 1) {
+      const x = i / samples;
+      const y = sampleCubicBezier(easing, x);
+      const px = x * 100;
+      const py = (1 - y) * 100;
+      parts.push(`${i === 0 ? "M" : "L"} ${px.toFixed(2)} ${py.toFixed(2)}`);
+    }
+    return parts.join(" ");
+  }, [easing]);
+
   const applySampledPose = useCallback(
-    (t: number, frames: TransitionKeyframe[], fx?: MotionFxSettings) => {
-      const base = sampleKeyframes(frames, t);
+    (
+      t: number,
+      frames: TransitionKeyframe[],
+      fx?: MotionFxSettings,
+      ease?: CubicBezier,
+    ) => {
+      const curve = ease ?? easingRef.current;
+      const base = sampleKeyframes(frames, t, curve);
       const settings = fx ?? motionFxRef.current;
       basePoseRef.current = base;
       setBasePose(base);
@@ -944,7 +1033,12 @@ export function VideoTransitionPlayground() {
     cardAId,
     cardBId,
     stageWidth: STAGE_WIDTH,
-    motionFx: { ...motionFx },
+    easing: sanitizeEasing(easing),
+    motionFx: {
+      enabled: motionFx.enabled,
+      blurPeak: motionFx.blurPeak,
+      blur: { ...motionFx.blur },
+    },
     keyframes: sortKeyframes(keyframes).map((frame) => ({
       t: roundValue(frame.t, 4),
       strip: roundStrip(frame.strip),
@@ -966,6 +1060,65 @@ export function VideoTransitionPlayground() {
     }
   };
 
+  const applyPreset = useCallback(
+    (
+      presetRaw: TransitionPreset,
+      opts?: { templateId?: string | null; statusText?: string },
+    ) => {
+      const preset = clonePreset(presetRaw);
+      const nextFx = preset.motionFx ?? defaultMotionFx();
+      const nextEase = preset.easing ?? defaultEasing();
+      const frames = sortKeyframes(preset.keyframes);
+
+      setPlaying(false);
+      setDurationMs(preset.durationMs);
+      setDurationInput(String(preset.durationMs));
+      setKeyframes(frames);
+      setMotionFx(nextFx);
+      motionFxRef.current = nextFx;
+      setEasing(nextEase);
+      easingRef.current = nextEase;
+      setSelectedKeyframeIndex(0);
+      setPlayheadT(frames[0]?.t ?? 0);
+
+      if (cards.some((card) => card.id === preset.cardAId)) {
+        setCardAId(preset.cardAId);
+      }
+      if (
+        cards.some((card) => card.id === preset.cardBId) &&
+        preset.cardBId !== preset.cardAId
+      ) {
+        setCardBId(preset.cardBId);
+      }
+
+      if (opts?.templateId !== undefined) {
+        setActiveTemplateId(opts.templateId ?? "");
+      }
+
+      applySampledPose(frames[0]?.t ?? 0, frames, nextFx, nextEase);
+      setStatus(
+        opts?.statusText ??
+          `Loaded preset (${preset.durationMs}ms, ${frames.length} keyframes)`,
+      );
+    },
+    [applySampledPose, cards],
+  );
+
+  const applyTemplate = useCallback(
+    (templateId: string) => {
+      const template = getTemplate(templateId);
+      if (!template) {
+        setStatus(`Unknown template: ${templateId}`);
+        return;
+      }
+      applyPreset(template.preset, {
+        templateId: template.id,
+        statusText: `Loaded template “${template.label}”`,
+      });
+    },
+    [applyPreset],
+  );
+
   const importJson = () => {
     try {
       const parsed = parsePreset(JSON.parse(importText));
@@ -973,46 +1126,17 @@ export function VideoTransitionPlayground() {
         setStatus("Invalid transition JSON");
         return;
       }
-      setPlaying(false);
-      setDurationMs(parsed.durationMs);
-      setDurationInput(String(parsed.durationMs));
-      if (cards.some((card) => card.id === parsed.cardAId)) {
-        setCardAId(parsed.cardAId);
-      }
-      if (
-        cards.some((card) => card.id === parsed.cardBId) &&
-        parsed.cardBId !== parsed.cardAId
-      ) {
-        setCardBId(parsed.cardBId);
-      }
-      const nextFx = parsed.motionFx ?? defaultMotionFx();
-      setMotionFx(nextFx);
-      motionFxRef.current = nextFx;
-      setKeyframes(parsed.keyframes);
-      setSelectedKeyframeIndex(0);
-      setPlayheadT(parsed.keyframes[0]?.t ?? 0);
-      applySampledPose(parsed.keyframes[0]?.t ?? 0, parsed.keyframes, nextFx);
-      setStatus(
-        `Imported ${parsed.keyframes.length} keyframes (${parsed.durationMs}ms)`,
-      );
+      applyPreset(parsed, {
+        templateId: null,
+        statusText: `Imported ${parsed.keyframes.length} keyframes (${parsed.durationMs}ms)`,
+      });
     } catch {
       setStatus("Could not parse JSON");
     }
   };
 
   const resetDefaults = () => {
-    setPlaying(false);
-    const frames = defaultKeyframes();
-    const fx = defaultMotionFx();
-    setDurationMs(DEFAULT_DURATION_MS);
-    setDurationInput(String(DEFAULT_DURATION_MS));
-    setKeyframes(frames);
-    setMotionFx(fx);
-    motionFxRef.current = fx;
-    setSelectedKeyframeIndex(0);
-    setPlayheadT(0);
-    applySampledPose(0, frames, fx);
-    setStatus("Reset to strip defaults");
+    applyTemplate(DEFAULT_TEMPLATE_ID);
   };
 
   const snapX = (value: number) => {
@@ -1038,8 +1162,61 @@ export function VideoTransitionPlayground() {
     });
   };
 
+  const updateEasing = useCallback(
+    (nextRaw: CubicBezier) => {
+      const next = sanitizeEasing(nextRaw);
+      setEasing(next);
+      easingRef.current = next;
+      applySampledPose(
+        playheadTRef.current,
+        keyframesRef.current,
+        motionFxRef.current,
+        next,
+      );
+    },
+    [applySampledPose],
+  );
+
+  useEffect(() => {
+    const clientToCurve = (clientX: number, clientY: number) => {
+      const svg = curveSvgRef.current;
+      if (!svg) return null;
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const x = clamp((clientX - rect.left) / rect.width, 0, 1);
+      // Allow overshoot on Y so ease handles can go above/below.
+      const y = 1 - (clientY - rect.top) / rect.height;
+      return { x, y: clamp(y, -0.5, 1.5) };
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const handle = dragHandleRef.current;
+      if (!handle) return;
+      const point = clientToCurve(event.clientX, event.clientY);
+      if (!point) return;
+      const current = easingRef.current;
+      if (handle === "p1") {
+        updateEasing({ ...current, x1: point.x, y1: point.y });
+      } else {
+        updateEasing({ ...current, x2: point.x, y2: point.y });
+      }
+    };
+    const onUp = () => {
+      dragHandleRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [updateEasing]);
+
   const playheadMs = playheadT * durationMs;
   const nearExisting = findNearestKeyframeIndex(sortedKeyframes, playheadT) >= 0;
+  const easedPlayhead = sampleCubicBezier(easing, playheadT);
 
   return (
     <main className="transition-lab-page">
@@ -1047,7 +1224,12 @@ export function VideoTransitionPlayground() {
         <section className="transition-lab-main">
           <header className="transition-lab-header">
             <div>
-              <p className="transition-lab-kicker">Desktop lab · single strip</p>
+              <p className="transition-lab-kicker">
+                Desktop lab · single strip
+                {activeTemplateId
+                  ? ` · template: ${getTemplate(activeTemplateId)?.label ?? activeTemplateId}`
+                  : ""}
+              </p>
               <h1>Video transition</h1>
               <p className="transition-lab-pattern">
                 [A | A↻ | B↻ | B] · stage {STAGE_WIDTH}px · strip {STRIP_WIDTH}px
@@ -1144,7 +1326,8 @@ export function VideoTransitionPlayground() {
               <span className="transition-lab-time">t={roundValue(playheadT, 3)}</span>
               <span className="transition-lab-time">
                 x={roundValue(pose.x, 0)} · blur={roundValue(pose.blur, 1)} ·{" "}
-                {visiblePanelLabel(pose.x)} · ease-in-out
+                {visiblePanelLabel(pose.x)} · eased=
+                {roundValue(easedPlayhead, 3)}
               </span>
             </div>
 
@@ -1177,6 +1360,49 @@ export function VideoTransitionPlayground() {
         </section>
 
         <aside className="panel transition-lab-panel">
+          <section className="transition-lab-section">
+            <h3>Template</h3>
+            <p className="transition-lab-hint">
+              Saved transition recipes. Default is “Shift left”.
+            </p>
+            <label>
+              Active template
+              <select
+                value={activeTemplateId}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  if (!nextId) {
+                    setActiveTemplateId("");
+                    return;
+                  }
+                  applyTemplate(nextId);
+                }}
+              >
+                <option value="">Custom / unsaved</option>
+                {TRANSITION_TEMPLATES.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="button-row">
+              <button
+                type="button"
+                onClick={() => applyTemplate(DEFAULT_TEMPLATE_ID)}
+              >
+                Load Shift left
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={resetDefaults}
+              >
+                Reset defaults
+              </button>
+            </div>
+          </section>
+
           <section className="transition-lab-section">
             <h3>Sources</h3>
             <label>
@@ -1291,10 +1517,195 @@ export function VideoTransitionPlayground() {
           </section>
 
           <section className="transition-lab-section">
+            <h3>Easing</h3>
+            <p className="transition-lab-hint">
+              Drag the handles to shape the cubic-bezier. X is time, Y is progress.
+            </p>
+            <div className="transition-lab-ease-presets">
+              {EASING_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => updateEasing(preset.bezier)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="transition-lab-ease-editor">
+              <svg
+                ref={curveSvgRef}
+                className="transition-lab-ease-svg"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                <rect
+                  className="transition-lab-ease-bg"
+                  x="0"
+                  y="0"
+                  width="100"
+                  height="100"
+                />
+                <line
+                  className="transition-lab-ease-grid"
+                  x1="0"
+                  y1="50"
+                  x2="100"
+                  y2="50"
+                />
+                <line
+                  className="transition-lab-ease-grid"
+                  x1="50"
+                  y1="0"
+                  x2="50"
+                  y2="100"
+                />
+                <line
+                  className="transition-lab-ease-linear"
+                  x1="0"
+                  y1="100"
+                  x2="100"
+                  y2="0"
+                />
+                <path className="transition-lab-ease-curve" d={curvePath} />
+                <line
+                  className="transition-lab-ease-arm"
+                  x1="0"
+                  y1="100"
+                  x2={easing.x1 * 100}
+                  y2={(1 - easing.y1) * 100}
+                />
+                <line
+                  className="transition-lab-ease-arm"
+                  x1="100"
+                  y1="0"
+                  x2={easing.x2 * 100}
+                  y2={(1 - easing.y2) * 100}
+                />
+                <circle
+                  className="transition-lab-ease-handle"
+                  cx={easing.x1 * 100}
+                  cy={(1 - easing.y1) * 100}
+                  r="4.5"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    dragHandleRef.current = "p1";
+                  }}
+                />
+                <circle
+                  className="transition-lab-ease-handle"
+                  cx={easing.x2 * 100}
+                  cy={(1 - easing.y2) * 100}
+                  r="4.5"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    dragHandleRef.current = "p2";
+                  }}
+                />
+                <line
+                  className="transition-lab-ease-playhead"
+                  x1={playheadT * 100}
+                  y1="0"
+                  x2={playheadT * 100}
+                  y2="100"
+                />
+                <circle
+                  className="transition-lab-ease-sample"
+                  cx={playheadT * 100}
+                  cy={(1 - easedPlayhead) * 100}
+                  r="2.8"
+                />
+              </svg>
+            </div>
+            <p className="transition-lab-hint transition-lab-mono">
+              {formatBezier(easing)}
+            </p>
+            <div className="transition-lab-sliders">
+              <label>
+                <span className="transition-lab-slider-label">
+                  <span>X1</span>
+                  <span>{roundValue(easing.x1, 3)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={easing.x1}
+                  onChange={(event) =>
+                    updateEasing({
+                      ...easing,
+                      x1: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                <span className="transition-lab-slider-label">
+                  <span>Y1</span>
+                  <span>{roundValue(easing.y1, 3)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={-0.5}
+                  max={1.5}
+                  step={0.01}
+                  value={easing.y1}
+                  onChange={(event) =>
+                    updateEasing({
+                      ...easing,
+                      y1: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                <span className="transition-lab-slider-label">
+                  <span>X2</span>
+                  <span>{roundValue(easing.x2, 3)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={easing.x2}
+                  onChange={(event) =>
+                    updateEasing({
+                      ...easing,
+                      x2: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                <span className="transition-lab-slider-label">
+                  <span>Y2</span>
+                  <span>{roundValue(easing.y2, 3)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={-0.5}
+                  max={1.5}
+                  step={0.01}
+                  value={easing.y2}
+                  onChange={(event) =>
+                    updateEasing({
+                      ...easing,
+                      y2: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="transition-lab-section">
             <h3>Strip</h3>
             <p className="transition-lab-hint">
-              One long line [A | A↻ | B↻ | B]. Slide left to go A → B with
-              ease-in/out. Sliders edit base keyframe values (blur FX is separate).
+              One long line [A | A↻ | B↻ | B]. Slide left to go A → B using the
+              easing curve. Sliders edit base keyframe values (blur FX is separate).
             </p>
             <div className="transition-lab-sliders">
               {STRIP_SLIDERS.map((slider) => {
