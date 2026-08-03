@@ -603,14 +603,15 @@ function loadSoundEnabled(): boolean {
   }
 }
 
-function worldPointToStage(
+// Rect-taking variant, for callers that project several points per frame: the
+// two getBoundingClientRect reads are identical for every point, so hoisting
+// them out of the loop turns 2N layout reads into 2.
+function worldPointToStageWithRects(
   worldPoint: Vec2,
-  canvas: HTMLCanvasElement,
-  stage: HTMLElement,
+  canvasRect: DOMRect,
+  stageRect: DOMRect,
   camera: { x: number; y: number },
 ): Vec2 {
-  const canvasRect = canvas.getBoundingClientRect();
-  const stageRect = stage.getBoundingClientRect();
   const refClipX = (worldPoint.x / CANVAS_WIDTH) * 2 - 1;
   const refClipY = 1 - (worldPoint.y / CANVAS_HEIGHT) * 2;
   const presentX = ((refClipX * PRESENT_ZOOM + camera.x + 1) / 2) * CANVAS_WIDTH;
@@ -621,6 +622,20 @@ function worldPointToStage(
   const clientY =
     canvasRect.top + (presentY / CANVAS_HEIGHT) * canvasRect.height;
   return { x: clientX - stageRect.left, y: clientY - stageRect.top };
+}
+
+function worldPointToStage(
+  worldPoint: Vec2,
+  canvas: HTMLCanvasElement,
+  stage: HTMLElement,
+  camera: { x: number; y: number },
+): Vec2 {
+  return worldPointToStageWithRects(
+    worldPoint,
+    canvas.getBoundingClientRect(),
+    stage.getBoundingClientRect(),
+    camera,
+  );
 }
 
 function loadScratchZoomSettings(): ScratchZoomSettings {
@@ -1146,6 +1161,11 @@ export function ScratchPrototype() {
   const showMeshRef = useRef(showMesh);
   showMeshRef.current = showMesh;
   const bodyMarkerRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // Last styles written to each body marker, so the render loop can skip
+  // redundant DOM writes. See the marker loop in render() for why.
+  const bodyMarkerStyleRef = useRef<
+    ({ el: HTMLDivElement; transform: string; revealed: boolean | null } | null)[]
+  >([]);
   const useBodySymbolsRef = useRef(false);
   const revealedPointsRef = useRef<boolean[]>(
     Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
@@ -1154,6 +1174,11 @@ export function ScratchPrototype() {
     trackedMesh?.symbolPoints?.length === SYMBOL_SLOT_COUNT;
   useBodySymbolsRef.current = useBodySymbols;
   const [progress, setProgress] = useState(0);
+  // Mirrors drawingRef for the body-symbol icons, which hold their animation
+  // while a stroke is in progress — that is exactly the window where the two
+  // videos compete with Lottie for the main thread. Flips twice per stroke, not
+  // per move, so it does not add render churn to the drag itself.
+  const [isScratching, setIsScratching] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
@@ -1520,19 +1545,45 @@ export function ScratchPrototype() {
         stage &&
         canvas
       ) {
+        const canvasRect = canvas.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
         for (let index = 0; index < SYMBOL_SLOT_COUNT; index += 1) {
           const marker = bodyMarkerRefs.current[index];
           if (!marker) continue;
           const revealed = revealedPointsRef.current[index];
+          // Writing an unchanged style value still dirties style for that
+          // element. Blindly re-assigning display + transform on all six markers
+          // cost ~1440 style recalcs/second even with nothing revealed, so track
+          // what was last written. Keyed on the element so a remount (new card,
+          // new session symbols) re-applies instead of trusting a stale cache.
+          let applied = bodyMarkerStyleRef.current[index];
+          if (!applied || applied.el !== marker) {
+            applied = { el: marker, transform: "", revealed: null };
+            bodyMarkerStyleRef.current[index] = applied;
+          }
+          if (applied.revealed !== revealed) {
+            marker.style.display = revealed ? "flex" : "none";
+            marker.classList.toggle("is-revealed", revealed);
+            applied.revealed = revealed;
+          }
+          // A hidden marker has no box — positioning it is invisible work.
+          if (!revealed) continue;
           const world = sampleMeshUvToWorld(
             trackedSample,
             bodyPoints[index].u,
             bodyPoints[index].v,
           );
-          const stagePos = worldPointToStage(world, canvas, stage, camera);
-          marker.style.display = revealed ? "flex" : "none";
-          marker.style.transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
-          marker.classList.toggle("is-revealed", revealed);
+          const stagePos = worldPointToStageWithRects(
+            world,
+            canvasRect,
+            stageRect,
+            camera,
+          );
+          const transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
+          if (applied.transform !== transform) {
+            marker.style.transform = transform;
+            applied.transform = transform;
+          }
         }
       }
 
@@ -2871,7 +2922,11 @@ export function ScratchPrototype() {
                 >
                   {bodyRevealed[index] ? (
                     <span className="body-symbol-icon">
-                      <GameSymbolIcon typeId={typeId} size={42} />
+                      <GameSymbolIcon
+                        typeId={typeId}
+                        size={42}
+                        paused={isScratching}
+                      />
                     </span>
                   ) : null}
                 </div>
@@ -2931,6 +2986,7 @@ export function ScratchPrototype() {
               if (foregroundVideo?.paused)
                 void foregroundVideo.play().catch(() => undefined);
               drawingRef.current = true;
+              setIsScratching(true);
               lastScratchWorldRef.current = null;
               lastPointerClientRef.current = {
                 x: event.clientX,
@@ -2956,17 +3012,20 @@ export function ScratchPrototype() {
             }}
             onPointerUp={() => {
               drawingRef.current = false;
+              setIsScratching(false);
               lastScratchWorldRef.current = null;
               clearScratchZoom();
             }}
             onPointerLeave={() => {
               drawingRef.current = false;
+              setIsScratching(false);
               lastScratchWorldRef.current = null;
               hoverPointRef.current = null;
               clearScratchZoom();
             }}
             onPointerCancel={() => {
               drawingRef.current = false;
+              setIsScratching(false);
               lastScratchWorldRef.current = null;
               hoverPointRef.current = null;
               clearScratchZoom();
