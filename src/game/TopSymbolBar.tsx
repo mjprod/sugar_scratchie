@@ -672,7 +672,7 @@ export function TopSymbolBar({
               }`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
-            <GameSymbolIcon typeId={typeId} size={28} />
+            <GameSymbolIcon typeId={typeId} size={28} paused={!revealed} />
           </div>
         );
       })}
