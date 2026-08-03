@@ -13,6 +13,7 @@ import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
+import { VideoTransitionPlayground } from "./VideoTransitionPlayground";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
 
@@ -38,6 +39,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
+  if (path === "/video-transition") return VideoTransitionPlayground;
   if (path === "/game") return GamePage;
   return ScratchPrototype;
 }
