@@ -640,9 +640,13 @@ function worldPointToStage(
 
 function loadScratchZoomSettings(): ScratchZoomSettings {
   if (typeof window === "undefined") return SCRATCH_ZOOM_DEFAULTS;
+try {
   for (const key of LEGACY_SCRATCH_ZOOM_STORAGE_KEYS) {
     localStorage.removeItem(key);
   }
+} catch {
+  // ignore
+}
   try {
     const raw = localStorage.getItem(SCRATCH_ZOOM_STORAGE_KEY);
     if (!raw) return SCRATCH_ZOOM_DEFAULTS;
