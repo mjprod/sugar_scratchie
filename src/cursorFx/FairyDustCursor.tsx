@@ -24,6 +24,8 @@ interface FairyDustCursorProps {
     min: number;
     max: number;
   };
+  /** When false, no new particles spawn; existing ones keep fading out. */
+  spawnEnabled?: boolean;
 }
 
 interface Particle {
@@ -151,6 +153,7 @@ function FairyDustCursorImpl({
   gravity = 0.02,
   fadeSpeed = 0.98,
   initialVelocity = DEFAULT_INITIAL_VELOCITY,
+  spawnEnabled = true,
 }: FairyDustCursorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particlesRef = useRef<Particle[]>([]);
@@ -166,8 +169,24 @@ function FairyDustCursorImpl({
 
   // The animation loop reads its tunables through this ref, so moving a slider
   // (or any parent re-render) never tears down the loop and its listeners.
-  const configRef = useRef({ colors, particleSize, particleCount, gravity, fadeSpeed, initialVelocity });
-  configRef.current = { colors, particleSize, particleCount, gravity, fadeSpeed, initialVelocity };
+  const configRef = useRef({
+    colors,
+    particleSize,
+    particleCount,
+    gravity,
+    fadeSpeed,
+    initialVelocity,
+    spawnEnabled,
+  });
+  configRef.current = {
+    colors,
+    particleSize,
+    particleCount,
+    gravity,
+    fadeSpeed,
+    initialVelocity,
+    spawnEnabled,
+  };
 
   const resolvedTypes = useMemo(
     () =>
@@ -413,6 +432,7 @@ function FairyDustCursorImpl({
     };
 
     const spawnIfMoved = (x: number, y: number) => {
+      if (!configRef.current.spawnEnabled) return;
       const dx = x - lastPosRef.current.x;
       const dy = y - lastPosRef.current.y;
       if (dx * dx + dy * dy <= SPAWN_DISTANCE_SQ) return;

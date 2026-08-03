@@ -2033,6 +2033,13 @@ export function ScratchPrototype() {
   const autoScratchLocked =
     useBodySymbols &&
     (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
+  // Sparkles only during the hunt play window (after countdown, before all
+  // symbols found); cards without body symbols have no countdown gate.
+  const cursorFxPlayWindow =
+    !useBodySymbols ||
+    (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete);
+  // Also require an active scratch stroke so idle cursor movement is quiet.
+  const cursorFxSpawnActive = cursorFxPlayWindow && isScratching;
 
   // Drop a persisted/stale auto-scratch enable while the hunt is still locked.
   useEffect(() => {
@@ -2611,6 +2618,15 @@ export function ScratchPrototype() {
   const cursorFxControls = (
     <fieldset className="scratch-zoom-settings">
       <legend>Cursor FX</legend>
+      {cursorFx.fairyDust && !cursorFxPlayWindow ? (
+        <p className="auto-scratch-hint">
+          {topBarPhase === "center"
+            ? "Scratch the top symbols first — cursor FX starts after the countdown."
+            : introGateActive
+              ? "Get ready — cursor FX starts after the countdown."
+              : "Cursor FX pauses once all symbols are found."}
+        </p>
+      ) : null}
       <label className="checkbox-label">
         <input
           checked={cursorFx.fairyDust}
@@ -2846,6 +2862,7 @@ export function ScratchPrototype() {
           gravity={cursorFx.gravity}
           fadeSpeed={cursorFx.fadeSpeed}
           initialVelocity={CURSOR_FX_INITIAL_VELOCITY}
+          spawnEnabled={cursorFxSpawnActive}
         />
       ) : null}
       <section className="prototype">
