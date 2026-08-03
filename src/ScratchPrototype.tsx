@@ -352,7 +352,8 @@ const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
 const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
 const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
-const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom";
+const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom-v2";
+const LEGACY_SCRATCH_ZOOM_STORAGE_KEYS = ["sugar-scratchie:scratch-zoom"];
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
 // Slightly larger than the manual brush so a scratch that covers the mark counts.
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
@@ -365,7 +366,7 @@ type ScratchZoomSettings = {
 };
 
 const SCRATCH_ZOOM_DEFAULTS: ScratchZoomSettings = {
-  enabled: true,
+  enabled: false,
   scale: 1.35,
   durationMs: 180,
   bounce: false,
@@ -624,6 +625,9 @@ function worldPointToStage(
 
 function loadScratchZoomSettings(): ScratchZoomSettings {
   if (typeof window === "undefined") return SCRATCH_ZOOM_DEFAULTS;
+  for (const key of LEGACY_SCRATCH_ZOOM_STORAGE_KEYS) {
+    localStorage.removeItem(key);
+  }
   try {
     const raw = localStorage.getItem(SCRATCH_ZOOM_STORAGE_KEY);
     if (!raw) return SCRATCH_ZOOM_DEFAULTS;
@@ -713,6 +717,8 @@ const CURSOR_FX_DEFAULTS: CursorFxSettings = {
   gravity: 0.1,
   fadeSpeed: 0.91,
 };
+
+const CURSOR_FX_INITIAL_VELOCITY = { min: 0.5, max: 1.5 };
 
 const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
   { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
@@ -2788,7 +2794,7 @@ export function ScratchPrototype() {
           particleCount={cursorFx.particleCount}
           gravity={cursorFx.gravity}
           fadeSpeed={cursorFx.fadeSpeed}
-          initialVelocity={{ min: 0.5, max: 1.5 }}
+          initialVelocity={CURSOR_FX_INITIAL_VELOCITY}
         />
       ) : null}
       <section className="prototype">
