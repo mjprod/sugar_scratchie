@@ -4,7 +4,6 @@ import {
   FairyDustCursor,
   type ParticleType,
 } from "./cursorFx/FairyDustCursor";
-import { RainbowCursor } from "./cursorFx/RainbowCursor";
 import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
 import { fetchModels, type ModelInfo } from "./shared/models";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
@@ -692,10 +691,14 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v2";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v4";
+const LEGACY_CURSOR_FX_STORAGE_KEYS = [
+  "sugar-scratchie:cursor-fx-v1",
+  "sugar-scratchie:cursor-fx-v2",
+  "sugar-scratchie:cursor-fx-v3",
+];
 
 type CursorFxSettings = {
-  rainbow: boolean;
   fairyDust: boolean;
   particleSize: number;
   particleCount: number;
@@ -704,12 +707,11 @@ type CursorFxSettings = {
 };
 
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
-  rainbow: true,
-  fairyDust: false,
+  fairyDust: true,
   particleSize: 64,
-  particleCount: 2,
+  particleCount: 1,
   gravity: 0.1,
-  fadeSpeed: 0.98,
+  fadeSpeed: 0.91,
 };
 
 const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
@@ -721,12 +723,14 @@ const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
 
 function loadCursorFxSettings(): CursorFxSettings {
   if (typeof window === "undefined") return CURSOR_FX_DEFAULTS;
+  for (const key of LEGACY_CURSOR_FX_STORAGE_KEYS) {
+    localStorage.removeItem(key);
+  }
   try {
     const raw = localStorage.getItem(CURSOR_FX_STORAGE_KEY);
     if (!raw) return CURSOR_FX_DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<CursorFxSettings>;
     return {
-      rainbow: parsed.rainbow ?? CURSOR_FX_DEFAULTS.rainbow,
       fairyDust: parsed.fairyDust ?? CURSOR_FX_DEFAULTS.fairyDust,
       particleSize: clampValue(
         Number(parsed.particleSize) || CURSOR_FX_DEFAULTS.particleSize,
@@ -2552,16 +2556,6 @@ export function ScratchPrototype() {
       <legend>Cursor FX</legend>
       <label className="checkbox-label">
         <input
-          checked={cursorFx.rainbow}
-          onChange={(event) =>
-            updateCursorFx({ rainbow: event.currentTarget.checked })
-          }
-          type="checkbox"
-        />
-        Rainbow
-      </label>
-      <label className="checkbox-label">
-        <input
           checked={cursorFx.fairyDust}
           onChange={(event) =>
             updateCursorFx({ fairyDust: event.currentTarget.checked })
@@ -2787,18 +2781,6 @@ export function ScratchPrototype() {
 
   return (
     <main className="app-shell">
-      {cursorFx.rainbow ? (
-        <RainbowCursor
-          length={20}
-          trailSpeed={0.4}
-          blur={0}
-          outerColor="#ffc800"
-          innerColor="#ffffff"
-          outerWidth={2}
-          innerWidth={3}
-          zIndex={1}
-        />
-      ) : null}
       {cursorFx.fairyDust ? (
         <FairyDustCursor
           particleTypes={cursorFxParticleTypes}
