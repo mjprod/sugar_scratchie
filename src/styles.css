@@ -3934,14 +3934,6 @@ dd {
   background: #111;
 }
 
-.transition-lab-tile.is-flipped {
-  transform: scaleX(-1);
-}
-
-.transition-lab-tile.is-flipped .transition-lab-tile-tag {
-  transform: scaleX(-1);
-}
-
 .transition-lab-tile-tag {
   position: absolute;
   top: 8px;
@@ -3963,6 +3955,11 @@ dd {
   height: 100%;
   object-fit: cover;
   background: #111;
+}
+
+/* Flipped clone painted from the source decoder (not a 3rd/4th video). */
+.transition-lab-mirror {
+  object-fit: cover;
 }
 
 .transition-lab-pattern {

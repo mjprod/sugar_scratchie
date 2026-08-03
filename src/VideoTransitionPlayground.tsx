@@ -619,26 +619,40 @@ function findNearestKeyframeIndex(frames: TransitionKeyframe[], t: number): numb
   return bestDistance <= KEYFRAME_EPSILON ? bestIndex : -1;
 }
 
-async function loadPairedVideos(
-  main: HTMLVideoElement,
-  mirror: HTMLVideoElement,
+async function loadLoopingVideo(
+  video: HTMLVideoElement,
   src: string,
 ): Promise<void> {
-  await Promise.all([loadVideoSrc(main, src), loadVideoSrc(mirror, src)]);
-  for (const video of [main, mirror]) {
-    video.loop = true;
-    video.muted = true;
-    video.playsInline = true;
+  await loadVideoSrc(video, src);
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  await video.play().catch(() => undefined);
+}
+
+/** Draw a horizontally flipped video frame into a canvas mirror tile. */
+function drawFlippedVideo(
+  canvas: HTMLCanvasElement | null,
+  video: HTMLVideoElement | null,
+) {
+  if (!canvas || !video) return;
+  if (video.readyState < 2) return;
+
+  const width = Math.max(1, video.videoWidth || STAGE_WIDTH);
+  const height = Math.max(1, video.videoHeight || STAGE_HEIGHT);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
   }
-  try {
-    mirror.currentTime = main.currentTime;
-  } catch {
-    // ignore
-  }
-  await Promise.all([
-    main.play().catch(() => undefined),
-    mirror.play().catch(() => undefined),
-  ]);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.save();
+  ctx.clearRect(0, 0, width, height);
+  ctx.translate(width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, width, height);
+  ctx.restore();
 }
 
 type SliderDef = {
@@ -664,11 +678,13 @@ function visiblePanelLabel(x: number): string {
 
 export function VideoTransitionPlayground() {
   const videoARef = useRef<HTMLVideoElement | null>(null);
-  const videoAMirrorRef = useRef<HTMLVideoElement | null>(null);
   const videoBRef = useRef<HTMLVideoElement | null>(null);
-  const videoBMirrorRef = useRef<HTMLVideoElement | null>(null);
+  const mirrorACanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mirrorBCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
-  const syncRafRef = useRef<number | null>(null);
+  const mirrorRafRef = useRef<number | null>(null);
+  const mirrorVfcARef = useRef<number | null>(null);
+  const mirrorVfcBRef = useRef<number | null>(null);
   const playStartedAtRef = useRef(0);
   const playStartedTRef = useRef(0);
   const playheadTRef = useRef(0);
@@ -820,10 +836,8 @@ export function VideoTransitionPlayground() {
 
   useEffect(() => {
     const videoA = videoARef.current;
-    const videoAMirror = videoAMirrorRef.current;
     const videoB = videoBRef.current;
-    const videoBMirror = videoBMirrorRef.current;
-    if (!videoA || !videoAMirror || !videoB || !videoBMirror) return;
+    if (!videoA || !videoB) return;
 
     let cancelled = false;
 
@@ -831,12 +845,17 @@ export function VideoTransitionPlayground() {
       if (!cardA || !cardB) return;
       setStatus(`Loading ${cardA.label} → ${cardB.label}…`);
       try {
+        // Only two decoders total. Mirrors are canvas clones.
         await Promise.all([
-          loadPairedVideos(videoA, videoAMirror, cardA.bottom),
-          loadPairedVideos(videoB, videoBMirror, cardB.bottom),
+          loadLoopingVideo(videoA, cardA.bottom),
+          loadLoopingVideo(videoB, cardB.bottom),
         ]);
         if (!cancelled) {
-          setStatus(`${cardA.label} → ${cardB.label} · [A|A↻|B↻|B]`);
+          drawFlippedVideo(mirrorACanvasRef.current, videoA);
+          drawFlippedVideo(mirrorBCanvasRef.current, videoB);
+          setStatus(
+            `${cardA.label} → ${cardB.label} · [A|A↻|B↻|B] · 2 decoders`,
+          );
         }
       } catch (error) {
         if (!cancelled) {
@@ -853,45 +872,90 @@ export function VideoTransitionPlayground() {
     };
   }, [cardA, cardB]);
 
+  // Paint flipped mirrors from the two source videos (no extra decoders).
   useEffect(() => {
-    const sync = () => {
-      const pairs: Array<[HTMLVideoElement | null, HTMLVideoElement | null]> = [
-        [videoARef.current, videoAMirrorRef.current],
-        [videoBRef.current, videoBMirrorRef.current],
-      ];
-      for (const [main, mirror] of pairs) {
-        if (!main || !mirror) continue;
-        if (!Number.isFinite(main.currentTime) || !Number.isFinite(mirror.currentTime)) {
-          continue;
-        }
-        if (Math.abs(main.currentTime - mirror.currentTime) > 0.045) {
-          try {
-            mirror.currentTime = main.currentTime;
-          } catch {
-            // ignore seek races
-          }
-        }
-      }
-      syncRafRef.current = requestAnimationFrame(sync);
+    const videoA = videoARef.current;
+    const videoB = videoBRef.current;
+    if (!videoA || !videoB) return;
+
+    let stopped = false;
+
+    const paint = () => {
+      if (stopped) return;
+      drawFlippedVideo(mirrorACanvasRef.current, videoA);
+      drawFlippedVideo(mirrorBCanvasRef.current, videoB);
     };
-    syncRafRef.current = requestAnimationFrame(sync);
+
+    type VideoWithVFC = HTMLVideoElement & {
+      requestVideoFrameCallback?: (
+        cb: (now: number, metadata: unknown) => void,
+      ) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+
+    const attachVfc = (
+      video: VideoWithVFC,
+      store: { current: number | null },
+    ) => {
+      if (typeof video.requestVideoFrameCallback !== "function") return false;
+      const tick = () => {
+        if (stopped) return;
+        paint();
+        store.current = video.requestVideoFrameCallback?.(tick) ?? null;
+      };
+      store.current = video.requestVideoFrameCallback(tick);
+      return true;
+    };
+
+    const usedVfcA = attachVfc(videoA as VideoWithVFC, mirrorVfcARef);
+    const usedVfcB = attachVfc(videoB as VideoWithVFC, mirrorVfcBRef);
+
+    if (!usedVfcA || !usedVfcB) {
+      const loop = () => {
+        if (stopped) return;
+        paint();
+        mirrorRafRef.current = requestAnimationFrame(loop);
+      };
+      mirrorRafRef.current = requestAnimationFrame(loop);
+    } else {
+      paint();
+    }
+
     return () => {
-      if (syncRafRef.current !== null) {
-        cancelAnimationFrame(syncRafRef.current);
-        syncRafRef.current = null;
+      stopped = true;
+      if (mirrorRafRef.current !== null) {
+        cancelAnimationFrame(mirrorRafRef.current);
+        mirrorRafRef.current = null;
       }
+      const a = videoA as VideoWithVFC;
+      const b = videoB as VideoWithVFC;
+      if (
+        mirrorVfcARef.current !== null &&
+        typeof a.cancelVideoFrameCallback === "function"
+      ) {
+        a.cancelVideoFrameCallback(mirrorVfcARef.current);
+      }
+      if (
+        mirrorVfcBRef.current !== null &&
+        typeof b.cancelVideoFrameCallback === "function"
+      ) {
+        b.cancelVideoFrameCallback(mirrorVfcBRef.current);
+      }
+      mirrorVfcARef.current = null;
+      mirrorVfcBRef.current = null;
     };
-  }, []);
+  }, [cardA, cardB]);
 
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
       }
+      if (mirrorRafRef.current !== null) {
+        cancelAnimationFrame(mirrorRafRef.current);
+      }
       releaseMediaElement(videoARef.current);
-      releaseMediaElement(videoAMirrorRef.current);
       releaseMediaElement(videoBRef.current);
-      releaseMediaElement(videoBMirrorRef.current);
     };
   }, []);
 
@@ -1255,25 +1319,17 @@ export function VideoTransitionPlayground() {
                   />
                   <span className="transition-lab-tile-tag">A</span>
                 </div>
-                <div className="transition-lab-tile is-flipped">
-                  <video
-                    ref={videoAMirrorRef}
-                    className="transition-lab-video"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
+                <div className="transition-lab-tile">
+                  <canvas
+                    ref={mirrorACanvasRef}
+                    className="transition-lab-video transition-lab-mirror"
                   />
                   <span className="transition-lab-tile-tag">A↻</span>
                 </div>
-                <div className="transition-lab-tile is-flipped">
-                  <video
-                    ref={videoBMirrorRef}
-                    className="transition-lab-video"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
+                <div className="transition-lab-tile">
+                  <canvas
+                    ref={mirrorBCanvasRef}
+                    className="transition-lab-video transition-lab-mirror"
                   />
                   <span className="transition-lab-tile-tag">B↻</span>
                 </div>
