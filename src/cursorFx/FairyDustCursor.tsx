@@ -43,6 +43,7 @@ interface Particle {
 }
 
 type LottieCacheEntry = {
+  source: string | ArrayBuffer;
   frames: HTMLCanvasElement[];
   frameCount: number;
   ready: boolean;
@@ -218,9 +219,10 @@ function FairyDustCursorImpl({
 
     resolvedTypes.forEach((type) => {
       if (type.kind !== "lottie") return;
-      if (cache.has(type.id)) return;
+      const cached = cache.get(type.id);
+      if (cached?.source === type.source) return;
 
-      const entry: LottieCacheEntry = { frames: [], frameCount: 0, ready: false };
+      const entry: LottieCacheEntry = { source: type.source, frames: [], frameCount: 0, ready: false };
       cache.set(type.id, entry);
 
       // Presets often repeat the same file to weight its spawn odds; decoding
