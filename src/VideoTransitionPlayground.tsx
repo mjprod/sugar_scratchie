@@ -52,6 +52,8 @@ type StripProps = {
   y: number;
   scale: number;
   blur: number;
+  /** CSS brightness multiplier (1 = normal). */
+  brightness: number;
   opacity: number;
 };
 
@@ -91,20 +93,46 @@ type ChannelKeyframe = {
   value: number;
 };
 
-type ChannelKey = keyof StripProps;
+type StripChannelKey = keyof StripProps;
+
+/** 3D Euler degrees for card-flip mode (A left hinge, B right hinge). */
+type FlipRotateKey =
+  | "aRotateX"
+  | "aRotateY"
+  | "aRotateZ"
+  | "bRotateX"
+  | "bRotateY"
+  | "bRotateZ";
+
+type ChannelKey = StripChannelKey | FlipRotateKey;
 
 type ChannelTracks = Record<ChannelKey, ChannelKeyframe[]>;
 
+type TransitionPattern = "mirror-slide-strip" | "card-flip";
+
+type Euler3 = {
+  rotateX: number;
+  rotateY: number;
+  rotateZ: number;
+};
+
+type FlipPose = {
+  a: Euler3;
+  b: Euler3;
+};
+
 type TransitionPreset = {
   version: 2 | 3;
-  pattern: "mirror-slide-strip";
+  pattern: TransitionPattern;
   durationMs: number;
   cardAId: string;
   cardBId: string;
   stageWidth: number;
+  /** Perspective distance in px for card-flip mode. */
+  perspectivePx?: number;
   easing?: CubicBezier;
   motionFx?: MotionFxSettings;
-  /** Preferred v3: independent X/Y/Scale(/blur/opacity) tracks. */
+  /** Preferred v3: independent channel tracks (strip and/or flip rotates). */
   channels?: ChannelTracks;
   /** Legacy v2 combined strip keys (still exported for compatibility). */
   keyframes: TransitionKeyframe[];
@@ -129,6 +157,7 @@ const IDENTITY: StripProps = {
   y: 0,
   scale: 1,
   blur: 0,
+  brightness: 1,
   opacity: 1,
 };
 
@@ -136,7 +165,32 @@ function cloneStrip(strip: StripProps): StripProps {
   return { ...strip };
 }
 
-const CHANNEL_KEYS: ChannelKey[] = ["x", "y", "scale", "blur", "opacity"];
+const STRIP_CHANNEL_KEYS: StripChannelKey[] = [
+  "x",
+  "y",
+  "scale",
+  "blur",
+  "brightness",
+  "opacity",
+];
+
+const FLIP_ROTATE_KEYS: FlipRotateKey[] = [
+  "aRotateX",
+  "aRotateY",
+  "aRotateZ",
+  "bRotateX",
+  "bRotateY",
+  "bRotateZ",
+];
+
+const CHANNEL_KEYS: ChannelKey[] = [...STRIP_CHANNEL_KEYS, ...FLIP_ROTATE_KEYS];
+
+const DEFAULT_PERSPECTIVE_PX = 1200;
+const IDENTITY_EULER: Euler3 = { rotateX: 0, rotateY: 0, rotateZ: 0 };
+const IDENTITY_FLIP: FlipPose = {
+  a: { ...IDENTITY_EULER },
+  b: { ...IDENTITY_EULER },
+};
 
 function cloneChannelKeyframe(frame: ChannelKeyframe): ChannelKeyframe {
   return { t: frame.t, value: frame.value };
@@ -146,10 +200,39 @@ function sortChannelKeyframes(frames: ChannelKeyframe[]): ChannelKeyframe[] {
   return [...frames].sort((left, right) => left.t - right.t);
 }
 
+function isFlipRotateKey(key: string): key is FlipRotateKey {
+  return (FLIP_ROTATE_KEYS as string[]).includes(key);
+}
+
+function isStripChannelKey(key: string): key is StripChannelKey {
+  return (STRIP_CHANNEL_KEYS as string[]).includes(key);
+}
+
 function roundChannelValue(key: ChannelKey, value: number): number {
-  if (key === "scale" || key === "opacity") return roundValue(value, 3);
+  if (isFlipRotateKey(key)) return roundValue(value, 2);
+  if (key === "scale" || key === "opacity" || key === "brightness") {
+    return roundValue(value, 3);
+  }
   if (key === "blur") return roundValue(value, 2);
   return roundValue(value, 2);
+}
+
+function flatChannel(value: number): ChannelKeyframe[] {
+  return [
+    { t: 0, value },
+    { t: 1, value },
+  ];
+}
+
+function defaultFlipRotateTracks(): Pick<ChannelTracks, FlipRotateKey> {
+  return {
+    aRotateX: flatChannel(0),
+    aRotateY: flatChannel(0),
+    aRotateZ: flatChannel(0),
+    bRotateX: flatChannel(0),
+    bRotateY: flatChannel(0),
+    bRotateZ: flatChannel(0),
+  };
 }
 
 function defaultChannelTracks(): ChannelTracks {
@@ -163,28 +246,19 @@ function defaultChannelTracks(): ChannelTracks {
    * x = -1163  → B settled (default end)
    *
    * X/Y/Scale are independent tracks — only X moves in the shift-left default.
+   * Flip rotate tracks default to identity (used when pattern is card-flip).
    */
   return {
     x: [
       { t: 0, value: 0 },
       { t: 1, value: DEFAULT_END_X },
     ],
-    y: [
-      { t: 0, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    scale: [
-      { t: 0, value: 1 },
-      { t: 1, value: 1 },
-    ],
-    blur: [
-      { t: 0, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    opacity: [
-      { t: 0, value: 1 },
-      { t: 1, value: 1 },
-    ],
+    y: flatChannel(0),
+    scale: flatChannel(1),
+    blur: flatChannel(0),
+    brightness: flatChannel(1),
+    opacity: flatChannel(1),
+    ...defaultFlipRotateTracks(),
   };
 }
 
@@ -400,6 +474,7 @@ function lerpStrip(a: StripProps, b: StripProps, t: number): StripProps {
     y: lerp(a.y, b.y, t),
     scale: lerp(a.scale, b.scale, t),
     blur: lerp(a.blur, b.blur, t),
+    brightness: lerp(a.brightness, b.brightness, t),
     opacity: lerp(a.opacity, b.opacity, t),
   };
 }
@@ -432,7 +507,7 @@ function sampleChannelValue(
   return last.value;
 }
 
-/** Sample independent X/Y/Scale(/blur/opacity) tracks into a strip pose. */
+/** Sample independent X/Y/Scale(/blur/brightness/opacity) tracks into a strip pose. */
 function sampleChannelTracks(
   tracks: ChannelTracks,
   t: number,
@@ -443,6 +518,12 @@ function sampleChannelTracks(
     y: sampleChannelValue(tracks.y, t, easing, IDENTITY.y),
     scale: sampleChannelValue(tracks.scale, t, easing, IDENTITY.scale),
     blur: sampleChannelValue(tracks.blur, t, easing, IDENTITY.blur),
+    brightness: sampleChannelValue(
+      tracks.brightness,
+      t,
+      easing,
+      IDENTITY.brightness,
+    ),
     opacity: sampleChannelValue(tracks.opacity, t, easing, IDENTITY.opacity),
   };
 }
@@ -596,15 +677,21 @@ function roundStrip(strip: StripProps): StripProps {
     y: roundValue(strip.y, 2),
     scale: roundValue(strip.scale, 3),
     blur: roundValue(strip.blur, 2),
+    brightness: roundValue(strip.brightness, 3),
     opacity: roundValue(strip.opacity, 3),
   };
 }
 
-/** Outer stage layer: blur + centered scale pulse (covers edge bleed). */
+/** Outer stage layer: blur/brightness + centered scale pulse (covers edge bleed). */
 function fxLayerStyle(strip: StripProps): CSSProperties {
+  const filters: string[] = [];
+  if (strip.blur > 0.001) filters.push(`blur(${strip.blur}px)`);
+  if (Math.abs(strip.brightness - 1) > 0.001) {
+    filters.push(`brightness(${strip.brightness})`);
+  }
   return {
     opacity: strip.opacity,
-    filter: strip.blur > 0.001 ? `blur(${strip.blur}px)` : "none",
+    filter: filters.length > 0 ? filters.join(" ") : "none",
     transform: `scale(${strip.scale})`,
   };
 }
@@ -643,7 +730,7 @@ function buildShiftLeftPreset(): TransitionPreset {
   };
 }
 
-/** Shift-left slide with an early Y bounce-out kick. */
+/** Shift-left slide with mid-transition Y bounce + scale/brightness pulse. */
 function buildBounceOutPreset(): TransitionPreset {
   const channels: ChannelTracks = {
     x: [
@@ -652,22 +739,34 @@ function buildBounceOutPreset(): TransitionPreset {
     ],
     y: [
       { t: 0, value: 0 },
-      { t: 0.0645, value: 0 },
-      { t: 0.0751, value: 15 },
-      { t: 0.0877, value: -3 },
-      { t: 0.1003, value: 42 },
-      { t: 0.1143, value: 16 },
-      { t: 0.1299, value: 47 },
-      { t: 0.1431, value: 3 },
+      { t: 0.1, value: 0 },
+      { t: 0.2627, value: -19.64 },
+      { t: 0.302, value: 26.79 },
+      { t: 0.3415, value: -19.64 },
+      { t: 0.4094, value: 32.12 },
+      { t: 0.4998, value: -27.59 },
+      { t: 0.6, value: 0 },
       { t: 1, value: 0 },
     ],
     scale: [
       { t: 0, value: 1 },
+      { t: 0.1004, value: 1 },
+      { t: 0.2389, value: 1.11 },
+      { t: 0.5011, value: 1.11 },
+      { t: 0.7029, value: 1 },
       { t: 1, value: 1 },
     ],
     blur: [
       { t: 0, value: 0 },
       { t: 1, value: 0 },
+    ],
+    brightness: [
+      { t: 0, value: 1 },
+      { t: 0.0785, value: 1.004 },
+      { t: 0.2136, value: 1.111 },
+      { t: 0.5598, value: 1.648 },
+      { t: 0.8625, value: 1 },
+      { t: 1, value: 1 },
     ],
     opacity: [
       { t: 0, value: 1 },
@@ -677,12 +776,70 @@ function buildBounceOutPreset(): TransitionPreset {
   return {
     version: 3,
     pattern: "mirror-slide-strip",
-    durationMs: DEFAULT_DURATION_MS,
+    durationMs: 750,
     cardAId: DEFAULT_CARD_A_ID,
     cardBId: DEFAULT_CARD_B_ID,
     stageWidth: STAGE_WIDTH,
     easing: defaultEasing(),
-    motionFx: defaultMotionFx(),
+    motionFx: {
+      ...defaultMotionFx(),
+      blurPeak: 4,
+    },
+    channels,
+    keyframes: channelsToStripKeyframes(channels),
+  };
+}
+
+/** Hold, then slide left with a mid-transition scale punch. */
+function buildZoomUpPreset(): TransitionPreset {
+  const channels: ChannelTracks = {
+    x: [
+      { t: 0, value: 0 },
+      { t: 0.1606, value: 0 },
+      { t: 1, value: DEFAULT_END_X },
+    ],
+    y: [
+      { t: 0, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    scale: [
+      { t: 0, value: 1 },
+      { t: 0.3007, value: 1 },
+      { t: 0.5985, value: 1.385 },
+      { t: 0.7833, value: 1 },
+      { t: 1, value: 1 },
+    ],
+    blur: [
+      { t: 0, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    brightness: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+    opacity: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+  };
+  return {
+    version: 3,
+    pattern: "mirror-slide-strip",
+    durationMs: 850,
+    cardAId: DEFAULT_CARD_A_ID,
+    cardBId: DEFAULT_CARD_B_ID,
+    stageWidth: STAGE_WIDTH,
+    easing: {
+      x1: 0.793,
+      y1: -0.013,
+      x2: 0.44,
+      y2: 1.14,
+    },
+    motionFx: {
+      ...defaultMotionFx(),
+      blurPeak: 3.5,
+      blur: { startPct: 19, stopPct: 99 },
+    },
     channels,
     keyframes: channelsToStripKeyframes(channels),
   };
@@ -698,6 +855,11 @@ const TRANSITION_TEMPLATES: TransitionTemplate[] = [
     id: "bounceout",
     label: "Bounce out",
     preset: buildBounceOutPreset(),
+  },
+  {
+    id: "zoomup",
+    label: "Zoom up",
+    preset: buildZoomUpPreset(),
   },
 ];
 
@@ -824,7 +986,7 @@ function formatTime(ms: number): string {
 }
 
 function summarizeStrip(strip: StripProps): string {
-  return `x${roundValue(strip.x, 0)} y${roundValue(strip.y, 0)} s${roundValue(strip.scale, 2)} b${roundValue(strip.blur, 1)} o${roundValue(strip.opacity, 2)}`;
+  return `x${roundValue(strip.x, 0)} y${roundValue(strip.y, 0)} s${roundValue(strip.scale, 2)} br${roundValue(strip.brightness, 2)} b${roundValue(strip.blur, 1)} o${roundValue(strip.opacity, 2)}`;
 }
 
 function isLooseStripProps(value: unknown): value is {
@@ -833,6 +995,7 @@ function isLooseStripProps(value: unknown): value is {
   scale: number;
   blur: number;
   opacity: number;
+  brightness?: number;
 } {
   if (!value || typeof value !== "object") return false;
   const strip = value as Record<string, unknown>;
@@ -851,12 +1014,15 @@ function normalizeStrip(value: {
   scale: number;
   blur: number;
   opacity: number;
+  brightness?: number;
 }): StripProps {
   return roundStrip({
     x: value.x,
     y: value.y,
     scale: value.scale,
     blur: value.blur,
+    brightness:
+      typeof value.brightness === "number" ? value.brightness : IDENTITY.brightness,
     opacity: value.opacity,
   });
 }
@@ -1066,12 +1232,13 @@ const STRIP_SLIDERS: SliderDef[] = [
   { key: "x", label: "X", min: -STAGE_WIDTH * 4, max: STAGE_WIDTH, step: 1 },
   { key: "y", label: "Y", min: -200, max: 200, step: 1 },
   { key: "scale", label: "Scale", min: 0, max: 2, step: 0.01 },
+  { key: "brightness", label: "Bright", min: 0, max: 3, step: 0.01 },
   { key: "blur", label: "Blur", min: 0, max: 40, step: 0.1 },
   { key: "opacity", label: "Opacity", min: 0, max: 1, step: 0.01 },
 ];
 
-/** Graph-editor channels for exact X / Y / Scale keyframing. */
-type GraphChannelKey = "x" | "y" | "scale";
+/** Graph-editor channels for exact X / Y / Scale / Brightness keyframing. */
+type GraphChannelKey = "x" | "y" | "scale" | "brightness";
 
 type GraphChannelDef = {
   key: GraphChannelKey;
@@ -1111,6 +1278,15 @@ const GRAPH_CHANNELS: GraphChannelDef[] = [
     step: 0.005,
     digits: 3,
   },
+  {
+    key: "brightness",
+    label: "Bright",
+    color: "#c9a227",
+    min: 0,
+    max: 2.5,
+    step: 0.01,
+    digits: 2,
+  },
 ];
 
 const GRAPH_VIEW = {
@@ -1137,6 +1313,7 @@ const DEFAULT_GRAPH_VISIBILITY: GraphVisibility = {
   x: true,
   y: true,
   scale: true,
+  brightness: true,
 };
 
 /** Shared time window + per-channel value windows (independent Y zoom). */
@@ -1153,6 +1330,7 @@ const DEFAULT_GRAPH_VIEWPORT: GraphViewport = {
     x: { n0: 0, n1: 1 },
     y: { n0: 0, n1: 1 },
     scale: { n0: 0, n1: 1 },
+    brightness: { n0: 0, n1: 1 },
   },
 };
 
@@ -1190,6 +1368,7 @@ function cloneViewport(view: GraphViewport): GraphViewport {
       x: { ...view.values.x },
       y: { ...view.values.y },
       scale: { ...view.values.scale },
+      brightness: { ...view.values.brightness },
     },
   };
 }
@@ -1231,6 +1410,10 @@ function sanitizeViewport(view: GraphViewport): GraphViewport {
       x: sanitizeValueWindow(view.values.x.n0, view.values.x.n1),
       y: sanitizeValueWindow(view.values.y.n0, view.values.y.n1),
       scale: sanitizeValueWindow(view.values.scale.n0, view.values.scale.n1),
+      brightness: sanitizeValueWindow(
+        view.values.brightness.n0,
+        view.values.brightness.n1,
+      ),
     },
   };
 }
@@ -1484,7 +1667,7 @@ function visiblePanelLabel(x: number): string {
 }
 
 function summarizeChannels(tracks: ChannelTracks): string {
-  return `x${tracks.x.length} y${tracks.y.length} s${tracks.scale.length}`;
+  return `x${tracks.x.length} y${tracks.y.length} s${tracks.scale.length} br${tracks.brightness.length}`;
 }
 
 export function VideoTransitionPlayground() {
@@ -2697,7 +2880,8 @@ export function VideoTransitionPlayground() {
               </span>
               <span className="transition-lab-time">t={roundValue(playheadT, 3)}</span>
               <span className="transition-lab-time">
-                x={roundValue(pose.x, 0)} · s={roundValue(pose.scale, 3)} · blur=
+                x={roundValue(pose.x, 0)} · s={roundValue(pose.scale, 3)} · br=
+                {roundValue(pose.brightness, 2)} · blur=
                 {roundValue(pose.blur, 1)} · {visiblePanelLabel(pose.x)} · eased=
                 {roundValue(easedPlayhead, 3)}
               </span>
@@ -2737,7 +2921,7 @@ export function VideoTransitionPlayground() {
                 <div className="transition-lab-graph-title">
                   <strong>Transform graph</strong>
                   <span>
-                    Independent X / Y / Scale tracks · double-click chip to isolate
+                    Independent X / Y / Scale / Bright tracks · double-click chip to isolate
                   </span>
                 </div>
                 <div className="transition-lab-graph-toggles">
@@ -2958,7 +3142,8 @@ export function VideoTransitionPlayground() {
                     const isActive = activeGraphChannel === lane.key;
                     const ticks = graphValueTicksByChannel[lane.key] ?? [];
                     const frames = sortChannelKeyframes(channels[lane.key] ?? []);
-                    const zeroValue = lane.key === "scale" ? 1 : 0;
+                    const zeroValue =
+                      lane.key === "scale" || lane.key === "brightness" ? 1 : 0;
                     return (
                       <g key={`lane-${lane.key}`}>
                         <rect
