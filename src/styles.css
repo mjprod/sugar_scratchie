@@ -4200,6 +4200,327 @@ dd {
   cursor: pointer;
 }
 
+.transition-lab-graph {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(23, 21, 19, 0.1);
+}
+
+.transition-lab-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transition-lab-graph-title {
+  display: grid;
+  gap: 2px;
+}
+
+.transition-lab-graph-title strong {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.transition-lab-graph-title span {
+  color: #6e645a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.transition-lab-graph-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.transition-lab-graph-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(23, 21, 19, 0.14);
+  border-radius: 999px;
+  background: #fff;
+  color: #171513;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.transition-lab-graph-chip em {
+  color: #6e645a;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.transition-lab-graph-chip.is-active {
+  border-color: var(--chip-color, #a11);
+  box-shadow: inset 0 0 0 1px var(--chip-color, #a11);
+}
+
+.transition-lab-graph-chip.is-isolated {
+  background: color-mix(in srgb, var(--chip-color, #a11) 16%, #fff);
+  border-color: var(--chip-color, #a11);
+}
+
+.transition-lab-graph-chip strong {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--chip-color, #a11);
+}
+
+.transition-lab-graph-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.transition-lab-graph-fx-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #6e645a;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.transition-lab-graph-fx-toggle input {
+  width: auto;
+}
+
+.transition-lab-graph-zoombar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transition-lab-graph-zoom-btns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.transition-lab-graph-zoom-btns button {
+  min-width: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #ece1d3;
+  color: #171513;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.transition-lab-graph-zoom-btns button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.transition-lab-graph-zoom-label {
+  color: #6e645a;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+.transition-lab-graph-editor {
+  border: 1px solid rgba(23, 21, 19, 0.14);
+  border-radius: 8px;
+  background:
+    linear-gradient(to right, rgba(23, 21, 19, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(23, 21, 19, 0.03) 1px, transparent 1px),
+    #fff;
+  background-size: 10% 25%;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.transition-lab-graph-editor.is-zoomed {
+  box-shadow: inset 0 0 0 1px rgba(42, 116, 191, 0.28);
+}
+
+.transition-lab-graph-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 160px;
+  cursor: crosshair;
+}
+
+.transition-lab-graph-lane {
+  fill: rgba(255, 250, 242, 0.55);
+  stroke: rgba(23, 21, 19, 0.08);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.transition-lab-graph-lane.is-active {
+  fill: rgba(255, 250, 242, 0.92);
+  stroke: rgba(23, 21, 19, 0.16);
+}
+
+.transition-lab-graph-lane-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.transition-lab-graph-bg {
+  fill: rgba(255, 250, 242, 0.35);
+  pointer-events: all;
+}
+
+.transition-lab-graph-grid {
+  stroke: rgba(23, 21, 19, 0.08);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.transition-lab-graph-zero {
+  stroke: rgba(23, 21, 19, 0.2);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+  pointer-events: none;
+}
+
+.transition-lab-graph-axis-label {
+  fill: rgba(23, 21, 19, 0.45);
+  font-size: 11px;
+  font-weight: 700;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  pointer-events: none;
+}
+
+.transition-lab-graph-curve {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.transition-lab-graph-curve.is-active {
+  stroke-width: 3;
+  opacity: 1;
+}
+
+.transition-lab-graph-curve-fx {
+  fill: none;
+  stroke: #c45c26;
+  stroke-width: 1.6;
+  stroke-dasharray: 6 4;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.transition-lab-graph-playhead {
+  stroke: rgba(42, 116, 191, 0.55);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.transition-lab-graph-live {
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.transition-lab-graph-handle {
+  stroke: #fff;
+  stroke-width: 2;
+  cursor: grab;
+  pointer-events: all;
+}
+
+.transition-lab-graph-handle.is-selected {
+  stroke: #171513;
+  stroke-width: 2.4;
+}
+
+.transition-lab-graph-handle.is-active {
+  stroke: #171513;
+  stroke-width: 2.8;
+  filter: drop-shadow(0 1px 2px rgba(23, 21, 19, 0.35));
+}
+
+.transition-lab-graph-handle:active {
+  cursor: grabbing;
+}
+
+.transition-lab-graph-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transition-lab-graph-help > span {
+  color: #6e645a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.transition-lab-graph-help .button-row {
+  margin: 0;
+}
+
+.transition-lab-graph-help button {
+  border: 0;
+  border-radius: 8px;
+  background: #171513;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 8px 12px;
+}
+
+.transition-lab-graph-help .secondary-button {
+  background: #ece1d3;
+  color: #171513;
+}
+
+.transition-lab-graph-help button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .transition-lab-panel {
   align-content: start;
   gap: 18px;

@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 
@@ -77,13 +79,24 @@ type CubicBezier = {
   y2: number;
 };
 
+/** Legacy combined strip keyframe (v1/v2 export + import). */
 type TransitionKeyframe = {
   t: number;
   strip: StripProps;
 };
 
+/** Independent scalar key on one transform channel. */
+type ChannelKeyframe = {
+  t: number;
+  value: number;
+};
+
+type ChannelKey = keyof StripProps;
+
+type ChannelTracks = Record<ChannelKey, ChannelKeyframe[]>;
+
 type TransitionPreset = {
-  version: 2;
+  version: 2 | 3;
   pattern: "mirror-slide-strip";
   durationMs: number;
   cardAId: string;
@@ -91,6 +104,9 @@ type TransitionPreset = {
   stageWidth: number;
   easing?: CubicBezier;
   motionFx?: MotionFxSettings;
+  /** Preferred v3: independent X/Y/Scale(/blur/opacity) tracks. */
+  channels?: ChannelTracks;
+  /** Legacy v2 combined strip keys (still exported for compatibility). */
   keyframes: TransitionKeyframe[];
 };
 
@@ -120,32 +136,138 @@ function cloneStrip(strip: StripProps): StripProps {
   return { ...strip };
 }
 
-/**
- * Continuous line:
- *   [ A | A↻ | B↻ | B ]
- *
- * x = 0      → A in frame
- * x = -W     → A↻ in frame
- * x = -2W    → B↻ in frame
- * x = -1163  → B settled (default end)
- */
+const CHANNEL_KEYS: ChannelKey[] = ["x", "y", "scale", "blur", "opacity"];
+
+function cloneChannelKeyframe(frame: ChannelKeyframe): ChannelKeyframe {
+  return { t: frame.t, value: frame.value };
+}
+
+function sortChannelKeyframes(frames: ChannelKeyframe[]): ChannelKeyframe[] {
+  return [...frames].sort((left, right) => left.t - right.t);
+}
+
+function roundChannelValue(key: ChannelKey, value: number): number {
+  if (key === "scale" || key === "opacity") return roundValue(value, 3);
+  if (key === "blur") return roundValue(value, 2);
+  return roundValue(value, 2);
+}
+
+function defaultChannelTracks(): ChannelTracks {
+  /**
+   * Continuous line:
+   *   [ A | A↻ | B↻ | B ]
+   *
+   * x = 0      → A in frame
+   * x = -W     → A↻ in frame
+   * x = -2W    → B↻ in frame
+   * x = -1163  → B settled (default end)
+   *
+   * X/Y/Scale are independent tracks — only X moves in the shift-left default.
+   */
+  return {
+    x: [
+      { t: 0, value: 0 },
+      { t: 1, value: DEFAULT_END_X },
+    ],
+    y: [
+      { t: 0, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    scale: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+    blur: [
+      { t: 0, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    opacity: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+  };
+}
+
+function cloneChannelTracks(tracks: ChannelTracks): ChannelTracks {
+  const next = {} as ChannelTracks;
+  for (const key of CHANNEL_KEYS) {
+    next[key] = sortChannelKeyframes(tracks[key] ?? []).map(cloneChannelKeyframe);
+  }
+  return next;
+}
+
+/** Expand independent channels into dense combined strip keys (export compat). */
+function channelsToStripKeyframes(tracks: ChannelTracks): TransitionKeyframe[] {
+  const times = new Set<number>();
+  for (const key of CHANNEL_KEYS) {
+    for (const frame of tracks[key] ?? []) times.add(roundValue(frame.t, 4));
+  }
+  if (times.size === 0) {
+    return [
+      { t: 0, strip: cloneStrip(IDENTITY) },
+      { t: 1, strip: cloneStrip(IDENTITY) },
+    ];
+  }
+  const sortedT = [...times].sort((a, b) => a - b);
+  // Ensure endpoints so sampling never extrapolates oddly for consumers.
+  if (sortedT[0] > 0) sortedT.unshift(0);
+  if (sortedT[sortedT.length - 1] < 1) sortedT.push(1);
+
+  return sortedT.map((t) => ({
+    t,
+    strip: sampleChannelTracks(tracks, t, {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+    }),
+  }));
+}
+
+/** Split legacy combined strip keys into independent channel tracks. */
+function stripKeyframesToChannels(
+  frames: TransitionKeyframe[],
+): ChannelTracks {
+  const sorted = sortKeyframes(frames);
+  if (sorted.length === 0) return defaultChannelTracks();
+
+  const tracks = {} as ChannelTracks;
+  for (const key of CHANNEL_KEYS) {
+    const channelFrames: ChannelKeyframe[] = sorted.map((frame) => ({
+      t: clamp(frame.t, 0, 1),
+      value: roundChannelValue(key, frame.strip[key]),
+    }));
+    // Collapse consecutive identical values to keep tracks tidy, but always
+    // keep first/last so each channel has a defined range.
+    const collapsed: ChannelKeyframe[] = [];
+    for (let i = 0; i < channelFrames.length; i += 1) {
+      const frame = channelFrames[i];
+      const prev = collapsed[collapsed.length - 1];
+      const isEndpoint = i === 0 || i === channelFrames.length - 1;
+      if (!prev || isEndpoint || Math.abs(prev.value - frame.value) > 1e-6) {
+        if (
+          prev &&
+          !isEndpoint &&
+          Math.abs(prev.t - frame.t) < KEYFRAME_EPSILON &&
+          Math.abs(prev.value - frame.value) <= 1e-6
+        ) {
+          continue;
+        }
+        collapsed.push(frame);
+      }
+    }
+    // Ensure at least two keys.
+    if (collapsed.length === 1) {
+      collapsed.push({ t: 1, value: collapsed[0].value });
+      if (collapsed[0].t > 0) collapsed.unshift({ t: 0, value: collapsed[0].value });
+    }
+    tracks[key] = sortChannelKeyframes(collapsed);
+  }
+  return tracks;
+}
+
 function defaultKeyframes(): TransitionKeyframe[] {
-  return [
-    {
-      t: 0,
-      strip: cloneStrip(IDENTITY),
-    },
-    {
-      t: 1,
-      strip: {
-        x: DEFAULT_END_X,
-        y: 0,
-        scale: 1,
-        blur: 0,
-        opacity: 1,
-      },
-    },
-  ];
+  return channelsToStripKeyframes(defaultChannelTracks());
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -286,6 +408,46 @@ function sortKeyframes(frames: TransitionKeyframe[]): TransitionKeyframe[] {
   return [...frames].sort((left, right) => left.t - right.t);
 }
 
+function sampleChannelValue(
+  frames: ChannelKeyframe[],
+  t: number,
+  easing: CubicBezier,
+  fallback = 0,
+): number {
+  if (!frames || frames.length === 0) return fallback;
+  const sorted = sortChannelKeyframes(frames);
+  const time = clamp(t, 0, 1);
+  if (time <= sorted[0].t) return sorted[0].value;
+  const last = sorted[sorted.length - 1];
+  if (time >= last.t) return last.value;
+
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const left = sorted[i];
+    const right = sorted[i + 1];
+    if (time < left.t || time > right.t) continue;
+    const span = Math.max(right.t - left.t, 1e-6);
+    const localT = sampleCubicBezier(easing, (time - left.t) / span);
+    return lerp(left.value, right.value, localT);
+  }
+  return last.value;
+}
+
+/** Sample independent X/Y/Scale(/blur/opacity) tracks into a strip pose. */
+function sampleChannelTracks(
+  tracks: ChannelTracks,
+  t: number,
+  easing: CubicBezier,
+): StripProps {
+  return {
+    x: sampleChannelValue(tracks.x, t, easing, IDENTITY.x),
+    y: sampleChannelValue(tracks.y, t, easing, IDENTITY.y),
+    scale: sampleChannelValue(tracks.scale, t, easing, IDENTITY.scale),
+    blur: sampleChannelValue(tracks.blur, t, easing, IDENTITY.blur),
+    opacity: sampleChannelValue(tracks.opacity, t, easing, IDENTITY.opacity),
+  };
+}
+
+/** Legacy combined-strip sampler (import path / old presets). */
 function sampleKeyframes(
   frames: TransitionKeyframe[],
   t: number,
@@ -310,6 +472,117 @@ function sampleKeyframes(
   }
 
   return cloneStrip(last.strip);
+}
+
+function findNearestChannelKeyframeIndex(
+  frames: ChannelKeyframe[],
+  t: number,
+): number {
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < frames.length; i += 1) {
+    const distance = Math.abs(frames[i].t - t);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestDistance <= KEYFRAME_EPSILON ? bestIndex : -1;
+}
+
+function quantizeChannelKeyframeT(
+  t: number,
+  frames: ChannelKeyframe[],
+  ignoreIndex = -1,
+): number {
+  let nextT = roundValue(clamp(t, 0, 1), 4);
+  for (let guard = 0; guard < 12; guard += 1) {
+    const hit = frames.findIndex(
+      (frame, index) =>
+        index !== ignoreIndex && Math.abs(frame.t - nextT) < KEYFRAME_EPSILON,
+    );
+    if (hit < 0) break;
+    nextT = clamp(nextT + KEYFRAME_EPSILON * 2, 0, 1);
+    nextT = roundValue(nextT, 4);
+  }
+  return nextT;
+}
+
+function setChannelKeyframe(
+  tracks: ChannelTracks,
+  channel: ChannelKey,
+  tRaw: number,
+  value: number,
+): { tracks: ChannelTracks; index: number; t: number } {
+  const frames = sortChannelKeyframes(tracks[channel] ?? []);
+  const nearest = findNearestChannelKeyframeIndex(frames, tRaw);
+  const t =
+    nearest >= 0
+      ? frames[nearest].t
+      : quantizeChannelKeyframeT(tRaw, frames);
+  const frame: ChannelKeyframe = {
+    t,
+    value: roundChannelValue(channel, value),
+  };
+  const nextFrames =
+    nearest >= 0
+      ? sortChannelKeyframes(
+          frames.map((entry, index) => (index === nearest ? frame : entry)),
+        )
+      : sortChannelKeyframes([...frames, frame]);
+  const index = nextFrames.findIndex((entry) => Math.abs(entry.t - frame.t) < 1e-6);
+  return {
+    tracks: {
+      ...tracks,
+      [channel]: nextFrames,
+    },
+    index: index >= 0 ? index : 0,
+    t: frame.t,
+  };
+}
+
+function moveChannelKeyframe(
+  tracks: ChannelTracks,
+  channel: ChannelKey,
+  index: number,
+  nextTRaw: number,
+  nextValue: number,
+): { tracks: ChannelTracks; index: number; t: number } {
+  const frames = sortChannelKeyframes(tracks[channel] ?? []);
+  if (index < 0 || index >= frames.length) {
+    return { tracks, index, t: nextTRaw };
+  }
+  const t = quantizeChannelKeyframeT(nextTRaw, frames, index);
+  const frame: ChannelKeyframe = {
+    t,
+    value: roundChannelValue(channel, nextValue),
+  };
+  const nextFrames = sortChannelKeyframes(
+    frames.map((entry, i) => (i === index ? frame : entry)),
+  );
+  const nextIndex = nextFrames.findIndex((entry) => Math.abs(entry.t - frame.t) < 1e-6);
+  return {
+    tracks: {
+      ...tracks,
+      [channel]: nextFrames,
+    },
+    index: nextIndex >= 0 ? nextIndex : index,
+    t: frame.t,
+  };
+}
+
+function deleteChannelKeyframe(
+  tracks: ChannelTracks,
+  channel: ChannelKey,
+  index: number,
+): ChannelTracks | null {
+  const frames = sortChannelKeyframes(tracks[channel] ?? []);
+  if (frames.length <= 1) return null;
+  if (index < 0 || index >= frames.length) return null;
+  return {
+    ...tracks,
+    [channel]: frames.filter((_, i) => i !== index),
+  };
 }
 
 function roundValue(value: number, digits = 3): number {
@@ -354,8 +627,9 @@ function defaultMotionFx(): MotionFxSettings {
 }
 
 function buildShiftLeftPreset(): TransitionPreset {
+  const channels = defaultChannelTracks();
   return {
-    version: 2,
+    version: 3,
     pattern: "mirror-slide-strip",
     durationMs: DEFAULT_DURATION_MS,
     cardAId: DEFAULT_CARD_A_ID,
@@ -363,7 +637,54 @@ function buildShiftLeftPreset(): TransitionPreset {
     stageWidth: STAGE_WIDTH,
     easing: defaultEasing(),
     motionFx: defaultMotionFx(),
-    keyframes: defaultKeyframes(),
+    channels,
+    // Combined keys kept for older consumers / visual markers.
+    keyframes: channelsToStripKeyframes(channels),
+  };
+}
+
+/** Shift-left slide with an early Y bounce-out kick. */
+function buildBounceOutPreset(): TransitionPreset {
+  const channels: ChannelTracks = {
+    x: [
+      { t: 0, value: 0 },
+      { t: 1, value: DEFAULT_END_X },
+    ],
+    y: [
+      { t: 0, value: 0 },
+      { t: 0.0645, value: 0 },
+      { t: 0.0751, value: 15 },
+      { t: 0.0877, value: -3 },
+      { t: 0.1003, value: 42 },
+      { t: 0.1143, value: 16 },
+      { t: 0.1299, value: 47 },
+      { t: 0.1431, value: 3 },
+      { t: 1, value: 0 },
+    ],
+    scale: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+    blur: [
+      { t: 0, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    opacity: [
+      { t: 0, value: 1 },
+      { t: 1, value: 1 },
+    ],
+  };
+  return {
+    version: 3,
+    pattern: "mirror-slide-strip",
+    durationMs: DEFAULT_DURATION_MS,
+    cardAId: DEFAULT_CARD_A_ID,
+    cardBId: DEFAULT_CARD_B_ID,
+    stageWidth: STAGE_WIDTH,
+    easing: defaultEasing(),
+    motionFx: defaultMotionFx(),
+    channels,
+    keyframes: channelsToStripKeyframes(channels),
   };
 }
 
@@ -372,6 +693,11 @@ const TRANSITION_TEMPLATES: TransitionTemplate[] = [
     id: "shift-left",
     label: "Shift left",
     preset: buildShiftLeftPreset(),
+  },
+  {
+    id: "bounceout",
+    label: "Bounce out",
+    preset: buildBounceOutPreset(),
   },
 ];
 
@@ -382,8 +708,11 @@ function getTemplate(id: string): TransitionTemplate | null {
 }
 
 function clonePreset(preset: TransitionPreset): TransitionPreset {
+  const channels = cloneChannelTracks(
+    preset.channels ?? stripKeyframesToChannels(preset.keyframes),
+  );
   return {
-    version: 2,
+    version: 3,
     pattern: "mirror-slide-strip",
     durationMs: preset.durationMs,
     cardAId: preset.cardAId,
@@ -404,10 +733,8 @@ function clonePreset(preset: TransitionPreset): TransitionPreset {
         stopPct: preset.motionFx?.scale.stopPct ?? DEFAULT_SCALE_WINDOW.stopPct,
       },
     },
-    keyframes: sortKeyframes(preset.keyframes).map((frame) => ({
-      t: frame.t,
-      strip: cloneStrip(frame.strip),
-    })),
+    channels,
+    keyframes: channelsToStripKeyframes(channels),
   };
 }
 
@@ -534,43 +861,74 @@ function normalizeStrip(value: {
   });
 }
 
-/** Accept v2 strip keyframes, or legacy v1 dual-group (a/b) by using a.x. */
+function parseChannelTracks(raw: unknown): ChannelTracks | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  const tracks = defaultChannelTracks();
+  let any = false;
+  for (const key of CHANNEL_KEYS) {
+    const list = data[key];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const frames: ChannelKeyframe[] = [];
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      const frame = entry as Record<string, unknown>;
+      if (typeof frame.t !== "number" || typeof frame.value !== "number") continue;
+      frames.push({
+        t: clamp(frame.t, 0, 1),
+        value: roundChannelValue(key, frame.value),
+      });
+    }
+    if (frames.length > 0) {
+      tracks[key] = sortChannelKeyframes(frames);
+      any = true;
+    }
+  }
+  return any ? tracks : null;
+}
+
+/** Accept v3 channel tracks, v2 strip keyframes, or legacy v1 dual-group (a/b). */
 function parsePreset(raw: unknown): TransitionPreset | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
-  if (data.version !== 1 && data.version !== 2) return null;
+  if (data.version !== 1 && data.version !== 2 && data.version !== 3) return null;
   if (typeof data.durationMs !== "number" || !Number.isFinite(data.durationMs)) {
     return null;
   }
   if (typeof data.cardAId !== "string" || typeof data.cardBId !== "string") {
     return null;
   }
-  if (!Array.isArray(data.keyframes) || data.keyframes.length === 0) return null;
 
+  let channels = parseChannelTracks(data.channels);
   const keyframes: TransitionKeyframe[] = [];
-  for (const entry of data.keyframes) {
-    if (!entry || typeof entry !== "object") continue;
-    const frame = entry as Record<string, unknown>;
-    if (typeof frame.t !== "number") continue;
+  if (Array.isArray(data.keyframes)) {
+    for (const entry of data.keyframes) {
+      if (!entry || typeof entry !== "object") continue;
+      const frame = entry as Record<string, unknown>;
+      if (typeof frame.t !== "number") continue;
 
-    if (isLooseStripProps(frame.strip)) {
-      keyframes.push({
-        t: clamp(frame.t, 0, 1),
-        strip: normalizeStrip(frame.strip),
-      });
-      continue;
-    }
+      if (isLooseStripProps(frame.strip)) {
+        keyframes.push({
+          t: clamp(frame.t, 0, 1),
+          strip: normalizeStrip(frame.strip),
+        });
+        continue;
+      }
 
-    // Legacy v1: prefer outgoing group a as strip x (same slide direction).
-    if (isLooseStripProps(frame.a)) {
-      keyframes.push({
-        t: clamp(frame.t, 0, 1),
-        strip: normalizeStrip(frame.a),
-      });
+      // Legacy v1: prefer outgoing group a as strip x (same slide direction).
+      if (isLooseStripProps(frame.a)) {
+        keyframes.push({
+          t: clamp(frame.t, 0, 1),
+          strip: normalizeStrip(frame.a),
+        });
+      }
     }
   }
 
-  if (keyframes.length === 0) return null;
+  if (!channels) {
+    if (keyframes.length === 0) return null;
+    channels = stripKeyframesToChannels(keyframes);
+  }
 
   let motionFx = defaultMotionFx();
   if (data.motionFx && typeof data.motionFx === "object") {
@@ -604,7 +962,7 @@ function parsePreset(raw: unknown): TransitionPreset | null {
   const easing = parseEasing(data.easing) ?? defaultEasing();
 
   return {
-    version: 2,
+    version: 3,
     pattern: "mirror-slide-strip",
     durationMs: sanitizeDurationMs(data.durationMs),
     cardAId: data.cardAId,
@@ -612,7 +970,8 @@ function parsePreset(raw: unknown): TransitionPreset | null {
     stageWidth: STAGE_WIDTH,
     easing,
     motionFx,
-    keyframes: sortKeyframes(keyframes),
+    channels,
+    keyframes: channelsToStripKeyframes(channels),
   };
 }
 
@@ -711,9 +1070,421 @@ const STRIP_SLIDERS: SliderDef[] = [
   { key: "opacity", label: "Opacity", min: 0, max: 1, step: 0.01 },
 ];
 
+/** Graph-editor channels for exact X / Y / Scale keyframing. */
+type GraphChannelKey = "x" | "y" | "scale";
+
+type GraphChannelDef = {
+  key: GraphChannelKey;
+  label: string;
+  color: string;
+  min: number;
+  max: number;
+  step: number;
+  digits: number;
+};
+
+const GRAPH_CHANNELS: GraphChannelDef[] = [
+  {
+    key: "x",
+    label: "X",
+    color: "#2a74bf",
+    min: -STAGE_WIDTH * 4,
+    max: STAGE_WIDTH,
+    step: 1,
+    digits: 1,
+  },
+  {
+    key: "y",
+    label: "Y",
+    color: "#2a9d5c",
+    min: -200,
+    max: 200,
+    step: 1,
+    digits: 1,
+  },
+  {
+    key: "scale",
+    label: "Scale",
+    color: "#c45c26",
+    min: 0.5,
+    max: 1.5,
+    step: 0.005,
+    digits: 3,
+  },
+];
+
+const GRAPH_VIEW = {
+  width: 1000,
+  /** Per-lane plot height (stacked independent X/Y/Scale rows). */
+  laneH: 110,
+  laneGap: 10,
+  padL: 54,
+  padR: 18,
+  padT: 10,
+  padB: 22,
+  labelW: 44,
+} as const;
+
+const GRAPH_PLOT_W = GRAPH_VIEW.width - GRAPH_VIEW.padL - GRAPH_VIEW.padR;
+const GRAPH_SAMPLE_COUNT = 120;
+const GRAPH_ZOOM_MIN_SPAN_T = 0.02;
+const GRAPH_ZOOM_MIN_SPAN_N = 0.02;
+const GRAPH_ZOOM_MAX = 50;
+
+type GraphVisibility = Record<GraphChannelKey, boolean>;
+
+const DEFAULT_GRAPH_VISIBILITY: GraphVisibility = {
+  x: true,
+  y: true,
+  scale: true,
+};
+
+/** Shared time window + per-channel value windows (independent Y zoom). */
+type GraphViewport = {
+  t0: number;
+  t1: number;
+  values: Record<GraphChannelKey, { n0: number; n1: number }>;
+};
+
+const DEFAULT_GRAPH_VIEWPORT: GraphViewport = {
+  t0: 0,
+  t1: 1,
+  values: {
+    x: { n0: 0, n1: 1 },
+    y: { n0: 0, n1: 1 },
+    scale: { n0: 0, n1: 1 },
+  },
+};
+
+type GraphDragState = {
+  index: number;
+  channel: GraphChannelKey;
+  moved: boolean;
+};
+
+type GraphPanState = {
+  channel: GraphChannelKey | null;
+  startClientX: number;
+  startClientY: number;
+  origin: GraphViewport;
+};
+
+type LaneLayout = {
+  key: GraphChannelKey;
+  channel: GraphChannelDef;
+  top: number;
+  height: number;
+  plotTop: number;
+  plotH: number;
+};
+
+function getGraphChannel(key: GraphChannelKey): GraphChannelDef {
+  return GRAPH_CHANNELS.find((channel) => channel.key === key) ?? GRAPH_CHANNELS[0];
+}
+
+function cloneViewport(view: GraphViewport): GraphViewport {
+  return {
+    t0: view.t0,
+    t1: view.t1,
+    values: {
+      x: { ...view.values.x },
+      y: { ...view.values.y },
+      scale: { ...view.values.scale },
+    },
+  };
+}
+
+function sanitizeValueWindow(n0Raw: number, n1Raw: number): { n0: number; n1: number } {
+  let n0 = clamp(n0Raw, 0, 1);
+  let n1 = clamp(n1Raw, 0, 1);
+  if (n1 < n0) {
+    const swap = n0;
+    n0 = n1;
+    n1 = swap;
+  }
+  if (n1 - n0 < GRAPH_ZOOM_MIN_SPAN_N) {
+    const mid = (n0 + n1) / 2;
+    n0 = clamp(mid - GRAPH_ZOOM_MIN_SPAN_N / 2, 0, 1 - GRAPH_ZOOM_MIN_SPAN_N);
+    n1 = n0 + GRAPH_ZOOM_MIN_SPAN_N;
+  }
+  return { n0, n1 };
+}
+
+function sanitizeViewport(view: GraphViewport): GraphViewport {
+  let t0 = clamp(view.t0, 0, 1);
+  let t1 = clamp(view.t1, 0, 1);
+  if (t1 < t0) {
+    const swap = t0;
+    t0 = t1;
+    t1 = swap;
+  }
+  if (t1 - t0 < GRAPH_ZOOM_MIN_SPAN_T) {
+    const mid = (t0 + t1) / 2;
+    t0 = clamp(mid - GRAPH_ZOOM_MIN_SPAN_T / 2, 0, 1 - GRAPH_ZOOM_MIN_SPAN_T);
+    t1 = t0 + GRAPH_ZOOM_MIN_SPAN_T;
+  }
+
+  return {
+    t0,
+    t1,
+    values: {
+      x: sanitizeValueWindow(view.values.x.n0, view.values.x.n1),
+      y: sanitizeValueWindow(view.values.y.n0, view.values.y.n1),
+      scale: sanitizeValueWindow(view.values.scale.n0, view.values.scale.n1),
+    },
+  };
+}
+
+function viewportZoomT(view: GraphViewport): number {
+  return 1 / Math.max(view.t1 - view.t0, GRAPH_ZOOM_MIN_SPAN_T);
+}
+
+function viewportZoomN(
+  view: GraphViewport,
+  channel: GraphChannelKey,
+): number {
+  const win = view.values[channel];
+  return 1 / Math.max(win.n1 - win.n0, GRAPH_ZOOM_MIN_SPAN_N);
+}
+
+function graphHeight(laneCount: number): number {
+  const count = Math.max(1, laneCount);
+  return (
+    GRAPH_VIEW.padT +
+    count * GRAPH_VIEW.laneH +
+    Math.max(0, count - 1) * GRAPH_VIEW.laneGap +
+    GRAPH_VIEW.padB
+  );
+}
+
+function buildLaneLayouts(visibleKeys: GraphChannelKey[]): LaneLayout[] {
+  const keys =
+    visibleKeys.length > 0
+      ? visibleKeys
+      : (["x"] as GraphChannelKey[]);
+  return keys.map((key, index) => {
+    const top =
+      GRAPH_VIEW.padT + index * (GRAPH_VIEW.laneH + GRAPH_VIEW.laneGap);
+    return {
+      key,
+      channel: getGraphChannel(key),
+      top,
+      height: GRAPH_VIEW.laneH,
+      plotTop: top + 16,
+      plotH: GRAPH_VIEW.laneH - 28,
+    };
+  });
+}
+
+function graphTToX(t: number, view: GraphViewport): number {
+  const span = Math.max(view.t1 - view.t0, 1e-6);
+  const u = (t - view.t0) / span;
+  return GRAPH_VIEW.padL + u * GRAPH_PLOT_W;
+}
+
+function graphXToT(x: number, view: GraphViewport): number {
+  const u = (x - GRAPH_VIEW.padL) / Math.max(GRAPH_PLOT_W, 1);
+  return view.t0 + u * (view.t1 - view.t0);
+}
+
+function valueToNorm(value: number, channel: GraphChannelDef): number {
+  const span = Math.max(channel.max - channel.min, 1e-6);
+  return (value - channel.min) / span;
+}
+
+function normToValue(n: number, channel: GraphChannelDef): number {
+  return channel.min + n * (channel.max - channel.min);
+}
+
+function graphValueToY(
+  value: number,
+  channel: GraphChannelDef,
+  view: GraphViewport,
+  lane: LaneLayout,
+): number {
+  const n = valueToNorm(value, channel);
+  const win = view.values[channel.key];
+  const span = Math.max(win.n1 - win.n0, 1e-6);
+  const u = (n - win.n0) / span;
+  return lane.plotTop + (1 - u) * lane.plotH;
+}
+
+function graphYToValue(
+  y: number,
+  channel: GraphChannelDef,
+  view: GraphViewport,
+  lane: LaneLayout,
+): number {
+  const u = 1 - (y - lane.plotTop) / Math.max(lane.plotH, 1);
+  const win = view.values[channel.key];
+  const n = win.n0 + u * (win.n1 - win.n0);
+  const raw = normToValue(n, channel);
+  const zoom = viewportZoomN(view, channel.key);
+  const step = channel.step / Math.max(1, Math.min(zoom, 20));
+  const stepped = Math.round(raw / step) * step;
+  return clamp(stepped, channel.min, channel.max);
+}
+
+function hitTestLane(y: number, lanes: LaneLayout[]): LaneLayout | null {
+  if (lanes.length === 0) return null;
+  for (const lane of lanes) {
+    if (y >= lane.top && y <= lane.top + lane.height) return lane;
+  }
+  // Snap to nearest lane if slightly outside.
+  let best = lanes[0];
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const lane of lanes) {
+    const mid = lane.top + lane.height / 2;
+    const dist = Math.abs(y - mid);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = lane;
+    }
+  }
+  return best;
+}
+
+function zoomViewportAt(
+  view: GraphViewport,
+  factor: number,
+  anchorT: number,
+  anchorN: number,
+  channel: GraphChannelKey | null,
+  axes: { time?: boolean; value?: boolean } = { time: true, value: true },
+): GraphViewport {
+  const next = cloneViewport(view);
+  const zoomFactor = clamp(factor, 1 / GRAPH_ZOOM_MAX, GRAPH_ZOOM_MAX);
+
+  if (axes.time !== false) {
+    const spanT = view.t1 - view.t0;
+    const nextSpanT = clamp(spanT * zoomFactor, GRAPH_ZOOM_MIN_SPAN_T, 1);
+    const at = clamp(anchorT, view.t0, view.t1);
+    const ratio = spanT <= 1e-9 ? 0.5 : clamp((at - view.t0) / spanT, 0, 1);
+    next.t0 = at - nextSpanT * ratio;
+    next.t1 = next.t0 + nextSpanT;
+    if (next.t0 < 0) {
+      next.t0 = 0;
+      next.t1 = nextSpanT;
+    } else if (next.t1 > 1) {
+      next.t1 = 1;
+      next.t0 = 1 - nextSpanT;
+    }
+  }
+
+  if (axes.value !== false && channel) {
+    const win = view.values[channel];
+    const spanN = win.n1 - win.n0;
+    const nextSpanN = clamp(spanN * zoomFactor, GRAPH_ZOOM_MIN_SPAN_N, 1);
+    const an = clamp(anchorN, win.n0, win.n1);
+    const ratio = spanN <= 1e-9 ? 0.5 : clamp((an - win.n0) / spanN, 0, 1);
+    let n0 = an - nextSpanN * ratio;
+    let n1 = n0 + nextSpanN;
+    if (n0 < 0) {
+      n0 = 0;
+      n1 = nextSpanN;
+    } else if (n1 > 1) {
+      n1 = 1;
+      n0 = 1 - nextSpanN;
+    }
+    next.values[channel] = { n0, n1 };
+  }
+
+  return sanitizeViewport(next);
+}
+
+function panViewport(
+  view: GraphViewport,
+  dT: number,
+  dN: number,
+  channel: GraphChannelKey | null,
+): GraphViewport {
+  const spanT = view.t1 - view.t0;
+  let t0 = view.t0 + dT;
+  let t1 = view.t1 + dT;
+  if (t0 < 0) {
+    t0 = 0;
+    t1 = spanT;
+  } else if (t1 > 1) {
+    t1 = 1;
+    t0 = 1 - spanT;
+  }
+
+  const next = cloneViewport(view);
+  next.t0 = t0;
+  next.t1 = t1;
+
+  if (channel) {
+    const win = view.values[channel];
+    const spanN = win.n1 - win.n0;
+    let n0 = win.n0 + dN;
+    let n1 = win.n1 + dN;
+    if (n0 < 0) {
+      n0 = 0;
+      n1 = spanN;
+    } else if (n1 > 1) {
+      n1 = 1;
+      n0 = 1 - spanN;
+    }
+    next.values[channel] = { n0, n1 };
+  }
+
+  return sanitizeViewport(next);
+}
+
+function buildNiceTicks(min: number, max: number, count: number): number[] {
+  const span = Math.max(max - min, 1e-9);
+  const rough = span / Math.max(count, 1);
+  const pow = 10 ** Math.floor(Math.log10(rough));
+  const err = rough / pow;
+  let step = pow;
+  if (err >= 5) step = 5 * pow;
+  else if (err >= 2) step = 2 * pow;
+  else step = pow;
+
+  const start = Math.ceil(min / step) * step;
+  const ticks: number[] = [];
+  for (let v = start; v <= max + step * 0.5; v += step) {
+    if (v < min - step * 1e-6 || v > max + step * 1e-6) continue;
+    ticks.push(Number(v.toPrecision(12)));
+    if (ticks.length > 24) break;
+  }
+  if (ticks.length === 0) {
+    ticks.push(min, max);
+  }
+  return ticks;
+}
+
+function buildChannelPath(
+  frames: ChannelKeyframe[],
+  easing: CubicBezier,
+  channel: GraphChannelDef,
+  view: GraphViewport,
+  lane: LaneLayout,
+): string {
+  if (!frames || frames.length === 0) return "";
+  const parts: string[] = [];
+  const tSpan = Math.max(view.t1 - view.t0, 1e-6);
+  const samples = Math.max(
+    40,
+    Math.round(GRAPH_SAMPLE_COUNT * clamp(1 / tSpan, 1, 6)),
+  );
+  for (let i = 0; i <= samples; i += 1) {
+    const t = view.t0 + (i / samples) * tSpan;
+    const value = sampleChannelValue(frames, t, easing, channel.min);
+    const x = graphTToX(t, view);
+    const y = graphValueToY(value, channel, view, lane);
+    parts.push(`${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return parts.join(" ");
+}
+
 function visiblePanelLabel(x: number): string {
   const panel = clamp(Math.round(-x / STAGE_WIDTH), 0, 3);
   return ["A", "A↻", "B↻", "B"][panel] ?? "?";
+}
+
+function summarizeChannels(tracks: ChannelTracks): string {
+  return `x${tracks.x.length} y${tracks.y.length} s${tracks.scale.length}`;
 }
 
 export function VideoTransitionPlayground() {
@@ -728,14 +1499,22 @@ export function VideoTransitionPlayground() {
   const playStartedAtRef = useRef(0);
   const playStartedTRef = useRef(0);
   const playheadTRef = useRef(0);
-  const keyframesRef = useRef<TransitionKeyframe[]>(defaultKeyframes());
+  const channelsRef = useRef<ChannelTracks>(defaultChannelTracks());
   const durationMsRef = useRef(DEFAULT_DURATION_MS);
   const motionFxRef = useRef<MotionFxSettings>(defaultMotionFx());
   const easingRef = useRef<CubicBezier>(defaultEasing());
   /** Base keyframed pose without procedural blur (for editing/export). */
-  const basePoseRef = useRef<StripProps>(defaultKeyframes()[0].strip);
+  const basePoseRef = useRef<StripProps>(
+    sampleChannelTracks(defaultChannelTracks(), 0, defaultEasing()),
+  );
   const curveSvgRef = useRef<SVGSVGElement | null>(null);
   const dragHandleRef = useRef<"p1" | "p2" | null>(null);
+  const graphSvgRef = useRef<SVGSVGElement | null>(null);
+  const graphDragRef = useRef<GraphDragState | null>(null);
+  const graphPanRef = useRef<GraphPanState | null>(null);
+  const graphPointerIdRef = useRef<number | null>(null);
+  const graphViewportRef = useRef<GraphViewport>(cloneViewport(DEFAULT_GRAPH_VIEWPORT));
+  const graphLanesRef = useRef<LaneLayout[]>([]);
 
   const [cards, setCards] = useState<TransitionCard[]>([]);
   const [cardAId, setCardAId] = useState("");
@@ -744,28 +1523,44 @@ export function VideoTransitionPlayground() {
   const [durationInput, setDurationInput] = useState(String(DEFAULT_DURATION_MS));
   const [playheadT, setPlayheadT] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [keyframes, setKeyframes] = useState<TransitionKeyframe[]>(() =>
-    defaultKeyframes(),
+  const [channels, setChannels] = useState<ChannelTracks>(() =>
+    defaultChannelTracks(),
   );
+  /** Selected key index within the active graph channel track. */
   const [selectedKeyframeIndex, setSelectedKeyframeIndex] = useState(0);
-  const [basePose, setBasePose] = useState<StripProps>(
-    () => defaultKeyframes()[0].strip,
+  const [basePose, setBasePose] = useState<StripProps>(() =>
+    sampleChannelTracks(defaultChannelTracks(), 0, defaultEasing()),
   );
-  const [pose, setPose] = useState<StripProps>(() => defaultKeyframes()[0].strip);
+  const [pose, setPose] = useState<StripProps>(() =>
+    sampleChannelTracks(defaultChannelTracks(), 0, defaultEasing()),
+  );
   const [motionFx, setMotionFx] = useState<MotionFxSettings>(() => defaultMotionFx());
   const [easing, setEasing] = useState<CubicBezier>(() => defaultEasing());
   const [status, setStatus] = useState("Loading cards…");
   const [importText, setImportText] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [activeTemplateId, setActiveTemplateId] = useState(DEFAULT_TEMPLATE_ID);
+  const [graphVisibility, setGraphVisibility] = useState<GraphVisibility>(
+    () => ({ ...DEFAULT_GRAPH_VISIBILITY }),
+  );
+  const [activeGraphChannel, setActiveGraphChannel] =
+    useState<GraphChannelKey>("x");
+  /** When set, only that channel lane is shown/editable. */
+  const [isolatedChannel, setIsolatedChannel] = useState<GraphChannelKey | null>(
+    null,
+  );
+  const [showFxOnGraph, setShowFxOnGraph] = useState(false);
+  const [graphViewport, setGraphViewport] = useState<GraphViewport>(() =>
+    cloneViewport(DEFAULT_GRAPH_VIEWPORT),
+  );
 
   useEffect(() => {
     playheadTRef.current = playheadT;
   }, [playheadT]);
 
   useEffect(() => {
-    keyframesRef.current = keyframes;
-  }, [keyframes]);
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     durationMsRef.current = durationMs;
@@ -784,6 +1579,10 @@ export function VideoTransitionPlayground() {
   }, [basePose]);
 
   useEffect(() => {
+    graphViewportRef.current = graphViewport;
+  }, [graphViewport]);
+
+  useEffect(() => {
     setDurationInput(String(durationMs));
   }, [durationMs]);
 
@@ -796,7 +1595,40 @@ export function VideoTransitionPlayground() {
     [cards, cardBId],
   );
 
-  const sortedKeyframes = useMemo(() => sortKeyframes(keyframes), [keyframes]);
+  const visibleGraphKeys = useMemo(() => {
+    if (isolatedChannel) return [isolatedChannel];
+    return GRAPH_CHANNELS.map((channel) => channel.key).filter(
+      (key) => graphVisibility[key],
+    );
+  }, [graphVisibility, isolatedChannel]);
+
+  const graphLanes = useMemo(
+    () => buildLaneLayouts(visibleGraphKeys),
+    [visibleGraphKeys],
+  );
+
+  useEffect(() => {
+    graphLanesRef.current = graphLanes;
+  }, [graphLanes]);
+
+  const activeChannelFrames = useMemo(
+    () => sortChannelKeyframes(channels[activeGraphChannel] ?? []),
+    [channels, activeGraphChannel],
+  );
+
+  /** Combined marker times across visible transform channels. */
+  const markerTimes = useMemo(() => {
+    const times = new Set<number>();
+    for (const key of visibleGraphKeys) {
+      for (const frame of channels[key] ?? []) times.add(frame.t);
+    }
+    // Always include blur/opacity endpoints lightly? no — keep transform-focused.
+    if (times.size === 0) {
+      times.add(0);
+      times.add(1);
+    }
+    return [...times].sort((a, b) => a - b);
+  }, [channels, visibleGraphKeys]);
 
   const curvePath = useMemo(() => {
     const parts: string[] = [];
@@ -811,21 +1643,213 @@ export function VideoTransitionPlayground() {
     return parts.join(" ");
   }, [easing]);
 
+  const graphChannelPaths = useMemo(() => {
+    const paths = {} as Record<GraphChannelKey, string>;
+    for (const lane of graphLanes) {
+      paths[lane.key] = buildChannelPath(
+        channels[lane.key] ?? [],
+        easing,
+        lane.channel,
+        graphViewport,
+        lane,
+      );
+    }
+    return paths;
+  }, [channels, easing, graphViewport, graphLanes]);
+
+  /** Optional overlay of final scale after procedural motion FX. */
+  const graphFxScalePath = useMemo(() => {
+    if (!showFxOnGraph || !motionFx.enabled) return "";
+    const lane = graphLanes.find((entry) => entry.key === "scale");
+    if (!lane) return "";
+    const parts: string[] = [];
+    const tSpan = Math.max(graphViewport.t1 - graphViewport.t0, 1e-6);
+    const samples = Math.max(
+      40,
+      Math.round(GRAPH_SAMPLE_COUNT * clamp(1 / tSpan, 1, 6)),
+    );
+    for (let i = 0; i <= samples; i += 1) {
+      const t = graphViewport.t0 + (i / samples) * tSpan;
+      const base = sampleChannelTracks(channels, t, easing);
+      const live = applyMotionFx(base, t, motionFx);
+      const x = graphTToX(t, graphViewport);
+      const y = graphValueToY(live.scale, lane.channel, graphViewport, lane);
+      parts.push(`${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`);
+    }
+    return parts.join(" ");
+  }, [showFxOnGraph, motionFx, channels, easing, graphViewport, graphLanes]);
+
+  const graphPlayheadValues = useMemo(() => {
+    const values = {} as Record<GraphChannelKey, number>;
+    for (const channel of GRAPH_CHANNELS) {
+      values[channel.key] = basePose[channel.key];
+    }
+    return values;
+  }, [basePose]);
+
+  const graphTimeTicks = useMemo(
+    () => buildNiceTicks(graphViewport.t0, graphViewport.t1, 6),
+    [graphViewport.t0, graphViewport.t1],
+  );
+
+  const graphValueTicksByChannel = useMemo(() => {
+    const ticks = {} as Record<GraphChannelKey, number[]>;
+    for (const channel of GRAPH_CHANNELS) {
+      const win = graphViewport.values[channel.key];
+      const min = normToValue(win.n0, channel);
+      const max = normToValue(win.n1, channel);
+      ticks[channel.key] = buildNiceTicks(min, max, 4);
+    }
+    return ticks;
+  }, [graphViewport]);
+
+  const graphZoomLabel = useMemo(() => {
+    const zT = viewportZoomT(graphViewport);
+    const zN = viewportZoomN(graphViewport, activeGraphChannel);
+    return `${roundValue(zT, 1)}×t · ${roundValue(zN, 1)}×${activeGraphChannel}`;
+  }, [graphViewport, activeGraphChannel]);
+
+  const isGraphZoomed = useMemo(() => {
+    if (Math.abs(graphViewport.t0) > 1e-6 || Math.abs(graphViewport.t1 - 1) > 1e-6) {
+      return true;
+    }
+    for (const key of GRAPH_CHANNELS.map((c) => c.key)) {
+      const win = graphViewport.values[key];
+      if (Math.abs(win.n0) > 1e-6 || Math.abs(win.n1 - 1) > 1e-6) return true;
+    }
+    return false;
+  }, [graphViewport]);
+
+  const graphSvgHeight = graphHeight(Math.max(1, graphLanes.length));
+
+  const updateGraphViewport = useCallback((nextRaw: GraphViewport) => {
+    const next = sanitizeViewport(nextRaw);
+    graphViewportRef.current = next;
+    setGraphViewport(next);
+  }, []);
+
+  const resetGraphViewport = useCallback(() => {
+    updateGraphViewport(cloneViewport(DEFAULT_GRAPH_VIEWPORT));
+  }, [updateGraphViewport]);
+
+  const zoomGraphBy = useCallback(
+    (
+      factor: number,
+      opts?: {
+        anchorT?: number;
+        anchorN?: number;
+        time?: boolean;
+        value?: boolean;
+        channel?: GraphChannelKey | null;
+      },
+    ) => {
+      const view = graphViewportRef.current;
+      const channel = opts?.channel === undefined ? activeGraphChannel : opts.channel;
+      const win = channel ? view.values[channel] : { n0: 0, n1: 1 };
+      const anchorT = opts?.anchorT ?? (view.t0 + view.t1) / 2;
+      const anchorN = opts?.anchorN ?? (win.n0 + win.n1) / 2;
+      updateGraphViewport(
+        zoomViewportAt(view, factor, anchorT, anchorN, channel, {
+          time: opts?.time,
+          value: opts?.value,
+        }),
+      );
+    },
+    [activeGraphChannel, updateGraphViewport],
+  );
+
+  const focusGraphOnPlayhead = useCallback(() => {
+    const view = graphViewportRef.current;
+    const channelKey = activeGraphChannel;
+    const win = view.values[channelKey];
+    const spanT = Math.max(view.t1 - view.t0, GRAPH_ZOOM_MIN_SPAN_T);
+    const spanN = Math.max(win.n1 - win.n0, GRAPH_ZOOM_MIN_SPAN_N);
+    const t = clamp(playheadTRef.current, 0, 1);
+    const channel = getGraphChannel(channelKey);
+    const n = clamp(valueToNorm(basePoseRef.current[channel.key], channel), 0, 1);
+    const nextSpanT = spanT >= 0.999 ? 0.25 : spanT;
+    const nextSpanN = spanN >= 0.999 ? 0.35 : spanN;
+    let t0 = t - nextSpanT / 2;
+    let t1 = t0 + nextSpanT;
+    if (t0 < 0) {
+      t0 = 0;
+      t1 = nextSpanT;
+    } else if (t1 > 1) {
+      t1 = 1;
+      t0 = 1 - nextSpanT;
+    }
+    let n0 = n - nextSpanN / 2;
+    let n1 = n0 + nextSpanN;
+    if (n0 < 0) {
+      n0 = 0;
+      n1 = nextSpanN;
+    } else if (n1 > 1) {
+      n1 = 1;
+      n0 = 1 - nextSpanN;
+    }
+    const next = cloneViewport(view);
+    next.t0 = t0;
+    next.t1 = t1;
+    next.values[channelKey] = { n0, n1 };
+    updateGraphViewport(next);
+  }, [activeGraphChannel, updateGraphViewport]);
+
+  const isolateChannel = useCallback((key: GraphChannelKey) => {
+    setIsolatedChannel((current) => {
+      if (current === key) {
+        setStatus(`Exited ${key.toUpperCase()} isolation`);
+        return null;
+      }
+      setActiveGraphChannel(key);
+      setGraphVisibility((prev) => ({ ...prev, [key]: true }));
+      setStatus(`Isolated ${key.toUpperCase()} — double-click chip again to show all`);
+      return key;
+    });
+  }, []);
+
   const applySampledPose = useCallback(
     (
       t: number,
-      frames: TransitionKeyframe[],
+      tracks?: ChannelTracks,
       fx?: MotionFxSettings,
       ease?: CubicBezier,
     ) => {
       const curve = ease ?? easingRef.current;
-      const base = sampleKeyframes(frames, t, curve);
+      const source = tracks ?? channelsRef.current;
+      const base = sampleChannelTracks(source, t, curve);
       const settings = fx ?? motionFxRef.current;
       basePoseRef.current = base;
       setBasePose(base);
       setPose(applyMotionFx(base, t, settings));
     },
     [],
+  );
+
+  const commitChannels = useCallback(
+    (
+      nextTracks: ChannelTracks,
+      opts?: {
+        t?: number;
+        selectChannel?: GraphChannelKey;
+        selectIndex?: number;
+        statusText?: string;
+      },
+    ) => {
+      const next = cloneChannelTracks(nextTracks);
+      channelsRef.current = next;
+      setChannels(next);
+      setActiveTemplateId("");
+      if (opts?.selectChannel) setActiveGraphChannel(opts.selectChannel);
+      if (opts?.selectIndex !== undefined) {
+        setSelectedKeyframeIndex(opts.selectIndex);
+      }
+      const t = opts?.t ?? playheadTRef.current;
+      setPlayheadT(t);
+      playheadTRef.current = t;
+      applySampledPose(t, next);
+      if (opts?.statusText) setStatus(opts.statusText);
+    },
+    [applySampledPose],
   );
 
   const loadCards = useCallback(async () => {
@@ -1016,7 +2040,7 @@ export function VideoTransitionPlayground() {
       const deltaT = elapsed / Math.max(durationMsRef.current, 1);
       const nextT = clamp(playStartedTRef.current + deltaT, 0, 1);
       setPlayheadT(nextT);
-      applySampledPose(nextT, keyframesRef.current);
+      applySampledPose(nextT, channelsRef.current);
       if (nextT >= 1) {
         setPlaying(false);
         rafRef.current = null;
@@ -1037,9 +2061,13 @@ export function VideoTransitionPlayground() {
   const setPlayhead = (nextT: number, opts?: { sample?: boolean }) => {
     const t = clamp(nextT, 0, 1);
     setPlayheadT(t);
+    playheadTRef.current = t;
     if (opts?.sample !== false) {
-      applySampledPose(t, keyframes);
-      const nearest = findNearestKeyframeIndex(sortedKeyframes, t);
+      applySampledPose(t, channels);
+      const nearest = findNearestChannelKeyframeIndex(
+        channels[activeGraphChannel] ?? [],
+        t,
+      );
       if (nearest >= 0) setSelectedKeyframeIndex(nearest);
     }
   };
@@ -1052,104 +2080,331 @@ export function VideoTransitionPlayground() {
     setPose(next);
   };
 
+  /** Add/update only the active channel at the playhead. */
   const addOrUpdateKeyframe = () => {
     setPlaying(false);
-    const t = clamp(playheadT, 0, 1);
-    const nearest = findNearestKeyframeIndex(sortedKeyframes, t);
-    const frame: TransitionKeyframe = {
-      t: nearest >= 0 ? sortedKeyframes[nearest].t : roundValue(t, 4),
-      strip: roundStrip(basePoseRef.current),
-    };
-
-    if (nearest >= 0) {
-      const next = sortedKeyframes.map((entry, index) =>
-        index === nearest ? frame : entry,
-      );
-      setKeyframes(next);
-      setSelectedKeyframeIndex(nearest);
-      setStatus(`Updated keyframe @ ${roundValue(frame.t, 3)}`);
-      return;
-    }
-
-    const next = sortKeyframes([...sortedKeyframes, frame]);
-    setKeyframes(next);
-    setSelectedKeyframeIndex(next.findIndex((entry) => entry.t === frame.t));
-    setStatus(`Added keyframe @ ${roundValue(frame.t, 3)}`);
+    const channel = activeGraphChannel;
+    const value = basePoseRef.current[channel];
+    const result = setChannelKeyframe(
+      channelsRef.current,
+      channel,
+      playheadT,
+      value,
+    );
+    commitChannels(result.tracks, {
+      t: result.t,
+      selectChannel: channel,
+      selectIndex: result.index,
+      statusText: `Set ${channel} @ ${roundValue(result.t, 3)} = ${roundChannelValue(channel, value)}`,
+    });
   };
 
   const updateSelectedKeyframe = () => {
-    if (
-      selectedKeyframeIndex < 0 ||
-      selectedKeyframeIndex >= sortedKeyframes.length
-    ) {
+    const frames = activeChannelFrames;
+    if (selectedKeyframeIndex < 0 || selectedKeyframeIndex >= frames.length) {
       return;
     }
     setPlaying(false);
-    const selectedT = sortedKeyframes[selectedKeyframeIndex].t;
-    const next = sortedKeyframes.map((entry, index) =>
-      index === selectedKeyframeIndex
-        ? {
-            t: entry.t,
-            strip: roundStrip(basePoseRef.current),
-          }
-        : entry,
+    const channel = activeGraphChannel;
+    const selectedT = frames[selectedKeyframeIndex].t;
+    const value = basePoseRef.current[channel];
+    const result = moveChannelKeyframe(
+      channelsRef.current,
+      channel,
+      selectedKeyframeIndex,
+      selectedT,
+      value,
     );
-    setKeyframes(next);
-    setStatus(`Updated selected keyframe @ ${roundValue(selectedT, 3)}`);
+    commitChannels(result.tracks, {
+      t: result.t,
+      selectChannel: channel,
+      selectIndex: result.index,
+      statusText: `Updated ${channel} @ ${roundValue(selectedT, 3)}`,
+    });
   };
 
   const deleteSelectedKeyframe = () => {
-    if (sortedKeyframes.length <= 1) {
-      setStatus("Keep at least one keyframe");
+    const channel = activeGraphChannel;
+    const frames = activeChannelFrames;
+    if (frames.length <= 1) {
+      setStatus(`Keep at least one ${channel} keyframe`);
       return;
     }
-    if (
-      selectedKeyframeIndex < 0 ||
-      selectedKeyframeIndex >= sortedKeyframes.length
-    ) {
+    if (selectedKeyframeIndex < 0 || selectedKeyframeIndex >= frames.length) {
       return;
     }
     setPlaying(false);
-    const removedT = sortedKeyframes[selectedKeyframeIndex].t;
-    const next = sortedKeyframes.filter(
-      (_, index) => index !== selectedKeyframeIndex,
+    const removedT = frames[selectedKeyframeIndex].t;
+    const next = deleteChannelKeyframe(
+      channelsRef.current,
+      channel,
+      selectedKeyframeIndex,
     );
-    setKeyframes(next);
-    const nextSelected = clamp(selectedKeyframeIndex, 0, next.length - 1);
-    setSelectedKeyframeIndex(nextSelected);
-    applySampledPose(playheadT, next);
-    setStatus(`Deleted keyframe @ ${roundValue(removedT, 3)}`);
+    if (!next) {
+      setStatus(`Keep at least one ${channel} keyframe`);
+      return;
+    }
+    const nextFrames = next[channel] ?? [];
+    const nextSelected = clamp(selectedKeyframeIndex, 0, nextFrames.length - 1);
+    commitChannels(next, {
+      selectChannel: channel,
+      selectIndex: nextSelected,
+      statusText: `Deleted ${channel} keyframe @ ${roundValue(removedT, 3)}`,
+    });
   };
 
-  const jumpToKeyframe = (index: number) => {
-    const frame = sortedKeyframes[index];
+  const jumpToChannelKeyframe = (channel: GraphChannelKey, index: number) => {
+    const frame = sortChannelKeyframes(channels[channel] ?? [])[index];
     if (!frame) return;
     setPlaying(false);
+    setActiveGraphChannel(channel);
     setSelectedKeyframeIndex(index);
     setPlayheadT(frame.t);
-    applySampledPose(frame.t, sortedKeyframes);
+    playheadTRef.current = frame.t;
+    applySampledPose(frame.t, channels);
   };
 
-  const buildPreset = (): TransitionPreset => ({
-    version: 2,
-    pattern: "mirror-slide-strip",
-    durationMs: sanitizeDurationMs(durationMs),
-    cardAId,
-    cardBId,
-    stageWidth: STAGE_WIDTH,
-    easing: sanitizeEasing(easing),
-    motionFx: {
-      enabled: motionFx.enabled,
-      blurPeak: motionFx.blurPeak,
-      blur: { ...motionFx.blur },
-      scalePeak: motionFx.scalePeak,
-      scale: { ...motionFx.scale },
+  const clientToGraphPoint = useCallback((clientX: number, clientY: number) => {
+    const svg = graphSvgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const height = graphHeight(Math.max(1, graphLanesRef.current.length));
+    const x = ((clientX - rect.left) / rect.width) * GRAPH_VIEW.width;
+    const y = ((clientY - rect.top) / rect.height) * height;
+    return { x, y };
+  }, []);
+
+  const commitGraphChannelKeyframe = useCallback(
+    (
+      channel: GraphChannelKey,
+      index: number,
+      nextT: number,
+      nextValue: number,
+      opts?: { statusText?: string },
+    ): number => {
+      const result = moveChannelKeyframe(
+        channelsRef.current,
+        channel,
+        index,
+        nextT,
+        nextValue,
+      );
+      commitChannels(result.tracks, {
+        t: result.t,
+        selectChannel: channel,
+        selectIndex: result.index,
+        statusText: opts?.statusText,
+      });
+      return result.index;
     },
-    keyframes: sortKeyframes(keyframes).map((frame) => ({
-      t: roundValue(frame.t, 4),
-      strip: roundStrip(frame.strip),
-    })),
-  });
+    [commitChannels],
+  );
+
+  const addGraphKeyframeAt = useCallback(
+    (tRaw: number, channel: GraphChannelKey, value: number) => {
+      setPlaying(false);
+      const result = setChannelKeyframe(
+        channelsRef.current,
+        channel,
+        tRaw,
+        value,
+      );
+      commitChannels(result.tracks, {
+        t: result.t,
+        selectChannel: channel,
+        selectIndex: result.index,
+        statusText: `Added ${channel} @ ${roundValue(result.t, 3)} = ${roundChannelValue(channel, value)}`,
+      });
+    },
+    [commitChannels],
+  );
+
+  const beginGraphHandleDrag = useCallback(
+    (
+      event: ReactPointerEvent<SVGCircleElement>,
+      index: number,
+      channel: GraphChannelKey,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const frames = channelsRef.current[channel] ?? [];
+      if (!frames[index]) return;
+      setPlaying(false);
+      graphPanRef.current = null;
+      setActiveGraphChannel(channel);
+      setSelectedKeyframeIndex(index);
+      graphDragRef.current = {
+        index,
+        channel,
+        moved: false,
+      };
+      graphPointerIdRef.current = event.pointerId;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    [],
+  );
+
+  const beginGraphPan = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>, channel: GraphChannelKey | null) => {
+      if (event.button !== 1 && !(event.button === 0 && event.altKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      graphDragRef.current = null;
+      graphPanRef.current = {
+        channel,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        origin: cloneViewport(graphViewportRef.current),
+      };
+      graphPointerIdRef.current = event.pointerId;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      const pan = graphPanRef.current;
+      if (pan) {
+        const svg = graphSvgRef.current;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const height = graphHeight(Math.max(1, graphLanesRef.current.length));
+        const dxPx = event.clientX - pan.startClientX;
+        const dyPx = event.clientY - pan.startClientY;
+        const dxSvg = (dxPx / rect.width) * GRAPH_VIEW.width;
+        const dySvg = (dyPx / rect.height) * height;
+        const origin = pan.origin;
+        const spanT = origin.t1 - origin.t0;
+        const channel = pan.channel;
+        const win = channel ? origin.values[channel] : { n0: 0, n1: 1 };
+        const spanN = win.n1 - win.n0;
+        const lane = channel
+          ? graphLanesRef.current.find((entry) => entry.key === channel)
+          : graphLanesRef.current[0];
+        const plotH = lane?.plotH ?? GRAPH_VIEW.laneH;
+        const dT = -(dxSvg / Math.max(GRAPH_PLOT_W, 1)) * spanT;
+        const dN = (dySvg / Math.max(plotH, 1)) * spanN;
+        updateGraphViewport(panViewport(origin, dT, dN, channel));
+        return;
+      }
+
+      const drag = graphDragRef.current;
+      if (!drag) return;
+      const point = clientToGraphPoint(event.clientX, event.clientY);
+      if (!point) return;
+      const lane =
+        graphLanesRef.current.find((entry) => entry.key === drag.channel) ??
+        hitTestLane(point.y, graphLanesRef.current);
+      if (!lane) return;
+      drag.moved = true;
+      const view = graphViewportRef.current;
+      const channel = getGraphChannel(drag.channel);
+      const nextT = clamp(graphXToT(point.x, view), 0, 1);
+      const nextValue = graphYToValue(point.y, channel, view, lane);
+      drag.index = commitGraphChannelKeyframe(
+        drag.channel,
+        drag.index,
+        nextT,
+        nextValue,
+      );
+    };
+
+    const onUp = () => {
+      if (graphPanRef.current) {
+        graphPanRef.current = null;
+        graphPointerIdRef.current = null;
+        return;
+      }
+      const drag = graphDragRef.current;
+      if (!drag) return;
+      graphDragRef.current = null;
+      graphPointerIdRef.current = null;
+      if (drag.moved) {
+        setStatus(
+          `Moved ${drag.channel} keyframe → t=${roundValue(playheadTRef.current, 3)}`,
+        );
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [clientToGraphPoint, commitGraphChannelKeyframe, updateGraphViewport]);
+
+  // Wheel zoom on the graph (prevent page scroll while hovering).
+  useEffect(() => {
+    const svg = graphSvgRef.current;
+    if (!svg) return;
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const point = clientToGraphPoint(event.clientX, event.clientY);
+      const view = graphViewportRef.current;
+      const lane = point
+        ? hitTestLane(point.y, graphLanesRef.current)
+        : graphLanesRef.current.find((entry) => entry.key === activeGraphChannel) ??
+          graphLanesRef.current[0];
+      const channelKey = lane?.key ?? activeGraphChannel;
+      if (lane) setActiveGraphChannel(channelKey);
+      const channel = getGraphChannel(channelKey);
+      const win = view.values[channelKey];
+      const anchorT = point
+        ? clamp(graphXToT(point.x, view), 0, 1)
+        : (view.t0 + view.t1) / 2;
+      const anchorN = point && lane
+        ? clamp(
+            valueToNorm(graphYToValue(point.y, channel, view, lane), channel),
+            0,
+            1,
+          )
+        : (win.n0 + win.n1) / 2;
+
+      const timeOnly = event.shiftKey && !event.altKey;
+      const valueOnly = event.altKey && !event.shiftKey;
+      const factor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
+      updateGraphViewport(
+        zoomViewportAt(view, factor, anchorT, anchorN, channelKey, {
+          time: !valueOnly,
+          value: !timeOnly,
+        }),
+      );
+    };
+
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      svg.removeEventListener("wheel", onWheel);
+    };
+  }, [activeGraphChannel, clientToGraphPoint, updateGraphViewport]);
+
+  const buildPreset = (): TransitionPreset => {
+    const nextChannels = cloneChannelTracks(channels);
+    return {
+      version: 3,
+      pattern: "mirror-slide-strip",
+      durationMs: sanitizeDurationMs(durationMs),
+      cardAId,
+      cardBId,
+      stageWidth: STAGE_WIDTH,
+      easing: sanitizeEasing(easing),
+      motionFx: {
+        enabled: motionFx.enabled,
+        blurPeak: motionFx.blurPeak,
+        blur: { ...motionFx.blur },
+        scalePeak: motionFx.scalePeak,
+        scale: { ...motionFx.scale },
+      },
+      channels: nextChannels,
+      keyframes: channelsToStripKeyframes(nextChannels),
+    };
+  };
 
   const copyJson = async () => {
     const json = JSON.stringify(buildPreset(), null, 2);
@@ -1174,18 +2429,24 @@ export function VideoTransitionPlayground() {
       const preset = clonePreset(presetRaw);
       const nextFx = preset.motionFx ?? defaultMotionFx();
       const nextEase = preset.easing ?? defaultEasing();
-      const frames = sortKeyframes(preset.keyframes);
+      const nextChannels = cloneChannelTracks(
+        preset.channels ?? stripKeyframesToChannels(preset.keyframes),
+      );
 
       setPlaying(false);
       setDurationMs(preset.durationMs);
       setDurationInput(String(preset.durationMs));
-      setKeyframes(frames);
+      channelsRef.current = nextChannels;
+      setChannels(nextChannels);
       setMotionFx(nextFx);
       motionFxRef.current = nextFx;
       setEasing(nextEase);
       easingRef.current = nextEase;
       setSelectedKeyframeIndex(0);
-      setPlayheadT(frames[0]?.t ?? 0);
+      setActiveGraphChannel("x");
+      setIsolatedChannel(null);
+      setPlayheadT(0);
+      playheadTRef.current = 0;
 
       if (cards.some((card) => card.id === preset.cardAId)) {
         setCardAId(preset.cardAId);
@@ -1201,10 +2462,10 @@ export function VideoTransitionPlayground() {
         setActiveTemplateId(opts.templateId ?? "");
       }
 
-      applySampledPose(frames[0]?.t ?? 0, frames, nextFx, nextEase);
+      applySampledPose(0, nextChannels, nextFx, nextEase);
       setStatus(
         opts?.statusText ??
-          `Loaded preset (${preset.durationMs}ms, ${frames.length} keyframes)`,
+          `Loaded preset (${preset.durationMs}ms, ${summarizeChannels(nextChannels)})`,
       );
     },
     [applySampledPose, cards],
@@ -1234,7 +2495,7 @@ export function VideoTransitionPlayground() {
       }
       applyPreset(parsed, {
         templateId: null,
-        statusText: `Imported ${parsed.keyframes.length} keyframes (${parsed.durationMs}ms)`,
+        statusText: `Imported ${summarizeChannels(parsed.channels ?? defaultChannelTracks())} (${parsed.durationMs}ms)`,
       });
     } catch {
       setStatus("Could not parse JSON");
@@ -1253,7 +2514,7 @@ export function VideoTransitionPlayground() {
     const next = { ...motionFx, ...patch };
     setMotionFx(next);
     motionFxRef.current = next;
-    applySampledPose(playheadT, keyframes, next);
+    applySampledPose(playheadT, channels, next);
   };
 
   const patchFxChannelWindow = (
@@ -1279,7 +2540,7 @@ export function VideoTransitionPlayground() {
       easingRef.current = next;
       applySampledPose(
         playheadTRef.current,
-        keyframesRef.current,
+        channelsRef.current,
         motionFxRef.current,
         next,
       );
@@ -1325,7 +2586,8 @@ export function VideoTransitionPlayground() {
   }, [updateEasing]);
 
   const playheadMs = playheadT * durationMs;
-  const nearExisting = findNearestKeyframeIndex(sortedKeyframes, playheadT) >= 0;
+  const nearExisting =
+    findNearestChannelKeyframeIndex(activeChannelFrames, playheadT) >= 0;
   const easedPlayhead = sampleCubicBezier(easing, playheadT);
 
   return (
@@ -1454,16 +2716,505 @@ export function VideoTransitionPlayground() {
                 }}
               />
               <div className="transition-lab-markers" aria-hidden="true">
-                {sortedKeyframes.map((frame, index) => (
+                {markerTimes.map((t) => (
                   <button
-                    key={`marker-${index}-${frame.t}`}
+                    key={`marker-${t}`}
                     type="button"
                     className="transition-lab-marker"
-                    style={{ left: `${frame.t * 100}%` }}
-                    title={`Keyframe @ ${roundValue(frame.t, 3)}`}
-                    onClick={() => jumpToKeyframe(index)}
+                    style={{ left: `${t * 100}%` }}
+                    title={`t=${roundValue(t, 3)}`}
+                    onClick={() => {
+                      setPlaying(false);
+                      setPlayhead(t);
+                    }}
                   />
                 ))}
+              </div>
+            </div>
+
+            <div className="transition-lab-graph">
+              <div className="transition-lab-graph-toolbar">
+                <div className="transition-lab-graph-title">
+                  <strong>Transform graph</strong>
+                  <span>
+                    Independent X / Y / Scale tracks · double-click chip to isolate
+                  </span>
+                </div>
+                <div className="transition-lab-graph-toggles">
+                  {GRAPH_CHANNELS.map((channel) => {
+                    const active = activeGraphChannel === channel.key;
+                    const isolated = isolatedChannel === channel.key;
+                    const visible =
+                      isolatedChannel === null
+                        ? graphVisibility[channel.key]
+                        : isolated;
+                    return (
+                      <button
+                        key={channel.key}
+                        type="button"
+                        className={[
+                          "transition-lab-graph-chip",
+                          active ? "is-active" : "",
+                          isolated ? "is-isolated" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        style={
+                          {
+                            "--chip-color": channel.color,
+                            opacity: visible ? 1 : 0.4,
+                          } as CSSProperties
+                        }
+                        onClick={() => {
+                          setActiveGraphChannel(channel.key);
+                          if (isolatedChannel && isolatedChannel !== channel.key) {
+                            setIsolatedChannel(channel.key);
+                          }
+                          setGraphVisibility((prev) => ({
+                            ...prev,
+                            [channel.key]: true,
+                          }));
+                          const nearest = findNearestChannelKeyframeIndex(
+                            channels[channel.key] ?? [],
+                            playheadT,
+                          );
+                          if (nearest >= 0) setSelectedKeyframeIndex(nearest);
+                        }}
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          isolateChannel(channel.key);
+                        }}
+                        title={`${channel.label} · click select · double-click isolate`}
+                      >
+                        <span
+                          className="transition-lab-graph-swatch"
+                          style={{ background: channel.color }}
+                        />
+                        {channel.label}
+                        {isolated ? <strong>solo</strong> : null}
+                        <em>
+                          {roundValue(
+                            graphPlayheadValues[channel.key],
+                            channel.digits,
+                          )}
+                        </em>
+                      </button>
+                    );
+                  })}
+                  {isolatedChannel ? (
+                    <button
+                      type="button"
+                      className="transition-lab-graph-chip"
+                      onClick={() => {
+                        setIsolatedChannel(null);
+                        setStatus("Showing all channels");
+                      }}
+                    >
+                      Show all
+                    </button>
+                  ) : null}
+                  <label className="transition-lab-graph-fx-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showFxOnGraph}
+                      onChange={(event) => setShowFxOnGraph(event.target.checked)}
+                    />
+                    FX scale
+                  </label>
+                </div>
+              </div>
+
+              <div className="transition-lab-graph-zoombar">
+                <div className="transition-lab-graph-zoom-btns">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => zoomGraphBy(1 / 1.25)}
+                    title="Zoom in"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => zoomGraphBy(1.25)}
+                    title="Zoom out"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => zoomGraphBy(1 / 1.25, { value: false })}
+                    title="Zoom time only"
+                  >
+                    +T
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => zoomGraphBy(1 / 1.25, { time: false })}
+                    title="Zoom value only (active channel)"
+                  >
+                    +V
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={focusGraphOnPlayhead}
+                    title="Focus viewport on playhead / active value"
+                  >
+                    Focus
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={resetGraphViewport}
+                    disabled={!isGraphZoomed}
+                    title="Reset zoom"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <span className="transition-lab-graph-zoom-label">
+                  {graphZoomLabel}
+                  {" · t "}
+                  {roundValue(graphViewport.t0, 3)}–{roundValue(graphViewport.t1, 3)}
+                  {isolatedChannel ? ` · solo ${isolatedChannel.toUpperCase()}` : ""}
+                </span>
+              </div>
+
+              <div
+                className={
+                  isGraphZoomed
+                    ? "transition-lab-graph-editor is-zoomed"
+                    : "transition-lab-graph-editor"
+                }
+              >
+                <svg
+                  ref={graphSvgRef}
+                  className="transition-lab-graph-svg"
+                  viewBox={`0 0 ${GRAPH_VIEW.width} ${graphSvgHeight}`}
+                  preserveAspectRatio="none"
+                  style={{ height: Math.max(160, graphLanes.length * 118) }}
+                  onPointerDown={(event) => {
+                    const point = clientToGraphPoint(event.clientX, event.clientY);
+                    const lane = point
+                      ? hitTestLane(point.y, graphLanes)
+                      : null;
+                    if (event.button === 1 || (event.button === 0 && event.altKey)) {
+                      beginGraphPan(event, lane?.key ?? activeGraphChannel);
+                      return;
+                    }
+                    if (event.target !== event.currentTarget) {
+                      const target = event.target as Element;
+                      if (target.closest(".transition-lab-graph-handle")) return;
+                    }
+                    if (!point) return;
+                    if (lane) setActiveGraphChannel(lane.key);
+                    setPlaying(false);
+                    setPlayhead(clamp(graphXToT(point.x, graphViewport), 0, 1));
+                  }}
+                  onContextMenu={(event) => {
+                    if (event.altKey) event.preventDefault();
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    const point = clientToGraphPoint(event.clientX, event.clientY);
+                    if (!point) return;
+                    const lane =
+                      hitTestLane(point.y, graphLanes) ??
+                      graphLanes.find((entry) => entry.key === activeGraphChannel) ??
+                      graphLanes[0];
+                    if (!lane) return;
+                    setActiveGraphChannel(lane.key);
+                    const t = clamp(graphXToT(point.x, graphViewport), 0, 1);
+                    const value = graphYToValue(
+                      point.y,
+                      lane.channel,
+                      graphViewport,
+                      lane,
+                    );
+                    addGraphKeyframeAt(t, lane.key, value);
+                  }}
+                >
+                  <defs>
+                    {graphLanes.map((lane) => (
+                      <clipPath
+                        key={`clip-${lane.key}`}
+                        id={`transition-lab-graph-clip-${lane.key}`}
+                      >
+                        <rect
+                          x={GRAPH_VIEW.padL}
+                          y={lane.plotTop}
+                          width={GRAPH_PLOT_W}
+                          height={lane.plotH}
+                        />
+                      </clipPath>
+                    ))}
+                  </defs>
+
+                  {graphLanes.map((lane) => {
+                    const isActive = activeGraphChannel === lane.key;
+                    const ticks = graphValueTicksByChannel[lane.key] ?? [];
+                    const frames = sortChannelKeyframes(channels[lane.key] ?? []);
+                    const zeroValue = lane.key === "scale" ? 1 : 0;
+                    return (
+                      <g key={`lane-${lane.key}`}>
+                        <rect
+                          className={
+                            isActive
+                              ? "transition-lab-graph-lane is-active"
+                              : "transition-lab-graph-lane"
+                          }
+                          x={GRAPH_VIEW.padL - 4}
+                          y={lane.top}
+                          width={GRAPH_PLOT_W + 8}
+                          height={lane.height}
+                          rx={6}
+                        />
+                        <text
+                          className="transition-lab-graph-lane-label"
+                          x={10}
+                          y={lane.top + 14}
+                          fill={lane.channel.color}
+                        >
+                          {lane.channel.label}
+                        </text>
+
+                        {/* Time grid */}
+                        {graphTimeTicks.map((t) => {
+                          const x = graphTToX(t, graphViewport);
+                          if (
+                            x < GRAPH_VIEW.padL - 1 ||
+                            x > GRAPH_VIEW.padL + GRAPH_PLOT_W + 1
+                          ) {
+                            return null;
+                          }
+                          return (
+                            <line
+                              key={`vgrid-${lane.key}-${t}`}
+                              className="transition-lab-graph-grid"
+                              x1={x}
+                              y1={lane.plotTop}
+                              x2={x}
+                              y2={lane.plotTop + lane.plotH}
+                            />
+                          );
+                        })}
+
+                        {/* Value grid */}
+                        {ticks.map((value) => {
+                          const y = graphValueToY(
+                            value,
+                            lane.channel,
+                            graphViewport,
+                            lane,
+                          );
+                          if (
+                            y < lane.plotTop - 1 ||
+                            y > lane.plotTop + lane.plotH + 1
+                          ) {
+                            return null;
+                          }
+                          return (
+                            <g key={`hgrid-${lane.key}-${value}`}>
+                              <line
+                                className="transition-lab-graph-grid"
+                                x1={GRAPH_VIEW.padL}
+                                y1={y}
+                                x2={GRAPH_VIEW.padL + GRAPH_PLOT_W}
+                                y2={y}
+                              />
+                              <text
+                                className="transition-lab-graph-axis-label"
+                                x={GRAPH_VIEW.padL - 8}
+                                y={y + 3}
+                                textAnchor="end"
+                              >
+                                {roundValue(value, lane.channel.digits)}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        <g clipPath={`url(#transition-lab-graph-clip-${lane.key})`}>
+                          <line
+                            className="transition-lab-graph-zero"
+                            x1={GRAPH_VIEW.padL}
+                            y1={graphValueToY(
+                              zeroValue,
+                              lane.channel,
+                              graphViewport,
+                              lane,
+                            )}
+                            x2={GRAPH_VIEW.padL + GRAPH_PLOT_W}
+                            y2={graphValueToY(
+                              zeroValue,
+                              lane.channel,
+                              graphViewport,
+                              lane,
+                            )}
+                          />
+
+                          <path
+                            className={
+                              isActive
+                                ? "transition-lab-graph-curve is-active"
+                                : "transition-lab-graph-curve"
+                            }
+                            d={graphChannelPaths[lane.key] ?? ""}
+                            stroke={lane.channel.color}
+                            fill="none"
+                            pointerEvents="none"
+                          />
+
+                          {lane.key === "scale" &&
+                            showFxOnGraph &&
+                            graphFxScalePath && (
+                              <path
+                                className="transition-lab-graph-curve-fx"
+                                d={graphFxScalePath}
+                                pointerEvents="none"
+                              />
+                            )}
+
+                          {playheadT >= graphViewport.t0 &&
+                            playheadT <= graphViewport.t1 && (
+                              <>
+                                <line
+                                  className="transition-lab-graph-playhead"
+                                  x1={graphTToX(playheadT, graphViewport)}
+                                  y1={lane.plotTop}
+                                  x2={graphTToX(playheadT, graphViewport)}
+                                  y2={lane.plotTop + lane.plotH}
+                                />
+                                <circle
+                                  className="transition-lab-graph-live"
+                                  cx={graphTToX(playheadT, graphViewport)}
+                                  cy={graphValueToY(
+                                    graphPlayheadValues[lane.key],
+                                    lane.channel,
+                                    graphViewport,
+                                    lane,
+                                  )}
+                                  r={isActive ? 4 : 3}
+                                  fill={lane.channel.color}
+                                  pointerEvents="none"
+                                />
+                              </>
+                            )}
+
+                          {frames.map((frame, index) => {
+                            if (
+                              frame.t < graphViewport.t0 - 1e-6 ||
+                              frame.t > graphViewport.t1 + 1e-6
+                            ) {
+                              return null;
+                            }
+                            const selected =
+                              isActive && index === selectedKeyframeIndex;
+                            const cx = graphTToX(frame.t, graphViewport);
+                            const cy = graphValueToY(
+                              frame.value,
+                              lane.channel,
+                              graphViewport,
+                              lane,
+                            );
+                            if (
+                              cy < lane.plotTop - 8 ||
+                              cy > lane.plotTop + lane.plotH + 8
+                            ) {
+                              return null;
+                            }
+                            return (
+                              <circle
+                                key={`handle-${lane.key}-${index}-${frame.t}`}
+                                className={
+                                  selected
+                                    ? "transition-lab-graph-handle is-active"
+                                    : "transition-lab-graph-handle"
+                                }
+                                cx={cx}
+                                cy={cy}
+                                r={selected ? 7 : 5.5}
+                                fill={lane.channel.color}
+                                onPointerDown={(event) =>
+                                  beginGraphHandleDrag(event, index, lane.key)
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  jumpToChannelKeyframe(lane.key, index);
+                                }}
+                              >
+                                <title>
+                                  {`${lane.channel.label} @ t=${roundValue(frame.t, 3)} · ${roundValue(
+                                    frame.value,
+                                    lane.channel.digits,
+                                  )}`}
+                                </title>
+                              </circle>
+                            );
+                          })}
+                        </g>
+                      </g>
+                    );
+                  })}
+
+                  {/* Shared time labels under last lane */}
+                  {graphLanes.length > 0 &&
+                    graphTimeTicks.map((t) => {
+                      const x = graphTToX(t, graphViewport);
+                      if (
+                        x < GRAPH_VIEW.padL - 1 ||
+                        x > GRAPH_VIEW.padL + GRAPH_PLOT_W + 1
+                      ) {
+                        return null;
+                      }
+                      const last = graphLanes[graphLanes.length - 1];
+                      return (
+                        <text
+                          key={`tlabel-${t}`}
+                          className="transition-lab-graph-axis-label"
+                          x={x}
+                          y={last.top + last.height + 14}
+                          textAnchor="middle"
+                        >
+                          {roundValue(
+                            t,
+                            t < 0.1 || graphViewport.t1 - graphViewport.t0 < 0.2
+                              ? 3
+                              : 2,
+                          )}
+                        </text>
+                      );
+                    })}
+                </svg>
+              </div>
+
+              <div className="transition-lab-graph-help">
+                <span>
+                  Active:{" "}
+                  <strong>{getGraphChannel(activeGraphChannel).label}</strong>
+                  {isolatedChannel ? " (solo)" : ""}
+                  {" · "}
+                  double-click lane to add on that channel only · drag handles · wheel zoom
+                </span>
+                <div className="button-row">
+                  <button type="button" onClick={addOrUpdateKeyframe}>
+                    {nearExisting
+                      ? `Update ${activeGraphChannel} @ playhead`
+                      : `Add ${activeGraphChannel} @ playhead`}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={deleteSelectedKeyframe}
+                    disabled={activeChannelFrames.length <= 1}
+                  >
+                    Delete selected
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1992,10 +3743,17 @@ export function VideoTransitionPlayground() {
           </section>
 
           <section className="transition-lab-section">
-            <h3>Keyframes</h3>
+            <h3>Keyframes · {getGraphChannel(activeGraphChannel).label}</h3>
+            <p className="transition-lab-hint">
+              Independent tracks. Edits apply only to{" "}
+              <strong>{activeGraphChannel.toUpperCase()}</strong>
+              {isolatedChannel ? " (solo mode)" : ""}.
+            </p>
             <div className="button-row">
               <button type="button" onClick={addOrUpdateKeyframe}>
-                {nearExisting ? "Update @ playhead" : "Add @ playhead"}
+                {nearExisting
+                  ? `Update ${activeGraphChannel} @ playhead`
+                  : `Add ${activeGraphChannel} @ playhead`}
               </button>
               <button
                 type="button"
@@ -2010,6 +3768,7 @@ export function VideoTransitionPlayground() {
                 type="button"
                 className="secondary-button"
                 onClick={deleteSelectedKeyframe}
+                disabled={activeChannelFrames.length <= 1}
               >
                 Delete selected
               </button>
@@ -2018,10 +3777,11 @@ export function VideoTransitionPlayground() {
               </button>
             </div>
             <ul className="transition-lab-keyframes">
-              {sortedKeyframes.map((frame, index) => {
+              {activeChannelFrames.map((frame, index) => {
                 const selected = index === selectedKeyframeIndex;
+                const channel = getGraphChannel(activeGraphChannel);
                 return (
-                  <li key={`kf-${index}-${frame.t}`}>
+                  <li key={`kf-${activeGraphChannel}-${index}-${frame.t}`}>
                     <button
                       type="button"
                       className={
@@ -2029,11 +3789,17 @@ export function VideoTransitionPlayground() {
                           ? "transition-lab-keyframe is-selected"
                           : "transition-lab-keyframe"
                       }
-                      onClick={() => jumpToKeyframe(index)}
+                      onClick={() =>
+                        jumpToChannelKeyframe(activeGraphChannel, index)
+                      }
                     >
                       <strong>t={roundValue(frame.t, 3)}</strong>
-                      <span>{summarizeStrip(frame.strip)}</span>
-                      <span>shows {visiblePanelLabel(frame.strip.x)}</span>
+                      <span>
+                        {channel.label}={roundValue(frame.value, channel.digits)}
+                      </span>
+                      {activeGraphChannel === "x" ? (
+                        <span>shows {visiblePanelLabel(frame.value)}</span>
+                      ) : null}
                     </button>
                   </li>
                 );
