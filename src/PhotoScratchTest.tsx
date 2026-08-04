@@ -729,6 +729,9 @@ export function PhotoScratchTest() {
   const claimedRef = useRef(false);
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameResultLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const tryResolveGameRef = useRef<() => void>(() => undefined);
   const advanceAfterScratchRef = useRef<() => void>(() => undefined);
   const completedCardIdsRef = useRef<string[]>([]);
@@ -798,6 +801,7 @@ export function PhotoScratchTest() {
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
+  const matchOutcomeRef = useRef<MatchGameOutcome | null>(null);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
@@ -814,6 +818,9 @@ export function PhotoScratchTest() {
   hasBodySymbolsRef.current = hasBodySymbols;
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const gameResultRef = useRef<GameResult | null>(null);
+  gameResultRef.current = gameResult;
+  const [gameResultLeaving, setGameResultLeaving] = useState(false);
   const [playlist, setPlaylist] = useState<PhotoScratchCardEntry[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
   const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
@@ -825,6 +832,10 @@ export function PhotoScratchTest() {
   // Theme ids whose intro clip has already played this session — one
   // playthrough per theme, even across multiple motion cards / photo slots.
   const introShownForThemeRef = useRef<Set<string>>(new Set());
+  /** True when the current match's 3-2-1 already ran over the theme intro. */
+  const countdownOverIntroRef = useRef(false);
+  /** One 3-2-1 per photo-hand / session — later cards skip it. */
+  const sessionCountdownDoneRef = useRef(false);
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -864,6 +875,7 @@ export function PhotoScratchTest() {
   function armIntroForEntry(entry: PhotoScratchCardEntry | undefined) {
     const url = entry ? entry.intro?.trim() : "";
     const themeId = entry ? entry.theme_id?.trim() : "";
+    countdownOverIntroRef.current = false;
     if (!url || !themeId || introShownForThemeRef.current.has(themeId)) {
       setIntroVideoUrl("");
       setIntroActive(false);
@@ -874,18 +886,52 @@ export function PhotoScratchTest() {
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;
+    // 3-2-1 only once per session — later theme intros play without it.
+    if (sessionCountdownDoneRef.current) return;
+    countdownOverIntroRef.current = true;
+    clearIntroDockTimer();
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(true);
   }
 
   function dismissIntro() {
     setIntroActive(false);
     introActiveRef.current = false;
+    // Leave countdown running if it started over the intro.
   }
 
   function resetGameOutcome() {
     clearGameResultTimer();
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+      gameResultLeaveTimerRef.current = null;
+    }
     gameResultPendingRef.current = null;
+    gameResultRef.current = null;
+    matchOutcomeRef.current = null;
     setGameResult(null);
+    setGameResultLeaving(false);
     setMatchOutcome(null);
+  }
+
+  function beginLeaveGameResult() {
+    if (gameResultLeaving) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      advanceAfterScratchRef.current();
+      return;
+    }
+    setGameResultLeaving(true);
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+    }
+    gameResultLeaveTimerRef.current = window.setTimeout(() => {
+      gameResultLeaveTimerRef.current = null;
+      advanceAfterScratchRef.current();
+    }, 760);
   }
 
   function resetMatchRound() {
@@ -904,10 +950,38 @@ export function PhotoScratchTest() {
   function onTopBarAllRevealed() {
     setTopBarPhase("docked");
     topBarPhaseRef.current = "docked";
+    clearIntroDockTimer();
+    // Later cards: skip 3-2-1 entirely.
+    if (sessionCountdownDoneRef.current) {
+      setIntroGateActive(true);
+      introGateActiveRef.current = true;
+      introDockTimerRef.current = window.setTimeout(() => {
+        introDockTimerRef.current = null;
+        setIntroGateActive(false);
+        introGateActiveRef.current = false;
+      }, TOP_BAR_DOCK_MS);
+      return;
+    }
+    // 3-2-1 already ran (or is running) over the theme intro — don't start another.
+    if (countdownOverIntroRef.current) {
+      countdownOverIntroRef.current = false;
+      setIntroGateActive(true);
+      introGateActiveRef.current = true;
+      if (showIntroCountdown) {
+        // Over-intro countdown still playing; unlock when it completes.
+        return;
+      }
+      sessionCountdownDoneRef.current = true;
+      introDockTimerRef.current = window.setTimeout(() => {
+        introDockTimerRef.current = null;
+        setIntroGateActive(false);
+        introGateActiveRef.current = false;
+      }, TOP_BAR_DOCK_MS);
+      return;
+    }
     setIntroGateActive(true);
     introGateActiveRef.current = true;
     setShowIntroCountdown(false);
-    clearIntroDockTimer();
     introDockTimerRef.current = window.setTimeout(() => {
       introDockTimerRef.current = null;
       setShowIntroCountdown(true);
@@ -915,6 +989,7 @@ export function PhotoScratchTest() {
   }
 
   function onIntroCountdownComplete() {
+    sessionCountdownDoneRef.current = true;
     setShowIntroCountdown(false);
     setIntroGateActive(false);
     introGateActiveRef.current = false;
@@ -984,6 +1059,10 @@ export function PhotoScratchTest() {
         const session = beginPhotoPhase() ?? existing;
         const index = await fetchPhotoScratchIndex();
         const hand = playlistForGameSession(index, session);
+        // Fresh photo hand → allow one 3-2-1; resume mid-hand keeps it spent.
+        if (session.completedPhotoIds.length === 0) {
+          sessionCountdownDoneRef.current = false;
+        }
         setPlaylist(hand);
         setCompletedCardIds(session.completedPhotoIds);
         completedCardIdsRef.current = session.completedPhotoIds;
@@ -1569,11 +1648,14 @@ export function PhotoScratchTest() {
       }
     }
     gameResultPendingRef.current = outcome;
+    matchOutcomeRef.current = match;
+    gameResultRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    const overlayDelayMs = playGameOutcomeSound(
+    // Skip the win/lose overlay — sting then next card / hub.
+    const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
@@ -1581,8 +1663,8 @@ export function PhotoScratchTest() {
     clearGameResultTimer();
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
-      setGameResult(outcome);
-    }, overlayDelayMs);
+      advanceAfterScratchRef.current();
+    }, advanceDelayMs);
   }
   tryResolveGameRef.current = tryResolveGame;
 
@@ -1594,10 +1676,12 @@ export function PhotoScratchTest() {
     }
 
     const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
+    const match = matchOutcomeRef.current ?? matchOutcome;
+    const result = gameResultRef.current ?? gameResult;
     let diamonds = 0;
-    if (matchOutcome) {
-      diamonds = matchOutcome.prize;
-    } else if (gameResult === "win") {
+    if (match) {
+      diamonds = match.prize;
+    } else if (result === "win") {
       diamonds = 1;
     }
     if (inGame) {
@@ -2134,7 +2218,9 @@ export function PhotoScratchTest() {
         <div
           ref={stageRef}
           className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
-            hasBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
+            hasBodySymbols && !introActive && topBarPhase === "center"
+              ? " is-bar-phase"
+              : ""
           }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}${introActive ? " is-intro-video-phase" : ""}`}
         >
           {introActive && introVideoUrl ? (
@@ -2244,31 +2330,39 @@ export function PhotoScratchTest() {
           </div>
           {gameResult ? (
             <div
-              className={`game-result game-result--${gameResult}`}
+              className={`game-result game-result--${gameResult}${
+                gameResultLeaving ? " is-leaving" : ""
+              }`}
               role="status"
               aria-live="polite"
             >
-              <p className="game-result-title">
-                {gameResult === "win" ? "You win!" : "No luck this time"}
-              </p>
-              <p className="game-result-detail">
-                {matchOutcome
-                  ? matchResultDetail(matchOutcome, "diamonds")
-                  : gameResult === "win"
-                    ? "Three matching symbols — nice!"
-                    : "No three-of-a-kind — try again."}
-              </p>
-              <button
-                type="button"
-                className="game-result-button"
-                onClick={() => advanceAfterScratchRef.current()}
-              >
-                {remainingCards.length > 1
-                  ? "Next card"
-                  : isGameModeUrl()
-                    ? "See diamonds"
-                    : "Done"}
-              </button>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">
+                      {gameResult === "win" ? "You win!" : "No luck this time"}
+                    </p>
+                    <p className="game-result-detail">
+                      {matchOutcome
+                        ? matchResultDetail(matchOutcome, "diamonds")
+                        : gameResult === "win"
+                          ? "Three matching symbols — nice!"
+                          : "No three-of-a-kind — try again."}
+                    </p>
+                    <button
+                      type="button"
+                      className="game-result-button"
+                      onClick={beginLeaveGameResult}
+                    >
+                      {remainingCards.length > 1
+                        ? "Next card"
+                        : isGameModeUrl()
+                          ? "See diamonds"
+                          : "Done"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>

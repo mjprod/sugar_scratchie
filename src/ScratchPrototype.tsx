@@ -25,6 +25,7 @@ import {
   loadGameSession,
   navigateTo,
   recordMotionCardResult,
+  themeForMotionCard,
   type GameSession,
 } from "./game/gameSession";
 import {
@@ -32,6 +33,7 @@ import {
   TOP_BAR_DOCK_MS,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { fetchThemes } from "./shared/themes";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -1185,15 +1187,36 @@ export function ScratchPrototype() {
   const [isScratching, setIsScratching] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const [gameResultLeaving, setGameResultLeaving] = useState(false);
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
+  const matchOutcomeRef = useRef<MatchGameOutcome | null>(null);
   const [topSymbols, setTopSymbols] = useState(buildTopSymbols);
   const [topBarPhase, setTopBarPhase] = useState<TopBarPhase>("center");
   const [topBarRound, setTopBarRound] = useState(0);
   /** Locks body scratch / video from dock through countdown end. */
   const [introGateActive, setIntroGateActive] = useState(false);
   const [showIntroCountdown, setShowIntroCountdown] = useState(false);
+  /** Theme intro clip for the current Play/Continue visit (game mode only). */
+  const [introVideoUrl, setIntroVideoUrl] = useState("");
+  const [introActive, setIntroActive] = useState(false);
+  const introActiveRef = useRef(false);
+  introActiveRef.current = introActive;
+  const introVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const handStartIntroDoneRef = useRef(false);
+  /** True when 3-2-1 already played over the hand-start theme intro. */
+  const handStartCountdownOverIntroRef = useRef(false);
+  /** One 3-2-1 per hand — later cards skip straight to play after the top bar. */
+  const handCountdownDoneRef = useRef(false);
+  /** Keeps match locked until that over-intro countdown finishes. */
+  const [handStartCountdownPending, setHandStartCountdownPending] = useState(false);
+  const themeIntroByKeyRef = useRef<Map<string, string>>(new Map());
+  const [themeIntrosReady, setThemeIntrosReady] = useState(false);
+  /** True once we've decided whether to show a hand-start intro (or skipped it). */
+  const [handStartIntroResolved, setHandStartIntroResolved] = useState(
+    () => !isGameModeUrl(),
+  );
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
@@ -1208,6 +1231,9 @@ export function ScratchPrototype() {
   gameResultRef.current = gameResult;
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameResultLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const introDockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topSymbolsRef = useRef(topSymbols);
   topSymbolsRef.current = topSymbols;
@@ -1278,18 +1304,94 @@ export function ScratchPrototype() {
   }
 
   function isBodyScratchLocked() {
+    if (introActiveRef.current) return true;
+    if (gameMode && !handStartIntroDoneRef.current) return true;
     return (
       useBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
   }
 
+  function scheduleIntroCountdown() {
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setShowIntroCountdown(true);
+      showIntroCountdownRef.current = true;
+    }, TOP_BAR_DOCK_MS);
+  }
+
+  function dismissThemeIntro() {
+    setIntroActive(false);
+    introActiveRef.current = false;
+    // Countdown stays up if still running — it overlays the stage until done.
+  }
+
+  function armHandStartIntro(cardId: string, session: GameSession) {
+    if (handStartIntroDoneRef.current) return;
+    handStartIntroDoneRef.current = true;
+    const themeLabel = themeForMotionCard(session, cardId)?.trim();
+    const url = themeLabel
+      ? themeIntroByKeyRef.current.get(themeLabel.toLowerCase()) ?? ""
+      : "";
+    clearIntroDockTimer();
+    setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
+    setHandStartCountdownPending(false);
+    handStartCountdownOverIntroRef.current = false;
+    if (!url) {
+      setIntroVideoUrl("");
+      setIntroActive(false);
+      introActiveRef.current = false;
+      setHandStartIntroResolved(true);
+      return;
+    }
+    setIntroVideoUrl(url);
+    setIntroActive(true);
+    introActiveRef.current = true;
+    setHandStartIntroResolved(true);
+    // 3-2-1 plays on top of the theme intro (once for this hand-start visit).
+    handStartCountdownOverIntroRef.current = true;
+    setHandStartCountdownPending(true);
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(true);
+    showIntroCountdownRef.current = true;
+  }
+
   function resetGameOutcome() {
     clearGameResultTimer();
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+      gameResultLeaveTimerRef.current = null;
+    }
     gameResultPendingRef.current = null;
     gameResultRef.current = null;
+    matchOutcomeRef.current = null;
     setGameResult(null);
+    setGameResultLeaving(false);
     setMatchOutcome(null);
+  }
+
+  function beginLeaveGameResult() {
+    if (gameResultLeaving) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      advanceAfterScratchRef.current();
+      return;
+    }
+    setGameResultLeaving(true);
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+    }
+    // Don't rely only on animationend — some browsers skip it when the
+    // leave animation replaces an in-flight open animation.
+    gameResultLeaveTimerRef.current = window.setTimeout(() => {
+      gameResultLeaveTimerRef.current = null;
+      advanceAfterScratchRef.current();
+    }, 760);
   }
 
   function resetMatchRound() {
@@ -1297,12 +1399,29 @@ export function ScratchPrototype() {
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
-    setIntroGateActive(false);
-    introGateActiveRef.current = false;
-    setShowIntroCountdown(false);
+    // Card-load effect runs after armHandStartIntro in the same commit. Don't
+    // wipe a hand-start 3-2-1 that was just armed (or the over-intro flag stays
+    // set and the post-dock countdown is skipped forever).
+    const preserveHandStartCountdown =
+      handStartCountdownOverIntroRef.current || handStartCountdownPending;
+    if (!preserveHandStartCountdown) {
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+      setShowIntroCountdown(false);
+      showIntroCountdownRef.current = false;
+    }
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
+  }
+
+  function unlockPlayAfterDock() {
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+    }, TOP_BAR_DOCK_MS);
   }
 
   function onTopBarAllRevealed() {
@@ -1310,18 +1429,41 @@ export function ScratchPrototype() {
     topBarPhaseRef.current = "docked";
     setIntroGateActive(true);
     introGateActiveRef.current = true;
-    setShowIntroCountdown(false);
     clearIntroDockTimer();
-    introDockTimerRef.current = window.setTimeout(() => {
-      introDockTimerRef.current = null;
-      setShowIntroCountdown(true);
-    }, TOP_BAR_DOCK_MS);
+    // Later cards in the hand: no 3-2-1, just open play after the bar docks.
+    if (handCountdownDoneRef.current) {
+      unlockPlayAfterDock();
+      return;
+    }
+    // Already ran / still running 3-2-1 over the theme intro — no second copy.
+    if (handStartCountdownOverIntroRef.current) {
+      handStartCountdownOverIntroRef.current = false;
+      if (showIntroCountdownRef.current) {
+        // Still playing; unlock when InitialCountdown completes.
+        return;
+      }
+      // Armed for intro but not visible (e.g. wiped by a race) — play it now.
+      if (handStartCountdownPending) {
+        scheduleIntroCountdown();
+        return;
+      }
+      handCountdownDoneRef.current = true;
+      unlockPlayAfterDock();
+      return;
+    }
+    // First card, no over-intro path — one countdown for the whole hand.
+    setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
+    scheduleIntroCountdown();
   }
 
   function onIntroCountdownComplete() {
+    handCountdownDoneRef.current = true;
     setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
     setIntroGateActive(false);
     introGateActiveRef.current = false;
+    setHandStartCountdownPending(false);
   }
 
   useEffect(
@@ -1331,6 +1473,51 @@ export function ScratchPrototype() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!gameMode) {
+      setThemeIntrosReady(false);
+      themeIntroByKeyRef.current = new Map();
+      handStartIntroDoneRef.current = false;
+      handCountdownDoneRef.current = false;
+      setHandStartIntroResolved(true);
+      return;
+    }
+    handStartIntroDoneRef.current = false;
+    handCountdownDoneRef.current = false;
+    setHandStartIntroResolved(false);
+    setThemeIntrosReady(false);
+    let cancelled = false;
+    void fetchThemes()
+      .then((themes) => {
+        if (cancelled) return;
+        const map = new Map<string, string>();
+        for (const theme of themes) {
+          const url = theme.intro?.trim();
+          if (!url) continue;
+          map.set(theme.id.toLowerCase(), url);
+          map.set(theme.label.toLowerCase(), url);
+        }
+        themeIntroByKeyRef.current = map;
+        setThemeIntrosReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        themeIntroByKeyRef.current = new Map();
+        setThemeIntrosReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameMode]);
+
+  useEffect(() => {
+    if (!gameMode || !gameSession || !selectedCardId || !themeIntrosReady) {
+      return;
+    }
+    armHandStartIntro(selectedCardId, gameSession);
+  }, [gameMode, gameSession, selectedCardId, themeIntrosReady]);
+
   // / showMesh changes (those are read live via refs).
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2032,16 +2219,24 @@ export function ScratchPrototype() {
     );
   }
 
+  // Hold top-bar until theme intro + its overlaid 3-2-1 have finished.
+  const matchStartUnlocked =
+    !gameMode ||
+    (handStartIntroResolved && !introActive && !handStartCountdownPending);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
   const autoScratchLocked =
-    useBodySymbols &&
-    (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
+    !matchStartUnlocked ||
+    introActive ||
+    (useBodySymbols &&
+      (!symbolsHuntComplete || topBarPhase === "center" || introGateActive));
   // Sparkles only during the hunt play window (after countdown, before all
   // symbols found); cards without body symbols have no countdown gate.
   const cursorFxPlayWindow =
-    !useBodySymbols ||
-    (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete);
+    matchStartUnlocked &&
+    !introActive &&
+    (!useBodySymbols ||
+      (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete));
   // Also require an active scratch stroke so idle cursor movement is quiet.
   const cursorFxSpawnActive = cursorFxPlayWindow && isScratching;
 
@@ -2099,10 +2294,12 @@ export function ScratchPrototype() {
     const finishedId = selectedCardId;
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
 
+    const match = matchOutcomeRef.current ?? matchOutcome;
+    const result = gameResultRef.current ?? gameResult;
     let prize = 0;
-    if (matchOutcome) {
-      prize = matchOutcome.prize;
-    } else if (gameResult === "win") {
+    if (match) {
+      prize = match.prize;
+    } else if (result === "win") {
       prize = 1;
     }
 
@@ -2177,11 +2374,14 @@ export function ScratchPrototype() {
       }
     }
     gameResultPendingRef.current = outcome;
+    matchOutcomeRef.current = match;
+    gameResultRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    const overlayDelayMs = playGameOutcomeSound(
+    // Play the outcome sting, then skip the win/lose overlay and go next.
+    const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
@@ -2189,9 +2389,8 @@ export function ScratchPrototype() {
     clearGameResultTimer();
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
-      gameResultRef.current = outcome;
-      setGameResult(outcome);
-    }, overlayDelayMs);
+      advanceAfterScratchRef.current();
+    }, advanceDelayMs);
   }
   tryResolveGameRef.current = tryResolveGame;
 
@@ -2574,11 +2773,13 @@ export function ScratchPrototype() {
       <legend>Auto scratch</legend>
       {autoScratchLocked ? (
         <p className="auto-scratch-hint">
-          {topBarPhase === "center"
-            ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
-            : introGateActive
-              ? "Get ready — play starts after the countdown."
-              : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+          {introActive
+            ? "Theme intro + 3-2-1 — play unlocks when both finish."
+            : topBarPhase === "center"
+              ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+              : introGateActive
+                ? "Get ready — play starts after the countdown."
+                : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2624,11 +2825,13 @@ export function ScratchPrototype() {
       <legend>Cursor FX</legend>
       {cursorFx.fairyDust && !cursorFxPlayWindow ? (
         <p className="auto-scratch-hint">
-          {topBarPhase === "center"
-            ? "Scratch the top symbols first — cursor FX starts after the countdown."
-            : introGateActive
-              ? "Get ready — cursor FX starts after the countdown."
-              : "Cursor FX pauses once all symbols are found."}
+          {introActive
+            ? "Theme intro + 3-2-1 — cursor FX starts when play unlocks."
+            : topBarPhase === "center"
+              ? "Scratch the top symbols first — cursor FX starts after the countdown."
+              : introGateActive
+                ? "Get ready — cursor FX starts after the countdown."
+                : "Cursor FX pauses once all symbols are found."}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2873,34 +3076,73 @@ export function ScratchPrototype() {
         <div
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
-            useBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
-          }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}`}
+            useBodySymbols &&
+            matchStartUnlocked &&
+            topBarPhase === "center" &&
+            !introGateActive
+              ? " is-bar-phase"
+              : ""
+          }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}${
+            introActive ? " is-intro-video-phase" : ""
+          }`}
         >
           {glError ? (
             <div
-              className="game-result"
+              className="game-result game-result--static"
               role="alert"
               style={{ pointerEvents: "auto" }}
             >
-              <p className="game-result-title">WebGL2 required</p>
-              <p className="game-result-detail">
-                {glError}. Open this page in Chrome or Safari (not Cursor's
-                Simple Browser), and make sure hardware acceleration is on.
-              </p>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">WebGL2 required</p>
+                    <p className="game-result-detail">
+                      {glError}. Open this page in Chrome or Safari (not
+                      Cursor's Simple Browser), and make sure hardware
+                      acceleration is on.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
           {typeof window !== "undefined" &&
           new URLSearchParams(window.location.search).has("debug") ? (
             <DebugHud />
           ) : null}
-          {useBodySymbols ? (
+          {introActive && introVideoUrl ? (
+            <div
+              className="photo-scratch-intro-video"
+              role="button"
+              tabIndex={0}
+              aria-label="Skip intro"
+              onClick={dismissThemeIntro}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  dismissThemeIntro();
+                }
+              }}
+            >
+              <video
+                ref={introVideoElRef}
+                autoPlay
+                muted={!soundEnabled}
+                playsInline
+                src={introVideoUrl}
+                onEnded={dismissThemeIntro}
+                onError={dismissThemeIntro}
+              />
+              <span className="photo-scratch-intro-video-skip">Tap to skip</span>
+            </div>
+          ) : null}
+          {useBodySymbols && matchStartUnlocked ? (
             <TopSymbolBar
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
               onAllRevealed={onTopBarAllRevealed}
             />
-          ) : (
+          ) : !useBodySymbols && matchStartUnlocked ? (
             <div
               className={`symbol-bar${revealedSymbols >= SYMBOL_SLOT_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
               aria-label="Game symbols"
@@ -2924,7 +3166,7 @@ export function ScratchPrototype() {
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
           {showIntroCountdown ? (
             <InitialCountdown
               onComplete={onIntroCountdownComplete}
@@ -3216,31 +3458,39 @@ export function ScratchPrototype() {
           </div>
           {gameResult ? (
             <div
-              className={`game-result game-result--${gameResult}`}
+              className={`game-result game-result--${gameResult}${
+                gameResultLeaving ? " is-leaving" : ""
+              }`}
               role="status"
               aria-live="polite"
             >
-              <p className="game-result-title">
-                {gameResult === "win" ? "You win!" : "No luck this time"}
-              </p>
-              <p className="game-result-detail">
-                {matchOutcome
-                  ? matchResultDetail(matchOutcome, "photo_scratches")
-                  : gameResult === "win"
-                    ? "Three matching symbols — nice!"
-                    : "No three-of-a-kind — try again."}
-              </p>
-              <button
-                type="button"
-                className="game-result-button"
-                onClick={() => advanceAfterScratchRef.current()}
-              >
-                {remainingCards.length > 1
-                  ? "Next card"
-                  : gameMode
-                    ? "Claim photo scratches"
-                    : "Done"}
-              </button>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">
+                      {gameResult === "win" ? "You win!" : "No luck this time"}
+                    </p>
+                    <p className="game-result-detail">
+                      {matchOutcome
+                        ? matchResultDetail(matchOutcome, "photo_scratches")
+                        : gameResult === "win"
+                          ? "Three matching symbols — nice!"
+                          : "No three-of-a-kind — try again."}
+                    </p>
+                    <button
+                      type="button"
+                      className="game-result-button"
+                      onClick={beginLeaveGameResult}
+                    >
+                      {remainingCards.length > 1
+                        ? "Next card"
+                        : gameMode
+                          ? "Claim photo scratches"
+                          : "Done"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>

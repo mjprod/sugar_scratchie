@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   beginPhotoPhase,
   clearGameSession,
+  firstMissingMotionCardId,
   loadGameSession,
   motionPlayHref,
   navigateTo,
@@ -50,7 +51,8 @@ function MotionPreview({ card }: { card: ThemedMotionCard }) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    video.src = card.bottom;
+    // Hub cards show the dressed foreground clip, not the under-layer bottom video.
+    video.src = card.foreground;
     video.load();
     const play = () => {
       void video.play().catch(() => undefined);
@@ -66,7 +68,7 @@ function MotionPreview({ card }: { card: ThemedMotionCard }) {
       window.clearInterval(keepAlive);
       releaseMediaElement(video);
     };
-  }, [card.bottom, card.id]);
+  }, [card.foreground, card.id]);
 
   return (
     <video
@@ -191,8 +193,36 @@ export function GamePage() {
     });
   }, [revealedSlots]);
 
+  // Lock New Game only while a motion/photo scratch run is mid-flight.
+  // On photo_reveal (and done), remake is allowed — abandon prizes and re-deal.
+  const handLocked =
+    Boolean(session) &&
+    (session!.phase === "motion" || session!.phase === "photo");
+  const canDeal =
+    !busy &&
+    (phase === "idle" ||
+      phase === "done" ||
+      phase === "photo_reveal" ||
+      (phase === "ready" && !handLocked));
+  const showHand =
+    hand.length > 0 && (phase === "dealing" || phase === "ready");
+  const inProgressSession =
+    session && (session.phase === "motion" || session.phase === "photo");
+  const playLabel =
+    session?.phase === "photo"
+      ? "Continue"
+      : session?.phase === "motion" && session.completedMotionIds.length > 0
+        ? "Continue"
+        : "Play";
+  const walletLabel =
+    session?.phase === "photo" || session?.phase === "photo_reveal"
+      ? `Game in progress · ${session.completedPhotoIds.length}/${session.wonPhotoIds.length || session.photoPrizeTotal} photos`
+      : handLocked
+        ? `Game in progress · ${session!.completedMotionIds.length}/${session!.motionCardIds.length} cards`
+        : "1 game available";
+
   async function startNewGame() {
-    if (busy) return;
+    if (!canDeal) return;
     if (motionPool.length === 0) {
       setError("No motion cards available.");
       return;
@@ -236,10 +266,7 @@ export function GamePage() {
         navigateTo(photoPlayHref(started));
         return;
       }
-      const remaining = existing.motionCardIds.find(
-        (id) => !existing.completedMotionIds.includes(id),
-      );
-      navigateTo(motionPlayHref(existing, remaining));
+      navigateTo(motionPlayHref(existing, firstMissingMotionCardId(existing)));
       return;
     }
     const created = startMotionSession(hand);
@@ -258,19 +285,36 @@ export function GamePage() {
     navigateTo(photoPlayHref(started));
   }
 
-  const canDeal =
-    phase === "idle" || phase === "ready" || phase === "photo_reveal" || phase === "done";
-  const showHand =
-    hand.length > 0 &&
-    (phase === "dealing" || phase === "ready");
-  const inProgressSession =
-    session && (session.phase === "motion" || session.phase === "photo");
-  const playLabel =
-    session?.phase === "photo"
-      ? "Continue photo scratches"
-      : session?.phase === "motion" && session.completedMotionIds.length > 0
-        ? "Continue motion cards"
-        : "Play";
+  function deleteGame() {
+    if (busy) return;
+    const hasProgress =
+      Boolean(session) || hand.length > 0 || phase === "photo_reveal" || phase === "done";
+    if (!hasProgress) return;
+    if (
+      !window.confirm(
+        "Delete this game? Your hand and any scratch progress will be lost.",
+      )
+    ) {
+      return;
+    }
+    runIdRef.current += 1;
+    clearGameSession();
+    setSession(null);
+    setHand([]);
+    setWonPhotos([]);
+    setRevealedSlots(0);
+    setPrizeRevealed(0);
+    resumedRef.current = false;
+    setError(null);
+    setBusy(false);
+    setPhase("idle");
+  }
+
+  const canDelete =
+    !busy &&
+    phase !== "loading" &&
+    phase !== "dealing" &&
+    (Boolean(session) || hand.length > 0);
 
   return (
     <main className={`game-hub game-hub--${phase}`}>
@@ -287,6 +331,10 @@ export function GamePage() {
         <p className="game-hub-copy game-hub-copy--mobile">
           5 themes → scratch for photos → photos for diamonds
         </p>
+        <div className="game-hub-wallet" aria-live="polite">
+          <span className="game-hub-wallet-label">Wallet</span>
+          <strong>{walletLabel}</strong>
+        </div>
         <div className="game-hub-meta">
           <span>
             {motionPool.length} motion · {themeCount} themes · {photoPool.length}{" "}
@@ -363,7 +411,7 @@ export function GamePage() {
                       </div>
                       {done ? (
                         <div className="game-hub-card-result">
-                          <span>Scratched</span>
+                          <span>PLAYED</span>
                         </div>
                       ) : null}
                     </div>
@@ -443,7 +491,7 @@ export function GamePage() {
         <button
           type="button"
           className="game-hub-new"
-          disabled={!canDeal || busy}
+          disabled={!canDeal}
           onClick={() => void startNewGame()}
         >
           New Game
@@ -465,6 +513,15 @@ export function GamePage() {
             onClick={playPhotoHand}
           >
             Scratch photos for diamonds
+          </button>
+        ) : null}
+        {canDelete ? (
+          <button
+            type="button"
+            className="game-hub-delete"
+            onClick={deleteGame}
+          >
+            Delete Game
           </button>
         ) : null}
         {phase === "dealing" ? (
