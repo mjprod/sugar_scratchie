@@ -411,7 +411,7 @@ export function GamePage() {
                       </div>
                       {done ? (
                         <div className="game-hub-card-result">
-                          <span>PLAYED</span>
+                          <span>Scratched</span>
                         </div>
                       ) : null}
                     </div>

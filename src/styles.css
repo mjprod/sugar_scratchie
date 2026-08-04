@@ -3504,7 +3504,9 @@ dd {
   position: absolute;
   left: 8px;
   right: 8px;
-  bottom: 64px;
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
   display: grid;
   gap: 6px;
   justify-items: center;
@@ -3916,7 +3918,6 @@ dd {
   }
 
   .game-hub-card-result {
-    bottom: 56px;
     left: 6px;
     right: 6px;
     padding: 6px;
