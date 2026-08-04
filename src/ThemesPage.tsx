@@ -142,6 +142,7 @@ export function ThemesPage() {
               <Heading size="7">Themes</Heading>
               <Text color="gray" size="2">
                 Categories for motion cards and photo scratch. Pick one in Video Flow Setup.
+                Upload intro videos on the model page under each theme header.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -292,6 +293,11 @@ export function ThemesPage() {
                             <Badge color="iris" size="1" variant="soft">
                               {theme.id}
                             </Badge>
+                            {theme.intro?.trim() ? (
+                              <Badge color="blue" size="1" variant="soft">
+                                intro
+                              </Badge>
+                            ) : null}
                           </Flex>
                         </>
                       )}

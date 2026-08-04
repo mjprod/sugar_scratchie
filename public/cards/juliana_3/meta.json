@@ -1,5 +1,6 @@
 {
   "label": "Julianaval Teacher 2",
   "model_id": "julianaval",
-  "sort_order": 3
+  "sort_order": 3,
+  "theme_id": "teacher"
 }

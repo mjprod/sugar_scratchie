@@ -31,7 +31,6 @@ from backend.cards import (
     compress_card,
     create_card,
     delete_card,
-    delete_card_intro,
     delete_card_photo,
     delete_card_trailer,
     delete_photo_scratch_layer,
@@ -48,7 +47,6 @@ from backend.cards import (
     reorder_model_cards,
     set_photo_scratch_slot_prompt,
     update_card,
-    upload_card_intro,
     upload_card_photo,
     upload_card_trailer,
     upload_photo_scratch_layer,
@@ -79,9 +77,11 @@ from backend.themes_store import (
     UpdateThemeRequest,
     create_theme,
     delete_theme,
+    delete_theme_intro,
     list_themes,
     reorder_themes,
     update_theme,
+    upload_theme_intro,
     write_themes_index,
 )
 from backend.symbols_store import (
@@ -631,18 +631,6 @@ def remove_card_trailer(card_id: str) -> dict:
     return card.dict()
 
 
-@app.post("/api/cards/{card_id}/intro")
-async def post_card_intro(card_id: str, file: UploadFile = File(...)) -> dict:
-    card = await upload_card_intro(ROOT, CARDS_DIR, MESH_DIR, card_id, file)
-    return card.dict()
-
-
-@app.delete("/api/cards/{card_id}/intro")
-def remove_card_intro(card_id: str) -> dict:
-    card = delete_card_intro(ROOT, CARDS_DIR, MESH_DIR, card_id)
-    return card.dict()
-
-
 # ── Photo-scratch slot endpoints ──────────────────────────────────────────────
 
 class GeneratePhotoScratchRequest(BaseModel):
@@ -676,7 +664,12 @@ def publish_photo_scratch_game_endpoint(card_id: str, slot_id: str = "") -> dict
     if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
         raise HTTPException(status_code=400, detail="Invalid slot_id")
     return publish_photo_scratch_game(
-        ROOT, CARDS_DIR, card_id, MESH_DIR, slot_id=slot_id or None
+        ROOT,
+        CARDS_DIR,
+        card_id,
+        MESH_DIR,
+        slot_id=slot_id or None,
+        themes_dir=THEMES_DIR,
     )
 
 
@@ -1065,6 +1058,18 @@ def put_theme(theme_id: str, request: UpdateThemeRequest) -> dict:
 def remove_theme(theme_id: str) -> dict:
     delete_theme(THEMES_DIR, theme_id)
     return {"ok": True, "id": theme_id}
+
+
+@app.post("/api/themes/{theme_id}/intro")
+async def post_theme_intro(theme_id: str, file: UploadFile = File(...)) -> dict:
+    theme = await upload_theme_intro(THEMES_DIR, theme_id, file)
+    return theme.dict()
+
+
+@app.delete("/api/themes/{theme_id}/intro")
+def remove_theme_intro(theme_id: str) -> dict:
+    theme = delete_theme_intro(THEMES_DIR, theme_id)
+    return theme.dict()
 
 
 @app.get("/api/symbols")

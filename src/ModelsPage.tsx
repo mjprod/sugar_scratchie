@@ -58,7 +58,6 @@ import {
   publishPhotoScratchGame,
   reorderModelCards,
   updateModel,
-  uploadCardIntro,
   uploadCardTrailer,
   uploadModelAvatar,
   uploadModelFlagSvg,
@@ -69,7 +68,7 @@ import {
   type PhotoInfo,
   type PhotoScratchSlot,
 } from "./shared/models";
-import { fetchThemes, type ThemeInfo } from "./shared/themes";
+import { fetchThemes, uploadThemeIntro, type ThemeInfo } from "./shared/themes";
 import {
   labelFromProjectId,
   PROJECT_ID_PATTERN,
@@ -104,8 +103,6 @@ type CardInfo = {
   theme_id?: string | null;
   /** Collection trailer preview URL when uploaded. */
   trailer?: string | null;
-  /** One-time in-game intro clip, played before the player's first scratch. */
-  intro?: string | null;
 };
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
@@ -825,11 +822,11 @@ export function ModelsPage() {
     }
   }
 
-  async function handleIntroUpload(cardId: string, file: File) {
+  async function handleIntroUpload(themeId: string, file: File) {
     setBusy(true);
     setError("");
     try {
-      await uploadCardIntro(cardId, file);
+      await uploadThemeIntro(themeId, file);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1020,8 +1017,8 @@ export function ModelsPage() {
                 setTrailerTargetId(cardId);
                 trailerInputRef.current?.click();
               }}
-              onIntroClick={(cardId) => {
-                setIntroTargetId(cardId);
+              onIntroClick={(themeId) => {
+                setIntroTargetId(themeId);
                 introInputRef.current?.click();
               }}
               onFlagClick={() => {
@@ -1630,7 +1627,7 @@ function ModelDetail({
   onAvatarClick: () => void;
   onThemeAvatarClick: (themeId: string) => void;
   onTrailerClick: (cardId: string) => void;
-  onIntroClick: (cardId: string) => void;
+  onIntroClick: (themeId: string) => void;
   onCancelCreateCard: () => void;
   onCancelRename: () => void;
   onCardIdChange: (value: string) => void;
@@ -1960,6 +1957,10 @@ function ModelDetail({
                 resolveThemeCatalogId(group.theme, themeCatalog);
               const themeAvatarUrl =
                 themeId && model.theme_avatars ? model.theme_avatars[themeId] : undefined;
+              const themeIntroUrl =
+                themeId
+                  ? themeCatalog.find((theme) => theme.id === themeId)?.intro?.trim() || ""
+                  : "";
               return (
                 <div key={themeKey(group.theme)} className="models-theme-group">
                   <div className="models-theme-group-header">
@@ -1974,24 +1975,75 @@ function ModelDetail({
                         <Badge color="iris" size="1" variant="soft">
                           {group.cards.length}
                         </Badge>
+                        {themeIntroUrl ? (
+                          <Badge color="blue" size="1" variant="soft">
+                            intro
+                          </Badge>
+                        ) : null}
                       </Flex>
-                      {themeId ? (
-                        <button
-                          aria-label={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
-                          className="models-theme-avatar-btn"
-                          disabled={busy}
-                          title={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
-                          onClick={() => onThemeAvatarClick(themeId)}
-                        >
-                          {themeAvatarUrl ? (
-                            <img alt="" className="models-theme-avatar" src={themeAvatarUrl} />
-                          ) : (
-                            <span className="models-theme-avatar models-theme-avatar--empty">
-                              <Upload size={14} strokeWidth={2} />
-                            </span>
-                          )}
-                        </button>
-                      ) : null}
+                      <Flex align="center" gap="2">
+                        {themeId ? (
+                          <button
+                            aria-label={themeIntroUrl ? "Replace theme intro" : "Upload theme intro"}
+                            className="models-theme-intro-btn"
+                            disabled={busy}
+                            title={
+                              themeIntroUrl
+                                ? "Replace intro video (plays once before first scratch)"
+                                : "Upload intro video (plays once before first scratch)"
+                            }
+                            type="button"
+                            onClick={() => onIntroClick(themeId)}
+                          >
+                            {themeIntroUrl ? (
+                              <video
+                                aria-hidden
+                                className="models-theme-intro-thumb"
+                                muted
+                                playsInline
+                                preload="metadata"
+                                src={previewSource(themeIntroUrl)}
+                                onLoadedData={(event) => {
+                                  const video = event.currentTarget;
+                                  if (video.readyState >= 2 && video.currentTime < 0.05) {
+                                    try {
+                                      video.currentTime = Math.min(
+                                        0.15,
+                                        (video.duration || 1) * 0.08,
+                                      );
+                                    } catch {
+                                      /* ignore seek failures */
+                                    }
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <span className="models-theme-intro-thumb models-theme-intro-thumb--empty">
+                                <Upload size={12} strokeWidth={2} />
+                                <span>Intro</span>
+                              </span>
+                            )}
+                          </button>
+                        ) : null}
+                        {themeId ? (
+                          <button
+                            aria-label={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
+                            className="models-theme-avatar-btn"
+                            disabled={busy}
+                            title={themeAvatarUrl ? "Replace theme avatar" : "Upload theme avatar"}
+                            type="button"
+                            onClick={() => onThemeAvatarClick(themeId)}
+                          >
+                            {themeAvatarUrl ? (
+                              <img alt="" className="models-theme-avatar" src={themeAvatarUrl} />
+                            ) : (
+                              <span className="models-theme-avatar models-theme-avatar--empty">
+                                <Upload size={14} strokeWidth={2} />
+                              </span>
+                            )}
+                          </button>
+                        ) : null}
+                      </Flex>
                     </Flex>
                   </div>
                   {group.cards.map((card, index) => {
@@ -2011,7 +2063,6 @@ function ModelDetail({
                         onMoveUp={() => onMoveCard(card.id, -1)}
                         onPublishGame={() => onPublishGame(card.id)}
                         onTrailerClick={() => onTrailerClick(card.id)}
-                        onIntroClick={() => onIntroClick(card.id)}
                       />
                     );
                   })}
@@ -2300,16 +2351,6 @@ function TrailerThumb({ card }: { card: CardInfo }) {
   );
 }
 
-function IntroThumb({ card }: { card: CardInfo }) {
-  const raw = card.intro?.trim() || "";
-  return (
-    <CardVideoThumb
-      label={`${card.label} intro`}
-      src={raw ? previewSource(raw) : ""}
-    />
-  );
-}
-
 function CardVideoThumb({ label, src }: { label: string; src: string }) {
   const [peek, setPeek] = useState<{ point: PeekPoint } | null>(null);
   const peekHandlers = useInstagramPeek(
@@ -2488,7 +2529,6 @@ function MotionCardRow({
   onMoveUp,
   onPublishGame,
   onTrailerClick,
-  onIntroClick,
 }: {
   busy: boolean;
   card: CardInfo;
@@ -2502,14 +2542,12 @@ function MotionCardRow({
   onMoveUp: () => void;
   onPublishGame: () => void;
   onTrailerClick: () => void;
-  onIntroClick: () => void;
 }) {
   const hasPicture =
     (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
   const hasGame = (card.photo_scratch_done ?? 0) > 0;
   const isDraft = Boolean(card.draft);
   const hasTrailer = Boolean(card.trailer?.trim());
-  const hasIntro = Boolean(card.intro?.trim());
 
   return (
     <div className="models-card-list-row">
@@ -2532,11 +2570,6 @@ function MotionCardRow({
               {!isDraft && hasTrailer ? (
                 <Badge color="green" size="1" variant="soft">
                   trailer
-                </Badge>
-              ) : null}
-              {!isDraft && hasIntro ? (
-                <Badge color="blue" size="1" variant="soft">
-                  intro
                 </Badge>
               ) : null}
             </Flex>
@@ -2649,36 +2682,6 @@ function MotionCardRow({
             <Button disabled={busy} size="1" variant="soft" onClick={onTrailerClick}>
               <Upload {...iconProps} />
               {hasTrailer ? "Replace trailer" : "Upload trailer"}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {!isDraft ? (
-        <div className="models-card-list-line models-card-list-line--intro">
-          {hasIntro ? (
-            <div className="models-card-list-identity">
-              <IntroThumb card={card} />
-              <div className="models-card-list-identity-text">
-                <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
-                  Intro
-                </Text>
-                <Text as="div" color="gray" size="1">
-                  Plays once before the first scratch
-                </Text>
-              </div>
-            </div>
-          ) : (
-            <div className="models-card-list-identity-text">
-              <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
-                Intro
-              </Text>
-            </div>
-          )}
-          <div className="models-card-list-actions">
-            <Button disabled={busy} size="1" variant="soft" onClick={onIntroClick}>
-              <Upload {...iconProps} />
-              {hasIntro ? "Replace intro" : "Upload intro"}
             </Button>
           </div>
         </div>
