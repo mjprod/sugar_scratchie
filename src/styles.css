@@ -3933,6 +3933,20 @@ dd {
   will-change: transform;
 }
 
+/* 3D flip: stack only A + B full-stage (mirrors hidden). */
+.transition-lab-strip.is-flip {
+  width: 100%;
+  height: 100%;
+  transform: none;
+  transform-style: preserve-3d;
+  will-change: auto;
+}
+
+.transition-lab-stage.is-flip {
+  /* Perspective is set inline from the preset. */
+  overflow: hidden;
+}
+
 .transition-lab-tile {
   position: relative;
   flex: 0 0 25%;
@@ -3940,6 +3954,28 @@ dd {
   height: 100%;
   overflow: hidden;
   background: #111;
+}
+
+.transition-lab-tile.is-flip-card {
+  position: absolute;
+  inset: 0;
+  flex: none;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #111;
+  transform-style: preserve-3d;
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.transition-lab-tile.is-flip-card.is-a {
+  z-index: 2;
+}
+
+.transition-lab-tile.is-flip-card.is-b {
+  z-index: 1;
 }
 
 .transition-lab-tile-tag {

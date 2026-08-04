@@ -104,7 +104,12 @@ type FlipRotateKey =
   | "bRotateY"
   | "bRotateZ";
 
-type ChannelKey = StripChannelKey | FlipRotateKey;
+/** Per-card translate/scale in flip mode (independent of strip x/scale). */
+type FlipCardMotionKey = "aX" | "bX" | "aScale" | "bScale";
+
+type FlipChannelKey = FlipRotateKey | FlipCardMotionKey;
+
+type ChannelKey = StripChannelKey | FlipChannelKey;
 
 type ChannelTracks = Record<ChannelKey, ChannelKeyframe[]>;
 
@@ -116,9 +121,14 @@ type Euler3 = {
   rotateZ: number;
 };
 
+type FlipCardPose = Euler3 & {
+  x: number;
+  scale: number;
+};
+
 type FlipPose = {
-  a: Euler3;
-  b: Euler3;
+  a: FlipCardPose;
+  b: FlipCardPose;
 };
 
 type TransitionPreset = {
@@ -183,13 +193,30 @@ const FLIP_ROTATE_KEYS: FlipRotateKey[] = [
   "bRotateZ",
 ];
 
-const CHANNEL_KEYS: ChannelKey[] = [...STRIP_CHANNEL_KEYS, ...FLIP_ROTATE_KEYS];
+const FLIP_CARD_MOTION_KEYS: FlipCardMotionKey[] = [
+  "aX",
+  "bX",
+  "aScale",
+  "bScale",
+];
+
+const FLIP_CHANNEL_KEYS: FlipChannelKey[] = [
+  ...FLIP_ROTATE_KEYS,
+  ...FLIP_CARD_MOTION_KEYS,
+];
+
+const CHANNEL_KEYS: ChannelKey[] = [...STRIP_CHANNEL_KEYS, ...FLIP_CHANNEL_KEYS];
 
 const DEFAULT_PERSPECTIVE_PX = 1200;
 const IDENTITY_EULER: Euler3 = { rotateX: 0, rotateY: 0, rotateZ: 0 };
+const IDENTITY_FLIP_CARD: FlipCardPose = {
+  ...IDENTITY_EULER,
+  x: 0,
+  scale: 1,
+};
 const IDENTITY_FLIP: FlipPose = {
-  a: { ...IDENTITY_EULER },
-  b: { ...IDENTITY_EULER },
+  a: { ...IDENTITY_FLIP_CARD },
+  b: { ...IDENTITY_FLIP_CARD },
 };
 
 function cloneChannelKeyframe(frame: ChannelKeyframe): ChannelKeyframe {
@@ -204,13 +231,27 @@ function isFlipRotateKey(key: string): key is FlipRotateKey {
   return (FLIP_ROTATE_KEYS as string[]).includes(key);
 }
 
+function isFlipCardMotionKey(key: string): key is FlipCardMotionKey {
+  return (FLIP_CARD_MOTION_KEYS as string[]).includes(key);
+}
+
+function isFlipChannelKey(key: string): key is FlipChannelKey {
+  return isFlipRotateKey(key) || isFlipCardMotionKey(key);
+}
+
 function isStripChannelKey(key: string): key is StripChannelKey {
   return (STRIP_CHANNEL_KEYS as string[]).includes(key);
 }
 
 function roundChannelValue(key: ChannelKey, value: number): number {
   if (isFlipRotateKey(key)) return roundValue(value, 2);
-  if (key === "scale" || key === "opacity" || key === "brightness") {
+  if (
+    key === "scale" ||
+    key === "aScale" ||
+    key === "bScale" ||
+    key === "opacity" ||
+    key === "brightness"
+  ) {
     return roundValue(value, 3);
   }
   if (key === "blur") return roundValue(value, 2);
@@ -232,6 +273,22 @@ function defaultFlipRotateTracks(): Pick<ChannelTracks, FlipRotateKey> {
     bRotateX: flatChannel(0),
     bRotateY: flatChannel(0),
     bRotateZ: flatChannel(0),
+  };
+}
+
+function defaultFlipCardMotionTracks(): Pick<ChannelTracks, FlipCardMotionKey> {
+  return {
+    aX: flatChannel(0),
+    bX: flatChannel(0),
+    aScale: flatChannel(1),
+    bScale: flatChannel(1),
+  };
+}
+
+function defaultFlipTracks(): Pick<ChannelTracks, FlipChannelKey> {
+  return {
+    ...defaultFlipRotateTracks(),
+    ...defaultFlipCardMotionTracks(),
   };
 }
 
@@ -258,7 +315,7 @@ function defaultChannelTracks(): ChannelTracks {
     blur: flatChannel(0),
     brightness: flatChannel(1),
     opacity: flatChannel(1),
-    ...defaultFlipRotateTracks(),
+    ...defaultFlipTracks(),
   };
 }
 
@@ -309,7 +366,10 @@ function stripKeyframesToChannels(
   for (const key of CHANNEL_KEYS) {
     const channelFrames: ChannelKeyframe[] = sorted.map((frame) => ({
       t: clamp(frame.t, 0, 1),
-      value: roundChannelValue(key, frame.strip[key]),
+      value: roundChannelValue(
+        key,
+        isStripChannelKey(key) ? frame.strip[key] : 0,
+      ),
     }));
     // Collapse consecutive identical values to keep tracks tidy, but always
     // keep first/last so each channel has a defined range.
@@ -733,6 +793,7 @@ function buildShiftLeftPreset(): TransitionPreset {
 /** Shift-left slide with mid-transition Y bounce + scale/brightness pulse. */
 function buildBounceOutPreset(): TransitionPreset {
   const channels: ChannelTracks = {
+    ...defaultFlipTracks(),
     x: [
       { t: 0, value: 0 },
       { t: 1, value: DEFAULT_END_X },
@@ -793,6 +854,7 @@ function buildBounceOutPreset(): TransitionPreset {
 /** Hold, then slide left with a mid-transition scale punch. */
 function buildZoomUpPreset(): TransitionPreset {
   const channels: ChannelTracks = {
+    ...defaultFlipTracks(),
     x: [
       { t: 0, value: 0 },
       { t: 0.1606, value: 0 },
@@ -845,6 +907,90 @@ function buildZoomUpPreset(): TransitionPreset {
   };
 }
 
+/**
+ * 3D card flip:
+ * - Card A hinges from center-left (rotateY 0 → -90)
+ * - Card B hinges from center-right (rotateY 90 → 0)
+ * No mirrored strip tiles — only A and B.
+ */
+function build3DFlipPreset(): TransitionPreset {
+  const channels: ChannelTracks = {
+    ...defaultChannelTracks(),
+    // Keep strip at rest; flip uses per-card rotate/x/scale tracks.
+    x: flatChannel(0),
+    y: flatChannel(0),
+    scale: flatChannel(1),
+    brightness: flatChannel(1),
+    opacity: flatChannel(1),
+    aX: flatChannel(0),
+    bX: flatChannel(0),
+    aScale: flatChannel(1),
+    // Landing bounce on B (impact ~t=0.429) then settle.
+    bScale: [
+      { t: 0, value: 1 },
+      { t: 0.364, value: 1 },
+      { t: 0.429, value: 0.965 },
+      { t: 0.657, value: 1.02 },
+      { t: 0.829, value: 0.992 },
+      { t: 1, value: 1 },
+    ],
+    blur: [
+      { t: 0, value: 0 },
+      { t: 0.075, value: 3.2 },
+      { t: 0.154, value: 5.4 },
+      { t: 0.263, value: 5.4 },
+      { t: 0.389, value: 5.43 },
+      { t: 0.536, value: 0 },
+      { t: 0.657, value: 0 },
+      { t: 1, value: 0 },
+    ],
+    aRotateY: [
+      { t: 0, value: 0 },
+      { t: 0.064, value: -14 },
+      { t: 0.129, value: -38 },
+      { t: 0.225, value: -56 },
+      { t: 0.343, value: -74 },
+      { t: 0.493, value: -86 },
+      { t: 0.643, value: -90 },
+      { t: 1, value: -90 },
+    ],
+    bRotateY: [
+      { t: 0, value: 90 },
+      { t: 0.096, value: 82 },
+      { t: 0.182, value: 68 },
+      { t: 0.268, value: 48 },
+      { t: 0.364, value: 14 },
+      { t: 0.429, value: -5.5 },
+      { t: 0.7, value: 2.4 },
+      { t: 0.871, value: -0.8 },
+      { t: 1, value: 0 },
+    ],
+  };
+  return {
+    version: 3,
+    pattern: "card-flip",
+    durationMs: 500,
+    cardAId: DEFAULT_CARD_A_ID,
+    cardBId: DEFAULT_CARD_B_ID,
+    stageWidth: STAGE_WIDTH,
+    perspectivePx: DEFAULT_PERSPECTIVE_PX,
+    easing: {
+      x1: 0,
+      y1: 0,
+      x2: 1,
+      y2: 1,
+    },
+    // Motion FX is a slide-strip tool — disabled for flip.
+    motionFx: {
+      ...defaultMotionFx(),
+      enabled: false,
+    },
+    channels,
+    keyframes: channelsToStripKeyframes(channels),
+  };
+}
+
+
 const TRANSITION_TEMPLATES: TransitionTemplate[] = [
   {
     id: "shift-left",
@@ -861,6 +1007,11 @@ const TRANSITION_TEMPLATES: TransitionTemplate[] = [
     label: "Zoom up",
     preset: buildZoomUpPreset(),
   },
+  {
+    id: "3d-flip",
+    label: "3D flip",
+    preset: build3DFlipPreset(),
+  },
 ];
 
 const DEFAULT_TEMPLATE_ID = "shift-left";
@@ -869,20 +1020,39 @@ function getTemplate(id: string): TransitionTemplate | null {
   return TRANSITION_TEMPLATES.find((entry) => entry.id === id) ?? null;
 }
 
+function sanitizePattern(value: unknown): TransitionPattern {
+  return value === "card-flip" ? "card-flip" : "mirror-slide-strip";
+}
+
+function sanitizePerspectivePx(
+  value: unknown,
+  fallback = DEFAULT_PERSPECTIVE_PX,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
 function clonePreset(preset: TransitionPreset): TransitionPreset {
   const channels = cloneChannelTracks(
     preset.channels ?? stripKeyframesToChannels(preset.keyframes),
   );
+  const pattern = sanitizePattern(preset.pattern);
   return {
     version: 3,
-    pattern: "mirror-slide-strip",
+    pattern,
     durationMs: preset.durationMs,
     cardAId: preset.cardAId,
     cardBId: preset.cardBId,
     stageWidth: preset.stageWidth,
+    perspectivePx: sanitizePerspectivePx(preset.perspectivePx),
     easing: sanitizeEasing(preset.easing ?? defaultEasing()),
     motionFx: {
-      enabled: preset.motionFx?.enabled ?? true,
+      enabled:
+        pattern === "card-flip"
+          ? false
+          : (preset.motionFx?.enabled ?? true),
       blurPeak: preset.motionFx?.blurPeak ?? DEFAULT_BLUR_PEAK,
       blur: {
         startPct: preset.motionFx?.blur.startPct ?? DEFAULT_BLUR_WINDOW.startPct,
@@ -978,6 +1148,81 @@ function applyMotionFx(
     ...base,
     blur: Math.max(0, base.blur + motion.blur),
     scale: base.scale * motion.scale,
+  };
+}
+
+function sampleFlipPose(
+  tracks: ChannelTracks,
+  t: number,
+  easing: CubicBezier,
+): FlipPose {
+  return {
+    a: {
+      rotateX: sampleChannelValue(tracks.aRotateX, t, easing, 0),
+      rotateY: sampleChannelValue(tracks.aRotateY, t, easing, 0),
+      rotateZ: sampleChannelValue(tracks.aRotateZ, t, easing, 0),
+      x: sampleChannelValue(tracks.aX, t, easing, 0),
+      scale: sampleChannelValue(tracks.aScale, t, easing, 1),
+    },
+    b: {
+      rotateX: sampleChannelValue(tracks.bRotateX, t, easing, 0),
+      rotateY: sampleChannelValue(tracks.bRotateY, t, easing, 0),
+      rotateZ: sampleChannelValue(tracks.bRotateZ, t, easing, 0),
+      x: sampleChannelValue(tracks.bX, t, easing, 0),
+      scale: sampleChannelValue(tracks.bScale, t, easing, 1),
+    },
+  };
+}
+
+function flipCardTransform(card: FlipCardPose): string {
+  return (
+    `translateX(${card.x}px) ` +
+    `scale(${card.scale}) ` +
+    `rotateX(${card.rotateX}deg) rotateY(${card.rotateY}deg) rotateZ(${card.rotateZ}deg)`
+  );
+}
+
+/** Outgoing card A: hinge on center-left. */
+function flipCardAStyle(card: FlipCardPose, zIndex: number): CSSProperties {
+  return {
+    transformOrigin: "left center",
+    transform: flipCardTransform(card),
+    backfaceVisibility: "hidden",
+    WebkitBackfaceVisibility: "hidden",
+    zIndex,
+  };
+}
+
+/** Incoming card B: hinge on center-right. */
+function flipCardBStyle(card: FlipCardPose, zIndex: number): CSSProperties {
+  return {
+    transformOrigin: "right center",
+    transform: flipCardTransform(card),
+    backfaceVisibility: "hidden",
+    WebkitBackfaceVisibility: "hidden",
+    zIndex,
+  };
+}
+
+/** Prefer the more face-on card (smaller |rotateY|) in front. */
+function flipCardZIndices(flip: FlipPose): { a: number; b: number } {
+  const aFace = Math.abs(((flip.a.rotateY + 180) % 360) - 180);
+  const bFace = Math.abs(((flip.b.rotateY + 180) % 360) - 180);
+  if (aFace <= bFace) return { a: 2, b: 1 };
+  return { a: 1, b: 2 };
+}
+
+function flipSceneStyle(perspectivePx: number): CSSProperties {
+  return {
+    perspective: `${perspectivePx}px`,
+    perspectiveOrigin: "50% 50%",
+  };
+}
+
+function flipFxLayerStyle(blur: number, opacity: number): CSSProperties {
+  return {
+    opacity,
+    filter: blur > 0.001 ? `blur(${blur}px)` : "none",
   };
 }
 
@@ -1126,14 +1371,19 @@ function parsePreset(raw: unknown): TransitionPreset | null {
   }
 
   const easing = parseEasing(data.easing) ?? defaultEasing();
+  const pattern = sanitizePattern(data.pattern);
+  if (pattern === "card-flip") {
+    motionFx = { ...motionFx, enabled: false };
+  }
 
   return {
     version: 3,
-    pattern: "mirror-slide-strip",
+    pattern,
     durationMs: sanitizeDurationMs(data.durationMs),
     cardAId: data.cardAId,
     cardBId: data.cardBId,
     stageWidth: STAGE_WIDTH,
+    perspectivePx: sanitizePerspectivePx(data.perspectivePx),
     easing,
     motionFx,
     channels,
@@ -1237,8 +1487,17 @@ const STRIP_SLIDERS: SliderDef[] = [
   { key: "opacity", label: "Opacity", min: 0, max: 1, step: 0.01 },
 ];
 
-/** Graph-editor channels for exact X / Y / Scale / Brightness keyframing. */
-type GraphChannelKey = "x" | "y" | "scale" | "brightness";
+/** Graph-editor channels (subset depends on active transition pattern). */
+type SlideGraphChannelKey = "x" | "y" | "scale" | "brightness";
+type FlipGraphChannelKey =
+  | "aX"
+  | "bX"
+  | "aScale"
+  | "bScale"
+  | "aRotateY"
+  | "bRotateY"
+  | "blur";
+type GraphChannelKey = SlideGraphChannelKey | FlipGraphChannelKey;
 
 type GraphChannelDef = {
   key: GraphChannelKey;
@@ -1250,7 +1509,7 @@ type GraphChannelDef = {
   digits: number;
 };
 
-const GRAPH_CHANNELS: GraphChannelDef[] = [
+const SLIDE_GRAPH_CHANNELS: GraphChannelDef[] = [
   {
     key: "x",
     label: "X",
@@ -1289,6 +1548,94 @@ const GRAPH_CHANNELS: GraphChannelDef[] = [
   },
 ];
 
+/** 3D flip lab: AX / BX / A Scale / B Scale / Rotate AY / Rotate BY / Blur. */
+const FLIP_GRAPH_CHANNELS: GraphChannelDef[] = [
+  {
+    key: "aX",
+    label: "AX",
+    color: "#2a74bf",
+    min: -STAGE_WIDTH,
+    max: STAGE_WIDTH,
+    step: 1,
+    digits: 1,
+  },
+  {
+    key: "bX",
+    label: "BX",
+    color: "#1d4ed8",
+    min: -STAGE_WIDTH,
+    max: STAGE_WIDTH,
+    step: 1,
+    digits: 1,
+  },
+  {
+    key: "aScale",
+    label: "A Scale",
+    color: "#c45c26",
+    min: 0.5,
+    max: 1.5,
+    step: 0.005,
+    digits: 3,
+  },
+  {
+    key: "bScale",
+    label: "B Scale",
+    color: "#b45309",
+    min: 0.5,
+    max: 1.5,
+    step: 0.005,
+    digits: 3,
+  },
+  {
+    key: "aRotateY",
+    label: "Rotate AY",
+    color: "#0f766e",
+    min: -180,
+    max: 180,
+    step: 0.5,
+    digits: 1,
+  },
+  {
+    key: "bRotateY",
+    label: "Rotate BY",
+    color: "#2a9d5c",
+    min: -180,
+    max: 180,
+    step: 0.5,
+    digits: 1,
+  },
+  {
+    key: "blur",
+    label: "Blur",
+    color: "#8b5cf6",
+    min: 0,
+    max: 40,
+    step: 0.1,
+    digits: 2,
+  },
+];
+
+const GRAPH_CHANNELS: GraphChannelDef[] = [
+  ...SLIDE_GRAPH_CHANNELS,
+  ...FLIP_GRAPH_CHANNELS,
+];
+
+const ALL_GRAPH_CHANNEL_KEYS: GraphChannelKey[] = GRAPH_CHANNELS.map(
+  (channel) => channel.key,
+);
+
+function graphChannelsForPattern(pattern: TransitionPattern): GraphChannelDef[] {
+  return pattern === "card-flip" ? FLIP_GRAPH_CHANNELS : SLIDE_GRAPH_CHANNELS;
+}
+
+function defaultGraphChannelForPattern(pattern: TransitionPattern): GraphChannelKey {
+  return pattern === "card-flip" ? "aRotateY" : "x";
+}
+
+function isGraphChannelKey(key: string): key is GraphChannelKey {
+  return ALL_GRAPH_CHANNEL_KEYS.includes(key as GraphChannelKey);
+}
+
 const GRAPH_VIEW = {
   width: 1000,
   /** Per-lane plot height (stacked independent X/Y/Scale rows). */
@@ -1309,12 +1656,13 @@ const GRAPH_ZOOM_MAX = 50;
 
 type GraphVisibility = Record<GraphChannelKey, boolean>;
 
-const DEFAULT_GRAPH_VISIBILITY: GraphVisibility = {
-  x: true,
-  y: true,
-  scale: true,
-  brightness: true,
-};
+function buildDefaultGraphVisibility(): GraphVisibility {
+  const visibility = {} as GraphVisibility;
+  for (const key of ALL_GRAPH_CHANNEL_KEYS) visibility[key] = true;
+  return visibility;
+}
+
+const DEFAULT_GRAPH_VISIBILITY: GraphVisibility = buildDefaultGraphVisibility();
 
 /** Shared time window + per-channel value windows (independent Y zoom). */
 type GraphViewport = {
@@ -1323,15 +1671,16 @@ type GraphViewport = {
   values: Record<GraphChannelKey, { n0: number; n1: number }>;
 };
 
+function buildDefaultValueWindows(): Record<GraphChannelKey, { n0: number; n1: number }> {
+  const values = {} as Record<GraphChannelKey, { n0: number; n1: number }>;
+  for (const key of ALL_GRAPH_CHANNEL_KEYS) values[key] = { n0: 0, n1: 1 };
+  return values;
+}
+
 const DEFAULT_GRAPH_VIEWPORT: GraphViewport = {
   t0: 0,
   t1: 1,
-  values: {
-    x: { n0: 0, n1: 1 },
-    y: { n0: 0, n1: 1 },
-    scale: { n0: 0, n1: 1 },
-    brightness: { n0: 0, n1: 1 },
-  },
+  values: buildDefaultValueWindows(),
 };
 
 type GraphDragState = {
@@ -1361,15 +1710,15 @@ function getGraphChannel(key: GraphChannelKey): GraphChannelDef {
 }
 
 function cloneViewport(view: GraphViewport): GraphViewport {
+  const values = {} as Record<GraphChannelKey, { n0: number; n1: number }>;
+  for (const key of ALL_GRAPH_CHANNEL_KEYS) {
+    const win = view.values[key] ?? { n0: 0, n1: 1 };
+    values[key] = { n0: win.n0, n1: win.n1 };
+  }
   return {
     t0: view.t0,
     t1: view.t1,
-    values: {
-      x: { ...view.values.x },
-      y: { ...view.values.y },
-      scale: { ...view.values.scale },
-      brightness: { ...view.values.brightness },
-    },
+    values,
   };
 }
 
@@ -1403,18 +1752,15 @@ function sanitizeViewport(view: GraphViewport): GraphViewport {
     t1 = t0 + GRAPH_ZOOM_MIN_SPAN_T;
   }
 
+  const values = {} as Record<GraphChannelKey, { n0: number; n1: number }>;
+  for (const key of ALL_GRAPH_CHANNEL_KEYS) {
+    const win = view.values[key] ?? { n0: 0, n1: 1 };
+    values[key] = sanitizeValueWindow(win.n0, win.n1);
+  }
   return {
     t0,
     t1,
-    values: {
-      x: sanitizeValueWindow(view.values.x.n0, view.values.x.n1),
-      y: sanitizeValueWindow(view.values.y.n0, view.values.y.n1),
-      scale: sanitizeValueWindow(view.values.scale.n0, view.values.scale.n1),
-      brightness: sanitizeValueWindow(
-        view.values.brightness.n0,
-        view.values.brightness.n1,
-      ),
-    },
+    values,
   };
 }
 
@@ -1666,8 +2012,69 @@ function visiblePanelLabel(x: number): string {
   return ["A", "A↻", "B↻", "B"][panel] ?? "?";
 }
 
-function summarizeChannels(tracks: ChannelTracks): string {
+function summarizeChannels(
+  tracks: ChannelTracks,
+  pattern: TransitionPattern = "mirror-slide-strip",
+): string {
+  if (pattern === "card-flip") {
+    return (
+      `aX${tracks.aX.length} bX${tracks.bX.length} ` +
+      `aS${tracks.aScale.length} bS${tracks.bScale.length} ` +
+      `aY${tracks.aRotateY.length} bY${tracks.bRotateY.length} blur${tracks.blur.length}`
+    );
+  }
   return `x${tracks.x.length} y${tracks.y.length} s${tracks.scale.length} br${tracks.brightness.length}`;
+}
+
+function readGraphChannelValue(
+  key: GraphChannelKey,
+  strip: StripProps,
+  flip: FlipPose,
+): number {
+  if (key === "aX") return flip.a.x;
+  if (key === "bX") return flip.b.x;
+  if (key === "aScale") return flip.a.scale;
+  if (key === "bScale") return flip.b.scale;
+  if (key === "aRotateY") return flip.a.rotateY;
+  if (key === "bRotateY") return flip.b.rotateY;
+  if (key === "blur") return strip.blur;
+  return strip[key];
+}
+
+function writeGraphChannelValue(
+  key: GraphChannelKey,
+  value: number,
+  strip: StripProps,
+  flip: FlipPose,
+): { strip: StripProps; flip: FlipPose } {
+  if (key === "aX") {
+    return { strip, flip: { ...flip, a: { ...flip.a, x: value } } };
+  }
+  if (key === "bX") {
+    return { strip, flip: { ...flip, b: { ...flip.b, x: value } } };
+  }
+  if (key === "aScale") {
+    return { strip, flip: { ...flip, a: { ...flip.a, scale: value } } };
+  }
+  if (key === "bScale") {
+    return { strip, flip: { ...flip, b: { ...flip.b, scale: value } } };
+  }
+  if (key === "aRotateY") {
+    return {
+      strip,
+      flip: { ...flip, a: { ...flip.a, rotateY: value } },
+    };
+  }
+  if (key === "bRotateY") {
+    return {
+      strip,
+      flip: { ...flip, b: { ...flip.b, rotateY: value } },
+    };
+  }
+  if (key === "blur") {
+    return { strip: { ...strip, blur: value }, flip };
+  }
+  return { strip: { ...strip, [key]: value }, flip };
 }
 
 export function VideoTransitionPlayground() {
@@ -1686,10 +2093,13 @@ export function VideoTransitionPlayground() {
   const durationMsRef = useRef(DEFAULT_DURATION_MS);
   const motionFxRef = useRef<MotionFxSettings>(defaultMotionFx());
   const easingRef = useRef<CubicBezier>(defaultEasing());
+  const patternRef = useRef<TransitionPattern>("mirror-slide-strip");
+  const perspectivePxRef = useRef(DEFAULT_PERSPECTIVE_PX);
   /** Base keyframed pose without procedural blur (for editing/export). */
   const basePoseRef = useRef<StripProps>(
     sampleChannelTracks(defaultChannelTracks(), 0, defaultEasing()),
   );
+  const flipPoseRef = useRef<FlipPose>({ ...IDENTITY_FLIP });
   const curveSvgRef = useRef<SVGSVGElement | null>(null);
   const dragHandleRef = useRef<"p1" | "p2" | null>(null);
   const graphSvgRef = useRef<SVGSVGElement | null>(null);
@@ -1717,6 +2127,12 @@ export function VideoTransitionPlayground() {
   const [pose, setPose] = useState<StripProps>(() =>
     sampleChannelTracks(defaultChannelTracks(), 0, defaultEasing()),
   );
+  const [flipPose, setFlipPose] = useState<FlipPose>(() => ({
+    a: { ...IDENTITY_FLIP_CARD },
+    b: { ...IDENTITY_FLIP_CARD },
+  }));
+  const [pattern, setPattern] = useState<TransitionPattern>("mirror-slide-strip");
+  const [perspectivePx, setPerspectivePx] = useState(DEFAULT_PERSPECTIVE_PX);
   const [motionFx, setMotionFx] = useState<MotionFxSettings>(() => defaultMotionFx());
   const [easing, setEasing] = useState<CubicBezier>(() => defaultEasing());
   const [status, setStatus] = useState("Loading cards…");
@@ -1758,8 +2174,34 @@ export function VideoTransitionPlayground() {
   }, [easing]);
 
   useEffect(() => {
+    patternRef.current = pattern;
+  }, [pattern]);
+
+  // Keep the graph focused on channels that exist for the active pattern.
+  useEffect(() => {
+    const allowed = new Set(
+      graphChannelsForPattern(pattern).map((channel) => channel.key),
+    );
+    if (!allowed.has(activeGraphChannel)) {
+      setActiveGraphChannel(defaultGraphChannelForPattern(pattern));
+      setSelectedKeyframeIndex(0);
+    }
+    if (isolatedChannel && !allowed.has(isolatedChannel)) {
+      setIsolatedChannel(null);
+    }
+  }, [pattern, activeGraphChannel, isolatedChannel]);
+
+  useEffect(() => {
+    perspectivePxRef.current = perspectivePx;
+  }, [perspectivePx]);
+
+  useEffect(() => {
     basePoseRef.current = basePose;
   }, [basePose]);
+
+  useEffect(() => {
+    flipPoseRef.current = flipPose;
+  }, [flipPose]);
 
   useEffect(() => {
     graphViewportRef.current = graphViewport;
@@ -1778,12 +2220,19 @@ export function VideoTransitionPlayground() {
     [cards, cardBId],
   );
 
+  const activeGraphChannels = useMemo(
+    () => graphChannelsForPattern(pattern),
+    [pattern],
+  );
+
+  const isFlipPattern = pattern === "card-flip";
+
   const visibleGraphKeys = useMemo(() => {
     if (isolatedChannel) return [isolatedChannel];
-    return GRAPH_CHANNELS.map((channel) => channel.key).filter(
-      (key) => graphVisibility[key],
-    );
-  }, [graphVisibility, isolatedChannel]);
+    return activeGraphChannels
+      .map((channel) => channel.key)
+      .filter((key) => graphVisibility[key]);
+  }, [activeGraphChannels, graphVisibility, isolatedChannel]);
 
   const graphLanes = useMemo(
     () => buildLaneLayouts(visibleGraphKeys),
@@ -1865,10 +2314,14 @@ export function VideoTransitionPlayground() {
   const graphPlayheadValues = useMemo(() => {
     const values = {} as Record<GraphChannelKey, number>;
     for (const channel of GRAPH_CHANNELS) {
-      values[channel.key] = basePose[channel.key];
+      values[channel.key] = readGraphChannelValue(
+        channel.key,
+        basePose,
+        flipPose,
+      );
     }
     return values;
-  }, [basePose]);
+  }, [basePose, flipPose]);
 
   const graphTimeTicks = useMemo(
     () => buildNiceTicks(graphViewport.t0, graphViewport.t1, 6),
@@ -1896,12 +2349,12 @@ export function VideoTransitionPlayground() {
     if (Math.abs(graphViewport.t0) > 1e-6 || Math.abs(graphViewport.t1 - 1) > 1e-6) {
       return true;
     }
-    for (const key of GRAPH_CHANNELS.map((c) => c.key)) {
-      const win = graphViewport.values[key];
+    for (const channel of activeGraphChannels) {
+      const win = graphViewport.values[channel.key] ?? { n0: 0, n1: 1 };
       if (Math.abs(win.n0) > 1e-6 || Math.abs(win.n1 - 1) > 1e-6) return true;
     }
     return false;
-  }, [graphViewport]);
+  }, [graphViewport, activeGraphChannels]);
 
   const graphSvgHeight = graphHeight(Math.max(1, graphLanes.length));
 
@@ -1949,7 +2402,12 @@ export function VideoTransitionPlayground() {
     const spanN = Math.max(win.n1 - win.n0, GRAPH_ZOOM_MIN_SPAN_N);
     const t = clamp(playheadTRef.current, 0, 1);
     const channel = getGraphChannel(channelKey);
-    const n = clamp(valueToNorm(basePoseRef.current[channel.key], channel), 0, 1);
+    const liveValue = readGraphChannelValue(
+      channelKey,
+      basePoseRef.current,
+      flipPoseRef.current,
+    );
+    const n = clamp(valueToNorm(liveValue, channel), 0, 1);
     const nextSpanT = spanT >= 0.999 ? 0.25 : spanT;
     const nextSpanN = spanN >= 0.999 ? 0.35 : spanN;
     let t0 = t - nextSpanT / 2;
@@ -1996,14 +2454,24 @@ export function VideoTransitionPlayground() {
       tracks?: ChannelTracks,
       fx?: MotionFxSettings,
       ease?: CubicBezier,
+      nextPattern?: TransitionPattern,
     ) => {
       const curve = ease ?? easingRef.current;
       const source = tracks ?? channelsRef.current;
+      const activePattern = nextPattern ?? patternRef.current;
       const base = sampleChannelTracks(source, t, curve);
-      const settings = fx ?? motionFxRef.current;
+      const flip = sampleFlipPose(source, t, curve);
       basePoseRef.current = base;
+      flipPoseRef.current = flip;
       setBasePose(base);
-      setPose(applyMotionFx(base, t, settings));
+      setFlipPose(flip);
+      if (activePattern === "card-flip") {
+        // Flip uses keyframed blur only — no slide motion FX.
+        setPose(base);
+      } else {
+        const settings = fx ?? motionFxRef.current;
+        setPose(applyMotionFx(base, t, settings));
+      }
     },
     [],
   );
@@ -2101,7 +2569,9 @@ export function VideoTransitionPlayground() {
           drawFlippedVideo(mirrorACanvasRef.current, videoA);
           drawFlippedVideo(mirrorBCanvasRef.current, videoB);
           setStatus(
-            `${cardA.label} → ${cardB.label} · [A|A↻|B↻|B] · 2 decoders`,
+            patternRef.current === "card-flip"
+              ? `${cardA.label} → ${cardB.label} · 3D flip [A|B] · 2 decoders`
+              : `${cardA.label} → ${cardB.label} · [A|A↻|B↻|B] · 2 decoders`,
           );
         }
       } catch (error) {
@@ -2263,11 +2733,40 @@ export function VideoTransitionPlayground() {
     setPose(next);
   };
 
+  const updateFlipPose = (next: FlipPose) => {
+    setPlaying(false);
+    flipPoseRef.current = next;
+    setFlipPose(next);
+  };
+
+  const updateGraphLiveValue = (channel: GraphChannelKey, value: number) => {
+    setPlaying(false);
+    const written = writeGraphChannelValue(
+      channel,
+      value,
+      basePoseRef.current,
+      flipPoseRef.current,
+    );
+    basePoseRef.current = written.strip;
+    flipPoseRef.current = written.flip;
+    setBasePose(written.strip);
+    setFlipPose(written.flip);
+    if (patternRef.current === "card-flip") {
+      setPose(written.strip);
+    } else {
+      setPose(written.strip);
+    }
+  };
+
   /** Add/update only the active channel at the playhead. */
   const addOrUpdateKeyframe = () => {
     setPlaying(false);
     const channel = activeGraphChannel;
-    const value = basePoseRef.current[channel];
+    const value = readGraphChannelValue(
+      channel,
+      basePoseRef.current,
+      flipPoseRef.current,
+    );
     const result = setChannelKeyframe(
       channelsRef.current,
       channel,
@@ -2290,7 +2789,11 @@ export function VideoTransitionPlayground() {
     setPlaying(false);
     const channel = activeGraphChannel;
     const selectedT = frames[selectedKeyframeIndex].t;
-    const value = basePoseRef.current[channel];
+    const value = readGraphChannelValue(
+      channel,
+      basePoseRef.current,
+      flipPoseRef.current,
+    );
     const result = moveChannelKeyframe(
       channelsRef.current,
       channel,
@@ -2571,14 +3074,15 @@ export function VideoTransitionPlayground() {
     const nextChannels = cloneChannelTracks(channels);
     return {
       version: 3,
-      pattern: "mirror-slide-strip",
+      pattern,
       durationMs: sanitizeDurationMs(durationMs),
       cardAId,
       cardBId,
       stageWidth: STAGE_WIDTH,
+      perspectivePx: sanitizePerspectivePx(perspectivePx),
       easing: sanitizeEasing(easing),
       motionFx: {
-        enabled: motionFx.enabled,
+        enabled: pattern === "card-flip" ? false : motionFx.enabled,
         blurPeak: motionFx.blurPeak,
         blur: { ...motionFx.blur },
         scalePeak: motionFx.scalePeak,
@@ -2612,22 +3116,32 @@ export function VideoTransitionPlayground() {
       const preset = clonePreset(presetRaw);
       const nextFx = preset.motionFx ?? defaultMotionFx();
       const nextEase = preset.easing ?? defaultEasing();
+      const nextPattern = sanitizePattern(preset.pattern);
+      const nextPerspective = sanitizePerspectivePx(preset.perspectivePx);
       const nextChannels = cloneChannelTracks(
         preset.channels ?? stripKeyframesToChannels(preset.keyframes),
       );
+      const nextGraphChannel = defaultGraphChannelForPattern(nextPattern);
 
       setPlaying(false);
       setDurationMs(preset.durationMs);
       setDurationInput(String(preset.durationMs));
       channelsRef.current = nextChannels;
       setChannels(nextChannels);
+      setPattern(nextPattern);
+      patternRef.current = nextPattern;
+      setPerspectivePx(nextPerspective);
+      perspectivePxRef.current = nextPerspective;
       setMotionFx(nextFx);
       motionFxRef.current = nextFx;
       setEasing(nextEase);
       easingRef.current = nextEase;
       setSelectedKeyframeIndex(0);
-      setActiveGraphChannel("x");
+      setActiveGraphChannel(nextGraphChannel);
       setIsolatedChannel(null);
+      setGraphVisibility(buildDefaultGraphVisibility());
+      setShowFxOnGraph(false);
+      resetGraphViewport();
       setPlayheadT(0);
       playheadTRef.current = 0;
 
@@ -2645,13 +3159,13 @@ export function VideoTransitionPlayground() {
         setActiveTemplateId(opts.templateId ?? "");
       }
 
-      applySampledPose(0, nextChannels, nextFx, nextEase);
+      applySampledPose(0, nextChannels, nextFx, nextEase, nextPattern);
       setStatus(
         opts?.statusText ??
-          `Loaded preset (${preset.durationMs}ms, ${summarizeChannels(nextChannels)})`,
+          `Loaded preset (${preset.durationMs}ms, ${summarizeChannels(nextChannels, nextPattern)})`,
       );
     },
-    [applySampledPose, cards],
+    [applySampledPose, cards, resetGraphViewport],
   );
 
   const applyTemplate = useCallback(
@@ -2678,7 +3192,7 @@ export function VideoTransitionPlayground() {
       }
       applyPreset(parsed, {
         templateId: null,
-        statusText: `Imported ${summarizeChannels(parsed.channels ?? defaultChannelTracks())} (${parsed.durationMs}ms)`,
+        statusText: `Imported ${summarizeChannels(parsed.channels ?? defaultChannelTracks(), parsed.pattern)} (${parsed.durationMs}ms)`,
       });
     } catch {
       setStatus("Could not parse JSON");
@@ -2772,6 +3286,7 @@ export function VideoTransitionPlayground() {
   const nearExisting =
     findNearestChannelKeyframeIndex(activeChannelFrames, playheadT) >= 0;
   const easedPlayhead = sampleCubicBezier(easing, playheadT);
+  const flipCardZ = flipCardZIndices(flipPose);
 
   return (
     <main className="transition-lab-page">
@@ -2780,14 +3295,16 @@ export function VideoTransitionPlayground() {
           <header className="transition-lab-header">
             <div>
               <p className="transition-lab-kicker">
-                Desktop lab · single strip
+                Desktop lab · {isFlipPattern ? "3D flip" : "single strip"}
                 {activeTemplateId
                   ? ` · template: ${getTemplate(activeTemplateId)?.label ?? activeTemplateId}`
                   : ""}
               </p>
               <h1>Video transition</h1>
               <p className="transition-lab-pattern">
-                [A | A↻ | B↻ | B] · stage {STAGE_WIDTH}px · strip {STRIP_WIDTH}px
+                {isFlipPattern
+                  ? `3D flip · A hinge left · B hinge right · perspective ${perspectivePx}px`
+                  : `[A | A↻ | B↻ | B] · stage ${STAGE_WIDTH}px · strip ${STRIP_WIDTH}px`}
               </p>
             </div>
             <p className="transition-lab-status">{status}</p>
@@ -2795,18 +3312,44 @@ export function VideoTransitionPlayground() {
 
           <div className="transition-lab-stage-wrap">
             <div
-              className="transition-lab-stage"
-              style={{ aspectRatio: `${STAGE_WIDTH} / ${STAGE_HEIGHT}` }}
+              className={
+                isFlipPattern
+                  ? "transition-lab-stage is-flip"
+                  : "transition-lab-stage"
+              }
+              style={{
+                aspectRatio: `${STAGE_WIDTH} / ${STAGE_HEIGHT}`,
+                ...(isFlipPattern ? flipSceneStyle(perspectivePx) : null),
+              }}
             >
               <div
                 className="transition-lab-fx-layer"
-                style={fxLayerStyle(pose)}
+                style={
+                  isFlipPattern
+                    ? flipFxLayerStyle(pose.blur, pose.opacity)
+                    : fxLayerStyle(pose)
+                }
               >
                 <div
-                  className="transition-lab-strip"
-                  style={stripTravelStyle(pose)}
+                  className={
+                    isFlipPattern
+                      ? "transition-lab-strip is-flip"
+                      : "transition-lab-strip"
+                  }
+                  style={isFlipPattern ? undefined : stripTravelStyle(pose)}
                 >
-                  <div className="transition-lab-tile">
+                  <div
+                    className={
+                      isFlipPattern
+                        ? "transition-lab-tile is-flip-card is-a"
+                        : "transition-lab-tile"
+                    }
+                    style={
+                      isFlipPattern
+                        ? flipCardAStyle(flipPose.a, flipCardZ.a)
+                        : undefined
+                    }
+                  >
                     <video
                       ref={videoARef}
                       className="transition-lab-video"
@@ -2817,21 +3360,40 @@ export function VideoTransitionPlayground() {
                     />
                     <span className="transition-lab-tile-tag">A</span>
                   </div>
-                  <div className="transition-lab-tile">
+                  <div
+                    className="transition-lab-tile is-mirror"
+                    aria-hidden={isFlipPattern}
+                    style={isFlipPattern ? { display: "none" } : undefined}
+                  >
                     <canvas
                       ref={mirrorACanvasRef}
                       className="transition-lab-video transition-lab-mirror"
                     />
                     <span className="transition-lab-tile-tag">A↻</span>
                   </div>
-                  <div className="transition-lab-tile">
+                  <div
+                    className="transition-lab-tile is-mirror"
+                    aria-hidden={isFlipPattern}
+                    style={isFlipPattern ? { display: "none" } : undefined}
+                  >
                     <canvas
                       ref={mirrorBCanvasRef}
                       className="transition-lab-video transition-lab-mirror"
                     />
                     <span className="transition-lab-tile-tag">B↻</span>
                   </div>
-                  <div className="transition-lab-tile">
+                  <div
+                    className={
+                      isFlipPattern
+                        ? "transition-lab-tile is-flip-card is-b"
+                        : "transition-lab-tile"
+                    }
+                    style={
+                      isFlipPattern
+                        ? flipCardBStyle(flipPose.b, flipCardZ.b)
+                        : undefined
+                    }
+                  >
                     <video
                       ref={videoBRef}
                       className="transition-lab-video"
@@ -2880,10 +3442,9 @@ export function VideoTransitionPlayground() {
               </span>
               <span className="transition-lab-time">t={roundValue(playheadT, 3)}</span>
               <span className="transition-lab-time">
-                x={roundValue(pose.x, 0)} · s={roundValue(pose.scale, 3)} · br=
-                {roundValue(pose.brightness, 2)} · blur=
-                {roundValue(pose.blur, 1)} · {visiblePanelLabel(pose.x)} · eased=
-                {roundValue(easedPlayhead, 3)}
+                {isFlipPattern
+                  ? `aX=${roundValue(flipPose.a.x, 0)} bX=${roundValue(flipPose.b.x, 0)} · aS=${roundValue(flipPose.a.scale, 3)} bS=${roundValue(flipPose.b.scale, 3)} · aY=${roundValue(flipPose.a.rotateY, 1)}° bY=${roundValue(flipPose.b.rotateY, 1)}° · blur=${roundValue(pose.blur, 1)} · eased=${roundValue(easedPlayhead, 3)}`
+                  : `x=${roundValue(pose.x, 0)} · s=${roundValue(pose.scale, 3)} · br=${roundValue(pose.brightness, 2)} · blur=${roundValue(pose.blur, 1)} · ${visiblePanelLabel(pose.x)} · eased=${roundValue(easedPlayhead, 3)}`}
               </span>
             </div>
 
@@ -2921,11 +3482,13 @@ export function VideoTransitionPlayground() {
                 <div className="transition-lab-graph-title">
                   <strong>Transform graph</strong>
                   <span>
-                    Independent X / Y / Scale / Bright tracks · double-click chip to isolate
+                    {isFlipPattern
+                      ? "AX / BX / A Scale / B Scale / Rotate AY / Rotate BY / Blur · double-click chip to isolate"
+                      : "Independent X / Y / Scale / Bright tracks · double-click chip to isolate"}
                   </span>
                 </div>
                 <div className="transition-lab-graph-toggles">
-                  {GRAPH_CHANNELS.map((channel) => {
+                  {activeGraphChannels.map((channel) => {
                     const active = activeGraphChannel === channel.key;
                     const isolated = isolatedChannel === channel.key;
                     const visible =
@@ -2997,14 +3560,16 @@ export function VideoTransitionPlayground() {
                       Show all
                     </button>
                   ) : null}
-                  <label className="transition-lab-graph-fx-toggle">
-                    <input
-                      type="checkbox"
-                      checked={showFxOnGraph}
-                      onChange={(event) => setShowFxOnGraph(event.target.checked)}
-                    />
-                    FX scale
-                  </label>
+                  {!isFlipPattern ? (
+                    <label className="transition-lab-graph-fx-toggle">
+                      <input
+                        type="checkbox"
+                        checked={showFxOnGraph}
+                        onChange={(event) => setShowFxOnGraph(event.target.checked)}
+                      />
+                      FX scale
+                    </label>
+                  ) : null}
                 </div>
               </div>
 
@@ -3143,7 +3708,12 @@ export function VideoTransitionPlayground() {
                     const ticks = graphValueTicksByChannel[lane.key] ?? [];
                     const frames = sortChannelKeyframes(channels[lane.key] ?? []);
                     const zeroValue =
-                      lane.key === "scale" || lane.key === "brightness" ? 1 : 0;
+                      lane.key === "scale" ||
+                      lane.key === "aScale" ||
+                      lane.key === "bScale" ||
+                      lane.key === "brightness"
+                        ? 1
+                        : 0;
                     return (
                       <g key={`lane-${lane.key}`}>
                         <rect
@@ -3531,35 +4101,45 @@ export function VideoTransitionPlayground() {
             <p className="transition-lab-hint">
               Any positive duration (e.g. 250, 800, 1250.5, 4000).
             </p>
-            <p className="transition-lab-hint">
-              Snap strip X · W={STAGE_WIDTH} · default end x={DEFAULT_END_X}
-            </p>
-            <div className="transition-lab-snap-row">
-              <button type="button" className="secondary-button" onClick={() => snapX(0)}>
-                A (0)
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => snapX(-STAGE_WIDTH)}
-              >
-                A↻ (-W)
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => snapX(-STAGE_WIDTH * 2)}
-              >
-                B↻ (-2W)
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => snapX(DEFAULT_END_X)}
-              >
-                B ({DEFAULT_END_X})
-              </button>
-            </div>
+            {isFlipPattern ? (
+              <p className="transition-lab-hint">
+                3D flip tools only: duration, easing curve, and the AX / BX /
+                A Scale / B Scale / Rotate AY / Rotate BY / Blur graph. A hinges
+                left-center; B hinges right-center.
+              </p>
+            ) : (
+              <>
+                <p className="transition-lab-hint">
+                  Snap strip X · W={STAGE_WIDTH} · default end x={DEFAULT_END_X}
+                </p>
+                <div className="transition-lab-snap-row">
+                  <button type="button" className="secondary-button" onClick={() => snapX(0)}>
+                    A (0)
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => snapX(-STAGE_WIDTH)}
+                  >
+                    A↻ (-W)
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => snapX(-STAGE_WIDTH * 2)}
+                  >
+                    B↻ (-2W)
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => snapX(DEFAULT_END_X)}
+                  >
+                    B ({DEFAULT_END_X})
+                  </button>
+                </div>
+              </>
+            )}
           </section>
 
           <section className="transition-lab-section">
@@ -3747,6 +4327,7 @@ export function VideoTransitionPlayground() {
             </div>
           </section>
 
+          {!isFlipPattern ? (
           <section className="transition-lab-section">
             <h3>Strip</h3>
             <p className="transition-lab-hint">
@@ -3780,7 +4361,9 @@ export function VideoTransitionPlayground() {
               })}
             </div>
           </section>
+          ) : null}
 
+          {!isFlipPattern ? (
           <section className="transition-lab-section">
             <h3>Motion FX</h3>
             <p className="transition-lab-hint">
@@ -3926,12 +4509,19 @@ export function VideoTransitionPlayground() {
               </div>
             </div>
           </section>
+          ) : null}
 
           <section className="transition-lab-section">
             <h3>Keyframes · {getGraphChannel(activeGraphChannel).label}</h3>
             <p className="transition-lab-hint">
-              Independent tracks. Edits apply only to{" "}
-              <strong>{activeGraphChannel.toUpperCase()}</strong>
+              {isFlipPattern
+                ? "3D flip tracks only (AX, BX, A/B Scale, Rotate AY/BY, Blur). Edits apply only to "
+                : "Independent tracks. Edits apply only to "}
+              <strong>
+                {isFlipPattern
+                  ? getGraphChannel(activeGraphChannel).label
+                  : activeGraphChannel.toUpperCase()}
+              </strong>
               {isolatedChannel ? " (solo mode)" : ""}.
             </p>
             <div className="button-row">
@@ -3982,8 +4572,12 @@ export function VideoTransitionPlayground() {
                       <span>
                         {channel.label}={roundValue(frame.value, channel.digits)}
                       </span>
-                      {activeGraphChannel === "x" ? (
+                      {activeGraphChannel === "x" && !isFlipPattern ? (
                         <span>shows {visiblePanelLabel(frame.value)}</span>
+                      ) : null}
+                      {activeGraphChannel === "aRotateY" ||
+                      activeGraphChannel === "bRotateY" ? (
+                        <span>{roundValue(frame.value, 1)}°</span>
                       ) : null}
                     </button>
                   </li>
