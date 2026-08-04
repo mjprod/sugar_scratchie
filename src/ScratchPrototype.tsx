@@ -6,7 +6,11 @@ import {
 } from "./cursorFx/FairyDustCursor";
 import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
 import { fetchModels, type ModelInfo } from "./shared/models";
-import { loadVideoSrc, releaseMediaElement } from "./shared/media";
+import {
+  loadVideoSrc,
+  playThemeIntro,
+  releaseMediaElement,
+} from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
@@ -30,7 +34,9 @@ import {
 } from "./game/gameSession";
 import {
   InitialCountdown,
+  isCountdownSoundUnlocked,
   TOP_BAR_DOCK_MS,
+  unlockCountdownSound,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import { fetchThemes } from "./shared/themes";
@@ -1201,6 +1207,8 @@ export function ScratchPrototype() {
   /** Theme intro clip for the current Play/Continue visit (game mode only). */
   const [introVideoUrl, setIntroVideoUrl] = useState("");
   const [introActive, setIntroActive] = useState(false);
+  /** Starts muted for autoplay policy; may unmute after playThemeIntro succeeds. */
+  const [introMuted, setIntroMuted] = useState(true);
   const introActiveRef = useRef(false);
   introActiveRef.current = introActive;
   const introVideoElRef = useRef<HTMLVideoElement | null>(null);
@@ -1217,6 +1225,15 @@ export function ScratchPrototype() {
   const [handStartIntroResolved, setHandStartIntroResolved] = useState(
     () => !isGameModeUrl(),
   );
+  /**
+   * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
+   * already called unlockCountdownSound(), so this starts true then.
+   */
+  const [entryReady, setEntryReady] = useState(
+    () => !isGameModeUrl() || !loadSoundEnabled() || isCountdownSoundUnlocked(),
+  );
+  const entryReadyRef = useRef(entryReady);
+  entryReadyRef.current = entryReady;
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
@@ -1304,12 +1321,18 @@ export function ScratchPrototype() {
   }
 
   function isBodyScratchLocked() {
+    if (gameMode && !entryReadyRef.current) return true;
     if (introActiveRef.current) return true;
     if (gameMode && !handStartIntroDoneRef.current) return true;
     return (
       useBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
+  }
+
+  function onMatchEntryTap() {
+    unlockCountdownSound();
+    setEntryReady(true);
   }
 
   function scheduleIntroCountdown() {
@@ -1324,7 +1347,6 @@ export function ScratchPrototype() {
   function dismissThemeIntro() {
     setIntroActive(false);
     introActiveRef.current = false;
-    // Countdown stays up if still running — it overlays the stage until done.
   }
 
   function armHandStartIntro(cardId: string, session: GameSession) {
@@ -1512,11 +1534,35 @@ export function ScratchPrototype() {
   }, [gameMode]);
 
   useEffect(() => {
-    if (!gameMode || !gameSession || !selectedCardId || !themeIntrosReady) {
+    if (
+      !gameMode ||
+      !gameSession ||
+      !selectedCardId ||
+      !themeIntrosReady ||
+      !entryReady
+    ) {
       return;
     }
     armHandStartIntro(selectedCardId, gameSession);
-  }, [gameMode, gameSession, selectedCardId, themeIntrosReady]);
+  }, [gameMode, gameSession, selectedCardId, themeIntrosReady, entryReady]);
+
+  // Android/iOS block unmuted autoplay after refresh or async mount — kick
+  // playback with a muted fallback so the intro still runs.
+  useEffect(() => {
+    if (!introActive || !introVideoUrl) {
+      setIntroMuted(true);
+      return;
+    }
+    const video = introVideoElRef.current;
+    if (!video) return;
+    let cancelled = false;
+    void playThemeIntro(video, soundEnabled).then((muted) => {
+      if (!cancelled) setIntroMuted(muted);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [introActive, introVideoUrl, soundEnabled]);
 
   // / showMesh changes (those are read live via refs).
   useEffect(() => {
@@ -2251,7 +2297,10 @@ export function ScratchPrototype() {
   }, [autoScratchLocked, autoScratch.enabled]);
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      unlockCountdownSound();
+    }
     setSoundEnabled(enabled);
   }
 
@@ -3110,29 +3159,35 @@ export function ScratchPrototype() {
           new URLSearchParams(window.location.search).has("debug") ? (
             <DebugHud />
           ) : null}
-          {introActive && introVideoUrl ? (
+          {gameMode && !entryReady ? (
             <div
-              className="photo-scratch-intro-video"
+              className="match-audio-gate"
               role="button"
               tabIndex={0}
-              aria-label="Skip intro"
-              onClick={dismissThemeIntro}
+              aria-label="Tap to play"
+              onClick={onMatchEntryTap}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
-                  dismissThemeIntro();
+                  event.preventDefault();
+                  onMatchEntryTap();
                 }
               }}
             >
+              <span className="match-audio-gate-label">Tap to play</span>
+            </div>
+          ) : null}
+          {introActive && introVideoUrl ? (
+            <div className="photo-scratch-intro-video" aria-hidden="true">
               <video
                 ref={introVideoElRef}
                 autoPlay
-                muted={!soundEnabled}
+                muted={introMuted}
                 playsInline
+                preload="auto"
                 src={introVideoUrl}
                 onEnded={dismissThemeIntro}
                 onError={dismissThemeIntro}
               />
-              <span className="photo-scratch-intro-video-skip">Tap to skip</span>
             </div>
           ) : null}
           {useBodySymbols && matchStartUnlocked ? (

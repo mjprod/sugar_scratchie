@@ -476,11 +476,9 @@ textarea:focus-visible {
   position: absolute;
   inset: 0;
   z-index: 20;
-  display: grid;
-  place-items: end center;
   background: #000;
-  cursor: pointer;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .photo-scratch-intro-video video {
@@ -492,23 +490,33 @@ textarea:focus-visible {
   pointer-events: none;
 }
 
-.photo-scratch-intro-video-skip {
-  position: relative;
-  margin-bottom: max(18px, env(safe-area-inset-bottom));
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(12, 10, 8, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
-
 .stage.is-intro-video-phase canvas {
   pointer-events: none;
+}
+
+/* Cold refresh / deep-link: one tap unlocks Safari audio before intro + 3-2-1. */
+.match-audio-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: rgba(8, 6, 5, 0.72);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.match-audio-gate-label {
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: rgba(12, 10, 8, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .initial-countdown {

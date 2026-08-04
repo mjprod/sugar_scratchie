@@ -213,6 +213,23 @@ export function finishPhotoHand(): GameSession | null {
   return next;
 }
 
+/**
+ * In-app navigation. Must stay on the same document (history.pushState) so a
+ * Safari AudioContext unlocked on Play/Continue survives into the scratch
+ * screen — `location.assign` full-reloads and kills that unlock, which is why
+ * 3-2-1 was silent on iOS.
+ */
 export function navigateTo(href: string): void {
-  window.location.assign(href);
+  const url = new URL(href, window.location.href);
+  if (url.origin !== window.location.origin) {
+    window.location.assign(href);
+    return;
+  }
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.pushState(null, "", next);
+  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  window.scrollTo(0, 0);
 }

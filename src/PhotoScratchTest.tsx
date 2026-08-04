@@ -27,7 +27,9 @@ import {
 } from "./game/matchGame";
 import {
   InitialCountdown,
+  isCountdownSoundUnlocked,
   TOP_BAR_DOCK_MS,
+  unlockCountdownSound,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
@@ -42,6 +44,7 @@ import {
   type TrackedMeshSample,
   type Vec2,
 } from "./meshGeometry";
+import { playThemeIntro } from "./shared/media";
 import { useDeviceParallax, type ParallaxState } from "./useDeviceParallax";
 
 const BACK_LAYER_SRC = "/photo-scratch/background.jpg";
@@ -827,6 +830,8 @@ export function PhotoScratchTest() {
   completedCardIdsRef.current = completedCardIds;
   const [introVideoUrl, setIntroVideoUrl] = useState("");
   const [introActive, setIntroActive] = useState(false);
+  /** Starts muted for autoplay policy; may unmute after playThemeIntro succeeds. */
+  const [introMuted, setIntroMuted] = useState(true);
   const introActiveRef = useRef(false);
   introActiveRef.current = introActive;
   // Theme ids whose intro clip has already played this session — one
@@ -836,6 +841,18 @@ export function PhotoScratchTest() {
   const countdownOverIntroRef = useRef(false);
   /** One 3-2-1 per photo-hand / session — later cards skip it. */
   const sessionCountdownDoneRef = useRef(false);
+  /**
+   * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
+   * already called unlockCountdownSound(), so this starts true then.
+   */
+  const [entryReady, setEntryReady] = useState(
+    () => !loadSoundEnabled() || isCountdownSoundUnlocked(),
+  );
+  const entryReadyRef = useRef(entryReady);
+  entryReadyRef.current = entryReady;
+  const pendingIntroEntryRef = useRef<{
+    entry: PhotoScratchCardEntry | undefined;
+  } | null>(null);
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -866,13 +883,25 @@ export function PhotoScratchTest() {
   }
 
   function isBodyScratchLocked() {
+    if (!entryReadyRef.current) return true;
+    if (introActiveRef.current) return true;
     return (
       hasBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
   }
 
+  function onMatchEntryTap() {
+    unlockCountdownSound();
+    setEntryReady(true);
+  }
+
   function armIntroForEntry(entry: PhotoScratchCardEntry | undefined) {
+    if (!entryReadyRef.current) {
+      pendingIntroEntryRef.current = { entry };
+      return;
+    }
+    pendingIntroEntryRef.current = null;
     const url = entry ? entry.intro?.trim() : "";
     const themeId = entry ? entry.theme_id?.trim() : "";
     countdownOverIntroRef.current = false;
@@ -898,7 +927,6 @@ export function PhotoScratchTest() {
   function dismissIntro() {
     setIntroActive(false);
     introActiveRef.current = false;
-    // Leave countdown running if it started over the intro.
   }
 
   function resetGameOutcome() {
@@ -939,9 +967,13 @@ export function PhotoScratchTest() {
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
-    setIntroGateActive(false);
-    introGateActiveRef.current = false;
-    setShowIntroCountdown(false);
+    // Don't wipe a 3-2-1 that was just armed over the theme intro (same race
+    // ScratchPrototype guards against when card assets finish loading).
+    if (!countdownOverIntroRef.current) {
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+      setShowIntroCountdown(false);
+    }
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
@@ -1580,7 +1612,10 @@ export function PhotoScratchTest() {
   }
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      unlockCountdownSound();
+    }
     setSoundEnabled(enabled);
   }
 
@@ -1758,6 +1793,32 @@ export function PhotoScratchTest() {
     clearGameResultTimer();
     clearIntroDockTimer();
   }, []);
+
+  useEffect(() => {
+    if (!entryReady) return;
+    const pending = pendingIntroEntryRef.current;
+    if (!pending) return;
+    pendingIntroEntryRef.current = null;
+    armIntroForEntry(pending.entry);
+  }, [entryReady]);
+
+  // Android/iOS block unmuted autoplay after refresh or async mount — kick
+  // playback with a muted fallback so the intro still runs.
+  useEffect(() => {
+    if (!introActive || !introVideoUrl) {
+      setIntroMuted(true);
+      return;
+    }
+    const video = introVideoElRef.current;
+    if (!video) return;
+    let cancelled = false;
+    void playThemeIntro(video, soundEnabled).then((muted) => {
+      if (!cancelled) setIntroMuted(muted);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [introActive, introVideoUrl, soundEnabled]);
 
   useEffect(() => {
     try {
@@ -2223,27 +2284,35 @@ export function PhotoScratchTest() {
               : ""
           }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}${introActive ? " is-intro-video-phase" : ""}`}
         >
-          {introActive && introVideoUrl ? (
+          {!entryReady ? (
             <div
-              className="photo-scratch-intro-video"
+              className="match-audio-gate"
               role="button"
               tabIndex={0}
-              aria-label="Skip intro"
-              onClick={dismissIntro}
+              aria-label="Tap to play"
+              onClick={onMatchEntryTap}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") dismissIntro();
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onMatchEntryTap();
+                }
               }}
             >
+              <span className="match-audio-gate-label">Tap to play</span>
+            </div>
+          ) : null}
+          {introActive && introVideoUrl ? (
+            <div className="photo-scratch-intro-video" aria-hidden="true">
               <video
                 ref={introVideoElRef}
                 autoPlay
-                muted={!soundEnabled}
+                muted={introMuted}
                 playsInline
+                preload="auto"
                 src={introVideoUrl}
                 onEnded={dismissIntro}
                 onError={dismissIntro}
               />
-              <span className="photo-scratch-intro-video-skip">Tap to skip</span>
             </div>
           ) : null}
           {hasBodySymbols ? (

@@ -10,6 +10,7 @@ import {
   startMotionSession,
   type GameSession,
 } from "./game/gameSession";
+import { unlockCountdownSound } from "./game/InitialCountdown";
 import {
   buildDealtRound,
   loadGameCatalog,
@@ -112,6 +113,14 @@ export function GamePage() {
     const keys = new Set(motionPool.map((card) => card.theme.toLowerCase()));
     return keys.size;
   }, [motionPool]);
+
+  // Prime countdown AudioContext on the first hub tap so Play → navigate →
+  // 3-2-1 can use a already-running context (Safari won't start HTMLAudio later).
+  useEffect(() => {
+    const warm = () => unlockCountdownSound();
+    window.addEventListener("pointerdown", warm, { capture: true, once: true });
+    return () => window.removeEventListener("pointerdown", warm, true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -259,6 +268,9 @@ export function GamePage() {
 
   function playMotionHand() {
     if (busy || hand.length === 0) return;
+    // Unlock 3-2-1 AudioContext inside the click. navigateTo is SPA so this
+    // context survives into the scratch screen (a full reload would kill it).
+    unlockCountdownSound();
     const existing = loadGameSession();
     if (existing?.phase === "motion" || existing?.phase === "photo") {
       if (existing.phase === "photo") {
@@ -280,6 +292,7 @@ export function GamePage() {
       setError("No photo scratches won this round.");
       return;
     }
+    unlockCountdownSound();
     const started = beginPhotoPhase() ?? current;
     setSession(started);
     navigateTo(photoPlayHref(started));
