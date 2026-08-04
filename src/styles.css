@@ -3912,6 +3912,14 @@ dd {
   box-shadow: 0 18px 60px rgba(23, 21, 19, 0.18);
 }
 
+/* Centered blur/scale layer so edge bleed is covered by a slight zoom. */
+.transition-lab-fx-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  will-change: transform, filter, opacity;
+}
+
 /* One continuous strip: [A | A↻ | B↻ | B]. X is left-edge anchored. */
 .transition-lab-strip {
   position: absolute;
@@ -3922,7 +3930,7 @@ dd {
   width: 400%;
   height: 100%;
   transform-origin: left center;
-  will-change: transform, opacity, filter;
+  will-change: transform;
 }
 
 .transition-lab-tile {

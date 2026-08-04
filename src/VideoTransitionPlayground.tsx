@@ -23,14 +23,17 @@ const DEFAULT_END_X = -1163;
 const TILE_COUNT = 4;
 const STRIP_WIDTH = STAGE_WIDTH * TILE_COUNT;
 
-/** Blur-only motion FX while the strip is sliding. */
+/** Motion FX while the strip is sliding (blur + scale pulse). */
 const DEFAULT_BLUR_PEAK = 12.5;
 const DEFAULT_BLUR_WINDOW = { startPct: 5, stopPct: 99 } as const;
+/** Slight zoom to hide blurred strip edges against the stage bg. */
+const DEFAULT_SCALE_PEAK = 1.03;
+const DEFAULT_SCALE_WINDOW = { startPct: 0, stopPct: 92 } as const;
 /** Fallback only used when importing legacy global windows. */
 const DEFAULT_FX_START_PCT = 5;
 const DEFAULT_FX_STOP_PCT = 99;
 /**
- * Within the blur start→stop window, relative ramp positions
+ * Within each FX start→stop window, relative ramp positions
  * (0–1 of that window). Fade in early, hold, then clear before stop.
  */
 const FX_WINDOW_FADE_IN_END = 0.18;
@@ -51,9 +54,9 @@ type StripProps = {
 };
 
 type FxWindow = {
-  /** 0–100: % of transition duration when blur begins. */
+  /** 0–100: % of transition duration when this FX begins. */
   startPct: number;
-  /** 0–100: % of transition duration when blur fully ends. */
+  /** 0–100: % of transition duration when this FX fully ends. */
   stopPct: number;
 };
 
@@ -61,6 +64,9 @@ type MotionFxSettings = {
   enabled: boolean;
   blurPeak: number;
   blur: FxWindow;
+  /** Peak uniform scale (1 = none). Pulses up then back to 1. */
+  scalePeak: number;
+  scale: FxWindow;
 };
 
 /** CSS-style cubic-bezier control points. */
@@ -321,11 +327,19 @@ function roundStrip(strip: StripProps): StripProps {
   };
 }
 
-function stripStyle(strip: StripProps): CSSProperties {
+/** Outer stage layer: blur + centered scale pulse (covers edge bleed). */
+function fxLayerStyle(strip: StripProps): CSSProperties {
   return {
     opacity: strip.opacity,
     filter: strip.blur > 0.001 ? `blur(${strip.blur}px)` : "none",
-    transform: `translate(${strip.x}px, ${strip.y}px) scale(${strip.scale})`,
+    transform: `scale(${strip.scale})`,
+  };
+}
+
+/** Inner strip: horizontal slide only (left-edge anchored). */
+function stripTravelStyle(strip: StripProps): CSSProperties {
+  return {
+    transform: `translate(${strip.x}px, ${strip.y}px)`,
   };
 }
 
@@ -334,6 +348,8 @@ function defaultMotionFx(): MotionFxSettings {
     enabled: true,
     blurPeak: DEFAULT_BLUR_PEAK,
     blur: { ...DEFAULT_BLUR_WINDOW },
+    scalePeak: DEFAULT_SCALE_PEAK,
+    scale: { ...DEFAULT_SCALE_WINDOW },
   };
 }
 
@@ -380,6 +396,12 @@ function clonePreset(preset: TransitionPreset): TransitionPreset {
       blur: {
         startPct: preset.motionFx?.blur.startPct ?? DEFAULT_BLUR_WINDOW.startPct,
         stopPct: preset.motionFx?.blur.stopPct ?? DEFAULT_BLUR_WINDOW.stopPct,
+      },
+      scalePeak: preset.motionFx?.scalePeak ?? DEFAULT_SCALE_PEAK,
+      scale: {
+        startPct:
+          preset.motionFx?.scale.startPct ?? DEFAULT_SCALE_WINDOW.startPct,
+        stopPct: preset.motionFx?.scale.stopPct ?? DEFAULT_SCALE_WINDOW.stopPct,
       },
     },
     keyframes: sortKeyframes(preset.keyframes).map((frame) => ({
@@ -442,13 +464,21 @@ function motionFxEnvelope(t: number, window: FxWindow): number {
   return fadeIn * fadeOut;
 }
 
-function sampleMotionFx(t: number, fx: MotionFxSettings): { blur: number } {
-  if (!fx.enabled) return { blur: 0 };
+function sampleMotionFx(
+  t: number,
+  fx: MotionFxSettings,
+): { blur: number; scale: number } {
+  if (!fx.enabled) return { blur: 0, scale: 1 };
   const blurEnv = motionFxEnvelope(t, fx.blur);
-  return { blur: fx.blurPeak * blurEnv };
+  const scaleEnv = motionFxEnvelope(t, fx.scale);
+  return {
+    blur: fx.blurPeak * blurEnv,
+    // 1 → peak → 1 within the scale window.
+    scale: lerp(1, fx.scalePeak, scaleEnv),
+  };
 }
 
-/** Keyframe base + procedural blur FX for display only. */
+/** Keyframe base + procedural blur/scale FX for display only. */
 function applyMotionFx(
   base: StripProps,
   t: number,
@@ -458,6 +488,7 @@ function applyMotionFx(
   return {
     ...base,
     blur: Math.max(0, base.blur + motion.blur),
+    scale: base.scale * motion.scale,
   };
 }
 
@@ -558,6 +589,15 @@ function parsePreset(raw: unknown): TransitionPreset | null {
       blurPeak:
         typeof rawFx.blurPeak === "number" ? rawFx.blurPeak : DEFAULT_BLUR_PEAK,
       blur: parseFxWindow(rawFx.blur, legacyStart, legacyStop),
+      scalePeak:
+        typeof rawFx.scalePeak === "number"
+          ? rawFx.scalePeak
+          : DEFAULT_SCALE_PEAK,
+      scale: parseFxWindow(
+        rawFx.scale,
+        DEFAULT_SCALE_WINDOW.startPct,
+        DEFAULT_SCALE_WINDOW.stopPct,
+      ),
     };
   }
 
@@ -1102,6 +1142,8 @@ export function VideoTransitionPlayground() {
       enabled: motionFx.enabled,
       blurPeak: motionFx.blurPeak,
       blur: { ...motionFx.blur },
+      scalePeak: motionFx.scalePeak,
+      scale: { ...motionFx.scale },
     },
     keyframes: sortKeyframes(keyframes).map((frame) => ({
       t: roundValue(frame.t, 4),
@@ -1214,16 +1256,20 @@ export function VideoTransitionPlayground() {
     applySampledPose(playheadT, keyframes, next);
   };
 
-  const patchBlurWindow = (patch: Partial<FxWindow>) => {
-    let startPct = patch.startPct ?? motionFx.blur.startPct;
-    let stopPct = patch.stopPct ?? motionFx.blur.stopPct;
+  const patchFxChannelWindow = (
+    channel: "blur" | "scale",
+    patch: Partial<FxWindow>,
+  ) => {
+    const current = motionFx[channel];
+    let startPct = patch.startPct ?? current.startPct;
+    let stopPct = patch.stopPct ?? current.stopPct;
     startPct = clamp(startPct, 0, 100);
     stopPct = clamp(stopPct, 0, 100);
     if (patch.startPct !== undefined) stopPct = Math.max(stopPct, startPct);
     if (patch.stopPct !== undefined) startPct = Math.min(startPct, stopPct);
     patchMotionFx({
-      blur: { startPct, stopPct },
-    });
+      [channel]: { startPct, stopPct },
+    } as Partial<MotionFxSettings>);
   };
 
   const updateEasing = useCallback(
@@ -1307,42 +1353,50 @@ export function VideoTransitionPlayground() {
               className="transition-lab-stage"
               style={{ aspectRatio: `${STAGE_WIDTH} / ${STAGE_HEIGHT}` }}
             >
-              <div className="transition-lab-strip" style={stripStyle(pose)}>
-                <div className="transition-lab-tile">
-                  <video
-                    ref={videoARef}
-                    className="transition-lab-video"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
-                  />
-                  <span className="transition-lab-tile-tag">A</span>
-                </div>
-                <div className="transition-lab-tile">
-                  <canvas
-                    ref={mirrorACanvasRef}
-                    className="transition-lab-video transition-lab-mirror"
-                  />
-                  <span className="transition-lab-tile-tag">A↻</span>
-                </div>
-                <div className="transition-lab-tile">
-                  <canvas
-                    ref={mirrorBCanvasRef}
-                    className="transition-lab-video transition-lab-mirror"
-                  />
-                  <span className="transition-lab-tile-tag">B↻</span>
-                </div>
-                <div className="transition-lab-tile">
-                  <video
-                    ref={videoBRef}
-                    className="transition-lab-video"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
-                  />
-                  <span className="transition-lab-tile-tag">B</span>
+              <div
+                className="transition-lab-fx-layer"
+                style={fxLayerStyle(pose)}
+              >
+                <div
+                  className="transition-lab-strip"
+                  style={stripTravelStyle(pose)}
+                >
+                  <div className="transition-lab-tile">
+                    <video
+                      ref={videoARef}
+                      className="transition-lab-video"
+                      muted
+                      loop
+                      playsInline
+                      preload="auto"
+                    />
+                    <span className="transition-lab-tile-tag">A</span>
+                  </div>
+                  <div className="transition-lab-tile">
+                    <canvas
+                      ref={mirrorACanvasRef}
+                      className="transition-lab-video transition-lab-mirror"
+                    />
+                    <span className="transition-lab-tile-tag">A↻</span>
+                  </div>
+                  <div className="transition-lab-tile">
+                    <canvas
+                      ref={mirrorBCanvasRef}
+                      className="transition-lab-video transition-lab-mirror"
+                    />
+                    <span className="transition-lab-tile-tag">B↻</span>
+                  </div>
+                  <div className="transition-lab-tile">
+                    <video
+                      ref={videoBRef}
+                      className="transition-lab-video"
+                      muted
+                      loop
+                      playsInline
+                      preload="auto"
+                    />
+                    <span className="transition-lab-tile-tag">B</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1381,8 +1435,8 @@ export function VideoTransitionPlayground() {
               </span>
               <span className="transition-lab-time">t={roundValue(playheadT, 3)}</span>
               <span className="transition-lab-time">
-                x={roundValue(pose.x, 0)} · blur={roundValue(pose.blur, 1)} ·{" "}
-                {visiblePanelLabel(pose.x)} · eased=
+                x={roundValue(pose.x, 0)} · s={roundValue(pose.scale, 3)} · blur=
+                {roundValue(pose.blur, 1)} · {visiblePanelLabel(pose.x)} · eased=
                 {roundValue(easedPlayhead, 3)}
               </span>
             </div>
@@ -1794,7 +1848,8 @@ export function VideoTransitionPlayground() {
           <section className="transition-lab-section">
             <h3>Motion FX</h3>
             <p className="transition-lab-hint">
-              Blur only. Start/stop are % of transition duration.
+              Blur + scale pulse. Scale is centered on stage to hide edge bleed.
+              Start/stop are % of transition duration.
             </p>
             <label className="transition-lab-check">
               <input
@@ -1804,7 +1859,7 @@ export function VideoTransitionPlayground() {
                   patchMotionFx({ enabled: event.target.checked });
                 }}
               />
-              Enable blur FX
+              Enable motion FX
             </label>
 
             <div className="transition-lab-fx-channel">
@@ -1825,7 +1880,7 @@ export function VideoTransitionPlayground() {
                     step={1}
                     value={motionFx.blur.startPct}
                     onChange={(event) =>
-                      patchBlurWindow({
+                      patchFxChannelWindow("blur", {
                         startPct: Number(event.target.value),
                       })
                     }
@@ -1846,7 +1901,7 @@ export function VideoTransitionPlayground() {
                     step={1}
                     value={motionFx.blur.stopPct}
                     onChange={(event) =>
-                      patchBlurWindow({
+                      patchFxChannelWindow("blur", {
                         stopPct: Number(event.target.value),
                       })
                     }
@@ -1865,6 +1920,70 @@ export function VideoTransitionPlayground() {
                     value={motionFx.blurPeak}
                     onChange={(event) =>
                       patchMotionFx({ blurPeak: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="transition-lab-fx-channel">
+              <h4>Scale pulse</h4>
+              <div className="transition-lab-sliders">
+                <label>
+                  <span className="transition-lab-slider-label">
+                    <span>Start %</span>
+                    <span>
+                      {roundValue(motionFx.scale.startPct, 0)}% ·{" "}
+                      {formatTime((motionFx.scale.startPct / 100) * durationMs)}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={motionFx.scale.startPct}
+                    onChange={(event) =>
+                      patchFxChannelWindow("scale", {
+                        startPct: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span className="transition-lab-slider-label">
+                    <span>Stop %</span>
+                    <span>
+                      {roundValue(motionFx.scale.stopPct, 0)}% ·{" "}
+                      {formatTime((motionFx.scale.stopPct / 100) * durationMs)}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={motionFx.scale.stopPct}
+                    onChange={(event) =>
+                      patchFxChannelWindow("scale", {
+                        stopPct: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  <span className="transition-lab-slider-label">
+                    <span>Peak</span>
+                    <span>{roundValue(motionFx.scalePeak, 3)}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={1.2}
+                    step={0.005}
+                    value={motionFx.scalePeak}
+                    onChange={(event) =>
+                      patchMotionFx({ scalePeak: Number(event.target.value) })
                     }
                   />
                 </label>
