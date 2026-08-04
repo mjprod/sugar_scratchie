@@ -57,7 +57,9 @@ type PhotoScratchCardEntry = {
   clothes: string;
   mesh: string;
   model_id?: string;
-  /** One-time clip played before the player's first scratch on this card. */
+  /** Catalog theme id — intro clips are shared across cards in the same theme. */
+  theme_id?: string;
+  /** One-time clip played before the player's first scratch on this theme. */
   intro?: string;
 };
 
@@ -820,9 +822,9 @@ export function PhotoScratchTest() {
   const [introActive, setIntroActive] = useState(false);
   const introActiveRef = useRef(false);
   introActiveRef.current = introActive;
-  // Motion-card ids whose intro clip has already played this session — one
-  // playthrough per card, even across its multiple published photo slots.
-  const introShownForCardRef = useRef<Set<string>>(new Set());
+  // Theme ids whose intro clip has already played this session — one
+  // playthrough per theme, even across multiple motion cards / photo slots.
+  const introShownForThemeRef = useRef<Set<string>>(new Set());
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -861,14 +863,14 @@ export function PhotoScratchTest() {
 
   function armIntroForEntry(entry: PhotoScratchCardEntry | undefined) {
     const url = entry ? entry.intro?.trim() : "";
-    const parentId = entry ? parentMotionCardId(entry.id) : "";
-    if (!url || introShownForCardRef.current.has(parentId)) {
+    const themeId = entry ? entry.theme_id?.trim() : "";
+    if (!url || !themeId || introShownForThemeRef.current.has(themeId)) {
       setIntroVideoUrl("");
       setIntroActive(false);
       introActiveRef.current = false;
       return;
     }
-    introShownForCardRef.current.add(parentId);
+    introShownForThemeRef.current.add(themeId);
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;

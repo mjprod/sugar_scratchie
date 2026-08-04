@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from backend.cards import public_url
+
 THEME_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+INTRO_EXTENSIONS = {".mp4", ".webm"}
 
 DEFAULT_THEMES: list[tuple[str, str]] = [
     ("police", "Police"),
@@ -24,6 +28,9 @@ class ThemeInfo(BaseModel):
     label: str
     sort_order: int = 0
     created_at: float | None = None
+    # One-time intro clip played in-game before the player's first scratch on
+    # any motion card that belongs to this theme.
+    intro: str | None = None
 
 
 class CreateThemeRequest(BaseModel):
@@ -70,6 +77,17 @@ def _read_index(themes_dir: Path) -> list[dict]:
     return [entry for entry in themes if isinstance(entry, dict)]
 
 
+def find_theme_intro(themes_dir: Path, theme_id: str) -> str | None:
+    theme_dir = themes_dir / theme_id
+    if not theme_dir.is_dir():
+        return None
+    for ext in INTRO_EXTENSIONS:
+        candidate = theme_dir / f"intro{ext}"
+        if candidate.is_file():
+            return public_url(f"themes/{theme_id}/intro{ext}")
+    return None
+
+
 def _write_index(themes_dir: Path, themes: list[ThemeInfo]) -> None:
     themes_dir.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -79,6 +97,7 @@ def _write_index(themes_dir: Path, themes: list[ThemeInfo]) -> None:
                 "label": theme.label,
                 "sort_order": theme.sort_order,
                 "created_at": theme.created_at,
+                **({"intro": theme.intro} if theme.intro else {}),
             }
             for theme in themes
         ]
@@ -86,7 +105,7 @@ def _write_index(themes_dir: Path, themes: list[ThemeInfo]) -> None:
     _index_path(themes_dir).write_text(json.dumps(payload, indent=2) + "\n")
 
 
-def _parse_theme(entry: dict, fallback_order: int) -> ThemeInfo | None:
+def _parse_theme(entry: dict, fallback_order: int, themes_dir: Path) -> ThemeInfo | None:
     theme_id = entry.get("id")
     label = entry.get("label")
     if not isinstance(theme_id, str) or not isinstance(label, str):
@@ -102,6 +121,7 @@ def _parse_theme(entry: dict, fallback_order: int) -> ThemeInfo | None:
         label=label,
         sort_order=sort_order if isinstance(sort_order, int) else fallback_order,
         created_at=created_at if isinstance(created_at, (int, float)) else None,
+        intro=find_theme_intro(themes_dir, theme_id),
     )
 
 
@@ -125,7 +145,7 @@ def list_themes(themes_dir: Path, *, ensure_defaults: bool = True) -> list[Theme
 
     themes: list[ThemeInfo] = []
     for index, entry in enumerate(_read_index(themes_dir)):
-        parsed = _parse_theme(entry, index)
+        parsed = _parse_theme(entry, index, themes_dir)
         if parsed:
             themes.append(parsed)
 
@@ -198,6 +218,7 @@ def update_theme(themes_dir: Path, theme_id: str, request: UpdateThemeRequest) -
         label=label,
         sort_order=sort_order,
         created_at=current.created_at,
+        intro=current.intro,
     )
     themes[index] = updated
     themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
@@ -212,6 +233,9 @@ def delete_theme(themes_dir: Path, theme_id: str) -> None:
     if len(next_themes) == len(themes):
         raise HTTPException(status_code=404, detail=f"Theme “{slug}” not found")
     _write_index(themes_dir, next_themes)
+    theme_dir = themes_dir / slug
+    if theme_dir.is_dir():
+        shutil.rmtree(theme_dir, ignore_errors=True)
 
 
 def reorder_themes(themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
@@ -235,11 +259,48 @@ def reorder_themes(themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
             label=theme.label,
             sort_order=index,
             created_at=theme.created_at,
+            intro=theme.intro,
         )
         for index, theme in enumerate(ordered)
     ]
     _write_index(themes_dir, rewritten)
     return rewritten
+
+
+async def upload_theme_intro(themes_dir: Path, theme_id: str, upload: UploadFile) -> ThemeInfo:
+    theme = get_theme(themes_dir, theme_id)
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in INTRO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Intro must be MP4 or WebM")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded intro is empty")
+    theme_dir = themes_dir / theme.id
+    theme_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in INTRO_EXTENSIONS:
+        old = theme_dir / f"intro{old_ext}"
+        if old.exists():
+            old.unlink()
+    target = theme_dir / f"intro{ext}"
+    target.write_bytes(data)
+    write_themes_index(themes_dir)
+    return get_theme(themes_dir, theme.id)
+
+
+def delete_theme_intro(themes_dir: Path, theme_id: str) -> ThemeInfo:
+    theme = get_theme(themes_dir, theme_id)
+    theme_dir = themes_dir / theme.id
+    removed = False
+    for ext in INTRO_EXTENSIONS:
+        path = theme_dir / f"intro{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Intro not found for theme: {theme.id}")
+    write_themes_index(themes_dir)
+    return get_theme(themes_dir, theme.id)
 
 
 def resolve_theme_id(themes_dir: Path, theme_or_label: str) -> str | None:

@@ -2293,6 +2293,45 @@ dd {
   opacity: 0.6;
 }
 
+.models-theme-intro-btn {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.models-theme-intro-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.models-theme-intro-thumb {
+  display: block;
+  width: 28px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--gray-4);
+  border: 1px solid var(--gray-6);
+}
+
+.models-theme-intro-thumb--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  color: var(--gray-9);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .models-theme-avatar {
   display: block;
   width: 40px;

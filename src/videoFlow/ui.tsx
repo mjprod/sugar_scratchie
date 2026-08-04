@@ -28,7 +28,7 @@ export const iconProps = {
 } as const;
 
 /** Public Vite/static paths — not absolute filesystem paths like /Users/... */
-const PUBLIC_SITE_PREFIXES = ["/cards/", "/mesh/", "/models/", "/api/"] as const;
+const PUBLIC_SITE_PREFIXES = ["/cards/", "/mesh/", "/models/", "/themes/", "/api/"] as const;
 
 export function previewSource(value: string, cacheBust?: string | number) {
   const trimmed = value.trim();

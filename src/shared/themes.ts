@@ -5,6 +5,8 @@ export type ThemeInfo = {
   label: string;
   sort_order: number;
   created_at?: number | null;
+  /** One-time in-game intro clip shared by every motion card in this theme. */
+  intro?: string | null;
 };
 
 export async function fetchThemes(): Promise<ThemeInfo[]> {
@@ -39,4 +41,25 @@ export async function reorderThemes(themeIds: string[]): Promise<ThemeInfo[]> {
     body: JSON.stringify({ theme_ids: themeIds }),
   });
   return Array.isArray(data.themes) ? data.themes : [];
+}
+
+/** Uploads the one-time intro clip played in-game before the player's first scratch. */
+export async function uploadThemeIntro(themeId: string, file: File): Promise<ThemeInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/themes/${encodeURIComponent(themeId)}/intro`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<ThemeInfo>;
+}
+
+export async function deleteThemeIntro(themeId: string): Promise<ThemeInfo> {
+  return api<ThemeInfo>(`/api/themes/${encodeURIComponent(themeId)}/intro`, {
+    method: "DELETE",
+  });
 }
