@@ -2,11 +2,17 @@ import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   FairyDustCursor,
+  fairyDustPerf,
+  resetFairyDustPerfPeak,
   type ParticleType,
 } from "./cursorFx/FairyDustCursor";
 import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
 import { fetchModels, type ModelInfo } from "./shared/models";
-import { loadVideoSrc, releaseMediaElement } from "./shared/media";
+import {
+  loadVideoSrc,
+  playThemeIntro,
+  releaseMediaElement,
+} from "./shared/media";
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
@@ -25,13 +31,17 @@ import {
   loadGameSession,
   navigateTo,
   recordMotionCardResult,
+  themeForMotionCard,
   type GameSession,
 } from "./game/gameSession";
 import {
   InitialCountdown,
+  isCountdownSoundUnlocked,
   TOP_BAR_DOCK_MS,
+  unlockCountdownSound,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { fetchThemes } from "./shared/themes";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -92,6 +102,13 @@ function DebugHud() {
       );
       const [bottom, foreground] = vids;
       const out: string[] = [`render ${fps}fps`];
+
+      // Cursor FX cost: concurrent particles drive drawImage count; fadeSpeed
+      // and particles-per-move are the main knobs that grow this under load.
+      const fx = fairyDustPerf;
+      out.push(
+        `fx ${fx.active} particles (peak ${fx.peak}) ${fx.avgFrameMs.toFixed(2)}ms avg`,
+      );
 
       // JS heap usage. performance.memory is non-standard (Chromium only) but
       // works on plain http/localhost — unlike measureUserAgentSpecificMemory,
@@ -714,11 +731,14 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v4";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v6";
 const LEGACY_CURSOR_FX_STORAGE_KEYS = [
+  "sugar-scratchie:cursor-fx",
   "sugar-scratchie:cursor-fx-v1",
   "sugar-scratchie:cursor-fx-v2",
   "sugar-scratchie:cursor-fx-v3",
+  "sugar-scratchie:cursor-fx-v4",
+  "sugar-scratchie:cursor-fx-v5",
 ];
 
 type CursorFxSettings = {
@@ -732,9 +752,11 @@ type CursorFxSettings = {
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
   fairyDust: true,
   particleSize: 64,
-  particleCount: 1,
+  particleCount: 2,
   gravity: 0.1,
-  fadeSpeed: 0.91,
+  // 0.98 looks lush but ~9× concurrent vs 0.91; 0.94 keeps a denser trail
+  // (~1.1s life) without sitting on the 400-particle cap during hard scratches.
+  fadeSpeed: 0.94,
 };
 
 const CURSOR_FX_INITIAL_VELOCITY = { min: 0.5, max: 1.5 };
@@ -1185,15 +1207,53 @@ export function ScratchPrototype() {
   const [isScratching, setIsScratching] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const [gameResultLeaving, setGameResultLeaving] = useState(false);
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
+  const matchOutcomeRef = useRef<MatchGameOutcome | null>(null);
   const [topSymbols, setTopSymbols] = useState(buildTopSymbols);
   const [topBarPhase, setTopBarPhase] = useState<TopBarPhase>("center");
   const [topBarRound, setTopBarRound] = useState(0);
   /** Locks body scratch / video from dock through countdown end. */
   const [introGateActive, setIntroGateActive] = useState(false);
   const [showIntroCountdown, setShowIntroCountdown] = useState(false);
+  /** Theme intro clip for the current Play/Continue visit (game mode only). */
+  const [introVideoUrl, setIntroVideoUrl] = useState("");
+  const [introActive, setIntroActive] = useState(false);
+  /** Starts muted for autoplay policy; may unmute after playThemeIntro succeeds. */
+  const [introMuted, setIntroMuted] = useState(true);
+  const introActiveRef = useRef(false);
+  introActiveRef.current = introActive;
+  const introVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const handStartIntroDoneRef = useRef(false);
+  /** True when 3-2-1 already played over the hand-start theme intro. */
+  const handStartCountdownOverIntroRef = useRef(false);
+  /** One 3-2-1 per hand — later cards skip straight to play after the top bar. */
+  const handCountdownDoneRef = useRef(false);
+  /** Keeps match locked until that over-intro countdown finishes. */
+  const [handStartCountdownPending, setHandStartCountdownPending] = useState(false);
+  const themeIntroByKeyRef = useRef<Map<string, string>>(new Map());
+  const [themeIntrosReady, setThemeIntrosReady] = useState(false);
+  /** True once we've decided whether to show a hand-start intro (or skipped it). */
+  const [handStartIntroResolved, setHandStartIntroResolved] = useState(
+    () => !isGameModeUrl(),
+  );
+  /**
+   * Game-mode: don't unlock the scratch bar until the card clips have a frame.
+   * Avoids the black stage that shows if the bar appears while Safari is still
+   * attaching decoders after the theme intro.
+   */
+  const [gameVideosReady, setGameVideosReady] = useState(() => !isGameModeUrl());
+  /**
+   * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
+   * already called unlockCountdownSound(), so this starts true then.
+   */
+  const [entryReady, setEntryReady] = useState(
+    () => !isGameModeUrl() || !loadSoundEnabled() || isCountdownSoundUnlocked(),
+  );
+  const entryReadyRef = useRef(entryReady);
+  entryReadyRef.current = entryReady;
   const [sessionSymbols, setSessionSymbols] = useState(buildSessionSymbols);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
@@ -1208,6 +1268,9 @@ export function ScratchPrototype() {
   gameResultRef.current = gameResult;
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameResultLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const introDockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topSymbolsRef = useRef(topSymbols);
   topSymbolsRef.current = topSymbols;
@@ -1243,6 +1306,11 @@ export function ScratchPrototype() {
   const [cursorFxParticleTypes, setCursorFxParticleTypes] = useState<
     ParticleType[]
   >([]);
+  const [cursorFxPerf, setCursorFxPerf] = useState({
+    active: 0,
+    peak: 0,
+    avgFrameMs: 0,
+  });
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
@@ -1278,18 +1346,136 @@ export function ScratchPrototype() {
   }
 
   function isBodyScratchLocked() {
+    if (gameMode && !entryReadyRef.current) return true;
+    if (introActiveRef.current) return true;
+    if (gameMode && !handStartIntroDoneRef.current) return true;
     return (
       useBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
   }
 
+  function onMatchEntryTap() {
+    unlockCountdownSound();
+    setEntryReady(true);
+  }
+
+  function scheduleIntroCountdown() {
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setShowIntroCountdown(true);
+      showIntroCountdownRef.current = true;
+    }, TOP_BAR_DOCK_MS);
+  }
+
+  function kickGameVideos() {
+    if (uiStateRef.current.isPaused) return;
+    const bottomVideo = bottomVideoRef.current;
+    const foregroundVideo = foregroundVideoRef.current;
+    if (!bottomVideo || !foregroundVideo) return;
+    // Safari sometimes keeps readyState high but stops presenting frames after
+    // the theme-intro decoder is torn down — a tiny seek nudges a fresh frame.
+    for (const video of [bottomVideo, foregroundVideo]) {
+      try {
+        if (video.readyState >= 2 && !video.seeking) {
+          const t = video.currentTime;
+          if (Number.isFinite(t) && t > 0) {
+            video.currentTime = Math.max(0, t - 0.001);
+          }
+        }
+      } catch {
+        // ignore seek failures
+      }
+    }
+    void Promise.all([bottomVideo.play(), foregroundVideo.play()]).catch(
+      () => undefined,
+    );
+  }
+
+  function dismissThemeIntro() {
+    const intro = introVideoElRef.current;
+    if (intro) {
+      try {
+        intro.pause();
+      } catch {
+        // ignore
+      }
+      // Free the intro decoder before relying on the two game clips (Safari).
+      releaseMediaElement(intro);
+    }
+    setIntroActive(false);
+    introActiveRef.current = false;
+    // Next frame: give Safari a tick to drop the intro decoder first.
+    requestAnimationFrame(() => kickGameVideos());
+  }
+
+  function armHandStartIntro(cardId: string, session: GameSession) {
+    if (handStartIntroDoneRef.current) return;
+    handStartIntroDoneRef.current = true;
+    const themeLabel = themeForMotionCard(session, cardId)?.trim();
+    const url = themeLabel
+      ? themeIntroByKeyRef.current.get(themeLabel.toLowerCase()) ?? ""
+      : "";
+    clearIntroDockTimer();
+    setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
+    setHandStartCountdownPending(false);
+    handStartCountdownOverIntroRef.current = false;
+    if (!url) {
+      setIntroVideoUrl("");
+      setIntroActive(false);
+      introActiveRef.current = false;
+      setHandStartIntroResolved(true);
+      return;
+    }
+    setIntroVideoUrl(url);
+    setIntroActive(true);
+    introActiveRef.current = true;
+    setGameVideosReady(false);
+    setHandStartIntroResolved(true);
+    // 3-2-1 plays on top of the theme intro (once for this hand-start visit).
+    handStartCountdownOverIntroRef.current = true;
+    setHandStartCountdownPending(true);
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(true);
+    showIntroCountdownRef.current = true;
+  }
+
   function resetGameOutcome() {
     clearGameResultTimer();
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+      gameResultLeaveTimerRef.current = null;
+    }
     gameResultPendingRef.current = null;
     gameResultRef.current = null;
+    matchOutcomeRef.current = null;
     setGameResult(null);
+    setGameResultLeaving(false);
     setMatchOutcome(null);
+  }
+
+  function beginLeaveGameResult() {
+    if (gameResultLeaving) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      advanceAfterScratchRef.current();
+      return;
+    }
+    setGameResultLeaving(true);
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+    }
+    // Don't rely only on animationend — some browsers skip it when the
+    // leave animation replaces an in-flight open animation.
+    gameResultLeaveTimerRef.current = window.setTimeout(() => {
+      gameResultLeaveTimerRef.current = null;
+      advanceAfterScratchRef.current();
+    }, 760);
   }
 
   function resetMatchRound() {
@@ -1297,12 +1483,29 @@ export function ScratchPrototype() {
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
-    setIntroGateActive(false);
-    introGateActiveRef.current = false;
-    setShowIntroCountdown(false);
+    // Card-load effect runs after armHandStartIntro in the same commit. Don't
+    // wipe a hand-start 3-2-1 that was just armed (or the over-intro flag stays
+    // set and the post-dock countdown is skipped forever).
+    const preserveHandStartCountdown =
+      handStartCountdownOverIntroRef.current || handStartCountdownPending;
+    if (!preserveHandStartCountdown) {
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+      setShowIntroCountdown(false);
+      showIntroCountdownRef.current = false;
+    }
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
+  }
+
+  function unlockPlayAfterDock() {
+    clearIntroDockTimer();
+    introDockTimerRef.current = window.setTimeout(() => {
+      introDockTimerRef.current = null;
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+    }, TOP_BAR_DOCK_MS);
   }
 
   function onTopBarAllRevealed() {
@@ -1310,18 +1513,44 @@ export function ScratchPrototype() {
     topBarPhaseRef.current = "docked";
     setIntroGateActive(true);
     introGateActiveRef.current = true;
-    setShowIntroCountdown(false);
     clearIntroDockTimer();
-    introDockTimerRef.current = window.setTimeout(() => {
-      introDockTimerRef.current = null;
-      setShowIntroCountdown(true);
-    }, TOP_BAR_DOCK_MS);
+    // Later cards in the hand: no 3-2-1, just open play after the bar docks.
+    if (handCountdownDoneRef.current) {
+      unlockPlayAfterDock();
+      return;
+    }
+    // Already ran / still running 3-2-1 over the theme intro — no second copy.
+    if (handStartCountdownOverIntroRef.current) {
+      handStartCountdownOverIntroRef.current = false;
+      if (showIntroCountdownRef.current) {
+        // Still playing; unlock when InitialCountdown completes.
+        return;
+      }
+      // Armed for intro but not visible (e.g. wiped by a race) — play it now.
+      if (handStartCountdownPending) {
+        scheduleIntroCountdown();
+        return;
+      }
+      handCountdownDoneRef.current = true;
+      unlockPlayAfterDock();
+      return;
+    }
+    // First card, no over-intro path — one countdown for the whole hand.
+    setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
+    scheduleIntroCountdown();
   }
 
   function onIntroCountdownComplete() {
+    handCountdownDoneRef.current = true;
     setShowIntroCountdown(false);
+    showIntroCountdownRef.current = false;
     setIntroGateActive(false);
     introGateActiveRef.current = false;
+    setHandStartCountdownPending(false);
+    // Countdown often ends before the theme intro — if the intro already
+    // finished (or never painted), make sure the stage clips are running.
+    if (!introActiveRef.current) kickGameVideos();
   }
 
   useEffect(
@@ -1331,6 +1560,93 @@ export function ScratchPrototype() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!gameMode) {
+      setThemeIntrosReady(false);
+      themeIntroByKeyRef.current = new Map();
+      handStartIntroDoneRef.current = false;
+      handCountdownDoneRef.current = false;
+      setHandStartIntroResolved(true);
+      return;
+    }
+    handStartIntroDoneRef.current = false;
+    handCountdownDoneRef.current = false;
+    setHandStartIntroResolved(false);
+    setThemeIntrosReady(false);
+    let cancelled = false;
+    void fetchThemes()
+      .then((themes) => {
+        if (cancelled) return;
+        const map = new Map<string, string>();
+        for (const theme of themes) {
+          const url = theme.intro?.trim();
+          if (!url) continue;
+          map.set(theme.id.toLowerCase(), url);
+          map.set(theme.label.toLowerCase(), url);
+        }
+        themeIntroByKeyRef.current = map;
+        setThemeIntrosReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        themeIntroByKeyRef.current = new Map();
+        setThemeIntrosReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameMode]);
+
+  useEffect(() => {
+    if (
+      !gameMode ||
+      !gameSession ||
+      !selectedCardId ||
+      !themeIntrosReady ||
+      !entryReady
+    ) {
+      return;
+    }
+    armHandStartIntro(selectedCardId, gameSession);
+  }, [gameMode, gameSession, selectedCardId, themeIntrosReady, entryReady]);
+
+  // Android/iOS block unmuted autoplay after refresh or async mount — kick
+  // playback with a muted fallback so the intro still runs.
+  // Keep game clips loading/playing under the intro (muted, covered) so Safari
+  // has decoded frames ready when the overlay drops — pausing them for the
+  // intro was leaving a black stage after 3-2-1 GO.
+  useEffect(() => {
+    if (!introActive || !introVideoUrl) {
+      setIntroMuted(true);
+      return;
+    }
+    const video = introVideoElRef.current;
+    if (!video) return;
+    let cancelled = false;
+    void playThemeIntro(video, soundEnabled).then((result) => {
+      if (cancelled) return;
+      if (!result.playing) {
+        dismissThemeIntro();
+        return;
+      }
+      setIntroMuted(result.muted);
+    });
+    // Stuck/black intro (no ended event) — don't cover the stage forever.
+    const safetyId = window.setTimeout(() => {
+      if (!cancelled && introActiveRef.current) dismissThemeIntro();
+    }, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyId);
+    };
+  }, [introActive, introVideoUrl, soundEnabled]);
+
+  useEffect(() => {
+    if (introActive) return;
+    kickGameVideos();
+  }, [introActive]);
+
   // / showMesh changes (those are read live via refs).
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1857,9 +2173,21 @@ export function ScratchPrototype() {
     const foregroundVideo = foregroundVideoRef.current;
     if (!bottomVideo || !foregroundVideo || !card) return;
 
+    // Theme intro + two game clips = three decoders. Safari/iOS often starves
+    // the game pair and leaves a black WebGL stage after 3-2-1. While the
+    // intro is up, fully unload the card clips so only the intro decodes.
+    if (introActiveRef.current) {
+      releaseMediaElement(bottomVideo);
+      releaseMediaElement(foregroundVideo);
+      glRendererRef.current?.resetForeground();
+      setGameVideosReady(false);
+      return;
+    }
+
     let cancelled = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
+    setGameVideosReady(false);
 
     const kickPlayback = () => {
       if (cancelled) return;
@@ -1867,6 +2195,7 @@ export function ScratchPrototype() {
       // decoded frame is ready. Firing play() on one while the other is still
       // buffering creates a startup offset that the soft-seek must then chase.
       if (bottomVideo.readyState < 2 || foregroundVideo.readyState < 2) return;
+      if (bottomVideo.videoWidth < 2 || foregroundVideo.videoWidth < 2) return;
       const nextDuration = bottomVideo.duration || uiStateRef.current.duration;
       uiStateRef.current = {
         ...uiStateRef.current,
@@ -1877,7 +2206,11 @@ export function ScratchPrototype() {
       void Promise.all([
         bottomVideo.play(),
         foregroundVideo.play(),
-      ]).catch(() => undefined);
+      ])
+        .then(() => {
+          if (!cancelled) setGameVideosReady(true);
+        })
+        .catch(() => undefined);
     };
 
     // Reuse the same two <video> elements and swap src (no React key remount).
@@ -1889,6 +2222,7 @@ export function ScratchPrototype() {
           loadVideoSrc(foregroundVideo, card.foreground),
         ]);
       } catch {
+        if (!cancelled) setGameVideosReady(true);
         return;
       }
       if (cancelled) return;
@@ -1897,8 +2231,14 @@ export function ScratchPrototype() {
       kickPlayback();
     })();
 
+    // Don't leave game-mode locked on the intro cover forever if decode stalls.
+    const readySafetyId = window.setTimeout(() => {
+      if (!cancelled) setGameVideosReady(true);
+    }, 8_000);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(readySafetyId);
       bottomVideo.removeEventListener("canplay", kickPlayback);
       foregroundVideo.removeEventListener("canplay", kickPlayback);
       try {
@@ -1908,7 +2248,7 @@ export function ScratchPrototype() {
         // ignore
       }
     };
-  }, [card?.id, card?.bottom, card?.foreground]);
+  }, [card?.id, card?.bottom, card?.foreground, introActive]);
 
   // Mobile browsers (notably iOS Safari) will suspend a second, simultaneously
   // playing <video> after a few seconds to save power — which here drops the
@@ -1918,6 +2258,9 @@ export function ScratchPrototype() {
   useEffect(() => {
     const keepPlaying = () => {
       if (uiStateRef.current.isPaused) return;
+      // Don't steal the decoder from the theme intro (causes black stage after
+      // 3-2-1 on Safari / Android when three <video>s fight).
+      if (introActiveRef.current) return;
       const bottomVideo = bottomVideoRef.current;
       const foregroundVideo = foregroundVideoRef.current;
       if (bottomVideo?.paused) void bottomVideo.play().catch(() => undefined);
@@ -1947,6 +2290,23 @@ export function ScratchPrototype() {
   useEffect(() => {
     localStorage.setItem(CURSOR_FX_STORAGE_KEY, JSON.stringify(cursorFx));
   }, [cursorFx]);
+
+  useEffect(() => {
+    if (!cursorFx.fairyDust) return;
+    const id = window.setInterval(() => {
+      const active = fairyDustPerf.active;
+      const peak = fairyDustPerf.peak;
+      const avgFrameMs = Math.round(fairyDustPerf.avgFrameMs * 100) / 100;
+      setCursorFxPerf((current) =>
+        current.active === active &&
+        current.peak === peak &&
+        current.avgFrameMs === avgFrameMs
+          ? current
+          : { active, peak, avgFrameMs },
+      );
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [cursorFx.fairyDust]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2018,6 +2378,14 @@ export function ScratchPrototype() {
   }
 
   function updateCursorFx(patch: Partial<CursorFxSettings>) {
+    if (
+      patch.particleCount !== undefined ||
+      patch.fadeSpeed !== undefined ||
+      patch.particleSize !== undefined ||
+      patch.gravity !== undefined
+    ) {
+      resetFairyDustPerfPeak();
+    }
     setCursorFx((current) => ({ ...current, ...patch }));
   }
 
@@ -2032,16 +2400,27 @@ export function ScratchPrototype() {
     );
   }
 
+  // Hold top-bar until theme intro + 3-2-1 are done and card clips have a frame.
+  const matchStartUnlocked =
+    !gameMode ||
+    (handStartIntroResolved &&
+      !introActive &&
+      !handStartCountdownPending &&
+      gameVideosReady);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
   const autoScratchLocked =
-    useBodySymbols &&
-    (!symbolsHuntComplete || topBarPhase === "center" || introGateActive);
+    !matchStartUnlocked ||
+    introActive ||
+    (useBodySymbols &&
+      (!symbolsHuntComplete || topBarPhase === "center" || introGateActive));
   // Sparkles only during the hunt play window (after countdown, before all
   // symbols found); cards without body symbols have no countdown gate.
   const cursorFxPlayWindow =
-    !useBodySymbols ||
-    (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete);
+    matchStartUnlocked &&
+    !introActive &&
+    (!useBodySymbols ||
+      (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete));
   // Also require an active scratch stroke so idle cursor movement is quiet.
   const cursorFxSpawnActive = cursorFxPlayWindow && isScratching;
 
@@ -2056,7 +2435,10 @@ export function ScratchPrototype() {
   }, [autoScratchLocked, autoScratch.enabled]);
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      unlockCountdownSound();
+    }
     setSoundEnabled(enabled);
   }
 
@@ -2099,10 +2481,12 @@ export function ScratchPrototype() {
     const finishedId = selectedCardId;
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
 
+    const match = matchOutcomeRef.current ?? matchOutcome;
+    const result = gameResultRef.current ?? gameResult;
     let prize = 0;
-    if (matchOutcome) {
-      prize = matchOutcome.prize;
-    } else if (gameResult === "win") {
+    if (match) {
+      prize = match.prize;
+    } else if (result === "win") {
       prize = 1;
     }
 
@@ -2177,11 +2561,14 @@ export function ScratchPrototype() {
       }
     }
     gameResultPendingRef.current = outcome;
+    matchOutcomeRef.current = match;
+    gameResultRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    const overlayDelayMs = playGameOutcomeSound(
+    // Play the outcome sting, then skip the win/lose overlay and go next.
+    const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
@@ -2189,9 +2576,8 @@ export function ScratchPrototype() {
     clearGameResultTimer();
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
-      gameResultRef.current = outcome;
-      setGameResult(outcome);
-    }, overlayDelayMs);
+      advanceAfterScratchRef.current();
+    }, advanceDelayMs);
   }
   tryResolveGameRef.current = tryResolveGame;
 
@@ -2574,11 +2960,13 @@ export function ScratchPrototype() {
       <legend>Auto scratch</legend>
       {autoScratchLocked ? (
         <p className="auto-scratch-hint">
-          {topBarPhase === "center"
-            ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
-            : introGateActive
-              ? "Get ready — play starts after the countdown."
-              : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+          {introActive
+            ? "Theme intro + 3-2-1 — play unlocks when both finish."
+            : topBarPhase === "center"
+              ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+              : introGateActive
+                ? "Get ready — play starts after the countdown."
+                : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2624,11 +3012,13 @@ export function ScratchPrototype() {
       <legend>Cursor FX</legend>
       {cursorFx.fairyDust && !cursorFxPlayWindow ? (
         <p className="auto-scratch-hint">
-          {topBarPhase === "center"
-            ? "Scratch the top symbols first — cursor FX starts after the countdown."
-            : introGateActive
-              ? "Get ready — cursor FX starts after the countdown."
-              : "Cursor FX pauses once all symbols are found."}
+          {introActive
+            ? "Theme intro + 3-2-1 — cursor FX starts when play unlocks."
+            : topBarPhase === "center"
+              ? "Scratch the top symbols first — cursor FX starts after the countdown."
+              : introGateActive
+                ? "Get ready — cursor FX starts after the countdown."
+                : "Cursor FX pauses once all symbols are found."}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -2697,6 +3087,13 @@ export function ScratchPrototype() {
           value={cursorFx.fadeSpeed}
         />
       </label>
+      {cursorFx.fairyDust ? (
+        <p className="auto-scratch-hint">
+          Active {cursorFxPerf.active} · peak {cursorFxPerf.peak} ·{" "}
+          {cursorFxPerf.avgFrameMs.toFixed(2)}ms/frame
+          {cursorFxPerf.peak >= 220 ? " — near cap (250)" : ""}
+        </p>
+      ) : null}
     </fieldset>
   );
 
@@ -2873,34 +3270,79 @@ export function ScratchPrototype() {
         <div
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
-            useBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
-          }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}`}
+            useBodySymbols &&
+            matchStartUnlocked &&
+            topBarPhase === "center" &&
+            !introGateActive
+              ? " is-bar-phase"
+              : ""
+          }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}${
+            introActive ? " is-intro-video-phase" : ""
+          }`}
         >
           {glError ? (
             <div
-              className="game-result"
+              className="game-result game-result--static"
               role="alert"
               style={{ pointerEvents: "auto" }}
             >
-              <p className="game-result-title">WebGL2 required</p>
-              <p className="game-result-detail">
-                {glError}. Open this page in Chrome or Safari (not Cursor's
-                Simple Browser), and make sure hardware acceleration is on.
-              </p>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">WebGL2 required</p>
+                    <p className="game-result-detail">
+                      {glError}. Open this page in Chrome or Safari (not
+                      Cursor's Simple Browser), and make sure hardware
+                      acceleration is on.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
           {typeof window !== "undefined" &&
           new URLSearchParams(window.location.search).has("debug") ? (
             <DebugHud />
           ) : null}
-          {useBodySymbols ? (
+          {gameMode && !entryReady ? (
+            <div
+              className="match-audio-gate"
+              role="button"
+              tabIndex={0}
+              aria-label="Tap to play"
+              onClick={onMatchEntryTap}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onMatchEntryTap();
+                }
+              }}
+            >
+              <span className="match-audio-gate-label">Tap to play</span>
+            </div>
+          ) : null}
+          {introActive && introVideoUrl ? (
+            <div className="photo-scratch-intro-video" aria-hidden="true">
+              <video
+                ref={introVideoElRef}
+                autoPlay
+                muted={introMuted}
+                playsInline
+                preload="auto"
+                src={introVideoUrl}
+                onEnded={dismissThemeIntro}
+                onError={dismissThemeIntro}
+              />
+            </div>
+          ) : null}
+          {useBodySymbols && matchStartUnlocked ? (
             <TopSymbolBar
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
               onAllRevealed={onTopBarAllRevealed}
             />
-          ) : (
+          ) : !useBodySymbols && matchStartUnlocked ? (
             <div
               className={`symbol-bar${revealedSymbols >= SYMBOL_SLOT_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
               aria-label="Game symbols"
@@ -2924,7 +3366,7 @@ export function ScratchPrototype() {
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
           {showIntroCountdown ? (
             <InitialCountdown
               onComplete={onIntroCountdownComplete}
@@ -3216,31 +3658,39 @@ export function ScratchPrototype() {
           </div>
           {gameResult ? (
             <div
-              className={`game-result game-result--${gameResult}`}
+              className={`game-result game-result--${gameResult}${
+                gameResultLeaving ? " is-leaving" : ""
+              }`}
               role="status"
               aria-live="polite"
             >
-              <p className="game-result-title">
-                {gameResult === "win" ? "You win!" : "No luck this time"}
-              </p>
-              <p className="game-result-detail">
-                {matchOutcome
-                  ? matchResultDetail(matchOutcome, "photo_scratches")
-                  : gameResult === "win"
-                    ? "Three matching symbols — nice!"
-                    : "No three-of-a-kind — try again."}
-              </p>
-              <button
-                type="button"
-                className="game-result-button"
-                onClick={() => advanceAfterScratchRef.current()}
-              >
-                {remainingCards.length > 1
-                  ? "Next card"
-                  : gameMode
-                    ? "Claim photo scratches"
-                    : "Done"}
-              </button>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">
+                      {gameResult === "win" ? "You win!" : "No luck this time"}
+                    </p>
+                    <p className="game-result-detail">
+                      {matchOutcome
+                        ? matchResultDetail(matchOutcome, "photo_scratches")
+                        : gameResult === "win"
+                          ? "Three matching symbols — nice!"
+                          : "No three-of-a-kind — try again."}
+                    </p>
+                    <button
+                      type="button"
+                      className="game-result-button"
+                      onClick={beginLeaveGameResult}
+                    >
+                      {remainingCards.length > 1
+                        ? "Next card"
+                        : gameMode
+                          ? "Claim photo scratches"
+                          : "Done"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>

@@ -99,8 +99,25 @@ export function startMotionSession(hand: ThemedMotionCard[]): GameSession {
   return session;
 }
 
+/** First motion card in deal order that has not been scratched yet. */
+export function firstMissingMotionCardId(session: GameSession): string | undefined {
+  return session.motionCardIds.find(
+    (id) => !session.completedMotionIds.includes(id),
+  );
+}
+
+/** Theme label for a motion card in the session hand (parallel arrays). */
+export function themeForMotionCard(
+  session: GameSession,
+  cardId: string,
+): string | undefined {
+  const index = session.motionCardIds.indexOf(cardId);
+  if (index < 0) return undefined;
+  return session.themes[index];
+}
+
 export function motionPlayHref(session: GameSession, cardId?: string): string {
-  const id = cardId ?? session.motionCardIds[0] ?? "";
+  const id = cardId ?? firstMissingMotionCardId(session) ?? session.motionCardIds[0] ?? "";
   const params = new URLSearchParams();
   if (session.modelId) params.set("model", session.modelId);
   if (id) params.set("card", id);
@@ -108,8 +125,15 @@ export function motionPlayHref(session: GameSession, cardId?: string): string {
   return `/?${params.toString()}`;
 }
 
+export function firstMissingPhotoCardId(session: GameSession): string | undefined {
+  return session.wonPhotoIds.find(
+    (id) => !session.completedPhotoIds.includes(id),
+  );
+}
+
 export function photoPlayHref(session: GameSession, cardId?: string): string {
-  const id = cardId ?? session.wonPhotoIds[0] ?? "";
+  const id =
+    cardId ?? firstMissingPhotoCardId(session) ?? session.wonPhotoIds[0] ?? "";
   const params = new URLSearchParams();
   if (id) params.set("card", id);
   params.set("game", "1");
@@ -189,6 +213,23 @@ export function finishPhotoHand(): GameSession | null {
   return next;
 }
 
+/**
+ * In-app navigation. Must stay on the same document (history.pushState) so a
+ * Safari AudioContext unlocked on Play/Continue survives into the scratch
+ * screen — `location.assign` full-reloads and kills that unlock, which is why
+ * 3-2-1 was silent on iOS.
+ */
 export function navigateTo(href: string): void {
-  window.location.assign(href);
+  const url = new URL(href, window.location.href);
+  if (url.origin !== window.location.origin) {
+    window.location.assign(href);
+    return;
+  }
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.pushState(null, "", next);
+  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  window.scrollTo(0, 0);
 }

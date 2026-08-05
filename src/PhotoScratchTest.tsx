@@ -27,7 +27,9 @@ import {
 } from "./game/matchGame";
 import {
   InitialCountdown,
+  isCountdownSoundUnlocked,
   TOP_BAR_DOCK_MS,
+  unlockCountdownSound,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
@@ -42,6 +44,7 @@ import {
   type TrackedMeshSample,
   type Vec2,
 } from "./meshGeometry";
+import { playThemeIntro, releaseMediaElement } from "./shared/media";
 import { useDeviceParallax, type ParallaxState } from "./useDeviceParallax";
 
 const BACK_LAYER_SRC = "/photo-scratch/background.jpg";
@@ -729,6 +732,9 @@ export function PhotoScratchTest() {
   const claimedRef = useRef(false);
   const gameResultPendingRef = useRef<GameResult | null>(null);
   const gameResultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameResultLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const tryResolveGameRef = useRef<() => void>(() => undefined);
   const advanceAfterScratchRef = useRef<() => void>(() => undefined);
   const completedCardIdsRef = useRef<string[]>([]);
@@ -798,6 +804,7 @@ export function PhotoScratchTest() {
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
+  const matchOutcomeRef = useRef<MatchGameOutcome | null>(null);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
@@ -814,17 +821,38 @@ export function PhotoScratchTest() {
   hasBodySymbolsRef.current = hasBodySymbols;
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
+  const gameResultRef = useRef<GameResult | null>(null);
+  gameResultRef.current = gameResult;
+  const [gameResultLeaving, setGameResultLeaving] = useState(false);
   const [playlist, setPlaylist] = useState<PhotoScratchCardEntry[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
   const [completedCardIds, setCompletedCardIds] = useState<string[]>([]);
   completedCardIdsRef.current = completedCardIds;
   const [introVideoUrl, setIntroVideoUrl] = useState("");
   const [introActive, setIntroActive] = useState(false);
+  /** Starts muted for autoplay policy; may unmute after playThemeIntro succeeds. */
+  const [introMuted, setIntroMuted] = useState(true);
   const introActiveRef = useRef(false);
   introActiveRef.current = introActive;
   // Theme ids whose intro clip has already played this session — one
   // playthrough per theme, even across multiple motion cards / photo slots.
   const introShownForThemeRef = useRef<Set<string>>(new Set());
+  /** True when the current match's 3-2-1 already ran over the theme intro. */
+  const countdownOverIntroRef = useRef(false);
+  /** One 3-2-1 per photo-hand / session — later cards skip it. */
+  const sessionCountdownDoneRef = useRef(false);
+  /**
+   * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
+   * already called unlockCountdownSound(), so this starts true then.
+   */
+  const [entryReady, setEntryReady] = useState(
+    () => !loadSoundEnabled() || isCountdownSoundUnlocked(),
+  );
+  const entryReadyRef = useRef(entryReady);
+  entryReadyRef.current = entryReady;
+  const pendingIntroEntryRef = useRef<{
+    entry: PhotoScratchCardEntry | undefined;
+  } | null>(null);
 
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url);
@@ -855,15 +883,28 @@ export function PhotoScratchTest() {
   }
 
   function isBodyScratchLocked() {
+    if (!entryReadyRef.current) return true;
+    if (introActiveRef.current) return true;
     return (
       hasBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
     );
   }
 
+  function onMatchEntryTap() {
+    unlockCountdownSound();
+    setEntryReady(true);
+  }
+
   function armIntroForEntry(entry: PhotoScratchCardEntry | undefined) {
+    if (!entryReadyRef.current) {
+      pendingIntroEntryRef.current = { entry };
+      return;
+    }
+    pendingIntroEntryRef.current = null;
     const url = entry ? entry.intro?.trim() : "";
     const themeId = entry ? entry.theme_id?.trim() : "";
+    countdownOverIntroRef.current = false;
     if (!url || !themeId || introShownForThemeRef.current.has(themeId)) {
       setIntroVideoUrl("");
       setIntroActive(false);
@@ -874,18 +915,60 @@ export function PhotoScratchTest() {
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;
+    // 3-2-1 only once per session — later theme intros play without it.
+    if (sessionCountdownDoneRef.current) return;
+    countdownOverIntroRef.current = true;
+    clearIntroDockTimer();
+    setIntroGateActive(true);
+    introGateActiveRef.current = true;
+    setShowIntroCountdown(true);
   }
 
   function dismissIntro() {
+    const intro = introVideoElRef.current;
+    if (intro) {
+      try {
+        intro.pause();
+      } catch {
+        // ignore
+      }
+      releaseMediaElement(intro);
+    }
     setIntroActive(false);
     introActiveRef.current = false;
   }
 
   function resetGameOutcome() {
     clearGameResultTimer();
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+      gameResultLeaveTimerRef.current = null;
+    }
     gameResultPendingRef.current = null;
+    gameResultRef.current = null;
+    matchOutcomeRef.current = null;
     setGameResult(null);
+    setGameResultLeaving(false);
     setMatchOutcome(null);
+  }
+
+  function beginLeaveGameResult() {
+    if (gameResultLeaving) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      advanceAfterScratchRef.current();
+      return;
+    }
+    setGameResultLeaving(true);
+    if (gameResultLeaveTimerRef.current !== null) {
+      window.clearTimeout(gameResultLeaveTimerRef.current);
+    }
+    gameResultLeaveTimerRef.current = window.setTimeout(() => {
+      gameResultLeaveTimerRef.current = null;
+      advanceAfterScratchRef.current();
+    }, 760);
   }
 
   function resetMatchRound() {
@@ -893,9 +976,13 @@ export function PhotoScratchTest() {
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
-    setIntroGateActive(false);
-    introGateActiveRef.current = false;
-    setShowIntroCountdown(false);
+    // Don't wipe a 3-2-1 that was just armed over the theme intro (same race
+    // ScratchPrototype guards against when card assets finish loading).
+    if (!countdownOverIntroRef.current) {
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
+      setShowIntroCountdown(false);
+    }
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
@@ -904,10 +991,38 @@ export function PhotoScratchTest() {
   function onTopBarAllRevealed() {
     setTopBarPhase("docked");
     topBarPhaseRef.current = "docked";
+    clearIntroDockTimer();
+    // Later cards: skip 3-2-1 entirely.
+    if (sessionCountdownDoneRef.current) {
+      setIntroGateActive(true);
+      introGateActiveRef.current = true;
+      introDockTimerRef.current = window.setTimeout(() => {
+        introDockTimerRef.current = null;
+        setIntroGateActive(false);
+        introGateActiveRef.current = false;
+      }, TOP_BAR_DOCK_MS);
+      return;
+    }
+    // 3-2-1 already ran (or is running) over the theme intro — don't start another.
+    if (countdownOverIntroRef.current) {
+      countdownOverIntroRef.current = false;
+      setIntroGateActive(true);
+      introGateActiveRef.current = true;
+      if (showIntroCountdown) {
+        // Over-intro countdown still playing; unlock when it completes.
+        return;
+      }
+      sessionCountdownDoneRef.current = true;
+      introDockTimerRef.current = window.setTimeout(() => {
+        introDockTimerRef.current = null;
+        setIntroGateActive(false);
+        introGateActiveRef.current = false;
+      }, TOP_BAR_DOCK_MS);
+      return;
+    }
     setIntroGateActive(true);
     introGateActiveRef.current = true;
     setShowIntroCountdown(false);
-    clearIntroDockTimer();
     introDockTimerRef.current = window.setTimeout(() => {
       introDockTimerRef.current = null;
       setShowIntroCountdown(true);
@@ -915,6 +1030,7 @@ export function PhotoScratchTest() {
   }
 
   function onIntroCountdownComplete() {
+    sessionCountdownDoneRef.current = true;
     setShowIntroCountdown(false);
     setIntroGateActive(false);
     introGateActiveRef.current = false;
@@ -984,6 +1100,10 @@ export function PhotoScratchTest() {
         const session = beginPhotoPhase() ?? existing;
         const index = await fetchPhotoScratchIndex();
         const hand = playlistForGameSession(index, session);
+        // Fresh photo hand → allow one 3-2-1; resume mid-hand keeps it spent.
+        if (session.completedPhotoIds.length === 0) {
+          sessionCountdownDoneRef.current = false;
+        }
         setPlaylist(hand);
         setCompletedCardIds(session.completedPhotoIds);
         completedCardIdsRef.current = session.completedPhotoIds;
@@ -1501,7 +1621,10 @@ export function PhotoScratchTest() {
   }
 
   function updateSoundEnabled(enabled: boolean) {
-    if (enabled) ensureSymbolAudio(symbolAudioRef.current);
+    if (enabled) {
+      ensureSymbolAudio(symbolAudioRef.current);
+      unlockCountdownSound();
+    }
     setSoundEnabled(enabled);
   }
 
@@ -1569,11 +1692,14 @@ export function PhotoScratchTest() {
       }
     }
     gameResultPendingRef.current = outcome;
+    matchOutcomeRef.current = match;
+    gameResultRef.current = outcome;
     setMatchOutcome(match);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    const overlayDelayMs = playGameOutcomeSound(
+    // Skip the win/lose overlay — sting then next card / hub.
+    const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
@@ -1581,8 +1707,8 @@ export function PhotoScratchTest() {
     clearGameResultTimer();
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
-      setGameResult(outcome);
-    }, overlayDelayMs);
+      advanceAfterScratchRef.current();
+    }, advanceDelayMs);
   }
   tryResolveGameRef.current = tryResolveGame;
 
@@ -1594,10 +1720,12 @@ export function PhotoScratchTest() {
     }
 
     const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
+    const match = matchOutcomeRef.current ?? matchOutcome;
+    const result = gameResultRef.current ?? gameResult;
     let diamonds = 0;
-    if (matchOutcome) {
-      diamonds = matchOutcome.prize;
-    } else if (gameResult === "win") {
+    if (match) {
+      diamonds = match.prize;
+    } else if (result === "win") {
       diamonds = 1;
     }
     if (inGame) {
@@ -1674,6 +1802,41 @@ export function PhotoScratchTest() {
     clearGameResultTimer();
     clearIntroDockTimer();
   }, []);
+
+  useEffect(() => {
+    if (!entryReady) return;
+    const pending = pendingIntroEntryRef.current;
+    if (!pending) return;
+    pendingIntroEntryRef.current = null;
+    armIntroForEntry(pending.entry);
+  }, [entryReady]);
+
+  // Android/iOS block unmuted autoplay after refresh or async mount — kick
+  // playback with a muted fallback so the intro still runs.
+  useEffect(() => {
+    if (!introActive || !introVideoUrl) {
+      setIntroMuted(true);
+      return;
+    }
+    const video = introVideoElRef.current;
+    if (!video) return;
+    let cancelled = false;
+    void playThemeIntro(video, soundEnabled).then((result) => {
+      if (cancelled) return;
+      if (!result.playing) {
+        dismissIntro();
+        return;
+      }
+      setIntroMuted(result.muted);
+    });
+    const safetyId = window.setTimeout(() => {
+      if (!cancelled && introActiveRef.current) dismissIntro();
+    }, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyId);
+    };
+  }, [introActive, introVideoUrl, soundEnabled]);
 
   useEffect(() => {
     try {
@@ -2134,30 +2297,40 @@ export function PhotoScratchTest() {
         <div
           ref={stageRef}
           className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
-            hasBodySymbols && topBarPhase === "center" ? " is-bar-phase" : ""
+            hasBodySymbols && !introActive && topBarPhase === "center"
+              ? " is-bar-phase"
+              : ""
           }${hasBodySymbols && introGateActive ? " is-countdown-phase" : ""}${introActive ? " is-intro-video-phase" : ""}`}
         >
-          {introActive && introVideoUrl ? (
+          {!entryReady ? (
             <div
-              className="photo-scratch-intro-video"
+              className="match-audio-gate"
               role="button"
               tabIndex={0}
-              aria-label="Skip intro"
-              onClick={dismissIntro}
+              aria-label="Tap to play"
+              onClick={onMatchEntryTap}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") dismissIntro();
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onMatchEntryTap();
+                }
               }}
             >
+              <span className="match-audio-gate-label">Tap to play</span>
+            </div>
+          ) : null}
+          {introActive && introVideoUrl ? (
+            <div className="photo-scratch-intro-video" aria-hidden="true">
               <video
                 ref={introVideoElRef}
                 autoPlay
-                muted={!soundEnabled}
+                muted={introMuted}
                 playsInline
+                preload="auto"
                 src={introVideoUrl}
                 onEnded={dismissIntro}
                 onError={dismissIntro}
               />
-              <span className="photo-scratch-intro-video-skip">Tap to skip</span>
             </div>
           ) : null}
           {hasBodySymbols ? (
@@ -2244,31 +2417,39 @@ export function PhotoScratchTest() {
           </div>
           {gameResult ? (
             <div
-              className={`game-result game-result--${gameResult}`}
+              className={`game-result game-result--${gameResult}${
+                gameResultLeaving ? " is-leaving" : ""
+              }`}
               role="status"
               aria-live="polite"
             >
-              <p className="game-result-title">
-                {gameResult === "win" ? "You win!" : "No luck this time"}
-              </p>
-              <p className="game-result-detail">
-                {matchOutcome
-                  ? matchResultDetail(matchOutcome, "diamonds")
-                  : gameResult === "win"
-                    ? "Three matching symbols — nice!"
-                    : "No three-of-a-kind — try again."}
-              </p>
-              <button
-                type="button"
-                className="game-result-button"
-                onClick={() => advanceAfterScratchRef.current()}
-              >
-                {remainingCards.length > 1
-                  ? "Next card"
-                  : isGameModeUrl()
-                    ? "See diamonds"
-                    : "Done"}
-              </button>
+              <div className="game-result-iris">
+                <div className="game-result-surface">
+                  <div className="game-result-card">
+                    <p className="game-result-title">
+                      {gameResult === "win" ? "You win!" : "No luck this time"}
+                    </p>
+                    <p className="game-result-detail">
+                      {matchOutcome
+                        ? matchResultDetail(matchOutcome, "diamonds")
+                        : gameResult === "win"
+                          ? "Three matching symbols — nice!"
+                          : "No three-of-a-kind — try again."}
+                    </p>
+                    <button
+                      type="button"
+                      className="game-result-button"
+                      onClick={beginLeaveGameResult}
+                    >
+                      {remainingCards.length > 1
+                        ? "Next card"
+                        : isGameModeUrl()
+                          ? "See diamonds"
+                          : "Done"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>

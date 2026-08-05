@@ -1983,47 +1983,12 @@ function ModelDetail({
                       </Flex>
                       <Flex align="center" gap="2">
                         {themeId ? (
-                          <button
-                            aria-label={themeIntroUrl ? "Replace theme intro" : "Upload theme intro"}
-                            className="models-theme-intro-btn"
-                            disabled={busy}
-                            title={
-                              themeIntroUrl
-                                ? "Replace intro video (plays once before first scratch)"
-                                : "Upload intro video (plays once before first scratch)"
-                            }
-                            type="button"
-                            onClick={() => onIntroClick(themeId)}
-                          >
-                            {themeIntroUrl ? (
-                              <video
-                                aria-hidden
-                                className="models-theme-intro-thumb"
-                                muted
-                                playsInline
-                                preload="metadata"
-                                src={previewSource(themeIntroUrl)}
-                                onLoadedData={(event) => {
-                                  const video = event.currentTarget;
-                                  if (video.readyState >= 2 && video.currentTime < 0.05) {
-                                    try {
-                                      video.currentTime = Math.min(
-                                        0.15,
-                                        (video.duration || 1) * 0.08,
-                                      );
-                                    } catch {
-                                      /* ignore seek failures */
-                                    }
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <span className="models-theme-intro-thumb models-theme-intro-thumb--empty">
-                                <Upload size={12} strokeWidth={2} />
-                                <span>Intro</span>
-                              </span>
-                            )}
-                          </button>
+                          <ThemeIntroControl
+                            busy={busy}
+                            label={`${group.theme} intro`}
+                            src={themeIntroUrl ? previewSource(themeIntroUrl) : ""}
+                            onUpload={() => onIntroClick(themeId)}
+                          />
                         ) : null}
                         {themeId ? (
                           <button
@@ -2348,6 +2313,34 @@ function TrailerThumb({ card }: { card: CardInfo }) {
       label={`${card.label} trailer`}
       src={raw ? previewSource(raw) : ""}
     />
+  );
+}
+
+function ThemeIntroControl({
+  busy,
+  label,
+  src,
+  onUpload,
+}: {
+  busy: boolean;
+  label: string;
+  src: string;
+  onUpload: () => void;
+}) {
+  return (
+    <Flex align="center" gap="1">
+      <CardVideoThumb label={label} src={src} />
+      <Button
+        disabled={busy}
+        size="1"
+        title={src ? "Replace intro video" : "Upload intro video"}
+        variant="soft"
+        onClick={onUpload}
+      >
+        <Upload size={14} strokeWidth={2} />
+        {src ? "Replace" : "Intro"}
+      </Button>
+    </Flex>
   );
 }
 

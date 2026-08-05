@@ -1,3 +1,4 @@
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import {
   useCallback,
   useEffect,
@@ -6,7 +7,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { GameSymbolIcon } from "./GameSymbolIcon";
 import { SYMBOL_TYPES, TOP_SYMBOL_COUNT } from "./matchGame";
 
@@ -28,15 +28,21 @@ const PEEL_LOTTIE_CYCLE_MS = PEEL_LOTTIE_DURATION_MS + PEEL_LOTTIE_PAUSE_MS;
 // scratch-coating texture instead of the video fabric.
 const FLAKE_COUNT_PER_SCRATCH = 2;
 const FLAKE_MAX = 90;
-const FLAKE_LIFE = 0.85;
+const FLAKE_LIFE = 0.7;
 const FLAKE_SCALE_MIN = 0.5;
 const FLAKE_SCALE_MAX = 1.1;
-const FLAKE_BASE_SIZE = 4.5;
-const FLAKE_GRAVITY = 420;
+const FLAKE_BASE_SIZE = 6;
+const FLAKE_GRAVITY = 800;
 /** Extra canvas height below the bar (as a multiple of bar height) so flakes
  * stay drawable while gravity pulls them past the pill. */
 const FLAKE_FALL_EXTEND_RATIO = 1.2;
-const FLAKE_FALLBACK_COLORS = ["#d4d0cb", "#b5b0aa", "#9a9590", "#847f7a", "#6a6662"];
+const FLAKE_FALLBACK_COLORS = [
+  "#d4d0cb",
+  "#b5b0aa",
+  "#9a9590",
+  "#847f7a",
+  "#6a6662",
+];
 
 export type TopBarPhase = "center" | "docked";
 
@@ -87,14 +93,22 @@ function sampleScratchTextureColor(
   canvasHeight: number,
 ): string {
   const tex = scratchTexture;
-  if (!scratchTextureReady || !tex || !scratchTextureSampler || tex.naturalWidth <= 0) {
+  if (
+    !scratchTextureReady ||
+    !tex ||
+    !scratchTextureSampler ||
+    tex.naturalWidth <= 0
+  ) {
     return FLAKE_FALLBACK_COLORS[
       Math.floor(Math.random() * FLAKE_FALLBACK_COLORS.length)
     ];
   }
   const scale = Math.max((canvasHeight / tex.naturalHeight) * 1.15, 1);
-  const sx = (((px / scale) % tex.naturalWidth) + tex.naturalWidth) % tex.naturalWidth;
-  const sy = (((py / scale) % tex.naturalHeight) + tex.naturalHeight) % tex.naturalHeight;
+  const sx =
+    (((px / scale) % tex.naturalWidth) + tex.naturalWidth) % tex.naturalWidth;
+  const sy =
+    (((py / scale) % tex.naturalHeight) + tex.naturalHeight) %
+    tex.naturalHeight;
   try {
     const [r, g, b] = scratchTextureSampler.getImageData(
       Math.floor(sx),
@@ -415,7 +429,8 @@ export function TopSymbolBar({
 
   useEffect(() => {
     return () => {
-      if (flakeRafRef.current !== null) cancelAnimationFrame(flakeRafRef.current);
+      if (flakeRafRef.current !== null)
+        cancelAnimationFrame(flakeRafRef.current);
     };
   }, []);
 
@@ -451,7 +466,9 @@ export function TopSymbolBar({
       for (const f of next) {
         const t = f.age / f.life;
         const ease = 1 - (1 - t) * (1 - t);
-        const size = f.size * (FLAKE_SCALE_MIN + (FLAKE_SCALE_MAX - FLAKE_SCALE_MIN) * ease);
+        const size =
+          f.size *
+          (FLAKE_SCALE_MIN + (FLAKE_SCALE_MAX - FLAKE_SCALE_MIN) * ease);
         const alpha = t < 0.65 ? 1 : Math.max(0, 1 - (t - 0.65) / 0.35);
         ctx.save();
         ctx.translate(f.x, f.y);
@@ -480,7 +497,12 @@ export function TopSymbolBar({
   }, []);
 
   const spawnFlakes = useCallback(
-    (x: number, y: number, canvasHeight: number, count = FLAKE_COUNT_PER_SCRATCH) => {
+    (
+      x: number,
+      y: number,
+      canvasHeight: number,
+      count = FLAKE_COUNT_PER_SCRATCH,
+    ) => {
       for (let i = 0; i < count; i += 1) {
         const angle = (Math.random() - 0.5) * Math.PI * 0.9;
         const speed = 50 + Math.random() * 70;
@@ -489,7 +511,7 @@ export function TopSymbolBar({
           y: y + (Math.random() - 0.5) * 6,
           // Bias outward/down: small side scatter, then gravity takes over.
           vx: Math.sin(angle) * speed * 0.55,
-          vy: 25 + Math.random() * 55,
+          vy: 60 + Math.random() * 90,
           age: 0,
           life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
           size: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
@@ -562,7 +584,10 @@ export function TopSymbolBar({
       if (next[i]) continue;
       const slot = geo[i];
       if (!slot) continue;
-      if (measureSlotErased(canvas, slot.cx, slot.cy, slot.r) < SLOT_REVEAL_THRESHOLD)
+      if (
+        measureSlotErased(canvas, slot.cx, slot.cy, slot.r) <
+        SLOT_REVEAL_THRESHOLD
+      )
         continue;
       next[i] = true;
       changed = true;
@@ -651,8 +676,9 @@ export function TopSymbolBar({
   return (
     <div
       ref={barRef}
-      className={`symbol-bar top-symbol-bar is-phase-${phase}${revealedCount >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""
-        }${showCoating ? " is-scratchable" : ""}`}
+      className={`symbol-bar top-symbol-bar is-phase-${phase}${
+        revealedCount >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""
+      }${showCoating ? " is-scratchable" : ""}`}
       aria-label="Match symbols — scratch to reveal"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -668,8 +694,9 @@ export function TopSymbolBar({
             ref={(el) => {
               slotElsRef.current[index] = el;
             }}
-            className={`symbol-slot top-symbol-slot${revealed ? " is-revealed" : ""
-              }`}
+            className={`symbol-slot top-symbol-slot${
+              revealed ? " is-revealed" : ""
+            }`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
             <GameSymbolIcon typeId={typeId} size={28} paused={!revealed} />

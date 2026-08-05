@@ -4,7 +4,8 @@
       "id": "police",
       "label": "Police",
       "sort_order": 0,
-      "created_at": 0.0
+      "created_at": 0.0,
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "teacher",
@@ -17,19 +18,22 @@
       "id": "nurse",
       "label": "Nurse",
       "sort_order": 2,
-      "created_at": 0.0
+      "created_at": 0.0,
+      "intro": "/themes/nurse/intro.mp4"
     },
     {
       "id": "gym",
       "label": "Gym",
       "sort_order": 3,
-      "created_at": 0.0
+      "created_at": 0.0,
+      "intro": "/themes/gym/intro.mp4"
     },
     {
       "id": "firegirl",
       "label": "Firegirl",
       "sort_order": 4,
-      "created_at": 0.0
+      "created_at": 0.0,
+      "intro": "/themes/firegirl/intro.mp4"
     }
   ]
 }

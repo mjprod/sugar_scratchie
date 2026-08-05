@@ -4,6 +4,57 @@
  * remount with a new React key each card.
  */
 
+export type ThemeIntroPlayback = {
+  /** Whether the element is muted after the kick attempt. */
+  muted: boolean;
+  /** False when autoplay failed — caller should dismiss the intro overlay. */
+  playing: boolean;
+};
+
+/**
+ * Kick a theme-intro clip. Starts muted (allowed without a user gesture on
+ * Android/iOS — e.g. F5 / post-fetch mount), then tries to unmute when sound
+ * is enabled.
+ */
+export async function playThemeIntro(
+  video: HTMLVideoElement,
+  wantSound: boolean,
+): Promise<ThemeIntroPlayback> {
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+
+  video.muted = true;
+  video.setAttribute("muted", "");
+  try {
+    await video.play();
+  } catch {
+    return { muted: true, playing: false };
+  }
+
+  if (!wantSound) return { muted: true, playing: !video.paused };
+
+  video.muted = false;
+  video.removeAttribute("muted");
+  try {
+    if (video.paused) await video.play();
+  } catch {
+    video.muted = true;
+    video.setAttribute("muted", "");
+    void video.play().catch(() => undefined);
+    return { muted: true, playing: !video.paused };
+  }
+
+  if (video.paused) {
+    video.muted = true;
+    video.setAttribute("muted", "");
+    void video.play().catch(() => undefined);
+    return { muted: true, playing: !video.paused };
+  }
+
+  return { muted: video.muted, playing: true };
+}
+
 export function releaseMediaElement(el: HTMLMediaElement | null | undefined) {
   if (!el) return;
   try {
