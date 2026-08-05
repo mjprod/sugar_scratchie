@@ -28,11 +28,11 @@ const PEEL_LOTTIE_CYCLE_MS = PEEL_LOTTIE_DURATION_MS + PEEL_LOTTIE_PAUSE_MS;
 // scratch-coating texture instead of the video fabric.
 const FLAKE_COUNT_PER_SCRATCH = 2;
 const FLAKE_MAX = 90;
-const FLAKE_LIFE = 0.85;
+const FLAKE_LIFE = 0.7;
 const FLAKE_SCALE_MIN = 0.5;
 const FLAKE_SCALE_MAX = 1.1;
 const FLAKE_BASE_SIZE = 6;
-const FLAKE_GRAVITY = 420;
+const FLAKE_GRAVITY = 800;
 /** Extra canvas height below the bar (as a multiple of bar height) so flakes
  * stay drawable while gravity pulls them past the pill. */
 const FLAKE_FALL_EXTEND_RATIO = 1.2;
@@ -511,7 +511,7 @@ export function TopSymbolBar({
           y: y + (Math.random() - 0.5) * 6,
           // Bias outward/down: small side scatter, then gravity takes over.
           vx: Math.sin(angle) * speed * 0.55,
-          vy: 25 + Math.random() * 55,
+          vy: 60 + Math.random() * 90,
           age: 0,
           life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
           size: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
