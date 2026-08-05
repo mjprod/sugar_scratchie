@@ -1721,7 +1721,10 @@ export function PhotoScratchTest() {
 
     const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
     const match = matchOutcomeRef.current ?? matchOutcome;
-    const result = gameResultRef.current ?? gameResult;
+    // Pending is set by tryResolveGame and not wiped by the render-time
+    // gameResultRef sync (overlay is skipped, so gameResult stays null).
+    const result =
+      gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let diamonds = 0;
     if (match) {
       diamonds = match.prize;
