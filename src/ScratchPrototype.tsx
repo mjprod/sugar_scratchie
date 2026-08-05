@@ -374,6 +374,8 @@ const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
 const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
 const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
+/** Theme-intro → game: iris rush + flash (see `.photo-scratch-intro-video.is-leaving`). */
+const INTRO_REVEAL_MS = 820;
 const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom-v2";
 const LEGACY_SCRATCH_ZOOM_STORAGE_KEYS = ["sugar-scratchie:scratch-zoom"];
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
@@ -1237,12 +1239,23 @@ export function ScratchPrototype() {
   const [showIntroCountdown, setShowIntroCountdown] = useState(false);
   /** Theme intro clip for the current Play/Continue visit (game mode only). */
   const [introVideoUrl, setIntroVideoUrl] = useState("");
+  /** Intro owns the decoder; game clips stay unloaded while this is true. */
   const [introActive, setIntroActive] = useState(false);
+  /** Overlay still covers the stage (playing, holding last frame, or fading). */
+  const [introCover, setIntroCover] = useState(false);
+  /** Crossfading the frozen intro out over the live game stage. */
+  const [introLeaving, setIntroLeaving] = useState(false);
   /** Starts muted for autoplay policy; may unmute after playThemeIntro succeeds. */
   const [introMuted, setIntroMuted] = useState(true);
   const introActiveRef = useRef(false);
   introActiveRef.current = introActive;
+  const introCoverRef = useRef(false);
+  introCoverRef.current = introCover;
+  const introLeavingRef = useRef(false);
+  introLeavingRef.current = introLeaving;
   const introVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const introFreezeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const introFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handStartIntroDoneRef = useRef(false);
   /** True when 3-2-1 already played over the hand-start theme intro. */
   const handStartCountdownOverIntroRef = useRef(false);
@@ -1362,9 +1375,50 @@ export function ScratchPrototype() {
     }
   }
 
+  function clearIntroFadeTimer() {
+    if (introFadeTimerRef.current !== null) {
+      window.clearTimeout(introFadeTimerRef.current);
+      introFadeTimerRef.current = null;
+    }
+  }
+
+  function captureIntroFreezeFrame(): boolean {
+    const intro = introVideoElRef.current;
+    const freeze = introFreezeCanvasRef.current;
+    if (!intro || !freeze) return false;
+    if (intro.videoWidth < 2 || intro.videoHeight < 2) return false;
+    freeze.width = intro.videoWidth;
+    freeze.height = intro.videoHeight;
+    const ctx = freeze.getContext("2d");
+    if (!ctx) return false;
+    try {
+      ctx.drawImage(intro, 0, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function finishIntroCover() {
+    clearIntroFadeTimer();
+    const intro = introVideoElRef.current;
+    if (intro) releaseMediaElement(intro);
+    const freeze = introFreezeCanvasRef.current;
+    if (freeze) {
+      freeze.width = 0;
+      freeze.height = 0;
+    }
+    setIntroLeaving(false);
+    introLeavingRef.current = false;
+    setIntroCover(false);
+    introCoverRef.current = false;
+    setIntroVideoUrl("");
+    setIntroMuted(true);
+  }
+
   function isBodyScratchLocked() {
     if (gameMode && !entryReadyRef.current) return true;
-    if (introActiveRef.current) return true;
+    if (introActiveRef.current || introCoverRef.current) return true;
     if (gameMode && !handStartIntroDoneRef.current) return true;
     return (
       useBodySymbolsRef.current &&
@@ -1410,7 +1464,10 @@ export function ScratchPrototype() {
     );
   }
 
-  function dismissThemeIntro() {
+  function dismissThemeIntro(options?: { immediate?: boolean }) {
+    if (!introActiveRef.current && !introCoverRef.current) return;
+    if (introLeavingRef.current && !options?.immediate) return;
+
     const intro = introVideoElRef.current;
     if (intro) {
       try {
@@ -1418,12 +1475,31 @@ export function ScratchPrototype() {
       } catch {
         // ignore
       }
-      // Free the intro decoder before relying on the two game clips (Safari).
-      releaseMediaElement(intro);
     }
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const captured = !options?.immediate && captureIntroFreezeFrame();
+
+    // Free the intro decoder before attaching the game pair (Safari).
+    if (intro) releaseMediaElement(intro);
     setIntroActive(false);
     introActiveRef.current = false;
-    // Next frame: give Safari a tick to drop the intro decoder first.
+    setIntroVideoUrl("");
+
+    if (options?.immediate || reduceMotion || !captured) {
+      finishIntroCover();
+      requestAnimationFrame(() => kickGameVideos());
+      return;
+    }
+
+    // Hold the frozen last frame until the game stage has a decoded frame, then
+    // crossfade — avoids the hard cut to black while Safari attaches decoders.
+    setIntroCover(true);
+    introCoverRef.current = true;
+    setIntroLeaving(false);
+    introLeavingRef.current = false;
     requestAnimationFrame(() => kickGameVideos());
   }
 
@@ -1435,20 +1511,27 @@ export function ScratchPrototype() {
       ? themeIntroByKeyRef.current.get(themeLabel.toLowerCase()) ?? ""
       : "";
     clearIntroDockTimer();
+    clearIntroFadeTimer();
     setShowIntroCountdown(false);
     showIntroCountdownRef.current = false;
     setHandStartCountdownPending(false);
     handStartCountdownOverIntroRef.current = false;
+    setIntroLeaving(false);
+    introLeavingRef.current = false;
     if (!url) {
       setIntroVideoUrl("");
       setIntroActive(false);
       introActiveRef.current = false;
+      setIntroCover(false);
+      introCoverRef.current = false;
       setHandStartIntroResolved(true);
       return;
     }
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;
+    setIntroCover(true);
+    introCoverRef.current = true;
     setGameVideosReady(false);
     setHandStartIntroResolved(true);
     // 3-2-1 plays on top of the theme intro (once for this hand-start visit).
@@ -1574,6 +1657,7 @@ export function ScratchPrototype() {
     () => () => {
       clearGameResultTimer();
       clearIntroDockTimer();
+      clearIntroFadeTimer();
     },
     [],
   );
@@ -1630,9 +1714,9 @@ export function ScratchPrototype() {
 
   // Android/iOS block unmuted autoplay after refresh or async mount — kick
   // playback with a muted fallback so the intro still runs.
-  // Keep game clips loading/playing under the intro (muted, covered) so Safari
-  // has decoded frames ready when the overlay drops — pausing them for the
-  // intro was leaving a black stage after 3-2-1 GO.
+  // Game clips stay unloaded while introActive (Safari can't decode three
+  // videos). On end we hold the last intro frame as a cover until the game
+  // pair has a frame, then crossfade the overlay away.
   useEffect(() => {
     if (!introActive || !introVideoUrl) {
       setIntroMuted(true);
@@ -1644,7 +1728,7 @@ export function ScratchPrototype() {
     void playThemeIntro(video, soundEnabled).then((result) => {
       if (cancelled) return;
       if (!result.playing) {
-        dismissThemeIntro();
+        dismissThemeIntro({ immediate: true });
         return;
       }
       setIntroMuted(result.muted);
@@ -1658,6 +1742,28 @@ export function ScratchPrototype() {
       window.clearTimeout(safetyId);
     };
   }, [introActive, introVideoUrl, soundEnabled]);
+
+  // Once the intro has ended and game clips have a frame, run the reveal.
+  useEffect(() => {
+    if (!introCover || introActive || introLeaving) return;
+    if (!gameVideosReady) return;
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      finishIntroCover();
+      return;
+    }
+
+    setIntroLeaving(true);
+    introLeavingRef.current = true;
+    clearIntroFadeTimer();
+    introFadeTimerRef.current = window.setTimeout(() => {
+      introFadeTimerRef.current = null;
+      finishIntroCover();
+    }, INTRO_REVEAL_MS);
+  }, [introCover, introActive, introLeaving, gameVideosReady]);
 
   useEffect(() => {
     if (introActive) return;
@@ -2422,6 +2528,7 @@ export function ScratchPrototype() {
     !gameMode ||
     (handStartIntroResolved &&
       !introActive &&
+      !introCover &&
       !handStartCountdownPending &&
       gameVideosReady);
   const symbolsHuntComplete =
@@ -2429,6 +2536,7 @@ export function ScratchPrototype() {
   const autoScratchLocked =
     !matchStartUnlocked ||
     introActive ||
+    introCover ||
     (useBodySymbols &&
       (!symbolsHuntComplete || topBarPhase === "center" || introGateActive));
   // Sparkles only during the hunt play window (after countdown, before all
@@ -2436,6 +2544,7 @@ export function ScratchPrototype() {
   const cursorFxPlayWindow =
     matchStartUnlocked &&
     !introActive &&
+    !introCover &&
     (!useBodySymbols ||
       (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete));
   // Also require an active scratch stroke so idle cursor movement is quiet.
@@ -3029,7 +3138,7 @@ export function ScratchPrototype() {
       <legend>Auto scratch</legend>
       {autoScratchLocked ? (
         <p className="auto-scratch-hint">
-          {introActive
+          {introActive || introCover
             ? "Theme intro + 3-2-1 — play unlocks when both finish."
             : topBarPhase === "center"
               ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
@@ -3081,7 +3190,7 @@ export function ScratchPrototype() {
       <legend>Cursor FX</legend>
       {cursorFx.fairyDust && !cursorFxPlayWindow ? (
         <p className="auto-scratch-hint">
-          {introActive
+          {introActive || introCover
             ? "Theme intro + 3-2-1 — cursor FX starts when play unlocks."
             : topBarPhase === "center"
               ? "Scratch the top symbols first — cursor FX starts after the countdown."
@@ -3346,8 +3455,8 @@ export function ScratchPrototype() {
               ? " is-bar-phase"
               : ""
           }${useBodySymbols && introGateActive ? " is-countdown-phase" : ""}${
-            introActive ? " is-intro-video-phase" : ""
-          }`}
+            introCover ? " is-intro-video-phase" : ""
+          }${introLeaving ? " is-intro-revealing" : ""}`}
         >
           {glError ? (
             <div
@@ -3390,18 +3499,31 @@ export function ScratchPrototype() {
               <span className="match-audio-gate-label">Tap to play</span>
             </div>
           ) : null}
-          {introActive && introVideoUrl ? (
-            <div className="photo-scratch-intro-video" aria-hidden="true">
-              <video
-                ref={introVideoElRef}
-                autoPlay
-                muted={introMuted}
-                playsInline
-                preload="auto"
-                src={introVideoUrl}
-                onEnded={dismissThemeIntro}
-                onError={dismissThemeIntro}
-              />
+          {introCover ? (
+            <div
+              className={`photo-scratch-intro-video${introLeaving ? " is-leaving" : ""}`}
+              aria-hidden="true"
+            >
+              <div className="photo-scratch-intro-media">
+                {introActive && introVideoUrl ? (
+                  <video
+                    ref={introVideoElRef}
+                    autoPlay
+                    muted={introMuted}
+                    playsInline
+                    preload="auto"
+                    src={introVideoUrl}
+                    onEnded={() => dismissThemeIntro()}
+                    onError={() => dismissThemeIntro({ immediate: true })}
+                  />
+                ) : null}
+                <canvas
+                  ref={introFreezeCanvasRef}
+                  className={`photo-scratch-intro-freeze${introActive ? "" : " is-visible"}`}
+                />
+              </div>
+              <div className="photo-scratch-intro-flash" />
+              <div className="photo-scratch-intro-ring" />
             </div>
           ) : null}
           {useBodySymbols && matchStartUnlocked ? (
@@ -3506,6 +3628,7 @@ export function ScratchPrototype() {
           />
           <canvas
             ref={canvasRef}
+            className="game-stage-canvas"
             width={CANVAS_WIDTH}
             height={CANVAS_HEIGHT}
             style={cardTransition ? { pointerEvents: "none" } : undefined}
