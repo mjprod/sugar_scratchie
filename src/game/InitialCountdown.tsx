@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DotLottieReact, type DotLottie } from "@lottiefiles/dotlottie-react";
 
-/** Match `.top-symbol-bar` dock transition in styles.css. */
-export const TOP_BAR_DOCK_MS = 480;
+/** Match `.top-symbol-bar` dock fly animation in styles.css. */
+export const TOP_BAR_DOCK_MS = 720;
 
 export const INITIAL_COUNTDOWN_SRC = "/lotties/lottieInitialCountdown.json";
 export const INITIAL_COUNTDOWN_SOUND_SRC = "/sounds/321_go_countdown.mp3";

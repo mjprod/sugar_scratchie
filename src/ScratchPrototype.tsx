@@ -374,8 +374,8 @@ const FULL_REVEAL_MANUAL_THRESHOLD = 0.7;
 const GAME_OUTCOME_OVERLAY_PAD_MS = 300;
 const GAME_OUTCOME_SILENT_DELAY_MS = 1500;
 const UI_STATE_UPDATE_INTERVAL_MS = 250;
-/** Theme-intro → game: iris rush + flash (see `.photo-scratch-intro-video.is-leaving`). */
-const INTRO_REVEAL_MS = 820;
+/** Brief hold→dissolve so the scratch-to-start bar can be the hero beat. */
+const INTRO_REVEAL_MS = 380;
 const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom-v2";
 const LEGACY_SCRATCH_ZOOM_STORAGE_KEYS = ["sugar-scratchie:scratch-zoom"];
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
@@ -2523,12 +2523,14 @@ export function ScratchPrototype() {
     );
   }
 
-  // Hold top-bar until theme intro + 3-2-1 are done and card clips have a frame.
+  // Hold top-bar until theme intro playback ends and card clips have a frame.
+  // While the intro cover is dissolving (`introLeaving`), unlock early so the
+  // scratch-to-start bar can spring in over the live stage — that's the beat.
   const matchStartUnlocked =
     !gameMode ||
     (handStartIntroResolved &&
       !introActive &&
-      !introCover &&
+      (!introCover || introLeaving) &&
       !handStartCountdownPending &&
       gameVideosReady);
   const symbolsHuntComplete =
