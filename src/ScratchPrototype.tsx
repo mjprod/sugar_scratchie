@@ -2482,7 +2482,10 @@ export function ScratchPrototype() {
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
 
     const match = matchOutcomeRef.current ?? matchOutcome;
-    const result = gameResultRef.current ?? gameResult;
+    // Pending is set by tryResolveGame and not wiped by the render-time
+    // gameResultRef sync (overlay is skipped, so gameResult stays null).
+    const result =
+      gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let prize = 0;
     if (match) {
       prize = match.prize;
