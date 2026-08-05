@@ -64,8 +64,32 @@ const PARTICLE_LIFESPAN = 100;
 // speed that ends their life around frame 40 rather than the ~75 frames it
 // takes lifeSpan to decay below 0.1, so ~45% of the per-frame work disappears.
 const MIN_VISIBLE_ALPHA = 0.02;
-const MAX_PARTICLES = 400;
+// Soft cap: under the safer defaults (~128 concurrent at hard scratch) this
+// rarely bites; if someone cranked fade/count it thins the trail before the
+// 2D drawImage loop eats the frame budget.
+const MAX_PARTICLES = 250;
 const SPAWN_DISTANCE_SQ = 4;
+
+/** Live cursor-FX cost counters for the debug HUD / settings panel. */
+export type FairyDustPerfStats = {
+  active: number;
+  peak: number;
+  /** Last drawFrame wall time in ms. */
+  frameMs: number;
+  /** EMA of drawFrame wall time (ms). */
+  avgFrameMs: number;
+};
+
+export const fairyDustPerf: FairyDustPerfStats = {
+  active: 0,
+  peak: 0,
+  frameMs: 0,
+  avgFrameMs: 0,
+};
+
+export function resetFairyDustPerfPeak() {
+  fairyDustPerf.peak = fairyDustPerf.active;
+}
 
 function defaultTypesFromCharacters(chars: string[]): ParticleType[] {
   return chars.map((value, i) => ({
@@ -150,9 +174,9 @@ function FairyDustCursorImpl({
   characterSet = DEFAULT_CHARACTER_SET,
   particleTypes,
   particleSize = 21,
-  particleCount = 1,
-  gravity = 0.02,
-  fadeSpeed = 0.98,
+  particleCount = 2,
+  gravity = 0.1,
+  fadeSpeed = 0.94,
   initialVelocity = DEFAULT_INITIAL_VELOCITY,
   spawnEnabled = true,
 }: FairyDustCursorProps) {
@@ -303,6 +327,7 @@ function FairyDustCursorImpl({
     };
 
     const drawFrame = (dt: number) => {
+      const frameStarted = performance.now();
       timeMs += dt;
       clearDirty();
 
@@ -378,6 +403,16 @@ function FairyDustCursorImpl({
         dirtyW = Math.min(width, Math.ceil(maxX)) - dirtyX;
         dirtyH = Math.min(height, Math.ceil(maxY)) - dirtyY;
       }
+
+      const frameMs = performance.now() - frameStarted;
+      fairyDustPerf.active = write;
+      if (write > fairyDustPerf.peak) fairyDustPerf.peak = write;
+      fairyDustPerf.frameMs = frameMs;
+      // Light EMA so the HUD isn't jittery; ~250ms window at 60fps.
+      fairyDustPerf.avgFrameMs =
+        fairyDustPerf.avgFrameMs === 0
+          ? frameMs
+          : fairyDustPerf.avgFrameMs * 0.9 + frameMs * 0.1;
     };
 
     const animate = (ts: number) => {

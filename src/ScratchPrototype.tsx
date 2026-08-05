@@ -2,6 +2,8 @@ import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   FairyDustCursor,
+  fairyDustPerf,
+  resetFairyDustPerfPeak,
   type ParticleType,
 } from "./cursorFx/FairyDustCursor";
 import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
@@ -100,6 +102,13 @@ function DebugHud() {
       );
       const [bottom, foreground] = vids;
       const out: string[] = [`render ${fps}fps`];
+
+      // Cursor FX cost: concurrent particles drive drawImage count; fadeSpeed
+      // and particles-per-move are the main knobs that grow this under load.
+      const fx = fairyDustPerf;
+      out.push(
+        `fx ${fx.active} particles (peak ${fx.peak}) ${fx.avgFrameMs.toFixed(2)}ms avg`,
+      );
 
       // JS heap usage. performance.memory is non-standard (Chromium only) but
       // works on plain http/localhost — unlike measureUserAgentSpecificMemory,
@@ -722,11 +731,14 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v4";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v6";
 const LEGACY_CURSOR_FX_STORAGE_KEYS = [
+  "sugar-scratchie:cursor-fx",
   "sugar-scratchie:cursor-fx-v1",
   "sugar-scratchie:cursor-fx-v2",
   "sugar-scratchie:cursor-fx-v3",
+  "sugar-scratchie:cursor-fx-v4",
+  "sugar-scratchie:cursor-fx-v5",
 ];
 
 type CursorFxSettings = {
@@ -740,9 +752,11 @@ type CursorFxSettings = {
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
   fairyDust: true,
   particleSize: 64,
-  particleCount: 1,
+  particleCount: 2,
   gravity: 0.1,
-  fadeSpeed: 0.91,
+  // 0.98 looks lush but ~9× concurrent vs 0.91; 0.94 keeps a denser trail
+  // (~1.1s life) without sitting on the 400-particle cap during hard scratches.
+  fadeSpeed: 0.94,
 };
 
 const CURSOR_FX_INITIAL_VELOCITY = { min: 0.5, max: 1.5 };
@@ -1292,6 +1306,11 @@ export function ScratchPrototype() {
   const [cursorFxParticleTypes, setCursorFxParticleTypes] = useState<
     ParticleType[]
   >([]);
+  const [cursorFxPerf, setCursorFxPerf] = useState({
+    active: 0,
+    peak: 0,
+    avgFrameMs: 0,
+  });
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
@@ -2273,6 +2292,23 @@ export function ScratchPrototype() {
   }, [cursorFx]);
 
   useEffect(() => {
+    if (!cursorFx.fairyDust) return;
+    const id = window.setInterval(() => {
+      const active = fairyDustPerf.active;
+      const peak = fairyDustPerf.peak;
+      const avgFrameMs = Math.round(fairyDustPerf.avgFrameMs * 100) / 100;
+      setCursorFxPerf((current) =>
+        current.active === active &&
+        current.peak === peak &&
+        current.avgFrameMs === avgFrameMs
+          ? current
+          : { active, peak, avgFrameMs },
+      );
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [cursorFx.fairyDust]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
@@ -2342,6 +2378,14 @@ export function ScratchPrototype() {
   }
 
   function updateCursorFx(patch: Partial<CursorFxSettings>) {
+    if (
+      patch.particleCount !== undefined ||
+      patch.fadeSpeed !== undefined ||
+      patch.particleSize !== undefined ||
+      patch.gravity !== undefined
+    ) {
+      resetFairyDustPerfPeak();
+    }
     setCursorFx((current) => ({ ...current, ...patch }));
   }
 
@@ -3043,6 +3087,13 @@ export function ScratchPrototype() {
           value={cursorFx.fadeSpeed}
         />
       </label>
+      {cursorFx.fairyDust ? (
+        <p className="auto-scratch-hint">
+          Active {cursorFxPerf.active} · peak {cursorFxPerf.peak} ·{" "}
+          {cursorFxPerf.avgFrameMs.toFixed(2)}ms/frame
+          {cursorFxPerf.peak >= 220 ? " — near cap (250)" : ""}
+        </p>
+      ) : null}
     </fieldset>
   );
 
