@@ -44,7 +44,7 @@ import {
   type TrackedMeshSample,
   type Vec2,
 } from "./meshGeometry";
-import { playThemeIntro } from "./shared/media";
+import { playThemeIntro, releaseMediaElement } from "./shared/media";
 import { useDeviceParallax, type ParallaxState } from "./useDeviceParallax";
 
 const BACK_LAYER_SRC = "/photo-scratch/background.jpg";
@@ -925,6 +925,15 @@ export function PhotoScratchTest() {
   }
 
   function dismissIntro() {
+    const intro = introVideoElRef.current;
+    if (intro) {
+      try {
+        intro.pause();
+      } catch {
+        // ignore
+      }
+      releaseMediaElement(intro);
+    }
     setIntroActive(false);
     introActiveRef.current = false;
   }
@@ -1812,11 +1821,20 @@ export function PhotoScratchTest() {
     const video = introVideoElRef.current;
     if (!video) return;
     let cancelled = false;
-    void playThemeIntro(video, soundEnabled).then((muted) => {
-      if (!cancelled) setIntroMuted(muted);
+    void playThemeIntro(video, soundEnabled).then((result) => {
+      if (cancelled) return;
+      if (!result.playing) {
+        dismissIntro();
+        return;
+      }
+      setIntroMuted(result.muted);
     });
+    const safetyId = window.setTimeout(() => {
+      if (!cancelled && introActiveRef.current) dismissIntro();
+    }, 20_000);
     return () => {
       cancelled = true;
+      window.clearTimeout(safetyId);
     };
   }, [introActive, introVideoUrl, soundEnabled]);
 

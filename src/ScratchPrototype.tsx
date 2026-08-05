@@ -1226,6 +1226,12 @@ export function ScratchPrototype() {
     () => !isGameModeUrl(),
   );
   /**
+   * Game-mode: don't unlock the scratch bar until the card clips have a frame.
+   * Avoids the black stage that shows if the bar appears while Safari is still
+   * attaching decoders after the theme intro.
+   */
+  const [gameVideosReady, setGameVideosReady] = useState(() => !isGameModeUrl());
+  /**
    * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
    * already called unlockCountdownSound(), so this starts true then.
    */
@@ -1344,9 +1350,45 @@ export function ScratchPrototype() {
     }, TOP_BAR_DOCK_MS);
   }
 
+  function kickGameVideos() {
+    if (uiStateRef.current.isPaused) return;
+    const bottomVideo = bottomVideoRef.current;
+    const foregroundVideo = foregroundVideoRef.current;
+    if (!bottomVideo || !foregroundVideo) return;
+    // Safari sometimes keeps readyState high but stops presenting frames after
+    // the theme-intro decoder is torn down — a tiny seek nudges a fresh frame.
+    for (const video of [bottomVideo, foregroundVideo]) {
+      try {
+        if (video.readyState >= 2 && !video.seeking) {
+          const t = video.currentTime;
+          if (Number.isFinite(t) && t > 0) {
+            video.currentTime = Math.max(0, t - 0.001);
+          }
+        }
+      } catch {
+        // ignore seek failures
+      }
+    }
+    void Promise.all([bottomVideo.play(), foregroundVideo.play()]).catch(
+      () => undefined,
+    );
+  }
+
   function dismissThemeIntro() {
+    const intro = introVideoElRef.current;
+    if (intro) {
+      try {
+        intro.pause();
+      } catch {
+        // ignore
+      }
+      // Free the intro decoder before relying on the two game clips (Safari).
+      releaseMediaElement(intro);
+    }
     setIntroActive(false);
     introActiveRef.current = false;
+    // Next frame: give Safari a tick to drop the intro decoder first.
+    requestAnimationFrame(() => kickGameVideos());
   }
 
   function armHandStartIntro(cardId: string, session: GameSession) {
@@ -1371,6 +1413,7 @@ export function ScratchPrototype() {
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;
+    setGameVideosReady(false);
     setHandStartIntroResolved(true);
     // 3-2-1 plays on top of the theme intro (once for this hand-start visit).
     handStartCountdownOverIntroRef.current = true;
@@ -1486,6 +1529,9 @@ export function ScratchPrototype() {
     setIntroGateActive(false);
     introGateActiveRef.current = false;
     setHandStartCountdownPending(false);
+    // Countdown often ends before the theme intro — if the intro already
+    // finished (or never painted), make sure the stage clips are running.
+    if (!introActiveRef.current) kickGameVideos();
   }
 
   useEffect(
@@ -1548,6 +1594,9 @@ export function ScratchPrototype() {
 
   // Android/iOS block unmuted autoplay after refresh or async mount — kick
   // playback with a muted fallback so the intro still runs.
+  // Keep game clips loading/playing under the intro (muted, covered) so Safari
+  // has decoded frames ready when the overlay drops — pausing them for the
+  // intro was leaving a black stage after 3-2-1 GO.
   useEffect(() => {
     if (!introActive || !introVideoUrl) {
       setIntroMuted(true);
@@ -1556,13 +1605,28 @@ export function ScratchPrototype() {
     const video = introVideoElRef.current;
     if (!video) return;
     let cancelled = false;
-    void playThemeIntro(video, soundEnabled).then((muted) => {
-      if (!cancelled) setIntroMuted(muted);
+    void playThemeIntro(video, soundEnabled).then((result) => {
+      if (cancelled) return;
+      if (!result.playing) {
+        dismissThemeIntro();
+        return;
+      }
+      setIntroMuted(result.muted);
     });
+    // Stuck/black intro (no ended event) — don't cover the stage forever.
+    const safetyId = window.setTimeout(() => {
+      if (!cancelled && introActiveRef.current) dismissThemeIntro();
+    }, 20_000);
     return () => {
       cancelled = true;
+      window.clearTimeout(safetyId);
     };
   }, [introActive, introVideoUrl, soundEnabled]);
+
+  useEffect(() => {
+    if (introActive) return;
+    kickGameVideos();
+  }, [introActive]);
 
   // / showMesh changes (those are read live via refs).
   useEffect(() => {
@@ -2090,9 +2154,21 @@ export function ScratchPrototype() {
     const foregroundVideo = foregroundVideoRef.current;
     if (!bottomVideo || !foregroundVideo || !card) return;
 
+    // Theme intro + two game clips = three decoders. Safari/iOS often starves
+    // the game pair and leaves a black WebGL stage after 3-2-1. While the
+    // intro is up, fully unload the card clips so only the intro decodes.
+    if (introActiveRef.current) {
+      releaseMediaElement(bottomVideo);
+      releaseMediaElement(foregroundVideo);
+      glRendererRef.current?.resetForeground();
+      setGameVideosReady(false);
+      return;
+    }
+
     let cancelled = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
+    setGameVideosReady(false);
 
     const kickPlayback = () => {
       if (cancelled) return;
@@ -2100,6 +2176,7 @@ export function ScratchPrototype() {
       // decoded frame is ready. Firing play() on one while the other is still
       // buffering creates a startup offset that the soft-seek must then chase.
       if (bottomVideo.readyState < 2 || foregroundVideo.readyState < 2) return;
+      if (bottomVideo.videoWidth < 2 || foregroundVideo.videoWidth < 2) return;
       const nextDuration = bottomVideo.duration || uiStateRef.current.duration;
       uiStateRef.current = {
         ...uiStateRef.current,
@@ -2110,7 +2187,11 @@ export function ScratchPrototype() {
       void Promise.all([
         bottomVideo.play(),
         foregroundVideo.play(),
-      ]).catch(() => undefined);
+      ])
+        .then(() => {
+          if (!cancelled) setGameVideosReady(true);
+        })
+        .catch(() => undefined);
     };
 
     // Reuse the same two <video> elements and swap src (no React key remount).
@@ -2122,6 +2203,7 @@ export function ScratchPrototype() {
           loadVideoSrc(foregroundVideo, card.foreground),
         ]);
       } catch {
+        if (!cancelled) setGameVideosReady(true);
         return;
       }
       if (cancelled) return;
@@ -2130,8 +2212,14 @@ export function ScratchPrototype() {
       kickPlayback();
     })();
 
+    // Don't leave game-mode locked on the intro cover forever if decode stalls.
+    const readySafetyId = window.setTimeout(() => {
+      if (!cancelled) setGameVideosReady(true);
+    }, 8_000);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(readySafetyId);
       bottomVideo.removeEventListener("canplay", kickPlayback);
       foregroundVideo.removeEventListener("canplay", kickPlayback);
       try {
@@ -2141,7 +2229,7 @@ export function ScratchPrototype() {
         // ignore
       }
     };
-  }, [card?.id, card?.bottom, card?.foreground]);
+  }, [card?.id, card?.bottom, card?.foreground, introActive]);
 
   // Mobile browsers (notably iOS Safari) will suspend a second, simultaneously
   // playing <video> after a few seconds to save power — which here drops the
@@ -2151,6 +2239,9 @@ export function ScratchPrototype() {
   useEffect(() => {
     const keepPlaying = () => {
       if (uiStateRef.current.isPaused) return;
+      // Don't steal the decoder from the theme intro (causes black stage after
+      // 3-2-1 on Safari / Android when three <video>s fight).
+      if (introActiveRef.current) return;
       const bottomVideo = bottomVideoRef.current;
       const foregroundVideo = foregroundVideoRef.current;
       if (bottomVideo?.paused) void bottomVideo.play().catch(() => undefined);
@@ -2265,10 +2356,13 @@ export function ScratchPrototype() {
     );
   }
 
-  // Hold top-bar until theme intro + its overlaid 3-2-1 have finished.
+  // Hold top-bar until theme intro + 3-2-1 are done and card clips have a frame.
   const matchStartUnlocked =
     !gameMode ||
-    (handStartIntroResolved && !introActive && !handStartCountdownPending);
+    (handStartIntroResolved &&
+      !introActive &&
+      !handStartCountdownPending &&
+      gameVideosReady);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
   const autoScratchLocked =
