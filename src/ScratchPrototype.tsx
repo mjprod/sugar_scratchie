@@ -43,6 +43,11 @@ import {
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import { fetchThemes } from "./shared/themes";
 import {
+  MirrorSlideTransition,
+  nextTemplateId,
+  type TransitionTemplateId,
+} from "./videoTransition";
+import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   parseTrackedMesh,
@@ -1182,6 +1187,18 @@ export function ScratchPrototype() {
   const chromaKeyRef = useRef(card?.chromaKey ?? false);
   chromaKeyRef.current = card?.chromaKey ?? false;
   const advanceAfterScratchRef = useRef<() => void>(() => undefined);
+  const transitionTemplateIndexRef = useRef(0);
+  const cardTransitionActiveRef = useRef(false);
+  type CardTransitionState = {
+    fromBottom: string;
+    toBottom: string;
+    templateId: TransitionTemplateId;
+    nextCardId: string;
+    finishedId: string;
+    prize: number;
+  };
+  const [cardTransition, setCardTransition] =
+    useState<CardTransitionState | null>(null);
   // Mesh lattice is a dev overlay — start hidden; toggle with "Show mesh".
   const [showMesh, setShowMesh] = useState(false);
   const showMeshRef = useRef(showMesh);
@@ -2477,9 +2494,34 @@ export function ScratchPrototype() {
   }
   resetScratchRef.current = resetScratch;
 
+  function finishCardTransition(transition: CardTransitionState) {
+    cardTransitionActiveRef.current = false;
+    setCardTransition(null);
+
+    if (gameMode) {
+      const updated = recordMotionCardResult(
+        transition.finishedId,
+        transition.prize,
+      );
+      if (updated) setGameSession(updated);
+    }
+
+    const nextCompleted = [
+      ...completedCardIdsRef.current,
+      transition.finishedId,
+    ];
+    completedCardIdsRef.current = nextCompleted;
+    setCompletedCardIds(nextCompleted);
+    resetGameOutcome();
+    setClaimed(false);
+    claimedRef.current = false;
+    setSelectedCardId(transition.nextCardId);
+  }
+
   function advanceAfterScratch() {
     const finishedId = selectedCardId;
     if (!finishedId || completedCardIdsRef.current.includes(finishedId)) return;
+    if (cardTransitionActiveRef.current) return;
 
     const match = matchOutcomeRef.current ?? matchOutcome;
     // Pending is set by tryResolveGame and not wiped by the render-time
@@ -2493,20 +2535,44 @@ export function ScratchPrototype() {
       prize = 1;
     }
 
+    const nextCompleted = [...completedCardIdsRef.current, finishedId];
+    const nextCard = modelCards.find(
+      (entry) => entry.id !== finishedId && !nextCompleted.includes(entry.id),
+    );
+    const finishedCard =
+      modelCards.find((entry) => entry.id === finishedId) ?? card;
+
+    if (
+      nextCard &&
+      finishedCard?.bottom &&
+      nextCard.bottom
+    ) {
+      const { id: templateId, nextIndex } = nextTemplateId(
+        transitionTemplateIndexRef.current,
+      );
+      transitionTemplateIndexRef.current = nextIndex;
+      cardTransitionActiveRef.current = true;
+      setCardTransition({
+        fromBottom: finishedCard.bottom,
+        toBottom: nextCard.bottom,
+        templateId,
+        nextCardId: nextCard.id,
+        finishedId,
+        prize,
+      });
+      return;
+    }
+
     if (gameMode) {
       const updated = recordMotionCardResult(finishedId, prize);
       if (updated) setGameSession(updated);
     }
 
-    const nextCompleted = [...completedCardIdsRef.current, finishedId];
     completedCardIdsRef.current = nextCompleted;
     setCompletedCardIds(nextCompleted);
     resetGameOutcome();
     setClaimed(false);
     claimedRef.current = false;
-    const nextCard = modelCards.find(
-      (entry) => entry.id !== finishedId && !nextCompleted.includes(entry.id),
-    );
     if (nextCard) {
       setSelectedCardId(nextCard.id);
       return;
@@ -3442,7 +3508,9 @@ export function ScratchPrototype() {
             ref={canvasRef}
             width={CANVAS_WIDTH}
             height={CANVAS_HEIGHT}
+            style={cardTransition ? { pointerEvents: "none" } : undefined}
             onPointerDown={(event) => {
+              if (cardTransitionActiveRef.current) return;
               if (soundEnabledRef.current)
                 ensureSymbolAudio(symbolAudioRef.current);
               const bottomVideo = bottomVideoRef.current;
@@ -3497,6 +3565,15 @@ export function ScratchPrototype() {
               clearScratchZoom();
             }}
           />
+          {cardTransition ? (
+            <MirrorSlideTransition
+              fromSrc={cardTransition.fromBottom}
+              toSrc={cardTransition.toBottom}
+              templateId={cardTransition.templateId}
+              onComplete={() => finishCardTransition(cardTransition)}
+              onError={() => finishCardTransition(cardTransition)}
+            />
+          ) : null}
           <div className="mobile-sound-wrap">
             <button
               type="button"
