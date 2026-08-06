@@ -30,6 +30,10 @@ import {
   TOP_BAR_DOCK_MS,
   unlockCountdownSound,
 } from "./game/InitialCountdown";
+import {
+  resolveStageCoachPhase,
+  StageCoachHint,
+} from "./game/StageCoachHint";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -1885,6 +1889,17 @@ export function PhotoScratchTest() {
   const parallaxState = parallaxStateRef.current;
   const symbolsHuntComplete =
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
+  const stageCoachPhase = resolveStageCoachPhase({
+    active:
+      hasBodySymbols &&
+      entryReady &&
+      !introActive &&
+      !introGateActive &&
+      !gameResult,
+    topBarPhase,
+    found: revealedSymbols,
+    total: SYMBOL_POINT_COUNT,
+  });
   const autoScratchLocked =
     introActive ||
     (hasBodySymbols &&
@@ -2200,10 +2215,10 @@ export function PhotoScratchTest() {
             {autoScratchLocked ? (
               <p className="auto-scratch-hint">
                 {topBarPhase === "center"
-                  ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+                  ? "Scratch the foil, then match symbols on her — auto scratch finishes the reveal."
                   : introGateActive
                     ? "Get ready — play starts when the top bar docks."
-                    : `Find all ${SYMBOL_POINT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+                    : `Find all ${SYMBOL_POINT_COUNT} matches first — auto scratch finishes the reveal.`}
               </p>
             ) : null}
             <label className="checkbox-label">
@@ -2309,6 +2324,12 @@ export function PhotoScratchTest() {
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}
+          <StageCoachHint
+            key={stageCoachPhase}
+            phase={stageCoachPhase}
+            found={revealedSymbols}
+            total={SYMBOL_POINT_COUNT}
+          />
           <div
             className={`bg-drag-scale${isScratching ? " is-bg-blurred" : ""}`}
             aria-hidden="true"

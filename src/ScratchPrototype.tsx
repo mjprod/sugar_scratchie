@@ -26,6 +26,10 @@ import {
   type MatchGameOutcome,
 } from "./game/matchGame";
 import {
+  resolveStageCoachPhase,
+  StageCoachHint,
+} from "./game/StageCoachHint";
+import {
   finishMotionHand,
   isGameModeUrl,
   loadGameSession,
@@ -2542,6 +2546,18 @@ export function ScratchPrototype() {
       gameVideosReady);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
+  const stageCoachPhase = resolveStageCoachPhase({
+    active:
+      useBodySymbols &&
+      matchStartUnlocked &&
+      !introGateActive &&
+      !introActive &&
+      !introCover &&
+      !gameResult,
+    topBarPhase,
+    found: revealedSymbols,
+    total: SYMBOL_SLOT_COUNT,
+  });
   const autoScratchLocked =
     !matchStartUnlocked ||
     introActive ||
@@ -3157,12 +3173,12 @@ export function ScratchPrototype() {
       {autoScratchLocked ? (
         <p className="auto-scratch-hint">
           {introActive || introCover
-            ? "Theme intro + 3-2-1 — play unlocks when both finish."
+            ? "Intro + countdown — play unlocks when both finish."
             : topBarPhase === "center"
-              ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+              ? "Scratch the foil, then match symbols on her — auto scratch finishes the reveal."
               : introGateActive
                 ? "Get ready — play starts after the countdown."
-                : `Find all ${SYMBOL_SLOT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+                : `Find all ${SYMBOL_SLOT_COUNT} matches first — auto scratch finishes the reveal.`}
         </p>
       ) : null}
       <label className="checkbox-label">
@@ -3209,9 +3225,9 @@ export function ScratchPrototype() {
       {cursorFx.fairyDust && !cursorFxPlayWindow ? (
         <p className="auto-scratch-hint">
           {introActive || introCover
-            ? "Theme intro + 3-2-1 — cursor FX starts when play unlocks."
+            ? "Intro + countdown — cursor FX starts when play unlocks."
             : topBarPhase === "center"
-              ? "Scratch the top symbols first — cursor FX starts after the countdown."
+              ? "Scratch the foil first — cursor FX starts after the countdown."
               : introGateActive
                 ? "Get ready — cursor FX starts after the countdown."
                 : "Cursor FX pauses once all symbols are found."}
@@ -3551,7 +3567,14 @@ export function ScratchPrototype() {
               roundKey={topBarRound}
               onAllRevealed={onTopBarAllRevealed}
             />
-          ) : !useBodySymbols && matchStartUnlocked ? (
+          ) : null}
+          <StageCoachHint
+            key={stageCoachPhase}
+            phase={stageCoachPhase}
+            found={revealedSymbols}
+            total={SYMBOL_SLOT_COUNT}
+          />
+          {!useBodySymbols && matchStartUnlocked ? (
             <div
               className={`symbol-bar${revealedSymbols >= SYMBOL_SLOT_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
               aria-label="Game symbols"
@@ -3817,7 +3840,7 @@ export function ScratchPrototype() {
                   disabled={autoScratchLocked}
                   aria-label={
                     autoScratchLocked
-                      ? `Find all ${SYMBOL_SLOT_COUNT} symbols first`
+                      ? `Find all ${SYMBOL_SLOT_COUNT} matches first`
                       : autoScratch.enabled
                         ? "Auto scratch running"
                         : "Enable auto scratch"
