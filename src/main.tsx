@@ -13,9 +13,25 @@ import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
-import { VideoTransitionPlayground } from "./VideoTransitionPlayground";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
+
+const VideoTransitionPlaygroundRoute = () => {
+  const [Page, setPage] = useState<React.ComponentType | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import("./VideoTransitionPlayground").then((m) => {
+      if (cancelled) return;
+      setPage(() => m.VideoTransitionPlayground);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return Page ? <Page /> : null;
+};
 
 // Self-hosted (see scripts/copy-dotlottie-wasm.mjs) so every Lottie —
 // e.g. GameSymbolIcon and InitialCountdown — loads its WASM
