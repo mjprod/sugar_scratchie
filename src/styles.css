@@ -471,6 +471,96 @@ textarea:focus-visible {
   }
 }
 
+/* End-of-card: fly dock → center and pulse the finds. */
+.top-symbol-bar.is-phase-showcase {
+  top: 50%;
+  transform: translateY(-50%) scale(1.04);
+  pointer-events: none;
+  cursor: default;
+  transition: none;
+  z-index: 9;
+  /* Beat game-over / stage filters — symbols must stay crisp. */
+  filter: none !important;
+  animation: top-bar-showcase-fly 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 217, 120, 0.55),
+    0 0 52px rgba(255, 200, 120, 0.35);
+  border-color: rgba(255, 217, 120, 0.75);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@keyframes top-bar-showcase-fly {
+  0% {
+    top: max(12px, env(safe-area-inset-top));
+    transform: translateY(0) scale(0.94);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.35),
+      0 0 0 1px rgba(255, 255, 255, 0.12);
+  }
+  55% {
+    transform: translateY(-54%) scale(1.08);
+  }
+  100% {
+    top: 50%;
+    transform: translateY(-50%) scale(1.04);
+    box-shadow:
+      0 18px 48px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 217, 120, 0.55),
+      0 0 52px rgba(255, 200, 120, 0.35);
+  }
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-dormant {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.88;
+  animation: none;
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing {
+  filter: none;
+  opacity: 1;
+  animation: top-bar-slot-found-pulse 700ms ease-in-out 720ms infinite;
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(1) {
+  animation-delay: 720ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(2) {
+  animation-delay: 780ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(3) {
+  animation-delay: 840ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(4) {
+  animation-delay: 900ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(5) {
+  animation-delay: 960ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(6) {
+  animation-delay: 1020ms;
+}
+
+@keyframes top-bar-slot-found-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+    border-color: rgba(255, 220, 140, 0.75);
+    background: rgba(255, 210, 120, 0.16);
+    box-shadow: 0 0 0 0 rgba(255, 200, 100, 0.35);
+  }
+  50% {
+    transform: scale(1.22);
+    filter: brightness(1.35);
+    border-color: rgba(255, 235, 170, 1);
+    background: rgba(255, 220, 140, 0.38);
+    box-shadow: 0 0 22px 4px rgba(255, 200, 100, 0.55);
+  }
+}
+
 .top-symbol-bar .top-symbol-slot {
   position: relative;
   z-index: 1;
@@ -671,6 +761,25 @@ textarea:focus-visible {
 .stage.is-game-over canvas,
 .stage.is-game-over .symbol-bar {
   filter: blur(5px);
+}
+
+/* Showcase: soft-focus the stage only — never the results bar. */
+.stage.is-showcase-phase .game-stage-canvas,
+.stage.is-showcase-phase canvas.photo-scratch-fg-layer,
+.stage.is-showcase-phase .photo-scratch-bg-layer,
+.stage.is-showcase-phase .bg-drag-scale {
+  filter: blur(4px) brightness(0.78);
+  pointer-events: none;
+}
+
+.stage.is-showcase-phase .body-symbol-marker {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage.is-showcase-phase .top-symbol-bar,
+.stage.is-showcase-phase .top-symbol-bar.is-phase-showcase {
+  filter: none !important;
 }
 
 .stage.is-bar-phase canvas,
@@ -910,9 +1019,11 @@ textarea:focus-visible {
   .top-symbol-bar.is-phase-center.is-scratchable::after,
   .top-symbol-bar.is-phase-center.is-cleared,
   .top-symbol-bar.is-phase-docked,
+  .top-symbol-bar.is-phase-showcase,
   .top-symbol-bar.is-cleared .top-symbol-slot.is-revealed,
   .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant,
   .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing,
   .lottie-clipper-peel,
   .stage-coach--bar,
   .stage-coach--hunt,
@@ -922,12 +1033,14 @@ textarea:focus-visible {
     opacity: 1;
   }
 
-  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant {
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-dormant {
     filter: saturate(0) brightness(1.25) !important;
     opacity: 0.92;
   }
 
-  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched {
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched {
     filter: none !important;
     opacity: 1;
   }
@@ -1157,9 +1270,73 @@ textarea:focus-visible {
 
 .game-result-detail {
   margin: 0;
+  color: rgba(255, 246, 236, 0.78);
   font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.45;
+}
+
+.game-result-symbols {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.game-result-symbol {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(20, 16, 12, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.game-result-symbol.is-matched {
+  border-color: rgba(255, 220, 140, 0.85);
+  background: rgba(255, 210, 120, 0.18);
+  box-shadow: 0 0 14px rgba(255, 200, 100, 0.35);
+  animation: game-result-symbol-pop 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.game-result-symbol.is-missed {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.72;
+}
+
+.game-result-symbol.is-matched:nth-child(1) {
+  animation-delay: 520ms;
+}
+.game-result-symbol.is-matched:nth-child(2) {
+  animation-delay: 580ms;
+}
+.game-result-symbol.is-matched:nth-child(3) {
+  animation-delay: 640ms;
+}
+.game-result-symbol.is-matched:nth-child(4) {
+  animation-delay: 700ms;
+}
+.game-result-symbol.is-matched:nth-child(5) {
+  animation-delay: 760ms;
+}
+.game-result-symbol.is-matched:nth-child(6) {
+  animation-delay: 820ms;
+}
+
+@keyframes game-result-symbol-pop {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .game-result-button {
@@ -1269,7 +1446,8 @@ textarea:focus-visible {
   .game-result-card,
   .game-result.is-leaving .game-result-iris,
   .game-result.is-leaving .game-result-card,
-  .game-result-surface::before {
+  .game-result-surface::before,
+  .game-result-symbol.is-matched {
     animation: none;
   }
 

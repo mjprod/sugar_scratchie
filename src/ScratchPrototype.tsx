@@ -20,7 +20,6 @@ import {
   buildTopSymbols,
   loadSymbolTypes,
   matchedTopSlots,
-  matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPES,
   SYMBOL_TYPE_COUNT,
@@ -45,7 +44,7 @@ import {
   TOP_BAR_DOCK_MS,
   unlockCountdownSound,
 } from "./game/InitialCountdown";
-import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { TopSymbolBar, TOP_BAR_SHOWCASE_MS, type TopBarPhase } from "./game/TopSymbolBar";
 import { fetchThemes } from "./shared/themes";
 import {
   MirrorSlideTransition,
@@ -1619,27 +1618,6 @@ export function ScratchPrototype() {
     setMatchOutcome(null);
   }
 
-  function beginLeaveGameResult() {
-    if (gameResultLeaving) return;
-    const reduceMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      advanceAfterScratchRef.current();
-      return;
-    }
-    setGameResultLeaving(true);
-    if (gameResultLeaveTimerRef.current !== null) {
-      window.clearTimeout(gameResultLeaveTimerRef.current);
-    }
-    // Don't rely only on animationend — some browsers skip it when the
-    // leave animation replaces an in-flight open animation.
-    gameResultLeaveTimerRef.current = window.setTimeout(() => {
-      gameResultLeaveTimerRef.current = null;
-      advanceAfterScratchRef.current();
-    }, 760);
-  }
-
   function resetMatchRound() {
     clearIntroDockTimer();
     setTopSymbols(buildTopSymbols());
@@ -2713,8 +2691,6 @@ export function ScratchPrototype() {
     if (cardTransitionActiveRef.current) return;
 
     const match = matchOutcomeRef.current ?? matchOutcome;
-    // Pending is set by tryResolveGame and not wiped by the render-time
-    // gameResultRef sync (overlay is skipped, so gameResult stays null).
     const result =
       gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let prize = 0;
@@ -2825,13 +2801,28 @@ export function ScratchPrototype() {
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    // Play the outcome sting, then skip the win/lose overlay and go next.
     const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
     );
     clearGameResultTimer();
+    // Body-hunt cards: bar flies back to center and pulses finds, then next card.
+    if (useBodySymbolsRef.current) {
+      setTopBarPhase("showcase");
+      topBarPhaseRef.current = "showcase";
+      const reduceMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const showcaseMs = reduceMotion
+        ? Math.min(advanceDelayMs, 600)
+        : Math.max(advanceDelayMs, TOP_BAR_SHOWCASE_MS);
+      gameResultTimerRef.current = window.setTimeout(() => {
+        gameResultTimerRef.current = null;
+        advanceAfterScratchRef.current();
+      }, showcaseMs);
+      return;
+    }
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
       advanceAfterScratchRef.current();
@@ -3539,6 +3530,8 @@ export function ScratchPrototype() {
         <div
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
+            topBarPhase === "showcase" ? " is-showcase-phase" : ""
+          }${
             useBodySymbols &&
             matchStartUnlocked &&
             topBarPhase === "center" &&
@@ -3958,43 +3951,6 @@ export function ScratchPrototype() {
               </div>
             )}
           </div>
-          {gameResult ? (
-            <div
-              className={`game-result game-result--${gameResult}${
-                gameResultLeaving ? " is-leaving" : ""
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <div className="game-result-iris">
-                <div className="game-result-surface">
-                  <div className="game-result-card">
-                    <p className="game-result-title">
-                      {gameResult === "win" ? "You win!" : "No luck this time"}
-                    </p>
-                    <p className="game-result-detail">
-                      {matchOutcome
-                        ? matchResultDetail(matchOutcome, "photo_scratches")
-                        : gameResult === "win"
-                          ? "Three matching symbols — nice!"
-                          : "No three-of-a-kind — try again."}
-                    </p>
-                    <button
-                      type="button"
-                      className="game-result-button"
-                      onClick={beginLeaveGameResult}
-                    >
-                      {remainingCards.length > 1
-                        ? "Next card"
-                        : gameMode
-                          ? "Claim photo scratches"
-                          : "Done"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
         <aside className="panel">
           <div>

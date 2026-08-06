@@ -21,7 +21,6 @@ import {
   buildTopSymbols,
   loadSymbolTypes,
   matchedTopSlots,
-  matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPE_COUNT,
   type MatchGameOutcome,
@@ -35,7 +34,7 @@ import {
   resolveStageCoachPhase,
   StageCoachHint,
 } from "./game/StageCoachHint";
-import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { TopSymbolBar, TOP_BAR_SHOWCASE_MS, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -1003,25 +1002,6 @@ export function PhotoScratchTest() {
     setMatchOutcome(null);
   }
 
-  function beginLeaveGameResult() {
-    if (gameResultLeaving) return;
-    const reduceMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      advanceAfterScratchRef.current();
-      return;
-    }
-    setGameResultLeaving(true);
-    if (gameResultLeaveTimerRef.current !== null) {
-      window.clearTimeout(gameResultLeaveTimerRef.current);
-    }
-    gameResultLeaveTimerRef.current = window.setTimeout(() => {
-      gameResultLeaveTimerRef.current = null;
-      advanceAfterScratchRef.current();
-    }, 760);
-  }
-
   function resetMatchRound() {
     clearIntroDockTimer();
     setTopSymbols(buildTopSymbols());
@@ -1719,13 +1699,27 @@ export function PhotoScratchTest() {
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    // Skip the win/lose overlay — sting then next card / hub.
     const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
     );
     clearGameResultTimer();
+    if (hasBodySymbolsRef.current) {
+      setTopBarPhase("showcase");
+      topBarPhaseRef.current = "showcase";
+      const reduceMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const showcaseMs = reduceMotion
+        ? Math.min(advanceDelayMs, 600)
+        : Math.max(advanceDelayMs, TOP_BAR_SHOWCASE_MS);
+      gameResultTimerRef.current = window.setTimeout(() => {
+        gameResultTimerRef.current = null;
+        advanceAfterScratchRef.current();
+      }, showcaseMs);
+      return;
+    }
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
       advanceAfterScratchRef.current();
@@ -1742,8 +1736,6 @@ export function PhotoScratchTest() {
 
     const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
     const match = matchOutcomeRef.current ?? matchOutcome;
-    // Pending is set by tryResolveGame and not wiped by the render-time
-    // gameResultRef sync (overlay is skipped, so gameResult stays null).
     const result =
       gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let diamonds = 0;
@@ -2337,7 +2329,9 @@ export function PhotoScratchTest() {
 
         <div
           ref={stageRef}
-          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
+          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${
+            gameResult ? " is-game-over" : ""
+          }${topBarPhase === "showcase" ? " is-showcase-phase" : ""}${
             hasBodySymbols && !introActive && topBarPhase === "center"
               ? " is-bar-phase"
               : ""
@@ -2462,43 +2456,6 @@ export function PhotoScratchTest() {
               )}
             </button>
           </div>
-          {gameResult ? (
-            <div
-              className={`game-result game-result--${gameResult}${
-                gameResultLeaving ? " is-leaving" : ""
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <div className="game-result-iris">
-                <div className="game-result-surface">
-                  <div className="game-result-card">
-                    <p className="game-result-title">
-                      {gameResult === "win" ? "You win!" : "No luck this time"}
-                    </p>
-                    <p className="game-result-detail">
-                      {matchOutcome
-                        ? matchResultDetail(matchOutcome, "diamonds")
-                        : gameResult === "win"
-                          ? "Three matching symbols — nice!"
-                          : "No three-of-a-kind — try again."}
-                    </p>
-                    <button
-                      type="button"
-                      className="game-result-button"
-                      onClick={beginLeaveGameResult}
-                    >
-                      {remainingCards.length > 1
-                        ? "Next card"
-                        : isGameModeUrl()
-                          ? "See diamonds"
-                          : "Done"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       </section>
     </main>

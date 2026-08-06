@@ -4,12 +4,13 @@ export type StageCoachPhase = "bar" | "hunt" | "hidden";
 
 export function resolveStageCoachPhase(options: {
   active: boolean;
-  topBarPhase: "center" | "docked";
+  topBarPhase: "center" | "docked" | "showcase";
   found: number;
   total?: number;
 }): StageCoachPhase {
   const total = options.total ?? BODY_SYMBOL_COUNT;
   if (!options.active) return "hidden";
+  if (options.topBarPhase === "showcase") return "hidden";
   if (options.topBarPhase === "center") return "bar";
   if (options.found >= total) return "hidden";
   return "hunt";

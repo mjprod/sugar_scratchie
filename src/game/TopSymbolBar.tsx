@@ -46,7 +46,10 @@ const FLAKE_FALLBACK_COLORS = [
   "#6a6662",
 ];
 
-export type TopBarPhase = "center" | "docked";
+export type TopBarPhase = "center" | "docked" | "showcase";
+
+/** Fly back to center + pulse matched finds before advancing. */
+export const TOP_BAR_SHOWCASE_MS = 2400;
 
 type TopSymbolBarProps = {
   symbols: number[];
@@ -719,9 +722,11 @@ export function TopSymbolBar({
       style={{ touchAction: "none" }}
     >
       {slots.map((typeId, index) => {
-        const revealed = revealedMask[index] || forceRevealed;
+        const revealed = revealedMask[index] || forceRevealed || phase === "showcase";
         const matched = Boolean(matchedSlots?.[index]);
-        const dormant = phase === "docked" && revealed && !matched;
+        const dormant =
+          (phase === "docked" || phase === "showcase") && revealed && !matched;
+        const pulsing = phase === "showcase" && matched;
         return (
           <div
             key={`${roundKey}-${index}-${typeId}`}
@@ -730,7 +735,9 @@ export function TopSymbolBar({
             }}
             className={`symbol-slot top-symbol-slot${
               revealed ? " is-revealed" : ""
-            }${dormant ? " is-dormant" : ""}${matched ? " is-matched" : ""}`}
+            }${dormant ? " is-dormant" : ""}${matched ? " is-matched" : ""}${
+              pulsing ? " is-pulsing" : ""
+            }`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
             <GameSymbolIcon
