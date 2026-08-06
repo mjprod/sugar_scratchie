@@ -872,11 +872,15 @@ textarea:focus-visible {
 }
 
 @keyframes symbolReveal {
-  from {
+  0% {
     opacity: 0;
-    transform: scale(0.4);
+    transform: scale(0.35);
   }
-  to {
+  55% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
     opacity: 1;
     transform: scale(1);
   }
@@ -2683,9 +2687,10 @@ dd {
   display: none;
   align-items: center;
   justify-content: center;
-  width: 60px;
-  height: 60px;
-  margin: -30px 0 0 -30px;
+  /* Keep in sync with BODY_SYMBOL_ICON_PX in ScratchPrototype / PhotoScratchTest. */
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
   border: none;
   background: transparent;
   overflow: visible;

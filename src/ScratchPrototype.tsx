@@ -380,7 +380,14 @@ const SCRATCH_ZOOM_STORAGE_KEY = "sugar-scratchie:scratch-zoom-v2";
 const LEGACY_SCRATCH_ZOOM_STORAGE_KEYS = ["sugar-scratchie:scratch-zoom"];
 const SOUND_STORAGE_KEY = "sugar-scratchie:sound";
 // Slightly larger than the manual brush so a scratch that covers the mark counts.
+/** Skip GPU sample when the stroke is nowhere near the symbol. */
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
+/** Require the scratch map itself to be clear at the symbol UV — stops icons
+ * floating over still-opaque clothing just because a stroke passed nearby. */
+const SYMBOL_SCRATCH_REVEAL_THRESHOLD = 0.55;
+/** Lottie backing store matches the CSS marker so the find-bounce doesn't
+ * upscale a soft 42px canvas. */
+const BODY_SYMBOL_ICON_PX = 72;
 
 type ScratchZoomSettings = {
   enabled: boolean;
@@ -2922,16 +2929,25 @@ export function ScratchPrototype() {
     if (useBodySymbolsRef.current && trackedMeshRef.current?.symbolPoints) {
       const bodyPoints = trackedMeshRef.current.symbolPoints;
       let changed = false;
+      const renderer = glRendererRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
         const distance = Math.hypot(
           u - bodyPoints[index].u,
           v - bodyPoints[index].v,
         );
-        if (distance <= SYMBOL_REVEAL_UV_RADIUS) {
-          revealedPointsRef.current[index] = true;
-          changed = true;
+        if (distance > SYMBOL_REVEAL_UV_RADIUS) continue;
+        // Must have actually punched the clothing at this UV — proximity alone
+        // used to pop icons on top of still-blue foil.
+        if (
+          !renderer ||
+          renderer.scratchAmountAt(bodyPoints[index].u, bodyPoints[index].v) <
+            SYMBOL_SCRATCH_REVEAL_THRESHOLD
+        ) {
+          continue;
         }
+        revealedPointsRef.current[index] = true;
+        changed = true;
       }
       if (changed) {
         const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
@@ -3580,7 +3596,7 @@ export function ScratchPrototype() {
                     <span className="body-symbol-icon">
                       <GameSymbolIcon
                         typeId={typeId}
-                        size={42}
+                        size={BODY_SYMBOL_ICON_PX}
                         paused={isScratching}
                       />
                     </span>
