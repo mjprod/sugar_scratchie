@@ -73,7 +73,7 @@ export const SQUIRCLE_CTA: CtaTemplate = {
     shape: "squircle",
     width: 338,
     height: 69,
-    cornerRadius: 11,
+    cornerRadius: 16,
     hexTip: 0.27,
     strokeWidth: 1,
     strokeColor: "rgba(255, 255, 255, 0.22)",
