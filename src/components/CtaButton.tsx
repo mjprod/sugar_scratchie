@@ -18,6 +18,13 @@ export type CtaButtonProps = {
   auroraBandHeight?: number;
   /** Color behind transparent aurora pixels (the “black” plate). */
   auroraBaseColor?: string;
+  /** Soft circle particles inside the aurora shader pass. */
+  particleCount?: number;
+  particleSize?: number;
+  particleSpeed?: number;
+  particleOpacity?: number;
+  particleColor?: string;
+  particleTwinkle?: number;
   labelColor?: string;
   fontSize?: number;
   forceHover?: boolean;
@@ -54,6 +61,12 @@ export function CtaButton({
   auroraAmplitude = 0.8,
   auroraBandHeight = 1.35,
   auroraBaseColor = "#42001b",
+  particleCount = 10,
+  particleSize = 0.029,
+  particleSpeed = 1.5,
+  particleOpacity = 0.37,
+  particleColor = "#dd8187",
+  particleTwinkle = 0.24,
   labelColor = "#ffffff",
   fontSize = 18,
   forceHover = false,
@@ -119,6 +132,12 @@ export function CtaButton({
             blend={auroraBlend}
             amplitude={auroraAmplitude}
             bandHeight={auroraBandHeight}
+            particleCount={particleCount}
+            particleSize={particleSize}
+            particleSpeed={particleSpeed}
+            particleOpacity={particleOpacity}
+            particleColor={particleColor}
+            particleTwinkle={particleTwinkle}
           />
         </span>
         <span className="cta-button__face" aria-hidden="true" />

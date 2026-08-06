@@ -19,6 +19,12 @@ uniform vec3 uColorStops[3];
 uniform vec2 uResolution;
 uniform float uBlend;
 uniform float uBandHeight;
+uniform float uParticleCount;
+uniform float uParticleSize;
+uniform float uParticleSpeed;
+uniform float uParticleOpacity;
+uniform vec3 uParticleColor;
+uniform float uParticleTwinkle;
 
 out vec4 fragColor;
 
@@ -66,6 +72,20 @@ float snoise(vec2 v){
   return 130.0 * dot(m, g);
 }
 
+// Stable pseudo-random helpers for particle seeds.
+float hash11(float p) {
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
+
+vec2 hash12(float p) {
+  vec3 p3 = fract(vec3(p) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.xx + p3.yz) * p3.zy);
+}
+
 struct ColorStop {
   vec3 color;
   float position;
@@ -110,8 +130,54 @@ void main() {
   float auroraAlpha = smoothstep(midPoint - uBlend * 0.5, midPoint + uBlend * 0.5, intensity);
 
   vec3 auroraColor = intensity * rampColor;
+  vec4 color = vec4(auroraColor * auroraAlpha, auroraAlpha);
 
-  fragColor = vec4(auroraColor * auroraAlpha, auroraAlpha);
+  // Soft circle particles in the same pass (fixed loop bound, gated by uParticleCount).
+  // Aspect-correct UV so dots stay round on wide CTAs.
+  float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
+  vec2 puv = vec2(uv.x * aspect, uv.y);
+  float count = clamp(uParticleCount, 0.0, 24.0);
+  float baseR = max(uParticleSize, 0.0005);
+  float spd = uParticleSpeed;
+  float opac = clamp(uParticleOpacity, 0.0, 1.0);
+
+  for (int i = 0; i < 24; i++) {
+    if (float(i) >= count) break;
+
+    float fi = float(i);
+    vec2 seed = hash12(fi + 1.7);
+    float phase = hash11(fi + 9.1) * 6.2831853;
+    float speedMul = 0.55 + hash11(fi + 3.3) * 0.9;
+    float sizeMul = 0.55 + hash11(fi + 5.7) * 1.1;
+
+    // Drift mostly upward/sideways like glitter in the aurora field.
+    vec2 drift = vec2(
+      sin(uTime * 0.55 * spd * speedMul + phase) * 0.18
+        + cos(uTime * 0.21 * spd + phase * 1.7) * 0.06,
+      fract(seed.y + uTime * 0.08 * spd * speedMul) * 1.15 - 0.08
+    );
+
+    vec2 center = vec2(seed.x * aspect, 0.0) + drift;
+    // Keep particles mostly over the colored band, with a little edge wander.
+    center.x = clamp(center.x, 0.02 * aspect, aspect - 0.02 * aspect);
+
+    float r = baseR * sizeMul * (0.85 + 0.15 * sin(uTime * 1.3 * spd + phase));
+    float d = length(puv - center);
+    float soft = smoothstep(r, r * 0.22, d);
+
+    float twinkle = 1.0;
+    if (uParticleTwinkle > 0.001) {
+      float tw = 0.5 + 0.5 * sin(uTime * (2.0 + hash11(fi + 11.0) * 3.5) * spd + phase);
+      twinkle = mix(1.0, tw, clamp(uParticleTwinkle, 0.0, 1.0));
+    }
+
+    float a = soft * opac * twinkle;
+    // Premultiplied-style add so particles read on top of aurora without a second pass.
+    color.rgb += uParticleColor * a;
+    color.a = max(color.a, a);
+  }
+
+  fragColor = color;
 }
 `;
 
@@ -126,6 +192,15 @@ export type AuroraProps = {
    * 1 = stock look; higher values stretch the bands so they fill more of the button.
    */
   bandHeight?: number;
+  /** Soft circle particles drawn in the same fragment pass. */
+  particleCount?: number;
+  /** Base particle radius in UV-ish units (~0.01–0.08 looks good on a CTA). */
+  particleSize?: number;
+  particleSpeed?: number;
+  particleOpacity?: number;
+  particleColor?: string;
+  /** 0 = steady, 1 = strong twinkle. */
+  particleTwinkle?: number;
   className?: string;
 };
 
@@ -142,6 +217,12 @@ export default function Aurora(props: AuroraProps) {
     amplitude = 1.0,
     blend = 0.5,
     bandHeight = 1.0,
+    particleCount = 0,
+    particleSize = 0.03,
+    particleSpeed = 1,
+    particleOpacity = 0.85,
+    particleColor = "#ffffff",
+    particleTwinkle = 0.45,
     className,
   } = props;
   const propsRef = useRef(props);
@@ -198,6 +279,12 @@ export default function Aurora(props: AuroraProps) {
         uResolution: { value: [ctn.offsetWidth, ctn.offsetHeight] },
         uBlend: { value: blend },
         uBandHeight: { value: bandHeight },
+        uParticleCount: { value: particleCount },
+        uParticleSize: { value: particleSize },
+        uParticleSpeed: { value: particleSpeed },
+        uParticleOpacity: { value: particleOpacity },
+        uParticleColor: { value: hexToRgb(particleColor) },
+        uParticleTwinkle: { value: particleTwinkle },
       },
     });
 
@@ -214,6 +301,12 @@ export default function Aurora(props: AuroraProps) {
       program.uniforms.uAmplitude.value = current.amplitude ?? 1.0;
       program.uniforms.uBlend.value = current.blend ?? blend;
       program.uniforms.uBandHeight.value = current.bandHeight ?? bandHeight;
+      program.uniforms.uParticleCount.value = current.particleCount ?? particleCount;
+      program.uniforms.uParticleSize.value = current.particleSize ?? particleSize;
+      program.uniforms.uParticleSpeed.value = current.particleSpeed ?? particleSpeed;
+      program.uniforms.uParticleOpacity.value = current.particleOpacity ?? particleOpacity;
+      program.uniforms.uParticleColor.value = hexToRgb(current.particleColor ?? particleColor);
+      program.uniforms.uParticleTwinkle.value = current.particleTwinkle ?? particleTwinkle;
       const stops = current.colorStops ?? colorStops;
       program.uniforms.uColorStops.value = stops.map(hexToRgb);
       renderer.render({ scene: mesh });

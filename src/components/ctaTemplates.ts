@@ -20,6 +20,12 @@ export type CtaTemplateValues = {
   auroraAmplitude: number;
   auroraBandHeight: number;
   auroraBaseColor: string;
+  particleCount: number;
+  particleSize: number;
+  particleSpeed: number;
+  particleOpacity: number;
+  particleColor: string;
+  particleTwinkle: number;
   labelColor: string;
   fontSize: number;
   glowEnabled: boolean;
@@ -64,6 +70,12 @@ export const SQUIRCLE_CTA: CtaTemplate = {
     auroraAmplitude: 0.8,
     auroraBandHeight: 1.35,
     auroraBaseColor: "#42001b",
+    particleCount: 10,
+    particleSize: 0.029,
+    particleSpeed: 1.5,
+    particleOpacity: 0.37,
+    particleColor: "#dd8187",
+    particleTwinkle: 0.24,
     labelColor: "#ffffff",
     fontSize: 18,
     glowEnabled: true,

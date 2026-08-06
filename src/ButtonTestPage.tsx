@@ -61,6 +61,12 @@ function formatCtaButtonDefaultsSnippet(state: CtaDebugState): string {
     `auroraAmplitude = ${state.auroraAmplitude},`,
     `auroraBandHeight = ${state.auroraBandHeight},`,
     `auroraBaseColor = ${JSON.stringify(state.auroraBaseColor)},`,
+    `particleCount = ${state.particleCount},`,
+    `particleSize = ${state.particleSize},`,
+    `particleSpeed = ${state.particleSpeed},`,
+    `particleOpacity = ${state.particleOpacity},`,
+    `particleColor = ${JSON.stringify(state.particleColor)},`,
+    `particleTwinkle = ${state.particleTwinkle},`,
     `labelColor = ${JSON.stringify(state.labelColor)},`,
     `fontSize = ${state.fontSize},`,
     `glowEnabled = ${state.glowEnabled},`,
@@ -130,6 +136,49 @@ const AURORA_SLIDERS: NumberSlider[] = [
     max: 4,
     step: 0.05,
     format: (v) => `${v.toFixed(2)}×`,
+  },
+];
+
+const PARTICLE_SLIDERS: NumberSlider[] = [
+  {
+    key: "particleCount",
+    label: "Count",
+    min: 0,
+    max: 24,
+    step: 1,
+    format: (v) => String(Math.round(v)),
+  },
+  {
+    key: "particleSize",
+    label: "Size",
+    min: 0.005,
+    max: 0.1,
+    step: 0.001,
+    format: (v) => v.toFixed(3),
+  },
+  {
+    key: "particleSpeed",
+    label: "Speed",
+    min: 0,
+    max: 3,
+    step: 0.05,
+    format: (v) => v.toFixed(2),
+  },
+  {
+    key: "particleOpacity",
+    label: "Opacity",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: (v) => v.toFixed(2),
+  },
+  {
+    key: "particleTwinkle",
+    label: "Twinkle",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: (v) => v.toFixed(2),
   },
 ];
 
@@ -321,6 +370,12 @@ export function ButtonTestPage() {
                 auroraAmplitude={state.auroraAmplitude}
                 auroraBandHeight={state.auroraBandHeight}
                 auroraBaseColor={state.auroraBaseColor}
+                particleCount={state.particleCount}
+                particleSize={state.particleSize}
+                particleSpeed={state.particleSpeed}
+                particleOpacity={state.particleOpacity}
+                particleColor={state.particleColor}
+                particleTwinkle={state.particleTwinkle}
                 labelColor={state.labelColor}
                 fontSize={state.fontSize}
                 glowEnabled={state.glowEnabled}
@@ -490,6 +545,32 @@ export function ButtonTestPage() {
             </label>
             <div className="button-test-sliders">
               {AURORA_SLIDERS.map((def) => (
+                <SliderRow
+                  key={def.key}
+                  def={def}
+                  value={state[def.key] as number}
+                  onChange={(value) => patch(def.key, value)}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="button-test-section">
+            <h3>Particles</h3>
+            <p className="button-test-hint">
+              Soft circles drawn in the same Aurora shader pass (no extra DOM/canvas). Count 0
+              disables them.
+            </p>
+            <label>
+              Particle color
+              <input
+                type="color"
+                value={toColorInputValue(state.particleColor)}
+                onChange={(event) => patch("particleColor", event.target.value)}
+              />
+            </label>
+            <div className="button-test-sliders">
+              {PARTICLE_SLIDERS.map((def) => (
                 <SliderRow
                   key={def.key}
                   def={def}
