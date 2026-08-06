@@ -57,6 +57,7 @@ function pickApp(pathname: string) {
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;
+  return ScratchPrototype;
 }
 
 function readLocation() {
