@@ -19,6 +19,7 @@ import {
   buildBodySymbols,
   buildTopSymbols,
   loadSymbolTypes,
+  matchedTopSlots,
   matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPES,
@@ -2546,6 +2547,10 @@ export function ScratchPrototype() {
       gameVideosReady);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
+  const topMatchedSlots = useMemo(
+    () => matchedTopSlots(topSymbols, sessionSymbols, bodyRevealed),
+    [topSymbols, sessionSymbols, bodyRevealed],
+  );
   const stageCoachPhase = resolveStageCoachPhase({
     active:
       useBodySymbols &&
@@ -3565,6 +3570,7 @@ export function ScratchPrototype() {
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
+              matchedSlots={topMatchedSlots}
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}

@@ -20,6 +20,7 @@ import {
   buildBodySymbols,
   buildTopSymbols,
   loadSymbolTypes,
+  matchedTopSlots,
   matchResultDetail,
   resolveMatchGame,
   SYMBOL_TYPE_COUNT,
@@ -1889,6 +1890,11 @@ export function PhotoScratchTest() {
   const parallaxState = parallaxStateRef.current;
   const symbolsHuntComplete =
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
+  const topMatchedSlots = matchedTopSlots(
+    topSymbols,
+    sessionSymbols,
+    bodyRevealed,
+  );
   const stageCoachPhase = resolveStageCoachPhase({
     active:
       hasBodySymbols &&
@@ -2321,6 +2327,7 @@ export function PhotoScratchTest() {
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
+              matchedSlots={topMatchedSlots}
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}

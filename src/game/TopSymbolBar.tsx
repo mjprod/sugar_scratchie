@@ -54,6 +54,8 @@ type TopSymbolBarProps = {
   onAllRevealed: () => void;
   roundKey?: string | number;
   forceRevealed?: boolean;
+  /** Docked hunt: slots that have been found on the body (full color again). */
+  matchedSlots?: boolean[];
 };
 
 let scratchTexture: HTMLImageElement | null = null;
@@ -268,6 +270,7 @@ export function TopSymbolBar({
   onAllRevealed,
   roundKey = 0,
   forceRevealed = false,
+  matchedSlots,
 }: TopSymbolBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<CoatingCanvas | null>(null);
@@ -717,6 +720,8 @@ export function TopSymbolBar({
     >
       {slots.map((typeId, index) => {
         const revealed = revealedMask[index] || forceRevealed;
+        const matched = Boolean(matchedSlots?.[index]);
+        const dormant = phase === "docked" && revealed && !matched;
         return (
           <div
             key={`${roundKey}-${index}-${typeId}`}
@@ -725,10 +730,14 @@ export function TopSymbolBar({
             }}
             className={`symbol-slot top-symbol-slot${
               revealed ? " is-revealed" : ""
-            }`}
+            }${dormant ? " is-dormant" : ""}${matched ? " is-matched" : ""}`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
-            <GameSymbolIcon typeId={typeId} size={28} paused={!revealed} />
+            <GameSymbolIcon
+              typeId={typeId}
+              size={28}
+              paused={!revealed || dormant}
+            />
           </div>
         );
       })}

@@ -405,6 +405,72 @@ textarea:focus-visible {
   }
 }
 
+/* After dock: cascade right→left into grayscale via keyframed filter. */
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant {
+  animation: top-bar-slot-go-dormant 520ms cubic-bezier(0.33, 1, 0.4, 1) both;
+}
+
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(6) {
+  animation-delay: 380ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(5) {
+  animation-delay: 440ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(4) {
+  animation-delay: 500ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(3) {
+  animation-delay: 560ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(2) {
+  animation-delay: 620ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(1) {
+  animation-delay: 680ms;
+}
+
+@keyframes top-bar-slot-go-dormant {
+  0% {
+    filter: saturate(1) brightness(1);
+    transform: scale(1) translateX(0);
+    opacity: 1;
+  }
+  45% {
+    filter: saturate(0.35) brightness(1.12);
+    transform: scale(0.9) translateX(-6px);
+  }
+  100% {
+    filter: saturate(0) brightness(1.25);
+    transform: scale(1) translateX(0);
+    opacity: 0.92;
+  }
+}
+
+/* Found on her body — full color again with a match pop. */
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched {
+  animation: top-bar-slot-reactivate 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+@keyframes top-bar-slot-reactivate {
+  0% {
+    filter: saturate(0) brightness(1.25);
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  42% {
+    filter: saturate(1) brightness(1.4);
+    transform: scale(1.26);
+    opacity: 1;
+    border-color: rgba(255, 230, 160, 0.95);
+    background: rgba(255, 220, 140, 0.28);
+  }
+  100% {
+    filter: none;
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 .top-symbol-bar .top-symbol-slot {
   position: relative;
   z-index: 1;
@@ -845,11 +911,23 @@ textarea:focus-visible {
   .top-symbol-bar.is-phase-center.is-cleared,
   .top-symbol-bar.is-phase-docked,
   .top-symbol-bar.is-cleared .top-symbol-slot.is-revealed,
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant,
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched,
   .lottie-clipper-peel,
   .stage-coach--bar,
   .stage-coach--hunt,
   .stage-coach--hunt .stage-coach-label {
     animation: none !important;
+    filter: none !important;
+    opacity: 1;
+  }
+
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant {
+    filter: saturate(0) brightness(1.25) !important;
+    opacity: 0.92;
+  }
+
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched {
     filter: none !important;
     opacity: 1;
   }
