@@ -39,9 +39,8 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
-  if (path === "/video-transition") return VideoTransitionPlayground;
+  if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;
-  return ScratchPrototype;
 }
 
 function readLocation() {
