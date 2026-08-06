@@ -521,21 +521,7 @@ function playMatchFindSound(
   scheduleTone(ctx, t + 0.11, 1174.66, 0.14, 0.12, "sine");
 }
 
-function playMissFindSound(
-  state: SymbolAudioState,
-  enabled: boolean,
-  startOffsetS = 0,
-) {
-  if (!enabled) return;
-  const ctx = ensureSymbolAudio(state);
-  if (!ctx) return;
-  const t = ctx.currentTime + startOffsetS;
-  // Soft descending dud — found on her, but no top-bar claim left.
-  scheduleSlide(ctx, t, 220, 140, 0.22, 0.14, "sawtooth");
-  scheduleTone(ctx, t + 0.04, 110, 0.18, 0.08, "triangle");
-}
-
-/** Per newly revealed body icon: positive if it lights a top slot, else miss. */
+/** Per newly revealed body icon: ding only when it claims a top-bar slot. */
 function playBodyFindSounds(
   state: SymbolAudioState,
   top: number[],
@@ -550,9 +536,9 @@ function playBodyFindSounds(
     const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
     revealed[index] = true;
     const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
-    const offset = i * 0.07;
-    if (after > before) playMatchFindSound(state, true, offset);
-    else playMissFindSound(state, true, offset);
+    if (after > before) {
+      playMatchFindSound(state, true, i * 0.07);
+    }
   });
 }
 
@@ -4025,10 +4011,29 @@ export function ScratchPrototype() {
                   animationDelay: `${coin.delayMs}ms`,
                 } as CSSProperties
               }
-              onAnimationEnd={() => removeFlyingCoin(coin.id)}
+              onAnimationEnd={(event) => {
+                if (event.target !== event.currentTarget) return;
+                removeFlyingCoin(coin.id);
+              }}
               aria-hidden="true"
             >
-              <GameSymbolIcon typeId={coin.typeId} size={68} paused />
+              <span className="flying-coin-spin">
+                <span
+                  className="flying-coin-plane flying-coin-plane--shadow"
+                  aria-hidden="true"
+                />
+                <span
+                  className="flying-coin-plane flying-coin-plane--back"
+                  aria-hidden="true"
+                />
+                <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
+                  <GameSymbolIcon typeId={coin.typeId} size={68} paused />
+                </span>
+                <span
+                  className="flying-coin-plane flying-coin-plane--front"
+                  aria-hidden="true"
+                />
+              </span>
             </div>
           ))}
           <video

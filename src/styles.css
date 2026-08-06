@@ -1159,7 +1159,7 @@ textarea:focus-visible {
   animation-fill-mode: both;
 }
 
-/* Body match: hold in front, then soar into the matching top-bar slot. */
+/* Body match: 2.5D multiplane — CSS planes on Z + one paused symbol. */
 .flying-coin.is-match-fly {
   z-index: 12;
   width: 84px;
@@ -1167,8 +1167,83 @@ textarea:focus-visible {
   background: transparent;
   border: none;
   box-shadow: none;
+  perspective: 760px;
+  perspective-origin: 50% 42%;
   animation-name: matchFly;
   animation-timing-function: cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+
+/* Virtual camera / rig — orbits so layered planes parallax. */
+.flying-coin.is-match-fly .flying-coin-spin {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+  animation-name: matchFlySpin;
+  animation-timing-function: cubic-bezier(0.28, 0.15, 0.3, 1);
+  animation-duration: inherit;
+  animation-delay: inherit;
+  animation-fill-mode: both;
+}
+
+.flying-coin.is-match-fly .flying-coin-plane {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* Far shadow plate */
+.flying-coin.is-match-fly .flying-coin-plane--shadow {
+  inset: 8%;
+  background: radial-gradient(
+    circle,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.12) 55%,
+    transparent 72%
+  );
+  transform: translateZ(-32px) scale(1.08);
+  opacity: 0.85;
+}
+
+/* Warm fill behind the icon — reads as volume under the art. */
+.flying-coin.is-match-fly .flying-coin-plane--back {
+  inset: 6%;
+  background: radial-gradient(
+    circle at 40% 35%,
+    rgba(255, 220, 140, 0.55) 0%,
+    rgba(255, 160, 60, 0.22) 48%,
+    transparent 70%
+  );
+  transform: translateZ(-14px) scale(1.02);
+}
+
+/* Art plane — only Lottie in the stack (paused). */
+.flying-coin.is-match-fly .flying-coin-face {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  transform: translateZ(0);
+}
+
+/* Near specular — opacity only (no mix-blend / filter). */
+.flying-coin.is-match-fly .flying-coin-plane--front {
+  inset: 10%;
+  background: radial-gradient(
+    circle at 30% 24%,
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.1) 28%,
+    transparent 52%
+  );
+  transform: translateZ(18px) scale(0.92);
+  opacity: 0.85;
 }
 
 .flying-coin.is-match-fly::before {
@@ -1178,8 +1253,8 @@ textarea:focus-visible {
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    rgba(255, 230, 150, 0.55) 0%,
-    rgba(255, 190, 80, 0.18) 42%,
+    rgba(255, 230, 150, 0.4) 0%,
+    rgba(255, 190, 80, 0.12) 42%,
     transparent 70%
   );
   z-index: -1;
@@ -1232,6 +1307,31 @@ textarea:focus-visible {
   100% {
     opacity: 0;
     transform: scale(0.35);
+  }
+}
+
+/*
+ * Camera orbit through the multiplane stack (parallax depth).
+ * Transform-only — no second Lottie, no CSS filter on the art.
+ */
+@keyframes matchFlySpin {
+  0% {
+    transform: translateZ(0) rotateY(-22deg) rotateX(10deg);
+  }
+  18% {
+    transform: translateZ(44px) rotateY(14deg) rotateX(-6deg);
+  }
+  40% {
+    transform: translateZ(56px) rotateY(-10deg) rotateX(8deg);
+  }
+  48% {
+    transform: translateZ(36px) rotateY(8deg) rotateX(-4deg);
+  }
+  72% {
+    transform: translateZ(14px) rotateY(-16deg) rotateX(6deg);
+  }
+  100% {
+    transform: translateZ(0) rotateY(28deg) rotateX(-8deg);
   }
 }
 
