@@ -26,11 +26,14 @@ import {
   type MatchGameOutcome,
 } from "./game/matchGame";
 import {
-  InitialCountdown,
   isCountdownSoundUnlocked,
   TOP_BAR_DOCK_MS,
   unlockCountdownSound,
 } from "./game/InitialCountdown";
+import {
+  resolveStageCoachPhase,
+  StageCoachHint,
+} from "./game/StageCoachHint";
 import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
@@ -123,7 +126,14 @@ const BG_BRIGHTNESS_DIM = 0.8;
 
 type ScratchMark = { u: number; v: number; radius: number };
 
+/** Skip GPU sample when the stroke is nowhere near the symbol. */
 const SYMBOL_REVEAL_UV_RADIUS = 0.06;
+/** Require the scratch map itself to be clear at the symbol UV — stops icons
+ * floating over still-opaque clothing just because a stroke passed nearby. */
+const SYMBOL_SCRATCH_REVEAL_THRESHOLD = 0.55;
+/** Lottie backing store matches the CSS marker so the find-bounce doesn't
+ * upscale a soft 42px canvas. */
+const BODY_SYMBOL_ICON_PX = 72;
 
 function clamp(value: number, lo: number, hi: number) {
   return value < lo ? lo : value > hi ? hi : value;
@@ -799,13 +809,15 @@ export function PhotoScratchTest() {
   const [introGateActive, setIntroGateActive] = useState(false);
   const introGateActiveRef = useRef(introGateActive);
   introGateActiveRef.current = introGateActive;
-  const [showIntroCountdown, setShowIntroCountdown] = useState(false);
   const introDockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [matchOutcome, setMatchOutcome] = useState<MatchGameOutcome | null>(
     null,
   );
   const matchOutcomeRef = useRef<MatchGameOutcome | null>(null);
   const [revealedSymbols, setRevealedSymbols] = useState(0);
+  const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
+  );
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
@@ -837,10 +849,6 @@ export function PhotoScratchTest() {
   // Theme ids whose intro clip has already played this session — one
   // playthrough per theme, even across multiple motion cards / photo slots.
   const introShownForThemeRef = useRef<Set<string>>(new Set());
-  /** True when the current match's 3-2-1 already ran over the theme intro. */
-  const countdownOverIntroRef = useRef(false);
-  /** One 3-2-1 per photo-hand / session — later cards skip it. */
-  const sessionCountdownDoneRef = useRef(false);
   /**
    * Cold refresh has no audio gesture — wait for Tap to play. Play/Continue
    * already called unlockCountdownSound(), so this starts true then.
@@ -904,7 +912,6 @@ export function PhotoScratchTest() {
     pendingIntroEntryRef.current = null;
     const url = entry ? entry.intro?.trim() : "";
     const themeId = entry ? entry.theme_id?.trim() : "";
-    countdownOverIntroRef.current = false;
     if (!url || !themeId || introShownForThemeRef.current.has(themeId)) {
       setIntroVideoUrl("");
       setIntroActive(false);
@@ -915,13 +922,6 @@ export function PhotoScratchTest() {
     setIntroVideoUrl(url);
     setIntroActive(true);
     introActiveRef.current = true;
-    // 3-2-1 only once per session — later theme intros play without it.
-    if (sessionCountdownDoneRef.current) return;
-    countdownOverIntroRef.current = true;
-    clearIntroDockTimer();
-    setIntroGateActive(true);
-    introGateActiveRef.current = true;
-    setShowIntroCountdown(true);
   }
 
   function dismissIntro() {
@@ -976,13 +976,8 @@ export function PhotoScratchTest() {
     setTopSymbols(buildTopSymbols());
     setTopBarPhase("center");
     topBarPhaseRef.current = "center";
-    // Don't wipe a 3-2-1 that was just armed over the theme intro (same race
-    // ScratchPrototype guards against when card assets finish loading).
-    if (!countdownOverIntroRef.current) {
-      setIntroGateActive(false);
-      introGateActiveRef.current = false;
-      setShowIntroCountdown(false);
-    }
+    setIntroGateActive(false);
+    introGateActiveRef.current = false;
     setTopBarRound((n) => n + 1);
     setSessionSymbols(buildBodySymbols());
     setMatchOutcome(null);
@@ -991,49 +986,15 @@ export function PhotoScratchTest() {
   function onTopBarAllRevealed() {
     setTopBarPhase("docked");
     topBarPhaseRef.current = "docked";
-    clearIntroDockTimer();
-    // Later cards: skip 3-2-1 entirely.
-    if (sessionCountdownDoneRef.current) {
-      setIntroGateActive(true);
-      introGateActiveRef.current = true;
-      introDockTimerRef.current = window.setTimeout(() => {
-        introDockTimerRef.current = null;
-        setIntroGateActive(false);
-        introGateActiveRef.current = false;
-      }, TOP_BAR_DOCK_MS);
-      return;
-    }
-    // 3-2-1 already ran (or is running) over the theme intro — don't start another.
-    if (countdownOverIntroRef.current) {
-      countdownOverIntroRef.current = false;
-      setIntroGateActive(true);
-      introGateActiveRef.current = true;
-      if (showIntroCountdown) {
-        // Over-intro countdown still playing; unlock when it completes.
-        return;
-      }
-      sessionCountdownDoneRef.current = true;
-      introDockTimerRef.current = window.setTimeout(() => {
-        introDockTimerRef.current = null;
-        setIntroGateActive(false);
-        introGateActiveRef.current = false;
-      }, TOP_BAR_DOCK_MS);
-      return;
-    }
     setIntroGateActive(true);
     introGateActiveRef.current = true;
-    setShowIntroCountdown(false);
+    clearIntroDockTimer();
+    // Photo scratch has no 3-2-1 — unlock body play after the bar docks.
     introDockTimerRef.current = window.setTimeout(() => {
       introDockTimerRef.current = null;
-      setShowIntroCountdown(true);
+      setIntroGateActive(false);
+      introGateActiveRef.current = false;
     }, TOP_BAR_DOCK_MS);
-  }
-
-  function onIntroCountdownComplete() {
-    sessionCountdownDoneRef.current = true;
-    setShowIntroCountdown(false);
-    setIntroGateActive(false);
-    introGateActiveRef.current = false;
   }
 
   function applyMesh(mesh: TrackedMesh) {
@@ -1056,6 +1017,7 @@ export function PhotoScratchTest() {
     resetGameOutcome();
     resetMatchRound();
     setRevealedSymbols(0);
+    setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setHasBodySymbols(mesh.symbolPoints?.length === SYMBOL_POINT_COUNT);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
@@ -1100,10 +1062,6 @@ export function PhotoScratchTest() {
         const session = beginPhotoPhase() ?? existing;
         const index = await fetchPhotoScratchIndex();
         const hand = playlistForGameSession(index, session);
-        // Fresh photo hand → allow one 3-2-1; resume mid-hand keeps it spent.
-        if (session.completedPhotoIds.length === 0) {
-          sessionCountdownDoneRef.current = false;
-        }
         setPlaylist(hand);
         setCompletedCardIds(session.completedPhotoIds);
         completedCardIdsRef.current = session.completedPhotoIds;
@@ -1546,22 +1504,32 @@ export function PhotoScratchTest() {
     const bodyPoints = trackedMeshRef.current?.symbolPoints;
     if (bodyPoints && bodyPoints.length === SYMBOL_POINT_COUNT) {
       let changed = false;
+      const renderer = fgRendererRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
         const distance = Math.hypot(
           u - bodyPoints[index].u,
           v - bodyPoints[index].v,
         );
-        if (distance <= SYMBOL_REVEAL_UV_RADIUS) {
-          revealedPointsRef.current[index] = true;
-          changed = true;
+        if (distance > SYMBOL_REVEAL_UV_RADIUS) continue;
+        // Must have actually punched the clothing at this UV — proximity alone
+        // used to pop icons on top of still-blue foil.
+        if (
+          !renderer ||
+          renderer.scratchAmountAt(bodyPoints[index].u, bodyPoints[index].v) <
+            SYMBOL_SCRATCH_REVEAL_THRESHOLD
+        ) {
+          continue;
         }
+        revealedPointsRef.current[index] = true;
+        changed = true;
       }
       if (changed) {
         const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
         const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
+        setBodyRevealed(revealedPointsRef.current.slice());
         playNewSymbolNotes(
           symbolAudioRef.current,
           prevCount,
@@ -1798,6 +1766,7 @@ export function PhotoScratchTest() {
     resetGameOutcome();
     resetMatchRound();
     setRevealedSymbols(0);
+    setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
 
@@ -1920,6 +1889,17 @@ export function PhotoScratchTest() {
   const parallaxState = parallaxStateRef.current;
   const symbolsHuntComplete =
     hasBodySymbols && revealedSymbols >= SYMBOL_POINT_COUNT;
+  const stageCoachPhase = resolveStageCoachPhase({
+    active:
+      hasBodySymbols &&
+      entryReady &&
+      !introActive &&
+      !introGateActive &&
+      !gameResult,
+    topBarPhase,
+    found: revealedSymbols,
+    total: SYMBOL_POINT_COUNT,
+  });
   const autoScratchLocked =
     introActive ||
     (hasBodySymbols &&
@@ -2235,10 +2215,10 @@ export function PhotoScratchTest() {
             {autoScratchLocked ? (
               <p className="auto-scratch-hint">
                 {topBarPhase === "center"
-                  ? "Scratch the top symbols first, then find all symbols on the dress — auto scratch finishes the reveal."
+                  ? "Scratch the foil, then match symbols on her — auto scratch finishes the reveal."
                   : introGateActive
-                    ? "Get ready — play starts after the countdown."
-                    : `Find all ${SYMBOL_POINT_COUNT} symbols on the dress first — auto scratch finishes the reveal.`}
+                    ? "Get ready — play starts when the top bar docks."
+                    : `Find all ${SYMBOL_POINT_COUNT} matches first — auto scratch finishes the reveal.`}
               </p>
             ) : null}
             <label className="checkbox-label">
@@ -2344,12 +2324,12 @@ export function PhotoScratchTest() {
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}
-          {showIntroCountdown ? (
-            <InitialCountdown
-              onComplete={onIntroCountdownComplete}
-              soundEnabled={soundEnabled}
-            />
-          ) : null}
+          <StageCoachHint
+            key={stageCoachPhase}
+            phase={stageCoachPhase}
+            found={revealedSymbols}
+            total={SYMBOL_POINT_COUNT}
+          />
           <div
             className={`bg-drag-scale${isScratching ? " is-bg-blurred" : ""}`}
             aria-hidden="true"
@@ -2396,9 +2376,14 @@ export function PhotoScratchTest() {
                     className="body-symbol-marker"
                     style={{ display: "none" }}
                   >
-                    <span className="body-symbol-icon">
-                      <GameSymbolIcon typeId={typeId} size={42} />
-                    </span>
+                    {bodyRevealed[index] ? (
+                      <span className="body-symbol-icon">
+                        <GameSymbolIcon
+                          typeId={typeId}
+                          size={BODY_SYMBOL_ICON_PX}
+                        />
+                      </span>
+                    ) : null}
                   </div>
                 ))
               : null}

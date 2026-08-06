@@ -338,12 +338,26 @@ export function GamePage() {
         <p className="eyebrow">Sugar Scratchie</p>
         <h1>GAME</h1>
         <p className="game-hub-copy">
-          Deal five motion cards — one theme each. Scratch them for photo
+          Five themed motion cards. Scratch foil, match symbols for photocard
           prizes, then scratch photos for diamonds.
         </p>
         <p className="game-hub-copy game-hub-copy--mobile">
-          5 themes → scratch for photos → photos for diamonds
+          Match symbols → photos → diamonds
         </p>
+        <ol className="game-hub-steps" aria-label="How to play">
+          <li>
+            <span className="game-hub-step-num">1</span>
+            <span className="game-hub-step-text">Deal five themes</span>
+          </li>
+          <li>
+            <span className="game-hub-step-num">2</span>
+            <span className="game-hub-step-text">Match symbols for photos</span>
+          </li>
+          <li>
+            <span className="game-hub-step-num">3</span>
+            <span className="game-hub-step-text">Scratch photos for diamonds</span>
+          </li>
+        </ol>
         <div className="game-hub-wallet" aria-live="polite">
           <span className="game-hub-wallet-label">Wallet</span>
           <strong>{walletLabel}</strong>
@@ -377,7 +391,9 @@ export function GamePage() {
                 />
               ))}
             </div>
-            <p className="game-hub-status">Press New Game to deal your hand</p>
+            <p className="game-hub-status">
+              New Game deals five themed cards — then Play to scratch
+            </p>
           </div>
         ) : null}
 

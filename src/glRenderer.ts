@@ -292,6 +292,8 @@ export class GarmentGLRenderer {
   private fgTex: WebGLTexture;
   private scratchTex: WebGLTexture;
   private scratchFbo: WebGLFramebuffer;
+  /** Reused by `scratchAmountAt` so reveal checks don't allocate per sample. */
+  private scratchReadPixel = new Uint8Array(4);
   private fgColorTex: WebGLTexture;
   private fgFbo: WebGLFramebuffer;
   // Once a video has been drawn at least once we keep drawing its last good
@@ -474,6 +476,20 @@ export class GarmentGLRenderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.blendEquation(gl.FUNC_ADD);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /** Scratch amount (0..1) at garment UV — R channel of the UV scratch map. */
+  scratchAmountAt(u: number, v: number): number {
+    if (this.disposed) return 0;
+    const gl = this.gl;
+    const size = this.scratchTexSize;
+    const x = Math.min(size - 1, Math.max(0, Math.floor(u * size)));
+    // Paint writes NDC with v=0 at the bottom of the FBO; readPixels matches.
+    const y = Math.min(size - 1, Math.max(0, Math.floor(v * size)));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.scratchFbo);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.scratchReadPixel);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.scratchReadPixel[0] / 255;
   }
 
   private bindQuad(prog: WebGLProgram) {

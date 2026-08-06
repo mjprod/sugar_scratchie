@@ -16,6 +16,23 @@ import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
 
+const VideoTransitionPlaygroundRoute = () => {
+  const [Page, setPage] = useState<React.ComponentType | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import("./VideoTransitionPlayground").then((m) => {
+      if (cancelled) return;
+      setPage(() => m.VideoTransitionPlayground);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return Page ? <Page /> : null;
+};
+
 // Self-hosted (see scripts/copy-dotlottie-wasm.mjs) so every Lottie —
 // e.g. GameSymbolIcon and InitialCountdown — loads its WASM
 // from this origin instead of the library's default cdn.jsdelivr.net, which
@@ -38,6 +55,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
+  if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;
   return ScratchPrototype;
 }

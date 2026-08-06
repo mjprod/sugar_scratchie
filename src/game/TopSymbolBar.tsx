@@ -22,6 +22,8 @@ const PEEL_LOTTIE_DURATION_MS = Math.round((180 / 60) * 1000);
 /** Hold the last frame this long before remounting for the next play. */
 const PEEL_LOTTIE_PAUSE_MS = 1800;
 const PEEL_LOTTIE_CYCLE_MS = PEEL_LOTTIE_DURATION_MS + PEEL_LOTTIE_PAUSE_MS;
+/** Beat after foil clears before the bar flies up to dock. */
+const CLEAR_CELEBRATE_MS = 420;
 
 // Flying foil flakes on scratch — same feel as the main game's fabric flakes
 // (glRenderer's spawnFlakes/drawFlakes), but colored by sampling the actual
@@ -290,6 +292,7 @@ export function TopSymbolBar({
     Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
   );
   const [coatingDone, setCoatingDone] = useState(forceRevealed);
+  const [clearedBurst, setClearedBurst] = useState(false);
   const [peelHidden, setPeelHidden] = useState(false);
   // Bumping this remounts DotLottieReact for the next peel cycle.
   const [peelPlayKey, setPeelPlayKey] = useState(0);
@@ -298,6 +301,9 @@ export function TopSymbolBar({
   while (slots.length < TOP_SYMBOL_COUNT) slots.push(0);
 
   const showCoating = phase === "center" && !coatingDone && !forceRevealed;
+  // Keep flake canvas alive through the clear celebration (coating unmounts).
+  const showParticles =
+    phase === "center" && !forceRevealed && (!coatingDone || clearedBurst);
 
   // Timed remount loop: play 3s → hold last frame 1.8s → remount + autoplay.
   // Does not rely on DotLottie's `complete` event (unreliable with this player).
@@ -411,6 +417,7 @@ export function TopSymbolBar({
       Array.from({ length: TOP_SYMBOL_COUNT }, () => forceRevealed),
     );
     setCoatingDone(forceRevealed);
+    setClearedBurst(false);
     setPeelHidden(false);
     setPeelPlayKey(0);
     drawingRef.current = false;
@@ -529,6 +536,26 @@ export function TopSymbolBar({
     [stepFlakes],
   );
 
+  // Foil just cleared — burst flakes, hold the celebrate pose, then dock.
+  useEffect(() => {
+    if (!clearedBurst || phase !== "center" || forceRevealed) return;
+    const pc = particleCanvasRef.current;
+    if (pc && pc.width > 1) {
+      const h = pc.height / (1 + FLAKE_FALL_EXTEND_RATIO);
+      for (let i = 0; i < 8; i += 1) {
+        spawnFlakes((pc.width * (i + 0.5)) / 8, h * 0.45, h, 3);
+      }
+    }
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const delay = reduceMotion ? 0 : CLEAR_CELEBRATE_MS;
+    const id = window.setTimeout(() => {
+      onAllRevealedRef.current();
+    }, delay);
+    return () => window.clearTimeout(id);
+  }, [clearedBurst, forceRevealed, phase, spawnFlakes]);
+
   useLayoutEffect(() => {
     if (!showCoating) return;
     let cancelled = false;
@@ -605,7 +632,7 @@ export function TopSymbolBar({
     if (next.every(Boolean) && !notifiedRef.current) {
       notifiedRef.current = true;
       setCoatingDone(true);
-      onAllRevealedRef.current();
+      setClearedBurst(true);
     }
   }, [slotGeometry]);
 
@@ -678,7 +705,9 @@ export function TopSymbolBar({
       ref={barRef}
       className={`symbol-bar top-symbol-bar is-phase-${phase}${
         revealedCount >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""
-      }${showCoating ? " is-scratchable" : ""}`}
+      }${showCoating ? " is-scratchable" : ""}${
+        clearedBurst ? " is-cleared" : ""
+      }`}
       aria-label="Match symbols — scratch to reveal"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -710,7 +739,7 @@ export function TopSymbolBar({
           aria-hidden="true"
         />
       ) : null}
-      {showCoating ? (
+      {showParticles ? (
         <canvas
           ref={particleCanvasRef}
           className="top-symbol-bar-particle-canvas"
