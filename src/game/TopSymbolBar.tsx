@@ -373,7 +373,7 @@ export function TopSymbolBar({
     const cssW = Math.max(1, Math.round(rect.width));
     const cssH = Math.max(1, Math.round(rect.height));
     if (cssW < 2 || cssH < 2) return;
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     flakeDprRef.current = dpr;
     const nextW = Math.max(1, Math.round(cssW * dpr));
     const nextH = Math.max(1, Math.round(cssH * dpr));
@@ -399,7 +399,7 @@ export function TopSymbolBar({
     const cssH = Math.max(1, Math.round(rect.height));
     if (cssW < 40 || cssH < 20) return false;
 
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const nextW = Math.max(1, Math.round(cssW * dpr));
     const nextH = Math.max(1, Math.round(cssH * dpr));
 
@@ -540,7 +540,7 @@ export function TopSymbolBar({
       coatingHeight: number,
       count = FLAKE_COUNT_PER_SCRATCH,
     ) => {
-      flakeDprRef.current = Math.min(3, window.devicePixelRatio || 1);
+      flakeDprRef.current = Math.min(2, window.devicePixelRatio || 1);
       const dpr = flakeDprRef.current;
       const sizePx = FLAKE_BASE_SIZE_CSS * dpr;
       for (let i = 0; i < count; i += 1) {
@@ -831,7 +831,10 @@ export function TopSymbolBar({
             <GameSymbolIcon
               typeId={typeId}
               size={28}
-              paused={!revealed || dormant}
+              // Only animate during the center foil reveal. Docked / showcase
+              // use CSS (dormant desat, pulse) — keeps DotLottie workers frozen
+              // for the whole hunt, which is the long expensive stretch.
+              paused={!revealed || dormant || phase !== "center"}
             />
           </div>
         );

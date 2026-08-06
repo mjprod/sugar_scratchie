@@ -26,8 +26,8 @@ const SCRATCH_TEX_BASE = 1024;
 // tighter shot framed on the performer. It doubles as pan headroom: the
 // chest-follow camera offset stays below PRESENT_ZOOM-1 so no canvas edge shows.
 export const PRESENT_ZOOM = 1.15;
-/** Cap devicePixelRatio so memory stays bounded on 3× phones. */
-export const MAX_PIXEL_RATIO = 3;
+/** Cap devicePixelRatio so memory stays bounded on retina phones. */
+export const MAX_PIXEL_RATIO = 2;
 
 export type ImageLayerDepths = {
   back: number;

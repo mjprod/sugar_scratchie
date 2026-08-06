@@ -3950,11 +3950,9 @@ export function ScratchPrototype() {
                       <GameSymbolIcon
                         typeId={typeId}
                         size={BODY_SYMBOL_ICON_PX}
-                        paused={
-                          isScratching ||
-                          !bodyFindHits[index] ||
-                          flyingCoins.some((coin) => coin.bodyIndex === index)
-                        }
+                        // Body markers are static finds — flight uses its own
+                        // paused copy. Never leave these workers animating.
+                        paused
                       />
                     </span>
                   ) : null}
@@ -4019,20 +4017,12 @@ export function ScratchPrototype() {
             >
               <span className="flying-coin-spin">
                 <span
-                  className="flying-coin-plane flying-coin-plane--shadow"
-                  aria-hidden="true"
-                />
-                <span
                   className="flying-coin-plane flying-coin-plane--back"
                   aria-hidden="true"
                 />
                 <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
                   <GameSymbolIcon typeId={coin.typeId} size={68} paused />
                 </span>
-                <span
-                  className="flying-coin-plane flying-coin-plane--front"
-                  aria-hidden="true"
-                />
               </span>
             </div>
           ))}

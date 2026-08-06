@@ -1159,7 +1159,7 @@ textarea:focus-visible {
   animation-fill-mode: both;
 }
 
-/* Body match: 2.5D multiplane — CSS planes on Z + one paused symbol. */
+/* Body match: light 2.5D — one glow plate + paused symbol (no blend modes). */
 .flying-coin.is-match-fly {
   z-index: 12;
   width: 84px;
@@ -1196,26 +1196,13 @@ textarea:focus-visible {
   pointer-events: none;
 }
 
-/* Far shadow plate */
-.flying-coin.is-match-fly .flying-coin-plane--shadow {
-  inset: 8%;
-  background: radial-gradient(
-    circle,
-    rgba(0, 0, 0, 0.45) 0%,
-    rgba(0, 0, 0, 0.12) 55%,
-    transparent 72%
-  );
-  transform: translateZ(-32px) scale(1.08);
-  opacity: 0.85;
-}
-
 /* Warm fill behind the icon — reads as volume under the art. */
 .flying-coin.is-match-fly .flying-coin-plane--back {
   inset: 6%;
   background: radial-gradient(
     circle at 40% 35%,
-    rgba(255, 220, 140, 0.55) 0%,
-    rgba(255, 160, 60, 0.22) 48%,
+    rgba(255, 220, 140, 0.5) 0%,
+    rgba(255, 160, 60, 0.18) 48%,
     transparent 70%
   );
   transform: translateZ(-14px) scale(1.02);
@@ -1231,19 +1218,6 @@ textarea:focus-visible {
   height: 100%;
   border-radius: 50%;
   transform: translateZ(0);
-}
-
-/* Near specular — opacity only (no mix-blend / filter). */
-.flying-coin.is-match-fly .flying-coin-plane--front {
-  inset: 10%;
-  background: radial-gradient(
-    circle at 30% 24%,
-    rgba(255, 255, 255, 0.42) 0%,
-    rgba(255, 255, 255, 0.1) 28%,
-    transparent 52%
-  );
-  transform: translateZ(18px) scale(0.92);
-  opacity: 0.85;
 }
 
 .flying-coin.is-match-fly::before {

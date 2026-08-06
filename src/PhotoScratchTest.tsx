@@ -2586,7 +2586,7 @@ export function PhotoScratchTest() {
                         <GameSymbolIcon
                           typeId={typeId}
                           size={BODY_SYMBOL_ICON_PX}
-                          paused={!bodyFindHits[index]}
+                          paused
                         />
                       </span>
                     ) : null}
@@ -2617,20 +2617,12 @@ export function PhotoScratchTest() {
               >
                 <span className="flying-coin-spin">
                   <span
-                    className="flying-coin-plane flying-coin-plane--shadow"
-                    aria-hidden="true"
-                  />
-                  <span
                     className="flying-coin-plane flying-coin-plane--back"
                     aria-hidden="true"
                   />
                   <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
                     <GameSymbolIcon typeId={coin.typeId} size={68} paused />
                   </span>
-                  <span
-                    className="flying-coin-plane flying-coin-plane--front"
-                    aria-hidden="true"
-                  />
                 </span>
               </div>
             ))}
