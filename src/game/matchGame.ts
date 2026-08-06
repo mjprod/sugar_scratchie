@@ -210,6 +210,21 @@ export function applyBodyFindHits(
   return hits;
 }
 
+/** Next still-open top slot of this type (left-to-right), or -1. */
+export function claimNextTopSlot(
+  top: number[],
+  typeId: number,
+  alreadyClaimed: readonly boolean[],
+): number {
+  if (typeId < 0 || typeId >= SYMBOL_TYPE_COUNT) return -1;
+  const n = Math.min(TOP_SYMBOL_COUNT, top.length);
+  for (let i = 0; i < n; i += 1) {
+    if (alreadyClaimed[i]) continue;
+    if (top[i] === typeId) return i;
+  }
+  return -1;
+}
+
 export function prizeForMatches(matches: number): number {
   const clamped = Math.max(0, Math.min(TOP_SYMBOL_COUNT, Math.floor(matches)));
   return PRIZE_BY_MATCHES[clamped] ?? 0;

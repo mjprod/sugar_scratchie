@@ -16,14 +16,16 @@ import {
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
+  applyBodyFindHits,
   buildBodySymbols,
   buildTopSymbols,
+  claimNextTopSlot,
   loadSymbolTypes,
   matchedTopSlots,
-  applyBodyFindHits,
   resolveMatchGame,
   SYMBOL_TYPES,
   SYMBOL_TYPE_COUNT,
+  TOP_SYMBOL_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
 import {
@@ -215,10 +217,15 @@ type FlyingCoin = {
   midX: number;
   midY: number;
   delayMs: number;
+  /** Body-hunt match flight: source body index + destination top slot. */
+  bodyIndex?: number;
+  topSlot?: number;
 };
 
 const COIN_FLIGHT_DURATION_MS = 620;
 const COIN_FLIGHT_STAGGER_MS = 80;
+const MATCH_FLIGHT_DURATION_MS = 1250;
+const MATCH_FLIGHT_STAGGER_MS = 90;
 // A card pairs the reveal (bottom) video, the green-screen foreground video, and
 // the tracked mesh generated from that foreground. Switching cards swaps all
 // three together so the scratch holes line up with the right clip.
@@ -1298,6 +1305,12 @@ export function ScratchPrototype() {
   const bodyMarkerStyleRef = useRef<
     ({ el: HTMLDivElement; transform: string; revealed: boolean | null } | null)[]
   >([]);
+  /** Throttle getBoundingClientRect — layout is stable between resizes. */
+  const bodyMarkerLayoutRef = useRef<{
+    canvasRect: DOMRect | null;
+    stageRect: DOMRect | null;
+    framesUntilRefresh: number;
+  }>({ canvasRect: null, stageRect: null, framesUntilRefresh: 0 });
   /** Single shared pulsar — repositioned onto one unfound mark at a time. */
   const huntPulsarRef = useRef<HTMLDivElement | null>(null);
   const huntPulsarStyleRef = useRef({
@@ -1393,6 +1406,15 @@ export function ScratchPrototype() {
   );
   const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
+  );
+  const [litTopSlots, setLitTopSlots] = useState<boolean[]>(() =>
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const claimedTopSlotsRef = useRef<boolean[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const topBarSlotElsRef = useRef<(HTMLDivElement | null)[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => null),
   );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(18.8);
@@ -2072,8 +2094,20 @@ export function ScratchPrototype() {
         stage &&
         canvas
       ) {
-        const canvasRect = canvas.getBoundingClientRect();
-        const stageRect = stage.getBoundingClientRect();
+        const layout = bodyMarkerLayoutRef.current;
+        if (
+          layout.framesUntilRefresh <= 0 ||
+          !layout.canvasRect ||
+          !layout.stageRect
+        ) {
+          layout.canvasRect = canvas.getBoundingClientRect();
+          layout.stageRect = stage.getBoundingClientRect();
+          layout.framesUntilRefresh = 8;
+        } else {
+          layout.framesUntilRefresh -= 1;
+        }
+        const canvasRect = layout.canvasRect;
+        const stageRect = layout.stageRect;
         const remainingSymbols =
           SYMBOL_SLOT_COUNT - revealedSymbolsRef.current;
         const nowMs = performance.now();
@@ -2417,6 +2451,11 @@ export function ScratchPrototype() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
     setFlyingCoins([]);
     setGameResult(null);
     setAutoScratch((current) => ({ ...current, enabled: false }));
@@ -2713,10 +2752,6 @@ export function ScratchPrototype() {
       gameVideosReady);
   const symbolsHuntComplete =
     useBodySymbols && revealedSymbols >= SYMBOL_SLOT_COUNT;
-  const topMatchedSlots = useMemo(
-    () => matchedTopSlots(topSymbols, sessionSymbols, bodyRevealed),
-    [topSymbols, sessionSymbols, bodyRevealed],
-  );
   const stageCoachPhase = resolveStageCoachPhase({
     active:
       useBodySymbols &&
@@ -2798,6 +2833,11 @@ export function ScratchPrototype() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
     setFlyingCoins([]);
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
@@ -3087,7 +3127,97 @@ export function ScratchPrototype() {
   }
 
   function removeFlyingCoin(id: number) {
-    setFlyingCoins((current) => current.filter((coin) => coin.id !== id));
+    setFlyingCoins((current) => {
+      const coin = current.find((entry) => entry.id === id);
+      const rest = current.filter((entry) => entry.id !== id);
+      if (coin && typeof coin.topSlot === "number" && coin.topSlot >= 0) {
+        const slot = coin.topSlot;
+        queueMicrotask(() => {
+          setLitTopSlots((prev) => {
+            if (prev[slot]) return prev;
+            const next = prev.slice();
+            next[slot] = true;
+            return next;
+          });
+        });
+      }
+      return rest;
+    });
+  }
+
+  function spawnBodyMatchFlights(newlyRevealed: readonly number[]) {
+    const stage = stageRef.current;
+    const sample = trackedSampleRef.current;
+    const bodyPoints = trackedMeshRef.current?.symbolPoints;
+    if (!stage || !sample || !bodyPoints || newlyRevealed.length === 0) return;
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const stageRect = stage.getBoundingClientRect();
+    const top = topSymbolsRef.current;
+    const body = sessionSymbolsRef.current;
+    const claimed = claimedTopSlotsRef.current.slice();
+    const coins: FlyingCoin[] = [];
+    let flightIndex = 0;
+
+    for (const bodyIndex of newlyRevealed) {
+      const typeId = body[bodyIndex];
+      if (typeId === undefined) continue;
+      const topSlot = claimNextTopSlot(top, typeId, claimed);
+      if (topSlot < 0) continue;
+      claimed[topSlot] = true;
+
+      if (reduceMotion) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const point = bodyPoints[bodyIndex];
+      const world = sampleMeshUvToWorld(sample, point.u, point.v);
+      const from = worldToStagePoint(world);
+      const slotEl = topBarSlotElsRef.current[topSlot];
+      if (!from || !slotEl) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const slotRect = slotEl.getBoundingClientRect();
+      const toX = slotRect.left - stageRect.left + slotRect.width / 2;
+      const toY = slotRect.top - stageRect.top + slotRect.height / 2;
+      // Arc hangs near the find, then rises hard into the slot.
+      const midX = from.x + (toX - from.x) * 0.28;
+      const midY = Math.min(from.y - 28, toY + (from.y - toY) * 0.55) - 36;
+      coins.push({
+        id: (coinIdRef.current += 1),
+        typeId,
+        fromX: from.x,
+        fromY: from.y,
+        toX,
+        toY,
+        midX,
+        midY,
+        delayMs: flightIndex * MATCH_FLIGHT_STAGGER_MS,
+        bodyIndex,
+        topSlot,
+      });
+      flightIndex += 1;
+    }
+
+    claimedTopSlotsRef.current = claimed;
+    if (coins.length > 0) {
+      setFlyingCoins((current) => [...current, ...coins]);
+    }
   }
 
   function applyScratchAtUv(
@@ -3178,6 +3308,7 @@ export function ScratchPrototype() {
           newlyRevealed,
           soundEnabledRef.current,
         );
+        spawnBodyMatchFlights(newlyRevealed);
         if (nextSymbolCount >= SYMBOL_SLOT_COUNT) {
           beginFinishAutoScratch();
         }
@@ -3768,7 +3899,8 @@ export function ScratchPrototype() {
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
-              matchedSlots={topMatchedSlots}
+              matchedSlots={litTopSlots}
+              slotElsOutRef={topBarSlotElsRef}
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}
@@ -3820,6 +3952,10 @@ export function ScratchPrototype() {
                     bodyRevealed[index] && !bodyFindHits[index]
                       ? " is-missed"
                       : ""
+                  }${
+                    flyingCoins.some((coin) => coin.bodyIndex === index)
+                      ? " is-flying"
+                      : ""
                   }`}
                   style={{ display: "none" }}
                 >
@@ -3828,7 +3964,11 @@ export function ScratchPrototype() {
                       <GameSymbolIcon
                         typeId={typeId}
                         size={BODY_SYMBOL_ICON_PX}
-                        paused={isScratching || !bodyFindHits[index]}
+                        paused={
+                          isScratching ||
+                          !bodyFindHits[index] ||
+                          flyingCoins.some((coin) => coin.bodyIndex === index)
+                        }
                       />
                     </span>
                   ) : null}
@@ -3869,7 +4009,28 @@ export function ScratchPrototype() {
               <GameSymbolIcon typeId={coin.typeId} />
             </div>
           ))
-            : null}
+            : flyingCoins.map((coin) => (
+            <div
+              key={coin.id}
+              className="flying-coin is-match-fly"
+              style={
+                {
+                  "--coin-from-x": `${coin.fromX}px`,
+                  "--coin-from-y": `${coin.fromY}px`,
+                  "--coin-mid-x": `${coin.midX}px`,
+                  "--coin-mid-y": `${coin.midY}px`,
+                  "--coin-to-x": `${coin.toX}px`,
+                  "--coin-to-y": `${coin.toY}px`,
+                  animationDuration: `${MATCH_FLIGHT_DURATION_MS}ms`,
+                  animationDelay: `${coin.delayMs}ms`,
+                } as CSSProperties
+              }
+              onAnimationEnd={() => removeFlyingCoin(coin.id)}
+              aria-hidden="true"
+            >
+              <GameSymbolIcon typeId={coin.typeId} size={68} paused />
+            </div>
+          ))}
           <video
             ref={bottomVideoRef}
             className="source-video"

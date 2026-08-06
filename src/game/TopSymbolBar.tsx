@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -58,6 +59,8 @@ type TopSymbolBarProps = {
   forceRevealed?: boolean;
   /** Docked hunt: slots that have been found on the body (full color again). */
   matchedSlots?: boolean[];
+  /** Optional mirror of slot DOM nodes for fly-to-slot animations. */
+  slotElsOutRef?: MutableRefObject<(HTMLDivElement | null)[]>;
 };
 
 let scratchTexture: HTMLImageElement | null = null;
@@ -273,6 +276,7 @@ export function TopSymbolBar({
   roundKey = 0,
   forceRevealed = false,
   matchedSlots,
+  slotElsOutRef,
 }: TopSymbolBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<CoatingCanvas | null>(null);
@@ -815,6 +819,7 @@ export function TopSymbolBar({
             key={`${roundKey}-${index}-${typeId}`}
             ref={(el) => {
               slotElsRef.current[index] = el;
+              if (slotElsOutRef) slotElsOutRef.current[index] = el;
             }}
             className={`symbol-slot top-symbol-slot${
               revealed ? " is-revealed" : ""
