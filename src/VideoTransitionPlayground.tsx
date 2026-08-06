@@ -6,7 +6,6 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
 
