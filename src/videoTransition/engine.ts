@@ -70,7 +70,7 @@ function flatChannel(value: number): ChannelKeyframe[] {
   ];
 }
 
-function sortChannelKeyframes(frames: ChannelKeyframe[]): ChannelKeyframe[] {
+export function sortChannelKeyframes(frames: ChannelKeyframe[]): ChannelKeyframe[] {
   return [...frames].sort((left, right) => left.t - right.t);
 }
 
@@ -160,7 +160,7 @@ export function sampleCubicBezier(easing: CubicBezier, x: number): number {
   return cubicBezierComponent(t, easing.y1, easing.y2);
 }
 
-function sampleChannelValue(
+export function sampleChannelValue(
   frames: ChannelKeyframe[],
   t: number,
   easing: CubicBezier,

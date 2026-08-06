@@ -8,22 +8,55 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
+import type {
+  ChannelKey,
+  ChannelKeyframe,
+  ChannelTracks,
+  CubicBezier,
+  FxWindow,
+  MotionFxSettings,
+  StripChannelKey,
+  StripProps,
+  TransitionKeyframe,
+  TransitionPreset,
+  TransitionTemplate,
+} from "./videoTransition/types";
+import {
+  STAGE_WIDTH,
+  STAGE_HEIGHT,
+  DEFAULT_END_X,
+  TILE_COUNT,
+  STRIP_WIDTH,
+  DEFAULT_DURATION_MS,
+  DEFAULT_EASING,
+  IDENTITY,
+  clamp,
+  lerp,
+  roundValue,
+  sortChannelKeyframes,
+  sampleChannelValue,
+  defaultChannelTracks,
+  channelsToStripKeyframes,
+  cloneEasing,
+  defaultEasing,
+  sampleCubicBezier,
+  sampleChannelTracks,
+  defaultMotionFx,
+  applyMotionFx,
+  fxLayerStyle,
+  stripTravelStyle,
+  drawFlippedVideo,
+} from "./videoTransition/engine";
+import {
+  buildShiftLeftPreset,
+  buildBounceOutPreset,
+  buildZoomUpPreset,
+  TRANSITION_TEMPLATES,
+  getTemplate,
+} from "./videoTransition/presets";
 
 const CARDS_INDEX_SRC = "/cards/index.json";
-const STAGE_WIDTH = 390;
-const STAGE_HEIGHT = 672;
 const KEYFRAME_EPSILON = 0.01;
-/** Tuned lab default / "shift left" template. */
-const DEFAULT_DURATION_MS = 500;
-const DEFAULT_CARD_A_ID = "original";
-const DEFAULT_CARD_B_ID = "asia_gym";
-/** Final strip X so B settles slightly short of a hard -3W lock. */
-const DEFAULT_END_X = -1163;
-
-/** One continuous strip: [A | A↻ | B↻ | B] */
-const TILE_COUNT = 4;
-const STRIP_WIDTH = STAGE_WIDTH * TILE_COUNT;
-
 /** Motion FX while the strip is sliding (blur + scale pulse). */
 const DEFAULT_BLUR_PEAK = 12.5;
 const DEFAULT_BLUR_WINDOW = { startPct: 5, stopPct: 99 } as const;
@@ -33,92 +66,14 @@ const DEFAULT_SCALE_WINDOW = { startPct: 0, stopPct: 92 } as const;
 /** Fallback only used when importing legacy global windows. */
 const DEFAULT_FX_START_PCT = 5;
 const DEFAULT_FX_STOP_PCT = 99;
-/**
- * Within each FX start→stop window, relative ramp positions
- * (0–1 of that window). Fade in early, hold, then clear before stop.
- */
-const FX_WINDOW_FADE_IN_END = 0.18;
-const FX_WINDOW_FADE_OUT_START = 0.7;
+
+const DEFAULT_CARD_A_ID = "original";
+const DEFAULT_CARD_B_ID = "asia_gym";
 
 type TransitionCard = {
   id: string;
   label: string;
   bottom: string;
-};
-
-type StripProps = {
-  x: number;
-  y: number;
-  scale: number;
-  blur: number;
-  /** CSS brightness multiplier (1 = normal). */
-  brightness: number;
-  opacity: number;
-};
-
-type FxWindow = {
-  /** 0–100: % of transition duration when this FX begins. */
-  startPct: number;
-  /** 0–100: % of transition duration when this FX fully ends. */
-  stopPct: number;
-};
-
-type MotionFxSettings = {
-  enabled: boolean;
-  blurPeak: number;
-  blur: FxWindow;
-  /** Peak uniform scale (1 = none). Pulses up then back to 1. */
-  scalePeak: number;
-  scale: FxWindow;
-};
-
-/** CSS-style cubic-bezier control points. */
-type CubicBezier = {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-};
-
-/** Legacy combined strip keyframe (v1/v2 export + import). */
-type TransitionKeyframe = {
-  t: number;
-  strip: StripProps;
-};
-
-/** Independent scalar key on one transform channel. */
-type ChannelKeyframe = {
-  t: number;
-  value: number;
-};
-
-type StripChannelKey = keyof StripProps;
-
-type ChannelKey = StripChannelKey;
-
-type ChannelTracks = Record<ChannelKey, ChannelKeyframe[]>;
-
-type TransitionPattern = "mirror-slide-strip";
-
-type TransitionPreset = {
-  version: 2 | 3;
-  pattern: TransitionPattern;
-  durationMs: number;
-  cardAId: string;
-  cardBId: string;
-  stageWidth: number;
-  easing?: CubicBezier;
-  motionFx?: MotionFxSettings;
-  /** Preferred v3: independent channel tracks. */
-  channels?: ChannelTracks;
-  /** Legacy v2 combined strip keys (still exported for compatibility). */
-  keyframes: TransitionKeyframe[];
-};
-
-type TransitionTemplate = {
-  id: string;
-  label: string;
-  preset: TransitionPreset;
 };
 
 type CardsIndexResponse = {
@@ -128,19 +83,6 @@ type CardsIndexResponse = {
     bottom?: unknown;
   }>;
 };
-
-const IDENTITY: StripProps = {
-  x: 0,
-  y: 0,
-  scale: 1,
-  blur: 0,
-  brightness: 1,
-  opacity: 1,
-};
-
-function cloneStrip(strip: StripProps): StripProps {
-  return { ...strip };
-}
 
 const STRIP_CHANNEL_KEYS: StripChannelKey[] = [
   "x",
@@ -153,12 +95,12 @@ const STRIP_CHANNEL_KEYS: StripChannelKey[] = [
 
 const CHANNEL_KEYS: ChannelKey[] = [...STRIP_CHANNEL_KEYS];
 
-function cloneChannelKeyframe(frame: ChannelKeyframe): ChannelKeyframe {
-  return { t: frame.t, value: frame.value };
+function cloneStrip(strip: StripProps): StripProps {
+  return { ...strip };
 }
 
-function sortChannelKeyframes(frames: ChannelKeyframe[]): ChannelKeyframe[] {
-  return [...frames].sort((left, right) => left.t - right.t);
+function cloneChannelKeyframe(frame: ChannelKeyframe): ChannelKeyframe {
+  return { t: frame.t, value: frame.value };
 }
 
 function isStripChannelKey(key: string): key is StripChannelKey {
@@ -173,72 +115,12 @@ function roundChannelValue(key: ChannelKey, value: number): number {
   return roundValue(value, 2);
 }
 
-function flatChannel(value: number): ChannelKeyframe[] {
-  return [
-    { t: 0, value },
-    { t: 1, value },
-  ];
-}
-
-function defaultChannelTracks(): ChannelTracks {
-  /**
-   * Continuous line:
-   *   [ A | A↻ | B↻ | B ]
-   *
-   * x = 0      → A in frame
-   * x = -W     → A↻ in frame
-   * x = -2W    → B↻ in frame
-   * x = -1163  → B settled (default end)
-   *
-   * X/Y/Scale are independent tracks — only X moves in the shift-left default.
-   */
-  return {
-    x: [
-      { t: 0, value: 0 },
-      { t: 1, value: DEFAULT_END_X },
-    ],
-    y: flatChannel(0),
-    scale: flatChannel(1),
-    blur: flatChannel(0),
-    brightness: flatChannel(1),
-    opacity: flatChannel(1),
-  };
-}
-
 function cloneChannelTracks(tracks: ChannelTracks): ChannelTracks {
   const next = {} as ChannelTracks;
   for (const key of CHANNEL_KEYS) {
     next[key] = sortChannelKeyframes(tracks[key] ?? []).map(cloneChannelKeyframe);
   }
   return next;
-}
-
-/** Expand independent channels into dense combined strip keys (export compat). */
-function channelsToStripKeyframes(tracks: ChannelTracks): TransitionKeyframe[] {
-  const times = new Set<number>();
-  for (const key of CHANNEL_KEYS) {
-    for (const frame of tracks[key] ?? []) times.add(roundValue(frame.t, 4));
-  }
-  if (times.size === 0) {
-    return [
-      { t: 0, strip: cloneStrip(IDENTITY) },
-      { t: 1, strip: cloneStrip(IDENTITY) },
-    ];
-  }
-  const sortedT = [...times].sort((a, b) => a - b);
-  // Ensure endpoints so sampling never extrapolates oddly for consumers.
-  if (sortedT[0] > 0) sortedT.unshift(0);
-  if (sortedT[sortedT.length - 1] < 1) sortedT.push(1);
-
-  return sortedT.map((t) => ({
-    t,
-    strip: sampleChannelTracks(tracks, t, {
-      x1: 0,
-      y1: 0,
-      x2: 1,
-      y2: 1,
-    }),
-  }));
 }
 
 /** Split legacy combined strip keys into independent channel tracks. */
@@ -287,22 +169,6 @@ function defaultKeyframes(): TransitionKeyframe[] {
   return channelsToStripKeyframes(defaultChannelTracks());
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-/** Default easing from the "shift left" template. */
-const DEFAULT_EASING: CubicBezier = {
-  x1: 0.51,
-  y1: 0.02,
-  x2: 0.44,
-  y2: 1.14,
-};
-
 const EASING_PRESETS: Array<{ id: string; label: string; bezier: CubicBezier }> = [
   { id: "linear", label: "Linear", bezier: { x1: 0, y1: 0, x2: 1, y2: 1 } },
   { id: "ease", label: "Ease", bezier: { x1: 0.25, y1: 0.1, x2: 0.25, y2: 1 } },
@@ -319,14 +185,6 @@ const EASING_PRESETS: Array<{ id: string; label: string; bezier: CubicBezier }> 
     bezier: { x1: 0.45, y1: 0, x2: 0.55, y2: 1 },
   },
 ];
-
-function cloneEasing(easing: CubicBezier): CubicBezier {
-  return { ...easing };
-}
-
-function defaultEasing(): CubicBezier {
-  return cloneEasing(DEFAULT_EASING);
-}
 
 function sanitizeEasing(value: CubicBezier): CubicBezier {
   return {
@@ -356,57 +214,6 @@ function parseEasing(raw: unknown): CubicBezier | null {
   });
 }
 
-function cubicBezierComponent(
-  t: number,
-  p1: number,
-  p2: number,
-): number {
-  // (1-t)^3*0 + 3(1-t)^2 t p1 + 3(1-t) t^2 p2 + t^3*1
-  const u = 1 - t;
-  return 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t;
-}
-
-function cubicBezierDerivative(
-  t: number,
-  p1: number,
-  p2: number,
-): number {
-  const u = 1 - t;
-  return 3 * u * u * p1 + 6 * u * t * (p2 - p1) + 3 * t * t * (1 - p2);
-}
-
-/** Solve Bezier X(t)=x for t, then return Y(t). */
-function sampleCubicBezier(easing: CubicBezier, x: number): number {
-  const target = clamp(x, 0, 1);
-  if (target <= 0) return 0;
-  if (target >= 1) return 1;
-
-  let t = target;
-  // Newton-Raphson on X curve.
-  for (let i = 0; i < 8; i += 1) {
-    const xEst = cubicBezierComponent(t, easing.x1, easing.x2);
-    const dx = cubicBezierDerivative(t, easing.x1, easing.x2);
-    if (Math.abs(dx) < 1e-6) break;
-    t = clamp(t - (xEst - target) / dx, 0, 1);
-  }
-
-  // Fallback bisection if needed.
-  let xEst = cubicBezierComponent(t, easing.x1, easing.x2);
-  if (Math.abs(xEst - target) > 1e-4) {
-    let lo = 0;
-    let hi = 1;
-    t = target;
-    for (let i = 0; i < 20; i += 1) {
-      t = (lo + hi) / 2;
-      xEst = cubicBezierComponent(t, easing.x1, easing.x2);
-      if (xEst < target) lo = t;
-      else hi = t;
-    }
-  }
-
-  return cubicBezierComponent(t, easing.y1, easing.y2);
-}
-
 function formatBezier(easing: CubicBezier): string {
   return `cubic-bezier(${roundValue(easing.x1, 3)}, ${roundValue(easing.y1, 3)}, ${roundValue(easing.x2, 3)}, ${roundValue(easing.y2, 3)})`;
 }
@@ -424,51 +231,6 @@ function lerpStrip(a: StripProps, b: StripProps, t: number): StripProps {
 
 function sortKeyframes(frames: TransitionKeyframe[]): TransitionKeyframe[] {
   return [...frames].sort((left, right) => left.t - right.t);
-}
-
-function sampleChannelValue(
-  frames: ChannelKeyframe[],
-  t: number,
-  easing: CubicBezier,
-  fallback = 0,
-): number {
-  if (!frames || frames.length === 0) return fallback;
-  const sorted = sortChannelKeyframes(frames);
-  const time = clamp(t, 0, 1);
-  if (time <= sorted[0].t) return sorted[0].value;
-  const last = sorted[sorted.length - 1];
-  if (time >= last.t) return last.value;
-
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    const left = sorted[i];
-    const right = sorted[i + 1];
-    if (time < left.t || time > right.t) continue;
-    const span = Math.max(right.t - left.t, 1e-6);
-    const localT = sampleCubicBezier(easing, (time - left.t) / span);
-    return lerp(left.value, right.value, localT);
-  }
-  return last.value;
-}
-
-/** Sample independent X/Y/Scale(/blur/brightness/opacity) tracks into a strip pose. */
-function sampleChannelTracks(
-  tracks: ChannelTracks,
-  t: number,
-  easing: CubicBezier,
-): StripProps {
-  return {
-    x: sampleChannelValue(tracks.x, t, easing, IDENTITY.x),
-    y: sampleChannelValue(tracks.y, t, easing, IDENTITY.y),
-    scale: sampleChannelValue(tracks.scale, t, easing, IDENTITY.scale),
-    blur: sampleChannelValue(tracks.blur, t, easing, IDENTITY.blur),
-    brightness: sampleChannelValue(
-      tracks.brightness,
-      t,
-      easing,
-      IDENTITY.brightness,
-    ),
-    opacity: sampleChannelValue(tracks.opacity, t, easing, IDENTITY.opacity),
-  };
 }
 
 /** Legacy combined-strip sampler (import path / old presets). */
@@ -609,11 +371,6 @@ function deleteChannelKeyframe(
   };
 }
 
-function roundValue(value: number, digits = 3): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
 function roundStrip(strip: StripProps): StripProps {
   return {
     x: roundValue(strip.x, 2),
@@ -625,192 +382,7 @@ function roundStrip(strip: StripProps): StripProps {
   };
 }
 
-/** Outer stage layer: blur/brightness + centered scale pulse (covers edge bleed). */
-function fxLayerStyle(strip: StripProps): CSSProperties {
-  const filters: string[] = [];
-  if (strip.blur > 0.001) filters.push(`blur(${strip.blur}px)`);
-  if (Math.abs(strip.brightness - 1) > 0.001) {
-    filters.push(`brightness(${strip.brightness})`);
-  }
-  return {
-    opacity: strip.opacity,
-    filter: filters.length > 0 ? filters.join(" ") : "none",
-    transform: `scale(${strip.scale})`,
-  };
-}
-
-/** Inner strip: horizontal slide only (left-edge anchored). */
-function stripTravelStyle(strip: StripProps): CSSProperties {
-  return {
-    transform: `translate(${strip.x}px, ${strip.y}px)`,
-  };
-}
-
-function defaultMotionFx(): MotionFxSettings {
-  return {
-    enabled: true,
-    blurPeak: DEFAULT_BLUR_PEAK,
-    blur: { ...DEFAULT_BLUR_WINDOW },
-    scalePeak: DEFAULT_SCALE_PEAK,
-    scale: { ...DEFAULT_SCALE_WINDOW },
-  };
-}
-
-function buildShiftLeftPreset(): TransitionPreset {
-  const channels = defaultChannelTracks();
-  return {
-    version: 3,
-    pattern: "mirror-slide-strip",
-    durationMs: DEFAULT_DURATION_MS,
-    cardAId: DEFAULT_CARD_A_ID,
-    cardBId: DEFAULT_CARD_B_ID,
-    stageWidth: STAGE_WIDTH,
-    easing: defaultEasing(),
-    motionFx: defaultMotionFx(),
-    channels,
-    // Combined keys kept for older consumers / visual markers.
-    keyframes: channelsToStripKeyframes(channels),
-  };
-}
-
-/** Shift-left slide with mid-transition Y bounce + scale/brightness pulse. */
-function buildBounceOutPreset(): TransitionPreset {
-  const channels: ChannelTracks = {
-    x: [
-      { t: 0, value: 0 },
-      { t: 1, value: DEFAULT_END_X },
-    ],
-    y: [
-      { t: 0, value: 0 },
-      { t: 0.1, value: 0 },
-      { t: 0.2627, value: -19.64 },
-      { t: 0.302, value: 26.79 },
-      { t: 0.3415, value: -19.64 },
-      { t: 0.4094, value: 32.12 },
-      { t: 0.4998, value: -27.59 },
-      { t: 0.6, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    scale: [
-      { t: 0, value: 1 },
-      { t: 0.1004, value: 1 },
-      { t: 0.2389, value: 1.11 },
-      { t: 0.5011, value: 1.11 },
-      { t: 0.7029, value: 1 },
-      { t: 1, value: 1 },
-    ],
-    blur: [
-      { t: 0, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    brightness: [
-      { t: 0, value: 1 },
-      { t: 0.0785, value: 1.004 },
-      { t: 0.2136, value: 1.111 },
-      { t: 0.5598, value: 1.648 },
-      { t: 0.8625, value: 1 },
-      { t: 1, value: 1 },
-    ],
-    opacity: [
-      { t: 0, value: 1 },
-      { t: 1, value: 1 },
-    ],
-  };
-  return {
-    version: 3,
-    pattern: "mirror-slide-strip",
-    durationMs: 750,
-    cardAId: DEFAULT_CARD_A_ID,
-    cardBId: DEFAULT_CARD_B_ID,
-    stageWidth: STAGE_WIDTH,
-    easing: defaultEasing(),
-    motionFx: {
-      ...defaultMotionFx(),
-      blurPeak: 4,
-    },
-    channels,
-    keyframes: channelsToStripKeyframes(channels),
-  };
-}
-
-/** Hold, then slide left with a mid-transition scale punch. */
-function buildZoomUpPreset(): TransitionPreset {
-  const channels: ChannelTracks = {
-    x: [
-      { t: 0, value: 0 },
-      { t: 0.1606, value: 0 },
-      { t: 1, value: DEFAULT_END_X },
-    ],
-    y: [
-      { t: 0, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    scale: [
-      { t: 0, value: 1 },
-      { t: 0.3007, value: 1 },
-      { t: 0.5985, value: 1.385 },
-      { t: 0.7833, value: 1 },
-      { t: 1, value: 1 },
-    ],
-    blur: [
-      { t: 0, value: 0 },
-      { t: 1, value: 0 },
-    ],
-    brightness: [
-      { t: 0, value: 1 },
-      { t: 1, value: 1 },
-    ],
-    opacity: [
-      { t: 0, value: 1 },
-      { t: 1, value: 1 },
-    ],
-  };
-  return {
-    version: 3,
-    pattern: "mirror-slide-strip",
-    durationMs: 850,
-    cardAId: DEFAULT_CARD_A_ID,
-    cardBId: DEFAULT_CARD_B_ID,
-    stageWidth: STAGE_WIDTH,
-    easing: {
-      x1: 0.793,
-      y1: -0.013,
-      x2: 0.44,
-      y2: 1.14,
-    },
-    motionFx: {
-      ...defaultMotionFx(),
-      blurPeak: 3.5,
-      blur: { startPct: 19, stopPct: 99 },
-    },
-    channels,
-    keyframes: channelsToStripKeyframes(channels),
-  };
-}
-
-const TRANSITION_TEMPLATES: TransitionTemplate[] = [
-  {
-    id: "shift-left",
-    label: "Shift left",
-    preset: buildShiftLeftPreset(),
-  },
-  {
-    id: "bounceout",
-    label: "Bounce out",
-    preset: buildBounceOutPreset(),
-  },
-  {
-    id: "zoomup",
-    label: "Zoom up",
-    preset: buildZoomUpPreset(),
-  },
-];
-
 const DEFAULT_TEMPLATE_ID = "shift-left";
-
-function getTemplate(id: string): TransitionTemplate | null {
-  return TRANSITION_TEMPLATES.find((entry) => entry.id === id) ?? null;
-}
 
 function clonePreset(preset: TransitionPreset): TransitionPreset {
   const channels = cloneChannelTracks(
@@ -843,20 +415,6 @@ function clonePreset(preset: TransitionPreset): TransitionPreset {
   };
 }
 
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = clamp((x - edge0) / Math.max(edge1 - edge0, 1e-6), 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
-function normalizeFxWindow(startPct: number, stopPct: number): {
-  start: number;
-  stop: number;
-} {
-  const start = clamp(startPct, 0, 100) / 100;
-  const stop = clamp(stopPct, 0, 100) / 100;
-  return start <= stop ? { start, stop } : { start: stop, stop: start };
-}
-
 function parseFxWindow(
   value: unknown,
   fallbackStart: number,
@@ -878,49 +436,6 @@ function parseFxWindow(
   return {
     startPct: fallbackStart,
     stopPct: Math.max(fallbackStart, fallbackStop),
-  };
-}
-
-/**
- * Envelope is 0 outside [startPct, stopPct], ramps inside the window,
- * and returns to 0 by stop so blur clears before settle when stop < 100.
- */
-function motionFxEnvelope(t: number, window: FxWindow): number {
-  const time = clamp(t, 0, 1);
-  const { start, stop } = normalizeFxWindow(window.startPct, window.stopPct);
-  if (stop - start < 1e-6) return 0;
-  if (time <= start || time >= stop) return 0;
-  const u = (time - start) / (stop - start);
-  const fadeIn = smoothstep(0, FX_WINDOW_FADE_IN_END, u);
-  const fadeOut = 1 - smoothstep(FX_WINDOW_FADE_OUT_START, 1, u);
-  return fadeIn * fadeOut;
-}
-
-function sampleMotionFx(
-  t: number,
-  fx: MotionFxSettings,
-): { blur: number; scale: number } {
-  if (!fx.enabled) return { blur: 0, scale: 1 };
-  const blurEnv = motionFxEnvelope(t, fx.blur);
-  const scaleEnv = motionFxEnvelope(t, fx.scale);
-  return {
-    blur: fx.blurPeak * blurEnv,
-    // 1 → peak → 1 within the scale window.
-    scale: lerp(1, fx.scalePeak, scaleEnv),
-  };
-}
-
-/** Keyframe base + procedural blur/scale FX for display only. */
-function applyMotionFx(
-  base: StripProps,
-  t: number,
-  fx: MotionFxSettings,
-): StripProps {
-  const motion = sampleMotionFx(t, fx);
-  return {
-    ...base,
-    blur: Math.max(0, base.blur + motion.blur),
-    scale: base.scale * motion.scale,
   };
 }
 
@@ -1136,31 +651,6 @@ async function loadLoopingVideo(
   video.muted = true;
   video.playsInline = true;
   await video.play().catch(() => undefined);
-}
-
-/** Draw a horizontally flipped video frame into a canvas mirror tile. */
-function drawFlippedVideo(
-  canvas: HTMLCanvasElement | null,
-  video: HTMLVideoElement | null,
-) {
-  if (!canvas || !video) return;
-  if (video.readyState < 2) return;
-
-  const width = Math.max(1, video.videoWidth || STAGE_WIDTH);
-  const height = Math.max(1, video.videoHeight || STAGE_HEIGHT);
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.save();
-  ctx.clearRect(0, 0, width, height);
-  ctx.translate(width, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(video, 0, 0, width, height);
-  ctx.restore();
 }
 
 type SliderDef = {
