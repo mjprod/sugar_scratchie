@@ -14,11 +14,14 @@ export type CtaTemplateValues = {
   strokeColor: string;
   auroraA: string;
   auroraB: string;
+  /** Extra stop between B and C. */
+  auroraMid: string;
   auroraC: string;
   auroraSpeed: number;
   auroraBlend: number;
   auroraAmplitude: number;
   auroraBandHeight: number;
+  auroraRotation: number;
   auroraBaseColor: string;
   particleCount: number;
   particleSize: number;
@@ -56,39 +59,41 @@ export const SQUIRCLE_CTA: CtaTemplate = {
   name: "Squircle CTA",
   description: "Soft rounded rect with aurora fill and orbiting border glow.",
   values: {
-    label: "Claim reward",
-    width: 240,
-    height: 64,
-    cornerRadius: 18,
+    label: "Start Playing",
+    width: 338,
+    height: 69,
+    cornerRadius: 11,
     strokeWidth: 1,
     strokeColor: "rgba(255, 255, 255, 0.22)",
     auroraA: "#aa3c6b",
-    auroraB: "#e16060",
-    auroraC: "#66004d",
-    auroraSpeed: 1.2,
-    auroraBlend: 0.37,
-    auroraAmplitude: 0.8,
-    auroraBandHeight: 1.35,
+    auroraB: "#ea2e89",
+    auroraMid: "#42001b",
+    auroraC: "#933e4c",
+    auroraSpeed: 0.7,
+    auroraBlend: 1,
+    auroraAmplitude: 1.7,
+    auroraBandHeight: 1.2,
+    auroraRotation: 17,
     auroraBaseColor: "#42001b",
-    particleCount: 10,
-    particleSize: 0.029,
-    particleSpeed: 1.5,
+    particleCount: 12,
+    particleSize: 0.03,
+    particleSpeed: 1.55,
     particleOpacity: 0.37,
-    particleColor: "#dd8187",
+    particleColor: "#fb4b97",
     particleTwinkle: 0.24,
-    labelColor: "#ffffff",
+    labelColor: "#ffe0e8",
     fontSize: 18,
     glowEnabled: true,
     glowAlwaysOn: true,
-    glowEdgeSensitivity: 12,
-    glowColor: "40 80 80",
-    glowRadius: 18,
-    glowIntensity: 0.4,
-    glowConeSpread: 22,
+    glowEdgeSensitivity: 15,
+    glowColor: "326 90 30",
+    glowRadius: 40,
+    glowIntensity: 0.95,
+    glowConeSpread: 28,
     glowFillOpacity: 0.13,
-    glowOrbitSpeed: 69,
+    glowOrbitSpeed: 103,
     glowAlwaysOnProximity: 94,
-    glowA: "#e5616e",
+    glowA: "#8c2c3f",
     glowB: "#ce3e78",
     glowC: "#aa3c6b",
   },

@@ -15,10 +15,11 @@ precision highp float;
 
 uniform float uTime;
 uniform float uAmplitude;
-uniform vec3 uColorStops[3];
+uniform vec3 uColorStops[4];
 uniform vec2 uResolution;
 uniform float uBlend;
 uniform float uBandHeight;
+uniform float uRotation;
 uniform float uParticleCount;
 uniform float uParticleSize;
 uniform float uParticleSpeed;
@@ -93,7 +94,7 @@ struct ColorStop {
 
 #define COLOR_RAMP(colors, factor, finalColor) {              \\
   int index = 0;                                            \\
-  for (int i = 0; i < 2; i++) {                               \\
+  for (int i = 0; i < 3; i++) {                               \\
      ColorStop currentColor = colors[i];                    \\
      bool isInBetween = currentColor.position <= factor;    \\
      index = int(mix(float(index), float(i), float(isInBetween))); \\
@@ -107,21 +108,36 @@ struct ColorStop {
 
 void main() {
   vec2 uv = gl_FragCoord.xy / uResolution;
+  float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
 
-  ColorStop colors[3];
+  // Rotate the whole field around the button center (aspect-corrected so 45° looks true).
+  float rad = uRotation * 0.017453292519943295; // deg → rad
+  float c = cos(rad);
+  float s = sin(rad);
+  vec2 fromCenter = uv - vec2(0.5);
+  fromCenter.x *= aspect;
+  vec2 rotated = vec2(
+    fromCenter.x * c - fromCenter.y * s,
+    fromCenter.x * s + fromCenter.y * c
+  );
+  rotated.x /= aspect;
+  vec2 ruv = rotated + vec2(0.5);
+
+  ColorStop colors[4];
   colors[0] = ColorStop(uColorStops[0], 0.0);
-  colors[1] = ColorStop(uColorStops[1], 0.5);
-  colors[2] = ColorStop(uColorStops[2], 1.0);
+  colors[1] = ColorStop(uColorStops[1], 0.333333);
+  colors[2] = ColorStop(uColorStops[2], 0.666667);
+  colors[3] = ColorStop(uColorStops[3], 1.0);
 
   vec3 rampColor;
-  COLOR_RAMP(colors, uv.x, rampColor);
+  COLOR_RAMP(colors, ruv.x, rampColor);
 
   // bandHeight > 1 stretches the curtain downward so the bands fill more of the button.
   float cover = max(uBandHeight, 0.05);
-  float y = 1.0 - (1.0 - uv.y) / cover;
+  float y = 1.0 - (1.0 - ruv.y) / cover;
   y = clamp(y, 0.0, 2.5);
 
-  float height = snoise(vec2(uv.x * 2.0 + uTime * 0.1, uTime * 0.25)) * 0.5 * uAmplitude;
+  float height = snoise(vec2(ruv.x * 2.0 + uTime * 0.1, uTime * 0.25)) * 0.5 * uAmplitude;
   height = exp(height);
   height = (y * 2.0 - height + 0.2);
   float intensity = 0.6 * height;
@@ -133,9 +149,8 @@ void main() {
   vec4 color = vec4(auroraColor * auroraAlpha, auroraAlpha);
 
   // Soft circle particles in the same pass (fixed loop bound, gated by uParticleCount).
-  // Aspect-correct UV so dots stay round on wide CTAs.
-  float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
-  vec2 puv = vec2(uv.x * aspect, uv.y);
+  // Sample in the same rotated, aspect-correct space so dots travel with the angled field.
+  vec2 puv = vec2(ruv.x * aspect, ruv.y);
   float count = clamp(uParticleCount, 0.0, 24.0);
   float baseR = max(uParticleSize, 0.0005);
   float spd = uParticleSpeed;
@@ -181,8 +196,11 @@ void main() {
 }
 `;
 
+export type AuroraColorStops = [string, string, string, string];
+
 export type AuroraProps = {
-  colorStops?: [string, string, string];
+  /** Four hex stops: A, B, mid (between B & C), C — spaced at 0 / ⅓ / ⅔ / 1. */
+  colorStops?: AuroraColorStops;
   amplitude?: number;
   blend?: number;
   speed?: number;
@@ -192,6 +210,8 @@ export type AuroraProps = {
    * 1 = stock look; higher values stretch the bands so they fill more of the button.
    */
   bandHeight?: number;
+  /** Rotate the whole aurora field (degrees). 0 = stock, 45 = diagonal. */
+  rotation?: number;
   /** Soft circle particles drawn in the same fragment pass. */
   particleCount?: number;
   /** Base particle radius in UV-ish units (~0.01–0.08 looks good on a CTA). */
@@ -204,7 +224,7 @@ export type AuroraProps = {
   className?: string;
 };
 
-const DEFAULT_COLOR_STOPS: [string, string, string] = ["#5227FF", "#7cff67", "#5227FF"];
+const DEFAULT_COLOR_STOPS: AuroraColorStops = ["#5227FF", "#7cff67", "#ff94b4", "#5227FF"];
 
 function hexToRgb(hex: string): [number, number, number] {
   const c = new Color(hex);
@@ -217,6 +237,7 @@ export default function Aurora(props: AuroraProps) {
     amplitude = 1.0,
     blend = 0.5,
     bandHeight = 1.0,
+    rotation = 0,
     particleCount = 0,
     particleSize = 0.03,
     particleSpeed = 1,
@@ -279,6 +300,7 @@ export default function Aurora(props: AuroraProps) {
         uResolution: { value: [ctn.offsetWidth, ctn.offsetHeight] },
         uBlend: { value: blend },
         uBandHeight: { value: bandHeight },
+        uRotation: { value: rotation },
         uParticleCount: { value: particleCount },
         uParticleSize: { value: particleSize },
         uParticleSpeed: { value: particleSpeed },
@@ -301,6 +323,7 @@ export default function Aurora(props: AuroraProps) {
       program.uniforms.uAmplitude.value = current.amplitude ?? 1.0;
       program.uniforms.uBlend.value = current.blend ?? blend;
       program.uniforms.uBandHeight.value = current.bandHeight ?? bandHeight;
+      program.uniforms.uRotation.value = current.rotation ?? rotation;
       program.uniforms.uParticleCount.value = current.particleCount ?? particleCount;
       program.uniforms.uParticleSize.value = current.particleSize ?? particleSize;
       program.uniforms.uParticleSpeed.value = current.particleSpeed ?? particleSpeed;

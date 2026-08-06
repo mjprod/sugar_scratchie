@@ -10,12 +10,15 @@ export type CtaButtonProps = {
   cornerRadius?: number;
   strokeWidth?: number;
   strokeColor?: string;
-  auroraColorStops?: [string, string, string];
+  /** Four aurora ramp stops: A, B, mid (between B & C), C. */
+  auroraColorStops?: [string, string, string, string];
   auroraSpeed?: number;
   auroraBlend?: number;
   auroraAmplitude?: number;
   /** Vertical fill of aurora bands (1 = stock, higher = fills more of the button). */
   auroraBandHeight?: number;
+  /** Rotate the aurora field in degrees (e.g. 45 for a diagonal look). */
+  auroraRotation?: number;
   /** Color behind transparent aurora pixels (the “black” plate). */
   auroraBaseColor?: string;
   /** Soft circle particles inside the aurora shader pass. */
@@ -45,41 +48,47 @@ export type CtaButtonProps = {
   className?: string;
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className" | "children">;
 
-const DEFAULT_AURORA: [string, string, string] = ["#aa3c6b", "#e16060", "#66004d"];
-const DEFAULT_GLOW_COLORS: [string, string, string] = ["#e5616e", "#ce3e78", "#aa3c6b"];
+const DEFAULT_AURORA: [string, string, string, string] = [
+  "#aa3c6b",
+  "#ea2e89",
+  "#42001b",
+  "#933e4c",
+];
+const DEFAULT_GLOW_COLORS: [string, string, string] = ["#8c2c3f", "#ce3e78", "#aa3c6b"];
 
 export function CtaButton({
-  label = "Claim reward",
-  width = 240,
-  height = 64,
-  cornerRadius = 18,
+  label = "Start Playing",
+  width = 338,
+  height = 69,
+  cornerRadius = 11,
   strokeWidth = 1,
   strokeColor = "rgba(255, 255, 255, 0.22)",
   auroraColorStops = DEFAULT_AURORA,
-  auroraSpeed = 1.2,
-  auroraBlend = 0.37,
-  auroraAmplitude = 0.8,
-  auroraBandHeight = 1.35,
+  auroraSpeed = 0.7,
+  auroraBlend = 1,
+  auroraAmplitude = 1.7,
+  auroraBandHeight = 1.2,
+  auroraRotation = 17,
   auroraBaseColor = "#42001b",
-  particleCount = 10,
-  particleSize = 0.029,
-  particleSpeed = 1.5,
+  particleCount = 12,
+  particleSize = 0.03,
+  particleSpeed = 1.55,
   particleOpacity = 0.37,
-  particleColor = "#dd8187",
+  particleColor = "#fb4b97",
   particleTwinkle = 0.24,
-  labelColor = "#ffffff",
+  labelColor = "#ffe0e8",
   fontSize = 18,
   forceHover = false,
   forcePressed = false,
   glowEnabled = true,
   glowAlwaysOn = true,
-  glowEdgeSensitivity = 12,
-  glowColor = "40 80 80",
-  glowRadius = 18,
-  glowIntensity = 0.4,
-  glowConeSpread = 22,
+  glowEdgeSensitivity = 15,
+  glowColor = "326 90 30",
+  glowRadius = 40,
+  glowIntensity = 0.95,
+  glowConeSpread = 28,
   glowFillOpacity = 0.13,
-  glowOrbitSpeed = 69,
+  glowOrbitSpeed = 103,
   glowAlwaysOnProximity = 94,
   glowColors = DEFAULT_GLOW_COLORS,
   disabled = false,
@@ -123,6 +132,11 @@ export function CtaButton({
       disabled={disabled}
       className={classes}
       style={{ ...cssVars, ...style }}
+      // Extra iOS guard: prevent long-press selection / callout on the control.
+      onContextMenu={(event) => {
+        event.preventDefault();
+        buttonProps.onContextMenu?.(event);
+      }}
     >
       <span className="cta-button__inner">
         <span className="cta-button__aurora" aria-hidden="true">
@@ -132,6 +146,7 @@ export function CtaButton({
             blend={auroraBlend}
             amplitude={auroraAmplitude}
             bandHeight={auroraBandHeight}
+            rotation={auroraRotation}
             particleCount={particleCount}
             particleSize={particleSize}
             particleSpeed={particleSpeed}

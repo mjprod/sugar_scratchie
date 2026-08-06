@@ -45,7 +45,7 @@ function formatTemplateValuesSnippet(templateId: CtaTemplateId, state: CtaDebugS
 /** Paste into CtaButton default parameter values + DEFAULT_AURORA / DEFAULT_GLOW_COLORS */
 function formatCtaButtonDefaultsSnippet(state: CtaDebugState): string {
   return [
-    `const DEFAULT_AURORA: [string, string, string] = [${JSON.stringify(state.auroraA)}, ${JSON.stringify(state.auroraB)}, ${JSON.stringify(state.auroraC)}];`,
+    `const DEFAULT_AURORA: [string, string, string, string] = [${JSON.stringify(state.auroraA)}, ${JSON.stringify(state.auroraB)}, ${JSON.stringify(state.auroraMid)}, ${JSON.stringify(state.auroraC)}];`,
     `const DEFAULT_GLOW_COLORS: [string, string, string] = [${JSON.stringify(state.glowA)}, ${JSON.stringify(state.glowB)}, ${JSON.stringify(state.glowC)}];`,
     "",
     "// CtaButton default params:",
@@ -60,6 +60,7 @@ function formatCtaButtonDefaultsSnippet(state: CtaDebugState): string {
     `auroraBlend = ${state.auroraBlend},`,
     `auroraAmplitude = ${state.auroraAmplitude},`,
     `auroraBandHeight = ${state.auroraBandHeight},`,
+    `auroraRotation = ${state.auroraRotation},`,
     `auroraBaseColor = ${JSON.stringify(state.auroraBaseColor)},`,
     `particleCount = ${state.particleCount},`,
     `particleSize = ${state.particleSize},`,
@@ -136,6 +137,14 @@ const AURORA_SLIDERS: NumberSlider[] = [
     max: 4,
     step: 0.05,
     format: (v) => `${v.toFixed(2)}×`,
+  },
+  {
+    key: "auroraRotation",
+    label: "Rotation",
+    min: -180,
+    max: 180,
+    step: 1,
+    format: (v) => `${Math.round(v)}°`,
   },
 ];
 
@@ -323,8 +332,14 @@ export function ButtonTestPage() {
   };
 
   const auroraStops = useMemo(
-    () => [state.auroraA, state.auroraB, state.auroraC] as [string, string, string],
-    [state.auroraA, state.auroraB, state.auroraC],
+    () =>
+      [state.auroraA, state.auroraB, state.auroraMid, state.auroraC] as [
+        string,
+        string,
+        string,
+        string,
+      ],
+    [state.auroraA, state.auroraB, state.auroraMid, state.auroraC],
   );
 
   const glowStops = useMemo(
@@ -369,6 +384,7 @@ export function ButtonTestPage() {
                 auroraBlend={state.auroraBlend}
                 auroraAmplitude={state.auroraAmplitude}
                 auroraBandHeight={state.auroraBandHeight}
+                auroraRotation={state.auroraRotation}
                 auroraBaseColor={state.auroraBaseColor}
                 particleCount={state.particleCount}
                 particleSize={state.particleSize}
@@ -509,7 +525,7 @@ export function ButtonTestPage() {
 
           <section className="button-test-section">
             <h3>Aurora</h3>
-            <div className="button-test-color-row">
+            <div className="button-test-color-row button-test-color-row--4">
               <label>
                 Stop A
                 <input
@@ -524,6 +540,14 @@ export function ButtonTestPage() {
                   type="color"
                   value={toColorInputValue(state.auroraB)}
                   onChange={(event) => patch("auroraB", event.target.value)}
+                />
+              </label>
+              <label>
+                Mid (B–C)
+                <input
+                  type="color"
+                  value={toColorInputValue(state.auroraMid)}
+                  onChange={(event) => patch("auroraMid", event.target.value)}
                 />
               </label>
               <label>
@@ -604,14 +628,18 @@ export function ButtonTestPage() {
               Always on (animated)
             </label>
             <label>
-              Glow HSL (H S L)
+              Outer bloom HSL (H S L)
               <input
                 type="text"
                 value={state.glowColor}
                 onChange={(event) => patch("glowColor", event.target.value)}
-                placeholder="40 80 80"
+                placeholder="328 90 72"
               />
             </label>
+            <p className="button-test-hint">
+              Controls the soft outer glow color (not the mesh rim). Hue ~40 = orange, ~328 =
+              magenta/pink. Format: <code>H S L</code> e.g. <code>328 90 72</code>.
+            </p>
             <div className="button-test-color-row">
               <label>
                 Mesh A
