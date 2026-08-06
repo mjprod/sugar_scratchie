@@ -895,6 +895,7 @@ export class GarmentGLRenderer {
     camera: { x: number; y: number } = { x: 0, y: 0 },
     hideForeground = false,
     foregroundChroma = true,
+    overscan = PRESENT_ZOOM,
   ) {
     const gl = this.gl;
 
@@ -902,8 +903,11 @@ export class GarmentGLRenderer {
     // composite in step 4) by the same clip-space offset, with overscan headroom.
     // The foreground-into-FBO (step 2) and hole punching (step 3) stay in the
     // un-panned reference frame so scratch holes remain glued to the mesh.
-    const camX = clamp(camera.x, -(PRESENT_ZOOM - 1), PRESENT_ZOOM - 1);
-    const camY = clamp(camera.y, -(PRESENT_ZOOM - 1), PRESENT_ZOOM - 1);
+    // `overscan` defaults to PRESENT_ZOOM; hunt-hint nudges may raise it briefly.
+    const zoom = Math.max(1, overscan);
+    const camMax = zoom - 1;
+    const camX = clamp(camera.x, -camMax, camMax);
+    const camY = clamp(camera.y, -camMax, camMax);
 
     const now = performance.now();
     const dt = this.lastRenderTime > 0 ? Math.min(0.05, (now - this.lastRenderTime) / 1000) : 0;
@@ -917,12 +921,12 @@ export class GarmentGLRenderer {
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (bottomVideo && bottomVideo.readyState >= 2) {
-      this.drawVideo(this.blit, this.bottomTex, bottomVideo, false, camX, camY, PRESENT_ZOOM);
+      this.drawVideo(this.blit, this.bottomTex, bottomVideo, false, camX, camY, zoom);
       this.bottomEverReady = true;
     } else if (bottomVideo && this.bottomEverReady) {
       // Bottom stalled (e.g. mid loop wrap): redraw its last frame so scratched
       // holes keep revealing video instead of flashing black.
-      this.drawVideo(this.blit, this.bottomTex, bottomVideo, false, camX, camY, PRESENT_ZOOM, false);
+      this.drawVideo(this.blit, this.bottomTex, bottomVideo, false, camX, camY, zoom, false);
     }
 
     const fgFresh = !!foregroundVideo && foregroundVideo.readyState >= 2;
@@ -960,14 +964,14 @@ export class GarmentGLRenderer {
     gl.uniform1i(gl.getUniformLocation(this.composite, "uTex"), 0);
     // Present the FBO (foreground + holes) with the same overscan + camera pan
     // as the bottom video so the whole shot moves together.
-    gl.uniform2f(gl.getUniformLocation(this.composite, "uScale"), PRESENT_ZOOM, PRESENT_ZOOM);
+    gl.uniform2f(gl.getUniformLocation(this.composite, "uScale"), zoom, zoom);
     gl.uniform2f(gl.getUniformLocation(this.composite, "uOffset"), camX, camY);
     this.bindQuad(this.composite);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
 
     // 4.5. flying fabric flakes over the composite
-    this.drawFlakes(camX, camY);
+    this.drawFlakes(camX, camY, zoom);
 
     // 5. mesh overlay
     if (showMesh && sample) {
@@ -1056,9 +1060,10 @@ export class GarmentGLRenderer {
     this.flakes = next;
   }
 
-  private drawFlakes(camX: number, camY: number) {
+  private drawFlakes(camX: number, camY: number, overscan = PRESENT_ZOOM) {
     if (this.flakes.length === 0 || !this.fgEverReady) return;
     const gl = this.gl;
+    const zoom = Math.max(1, overscan);
     gl.useProgram(this.flake);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
@@ -1067,7 +1072,7 @@ export class GarmentGLRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.fgColorTex);
     gl.uniform1i(gl.getUniformLocation(this.flake, "uFabric"), 0);
     gl.uniform2f(gl.getUniformLocation(this.flake, "uCanvas"), this.width, this.height);
-    gl.uniform2f(gl.getUniformLocation(this.flake, "uPresentScale"), PRESENT_ZOOM, PRESENT_ZOOM);
+    gl.uniform2f(gl.getUniformLocation(this.flake, "uPresentScale"), zoom, zoom);
     gl.uniform2f(gl.getUniformLocation(this.flake, "uPresentOffset"), camX, camY);
     this.bindQuad(this.flake);
 

@@ -21,6 +21,7 @@ import {
   buildTopSymbols,
   loadSymbolTypes,
   matchedTopSlots,
+  applyBodyFindHits,
   resolveMatchGame,
   SYMBOL_TYPE_COUNT,
   type MatchGameOutcome,
@@ -868,6 +869,9 @@ export function PhotoScratchTest() {
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
   );
+  const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
+  );
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
@@ -1049,6 +1053,7 @@ export function PhotoScratchTest() {
     resetMatchRound();
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setHasBodySymbols(mesh.symbolPoints?.length === SYMBOL_POINT_COUNT);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
@@ -1561,6 +1566,15 @@ export function PhotoScratchTest() {
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
+        setBodyFindHits((prev) =>
+          applyBodyFindHits(
+            topSymbolsRef.current,
+            sessionSymbolsRef.current,
+            revealedBefore,
+            newlyRevealed,
+            prev,
+          ),
+        );
         playBodyFindSounds(
           symbolAudioRef.current,
           topSymbolsRef.current,
@@ -1812,6 +1826,7 @@ export function PhotoScratchTest() {
     resetMatchRound();
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
 
@@ -2426,7 +2441,11 @@ export function PhotoScratchTest() {
                     ref={(el) => {
                       bodyMarkerRefs.current[index] = el;
                     }}
-                    className="body-symbol-marker"
+                    className={`body-symbol-marker${
+                      bodyRevealed[index] && !bodyFindHits[index]
+                        ? " is-missed"
+                        : ""
+                    }`}
                     style={{ display: "none" }}
                   >
                     {bodyRevealed[index] ? (
@@ -2434,6 +2453,7 @@ export function PhotoScratchTest() {
                         <GameSymbolIcon
                           typeId={typeId}
                           size={BODY_SYMBOL_ICON_PX}
+                          paused={!bodyFindHits[index]}
                         />
                       </span>
                     ) : null}

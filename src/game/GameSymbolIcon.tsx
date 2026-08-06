@@ -50,8 +50,17 @@ function WorkerSymbolIcon({
     const host = hostRef.current;
     if (!host) return;
     const canvas = document.createElement("canvas");
+    // Bitmap starts at CSS size; DotLottieWorker then raises the backing store
+    // to size×DPR. Chrome lays transferred OffscreenCanvas out at buffer
+    // pixels unless CSS width/height are locked to `size` with !important —
+    // percentage sizing is ignored on those placeholders, so icons go ~2×.
     canvas.width = size;
     canvas.height = size;
+    const lockCssSize = () => {
+      canvas.style.setProperty("width", `${size}px`, "important");
+      canvas.style.setProperty("height", `${size}px`, "important");
+    };
+    lockCssSize();
     host.appendChild(canvas);
     const player = new DotLottieWorker({
       canvas,
@@ -66,17 +75,31 @@ function WorkerSymbolIcon({
       // See the note on the non-worker path below.
       useFrameInterpolation: false,
       workerId: SYMBOL_WORKER_ID,
+      // Keep DPR for sharpness, but never auto-grow the DOM box.
+      renderConfig: {
+        autoResize: false,
+        freezeOnOffscreen: true,
+      },
     });
     const turn = joinSymbolRotation(() => {
       void player.play();
     });
     const onLoad = () => {
+      lockCssSize();
       // stop() renders the first frame, so an icon waiting its turn shows its
       // designed pose rather than an empty canvas.
       void player.stop();
-      turn.setReady(!pausedRef.current);
+      if (pausedRef.current) {
+        // Desaturated / hidden icons stay on frame 0 and leave the rotation —
+        // freeze() parks the worker so they don't keep burning CPU/memory.
+        void player.freeze();
+        turn.setReady(false);
+      } else {
+        turn.setReady(true);
+      }
     };
     const onComplete = () => {
+      lockCssSize();
       void player.stop();
       turn.finish();
     };
@@ -84,7 +107,13 @@ function WorkerSymbolIcon({
     player.addEventListener("complete", onComplete);
     playerRef.current = player;
     turnRef.current = turn;
+    lockCssSize();
+    // Worker may bump canvas.width to size×DPR asynchronously — re-lock CSS.
+    const sizeLock = window.setInterval(lockCssSize, 250);
+    const sizeLockStop = window.setTimeout(() => window.clearInterval(sizeLock), 3000);
     return () => {
+      window.clearInterval(sizeLock);
+      window.clearTimeout(sizeLockStop);
       playerRef.current = null;
       turnRef.current = null;
       turn.dispose();
@@ -100,21 +129,30 @@ function WorkerSymbolIcon({
     const turn = turnRef.current;
     // Before load the load handler owns readiness, using pausedRef.
     if (!turn || !player?.isLoaded) return;
-    // Give the turn back rather than freezing mid-pose; the rotation comes
-    // round again once this icon is released.
-    if (paused) void player.stop();
-    turn.setReady(!paused);
+    if (paused) {
+      void player.stop();
+      void player.freeze();
+      turn.setReady(false);
+      return;
+    }
+    void player.unfreeze();
+    turn.setReady(true);
   }, [paused]);
 
-  return <div ref={hostRef} className="game-symbol-lottie" aria-hidden="true" />;
+  return (
+    <div
+      ref={hostRef}
+      className="game-symbol-lottie"
+      aria-hidden="true"
+      style={{ width: size, height: size }}
+    />
+  );
 }
 
-// NOTE: do not pass a `renderConfig` here without measuring first. Capping
-// devicePixelRatio looks like an easy win — up to eighteen of these play at
-// once and they dominate the CPU profile — but the library only defaults
-// devicePixelRatio and freezeOnOffscreen, so any config you supply must also
-// carry autoResize, and enabling that grows the body icons' backing store
-// (~84x84 to ~114x114) and costs more than the DPR cap saves.
+// NOTE: renderConfig must be a full-enough object — the library merges only
+// what you pass, but omitting autoResize previously defaulted in ways that
+// fought our fixed CSS box. We always pass autoResize: false here so the
+// worker keeps the host's inline `size` instead of growing with DPR.
 export function GameSymbolIcon({
   typeId,
   size = 24,
@@ -123,11 +161,10 @@ export function GameSymbolIcon({
   typeId: number;
   size?: number;
   /**
-   * Take this icon out of the playback rotation and hold it on its first
-   * frame. Set it while the icon is not visible yet — the top bar builds all
-   * six slots under the scratch coating — so turns are not spent unseen. The
-   * entrance "pop" is a CSS keyframe on `.body-symbol-icon`, not part of the
-   * Lottie, so a held symbol still appears normally.
+   * Hold on the first frame and leave the playback rotation. Also freezes the
+   * worker so desaturated / hidden icons (dormant top-bar slots, missed body
+   * finds) do not keep animating or burning CPU. Clear it when the icon should
+   * play again (e.g. a top slot that just matched).
    */
   paused?: boolean;
 }) {
@@ -143,7 +180,12 @@ export function GameSymbolIcon({
     const turn = joinSymbolRotation(() => player.play());
     const onLoad = () => {
       player.stop();
-      turn.setReady(!pausedRef.current);
+      if (pausedRef.current) {
+        player.freeze();
+        turn.setReady(false);
+      } else {
+        turn.setReady(true);
+      }
     };
     const onComplete = () => {
       player.stop();
@@ -166,8 +208,14 @@ export function GameSymbolIcon({
   useEffect(() => {
     const turn = turnRef.current;
     if (!turn || !player?.isLoaded) return;
-    if (paused) player.stop();
-    turn.setReady(!paused);
+    if (paused) {
+      player.stop();
+      player.freeze();
+      turn.setReady(false);
+      return;
+    }
+    player.unfreeze();
+    turn.setReady(true);
   }, [player, paused]);
 
   if (SUPPORTS_OFFSCREEN) {

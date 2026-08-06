@@ -186,6 +186,30 @@ export function matchedTopSlots(
   return matched;
 }
 
+/**
+ * Sticky per-body-find hit flags: true when that reveal claimed a top slot.
+ * Matches `playBodyFindSounds` order so icons never flip hit↔miss later.
+ */
+export function applyBodyFindHits(
+  top: number[],
+  body: number[],
+  revealedBefore: readonly boolean[],
+  newlyRevealed: readonly number[],
+  previousHits: readonly boolean[],
+): boolean[] {
+  const hits = previousHits.slice();
+  while (hits.length < body.length) hits.push(false);
+  const revealed = revealedBefore.slice();
+  for (const index of newlyRevealed) {
+    if (index < 0 || index >= body.length) continue;
+    const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    revealed[index] = true;
+    const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    hits[index] = after > before;
+  }
+  return hits;
+}
+
 export function prizeForMatches(matches: number): number {
   const clamped = Math.max(0, Math.min(TOP_SYMBOL_COUNT, Math.floor(matches)));
   return PRIZE_BY_MATCHES[clamped] ?? 0;
