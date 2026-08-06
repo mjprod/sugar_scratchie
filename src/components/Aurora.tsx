@@ -221,6 +221,8 @@ export type AuroraProps = {
   particleColor?: string;
   /** 0 = steady, 1 = strong twinkle. */
   particleTwinkle?: number;
+  /** Freeze the shader clock (and particles) on the last frame. */
+  paused?: boolean;
   className?: string;
 };
 
@@ -244,12 +246,19 @@ export default function Aurora(props: AuroraProps) {
     particleOpacity = 0.85,
     particleColor = "#ffffff",
     particleTwinkle = 0.45,
+    paused = false,
     className,
   } = props;
   const propsRef = useRef(props);
   propsRef.current = props;
 
   const ctnDom = useRef<HTMLDivElement>(null);
+  /** Lets a separate effect restart the rAF loop after unpause. */
+  const loopControlRef = useRef<{
+    start: () => void;
+    stop: () => void;
+    renderOnce: () => void;
+  } | null>(null);
 
   useEffect(() => {
     const ctn = ctnDom.current;
@@ -314,32 +323,99 @@ export default function Aurora(props: AuroraProps) {
     ctn.appendChild(gl.canvas);
 
     let animateId = 0;
-    const update = (t: number) => {
-      animateId = requestAnimationFrame(update);
+    let frozenTime = 0;
+    let hasFrozenTime = false;
+    let timeOriginMs = performance.now();
+    let pausedElapsedSec = 0;
+
+    const applyUniforms = (nowMs: number) => {
       if (!program) return;
       const current = propsRef.current;
-      const { time = t * 0.01, speed = 1.0 } = current;
-      program.uniforms.uTime.value = time * speed * 0.1;
+      const isPaused = Boolean(current.paused);
+      const speed = current.speed ?? 1.0;
+
+      if (isPaused) {
+        if (!hasFrozenTime) {
+          pausedElapsedSec = (nowMs - timeOriginMs) / 1000;
+          frozenTime =
+            current.time != null
+              ? current.time * speed * 0.1
+              : pausedElapsedSec * 0.01 * speed * 0.1;
+          hasFrozenTime = true;
+        }
+      } else if (hasFrozenTime) {
+        // Resume from the frozen clock so the field doesn't jump.
+        timeOriginMs = nowMs - pausedElapsedSec * 1000;
+        hasFrozenTime = false;
+      }
+
+      const liveTime =
+        current.time != null
+          ? current.time * speed * 0.1
+          : ((nowMs - timeOriginMs) / 1000) * 0.01 * speed * 0.1;
+
+      program.uniforms.uTime.value = isPaused ? frozenTime : liveTime;
       program.uniforms.uAmplitude.value = current.amplitude ?? 1.0;
       program.uniforms.uBlend.value = current.blend ?? blend;
       program.uniforms.uBandHeight.value = current.bandHeight ?? bandHeight;
       program.uniforms.uRotation.value = current.rotation ?? rotation;
-      program.uniforms.uParticleCount.value = current.particleCount ?? particleCount;
+      // Hide particles while paused so the disabled face stays still.
+      program.uniforms.uParticleCount.value = isPaused
+        ? 0
+        : (current.particleCount ?? particleCount);
       program.uniforms.uParticleSize.value = current.particleSize ?? particleSize;
-      program.uniforms.uParticleSpeed.value = current.particleSpeed ?? particleSpeed;
+      program.uniforms.uParticleSpeed.value = isPaused
+        ? 0
+        : (current.particleSpeed ?? particleSpeed);
       program.uniforms.uParticleOpacity.value = current.particleOpacity ?? particleOpacity;
       program.uniforms.uParticleColor.value = hexToRgb(current.particleColor ?? particleColor);
-      program.uniforms.uParticleTwinkle.value = current.particleTwinkle ?? particleTwinkle;
+      program.uniforms.uParticleTwinkle.value = isPaused
+        ? 0
+        : (current.particleTwinkle ?? particleTwinkle);
       const stops = current.colorStops ?? colorStops;
       program.uniforms.uColorStops.value = stops.map(hexToRgb);
       renderer.render({ scene: mesh });
     };
-    animateId = requestAnimationFrame(update);
+
+    const update = (nowMs: number) => {
+      if (propsRef.current.paused) {
+        animateId = 0;
+        applyUniforms(nowMs);
+        return;
+      }
+      animateId = requestAnimationFrame(update);
+      applyUniforms(nowMs);
+    };
+
+    const stop = () => {
+      if (animateId) {
+        cancelAnimationFrame(animateId);
+        animateId = 0;
+      }
+    };
+
+    const start = () => {
+      if (animateId) return;
+      animateId = requestAnimationFrame(update);
+    };
+
+    const renderOnce = () => {
+      applyUniforms(performance.now());
+    };
+
+    loopControlRef.current = { start, stop, renderOnce };
+
+    if (propsRef.current.paused) {
+      renderOnce();
+    } else {
+      start();
+    }
 
     resize();
 
     return () => {
-      cancelAnimationFrame(animateId);
+      stop();
+      loopControlRef.current = null;
       window.removeEventListener("resize", resize);
       if (ctn && gl.canvas.parentNode === ctn) {
         ctn.removeChild(gl.canvas);
@@ -348,6 +424,17 @@ export default function Aurora(props: AuroraProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amplitude]);
+
+  useEffect(() => {
+    const control = loopControlRef.current;
+    if (!control) return;
+    if (paused) {
+      control.stop();
+      control.renderOnce();
+      return;
+    }
+    control.start();
+  }, [paused]);
 
   return (
     <div

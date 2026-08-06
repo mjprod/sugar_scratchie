@@ -57,6 +57,16 @@
   transition: opacity 0.75s ease-in-out;
 }
 
+/* Disabled CTA: kill bloom layers immediately (no orbit / no hover glow). */
+.border-glow-card.is-disabled::before,
+.border-glow-card.is-disabled::after,
+.border-glow-card.is-disabled > .edge-light {
+  opacity: 0 !important;
+  transition: none;
+  animation: none;
+  pointer-events: none;
+}
+
 /* colored mesh-gradient border */
 .border-glow-card::before {
   border: 1px solid transparent;

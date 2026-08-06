@@ -169,17 +169,18 @@ export function CtaButton({
         <span className="cta-button__aurora" aria-hidden="true">
           <Aurora
             colorStops={auroraColorStops}
-            speed={auroraSpeed}
+            speed={disabled ? 0 : auroraSpeed}
             blend={auroraBlend}
             amplitude={auroraAmplitude}
             bandHeight={auroraBandHeight}
             rotation={auroraRotation}
-            particleCount={particleCount}
+            particleCount={disabled ? 0 : particleCount}
             particleSize={particleSize}
-            particleSpeed={particleSpeed}
+            particleSpeed={disabled ? 0 : particleSpeed}
             particleOpacity={particleOpacity}
             particleColor={particleColor}
-            particleTwinkle={particleTwinkle}
+            particleTwinkle={disabled ? 0 : particleTwinkle}
+            paused={disabled}
           />
         </span>
         <span className="cta-button__face" aria-hidden="true" />
@@ -205,18 +206,25 @@ export function CtaButton({
   return (
     <BorderGlow
       bare
-      className={`cta-button-glow cta-button-glow--${shape}`}
-      alwaysOn={glowAlwaysOn}
+      className={[
+        "cta-button-glow",
+        `cta-button-glow--${shape}`,
+        disabled ? "is-disabled" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      alwaysOn={glowAlwaysOn && !disabled}
+      disabled={disabled}
       edgeSensitivity={glowEdgeSensitivity}
       glowColor={glowColor}
       backgroundColor="transparent"
       borderRadius={radius}
       glowRadius={glowRadius}
-      glowIntensity={glowIntensity}
+      glowIntensity={disabled ? 0 : glowIntensity}
       coneSpread={glowConeSpread}
-      fillOpacity={glowFillOpacity}
-      orbitSpeed={glowOrbitSpeed}
-      alwaysOnProximity={glowAlwaysOnProximity}
+      fillOpacity={disabled ? 0 : glowFillOpacity}
+      orbitSpeed={disabled ? 0 : glowOrbitSpeed}
+      alwaysOnProximity={disabled ? 0 : glowAlwaysOnProximity}
       colors={glowColors}
       animated={false}
       shape={shape === "hex" ? "hex" : "rounded-rect"}

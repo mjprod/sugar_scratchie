@@ -134,6 +134,8 @@ export type BorderGlowProps = {
   shapeHeight?: number;
   /** Hex tip depth as a fraction of height (matches CtaButton.hexTip). */
   hexTip?: number;
+  /** Freeze orbit / pointer glow and hide bloom layers. */
+  disabled?: boolean;
 };
 
 const DEFAULT_COLORS = ["#c084fc", "#f472b6", "#38bdf8"];
@@ -159,6 +161,7 @@ export default function BorderGlow({
   shapeWidth,
   shapeHeight,
   hexTip = 0.27,
+  disabled = false,
 }: BorderGlowProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -197,7 +200,7 @@ export default function BorderGlow({
 
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (alwaysOn) return;
+      if (alwaysOn || disabled) return;
       const card = cardRef.current;
       if (!card) return;
 
@@ -211,12 +214,12 @@ export default function BorderGlow({
       card.style.setProperty("--edge-proximity", `${(edge * 100).toFixed(3)}`);
       card.style.setProperty("--cursor-angle", `${angle.toFixed(3)}deg`);
     },
-    [alwaysOn, getEdgeProximity, getCursorAngle],
+    [alwaysOn, disabled, getEdgeProximity, getCursorAngle],
   );
 
   // One-shot intro sweep (stock).
   useEffect(() => {
-    if (!animated || alwaysOn || !cardRef.current) return;
+    if (!animated || alwaysOn || disabled || !cardRef.current) return;
     const card = cardRef.current;
     const angleStart = 110;
     const angleEnd = 465;
@@ -267,11 +270,11 @@ export default function BorderGlow({
       cleanups.forEach((fn) => fn());
       card.classList.remove("sweep-active");
     };
-  }, [animated, alwaysOn]);
+  }, [animated, alwaysOn, disabled]);
 
   // Continuous orbit — no hover needed.
   useEffect(() => {
-    if (!alwaysOn || !cardRef.current) return;
+    if (!alwaysOn || disabled || !cardRef.current) return;
     const card = cardRef.current;
     card.classList.add("always-on");
     card.style.setProperty("--edge-proximity", String(alwaysOnProximity));
@@ -293,7 +296,15 @@ export default function BorderGlow({
       cancelAnimationFrame(raf);
       card.classList.remove("always-on");
     };
-  }, [alwaysOn, orbitSpeed, alwaysOnProximity]);
+  }, [alwaysOn, disabled, orbitSpeed, alwaysOnProximity]);
+
+  // Ensure bloom is fully off while disabled (even if a previous orbit left proximity high).
+  useEffect(() => {
+    if (!disabled || !cardRef.current) return;
+    const card = cardRef.current;
+    card.classList.remove("always-on", "sweep-active");
+    card.style.setProperty("--edge-proximity", "0");
+  }, [disabled]);
 
   const glowVars = buildGlowVars(glowColor, glowIntensity);
   const tipRatio = Math.max(0.12, Math.min(0.55, hexTip));
@@ -302,7 +313,8 @@ export default function BorderGlow({
   const classes = [
     "border-glow-card",
     bare ? "is-bare" : "",
-    alwaysOn ? "always-on" : "",
+    alwaysOn && !disabled ? "always-on" : "",
+    disabled ? "is-disabled" : "",
     shape === "hex" ? "is-shape-hex" : "is-shape-rounded-rect",
     className,
   ]

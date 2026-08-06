@@ -5675,24 +5675,42 @@ dd {
   outline-offset: 3px;
 }
 
-.cta-button:hover,
-.cta-button.is-force-hover {
+.cta-button:hover:not(:disabled):not(.is-disabled),
+.cta-button.is-force-hover:not(:disabled):not(.is-disabled) {
   transform: translateY(-1px);
   filter: brightness(1.06);
 }
 
-.cta-button:active,
-.cta-button.is-force-pressed {
+.cta-button:active:not(:disabled):not(.is-disabled),
+.cta-button.is-force-pressed:not(:disabled):not(.is-disabled) {
   transform: translateY(1px) scale(0.985);
   filter: brightness(0.96);
 }
 
+/*
+  Disabled: full greyscale at 100% opacity (no fade).
+  Glow bloom is also stopped/hidden via BorderGlow `disabled` + CSS.
+*/
 .cta-button:disabled,
-.cta-button.is-disabled {
+.cta-button.is-disabled,
+.cta-button-glow:has(> .border-glow-inner .cta-button:disabled),
+.cta-button-glow:has(> .border-glow-inner .cta-button.is-disabled),
+.cta-button-glow.is-disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 1;
   transform: none;
-  filter: grayscale(0.25);
+  filter: grayscale(1);
+}
+
+.cta-button:disabled .cta-button__aurora,
+.cta-button.is-disabled .cta-button__aurora {
+  /* Frozen still-frame is enough; block any residual canvas compositing cost. */
+  pointer-events: none;
+}
+
+.cta-button:disabled .cta-button__label,
+.cta-button.is-disabled .cta-button__label {
+  opacity: 0.3;
 }
 
 .cta-button__inner {
