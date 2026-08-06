@@ -3,11 +3,25 @@ import type { ButtonHTMLAttributes, CSSProperties } from "react";
 import Aurora from "./Aurora";
 import BorderGlow from "./BorderGlow";
 
+export type CtaShape = "squircle" | "hex";
+
 export type CtaButtonProps = {
   label?: string;
+  /** Optional secondary cost row under the title. Empty / null hides the row. */
+  costAmount?: string | number | null;
+  /** Shown after costAmount (emoji or short glyph). */
+  costIcon?: string;
+  /** Clip silhouette. Default soft rounded rect. */
+  shape?: CtaShape;
   width?: number;
   height?: number;
+  /** Squircle corner roundness (ignored by hex silhouette). */
   cornerRadius?: number;
+  /**
+   * Hex only: tip depth as a fraction of height (higher = longer points).
+   * Default 0.27.
+   */
+  hexTip?: number;
   strokeWidth?: number;
   strokeColor?: string;
   /** Four aurora ramp stops: A, B, mid (between B & C), C. */
@@ -58,9 +72,13 @@ const DEFAULT_GLOW_COLORS: [string, string, string] = ["#8c2c3f", "#ce3e78", "#a
 
 export function CtaButton({
   label = "Start Playing",
+  costAmount = null,
+  costIcon = "💎",
+  shape = "squircle",
   width = 338,
   height = 69,
   cornerRadius = 11,
+  hexTip = 0.27,
   strokeWidth = 1,
   strokeColor = "rgba(255, 255, 255, 0.22)",
   auroraColorStops = DEFAULT_AURORA,
@@ -101,12 +119,20 @@ export function CtaButton({
   const radius = Math.max(0, Math.min(cornerRadius, Math.min(width, height) / 2));
   // Keep inner corners concentric with the outer shape after the stroke inset.
   const innerRadius = Math.max(0, radius - stroke);
+  const tipRatio = Math.max(0.12, Math.min(0.55, hexTip));
+  const tipPx = height * tipRatio;
+  const innerTipPx = Math.max(0, tipPx - stroke * 0.85);
+  const showCost =
+    costAmount != null && costAmount !== "" && !(typeof costAmount === "number" && Number.isNaN(costAmount));
+  const costText = showCost ? String(costAmount) : "";
 
   const cssVars = {
     "--cta-w": `${width}px`,
     "--cta-h": `${height}px`,
     "--cta-r": `${radius}px`,
     "--cta-inner-r": `${innerRadius}px`,
+    "--cta-tip": `${tipPx}px`,
+    "--cta-inner-tip": `${innerTipPx}px`,
     "--cta-stroke": `${stroke}px`,
     "--cta-stroke-color": strokeColor,
     "--cta-aurora-base": auroraBaseColor,
@@ -116,6 +142,7 @@ export function CtaButton({
 
   const classes = [
     "cta-button",
+    `cta-button--${shape}`,
     glowEnabled ? "is-glow-on" : "is-glow-off",
     forceHover ? "is-force-hover" : "",
     forcePressed ? "is-force-pressed" : "",
@@ -156,7 +183,19 @@ export function CtaButton({
           />
         </span>
         <span className="cta-button__face" aria-hidden="true" />
-        <span className="cta-button__label">{label}</span>
+        <span className="cta-button__label">
+          <span className="cta-button__title">{label}</span>
+          {showCost ? (
+            <span className="cta-button__cost">
+              <span className="cta-button__cost-amount">{costText}</span>
+              {costIcon ? (
+                <span className="cta-button__cost-icon" aria-hidden="true">
+                  {costIcon}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </span>
       </span>
     </button>
   );
@@ -166,7 +205,7 @@ export function CtaButton({
   return (
     <BorderGlow
       bare
-      className="cta-button-glow"
+      className={`cta-button-glow cta-button-glow--${shape}`}
       alwaysOn={glowAlwaysOn}
       edgeSensitivity={glowEdgeSensitivity}
       glowColor={glowColor}
@@ -180,6 +219,10 @@ export function CtaButton({
       alwaysOnProximity={glowAlwaysOnProximity}
       colors={glowColors}
       animated={false}
+      shape={shape === "hex" ? "hex" : "rounded-rect"}
+      shapeWidth={width}
+      shapeHeight={height}
+      hexTip={tipRatio}
     >
       {button}
     </BorderGlow>

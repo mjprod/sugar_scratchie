@@ -97,6 +97,8 @@ function animateValue({
   };
 }
 
+export type BorderGlowShape = "rounded-rect" | "hex";
+
 export type BorderGlowProps = {
   children?: ReactNode;
   className?: string;
@@ -122,6 +124,16 @@ export type BorderGlowProps = {
   alwaysOnProximity?: number;
   /** Strip card chrome (border/bg/shadow) for wrapping custom CTAs. */
   bare?: boolean;
+  /**
+   * Silhouette for mesh rim + outer bloom. `hex` clips glow layers to the
+   * pointed chevron (needs shapeWidth/shapeHeight). Default keeps rounded-rect.
+   */
+  shape?: BorderGlowShape;
+  /** Button box used to size hex/squircle glow clips. */
+  shapeWidth?: number;
+  shapeHeight?: number;
+  /** Hex tip depth as a fraction of height (matches CtaButton.hexTip). */
+  hexTip?: number;
 };
 
 const DEFAULT_COLORS = ["#c084fc", "#f472b6", "#38bdf8"];
@@ -143,6 +155,10 @@ export default function BorderGlow({
   orbitSpeed = 40,
   alwaysOnProximity = 92,
   bare = false,
+  shape = "rounded-rect",
+  shapeWidth,
+  shapeHeight,
+  hexTip = 0.27,
 }: BorderGlowProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -280,14 +296,29 @@ export default function BorderGlow({
   }, [alwaysOn, orbitSpeed, alwaysOnProximity]);
 
   const glowVars = buildGlowVars(glowColor, glowIntensity);
+  const tipRatio = Math.max(0.12, Math.min(0.55, hexTip));
+  const tipPx = shapeHeight != null ? shapeHeight * tipRatio : 0;
+
   const classes = [
     "border-glow-card",
     bare ? "is-bare" : "",
     alwaysOn ? "always-on" : "",
+    shape === "hex" ? "is-shape-hex" : "is-shape-rounded-rect",
     className,
   ]
     .filter(Boolean)
     .join(" ");
+
+  const shapeVars: CSSProperties = {};
+  if (shapeWidth != null) {
+    (shapeVars as Record<string, string>)["--shape-w"] = `${shapeWidth}px`;
+  }
+  if (shapeHeight != null) {
+    (shapeVars as Record<string, string>)["--shape-h"] = `${shapeHeight}px`;
+    // Match CtaButton hex tip so glow and face share one silhouette.
+    (shapeVars as Record<string, string>)["--shape-tip"] = `${tipPx}px`;
+  }
+  (shapeVars as Record<string, string>)["--shape-r"] = `${Math.max(0, borderRadius)}px`;
 
   return (
     <div
@@ -301,11 +332,12 @@ export default function BorderGlow({
         "--glow-padding": `${glowRadius}px`,
         "--cone-spread": coneSpread,
         "--fill-opacity": fillOpacity,
+        ...shapeVars,
         ...glowVars,
         ...buildGradientVars(colors),
       } as CSSProperties}
     >
-      <span className="edge-light" />
+      <span className="edge-light" aria-hidden="true" />
       <div className="border-glow-inner">{children}</div>
     </div>
   );

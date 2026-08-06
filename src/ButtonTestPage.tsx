@@ -50,9 +50,13 @@ function formatCtaButtonDefaultsSnippet(state: CtaDebugState): string {
     "",
     "// CtaButton default params:",
     `label = ${JSON.stringify(state.label)},`,
+    `costAmount = ${JSON.stringify(state.costAmount)},`,
+    `costIcon = ${JSON.stringify(state.costIcon)},`,
+    `shape = ${JSON.stringify(state.shape)},`,
     `width = ${state.width},`,
     `height = ${state.height},`,
     `cornerRadius = ${state.cornerRadius},`,
+    `hexTip = ${state.hexTip},`,
     `strokeWidth = ${state.strokeWidth},`,
     `strokeColor = ${JSON.stringify(state.strokeColor)},`,
     `auroraColorStops = DEFAULT_AURORA,`,
@@ -370,13 +374,44 @@ export function ButtonTestPage() {
             <p className="button-test-status">{copyStatus ?? status}</p>
           </header>
 
+          {/* Mobile-only: keep template switching above the stage. */}
+          <section className="button-test-template-mobile panel">
+            <h3>Template</h3>
+            <p className="button-test-hint">{activeTemplate.description}</p>
+            <label>
+              Preset
+              <select
+                value={templateId}
+                onChange={(event) => applyTemplate(event.target.value as CtaTemplateId)}
+              >
+                {CTA_TEMPLATES.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="button-row">
+              <button type="button" onClick={() => applyTemplate(templateId)}>
+                Reset template
+              </button>
+              <a className="secondary-button" href="/dashboard">
+                Back to dashboard
+              </a>
+            </div>
+          </section>
+
           <div className="button-test-stage-wrap">
             <div className="button-test-stage">
               <CtaButton
                 label={state.label}
+                costAmount={state.costAmount}
+                costIcon={state.costIcon}
+                shape={state.shape}
                 width={state.width}
                 height={state.height}
                 cornerRadius={state.cornerRadius}
+                hexTip={state.hexTip}
                 strokeWidth={state.strokeWidth}
                 strokeColor={state.strokeColor}
                 auroraColorStops={auroraStops}
@@ -415,7 +450,7 @@ export function ButtonTestPage() {
         </section>
 
         <aside className="panel button-test-panel">
-          <section className="button-test-section">
+          <section className="button-test-section button-test-section--template-desktop">
             <h3>Template</h3>
             <p className="button-test-hint">{activeTemplate.description}</p>
             <label>
@@ -474,7 +509,9 @@ export function ButtonTestPage() {
           <section className="button-test-section">
             <h3>Size & shape</h3>
             <div className="button-test-sliders">
-              {SIZE_SLIDERS.map((def) => (
+              {SIZE_SLIDERS.filter(
+                (def) => !(state.shape === "hex" && def.key === "cornerRadius"),
+              ).map((def) => (
                 <SliderRow
                   key={def.key}
                   def={def}
@@ -495,12 +532,33 @@ export function ButtonTestPage() {
 
           <section className="button-test-section">
             <h3>Label</h3>
+            <p className="button-test-hint">
+              Shape: <strong>{state.shape}</strong>
+              {state.shape === "hex" ? ` · tip depth ${state.hexTip.toFixed(2)}×h` : ""}
+            </p>
             <label>
-              Text
+              Title
               <input
                 type="text"
                 value={state.label}
                 onChange={(event) => patch("label", event.target.value)}
+              />
+            </label>
+            <label>
+              Cost amount
+              <input
+                type="text"
+                value={state.costAmount}
+                placeholder="empty = hidden"
+                onChange={(event) => patch("costAmount", event.target.value)}
+              />
+            </label>
+            <label>
+              Cost icon
+              <input
+                type="text"
+                value={state.costIcon}
+                onChange={(event) => patch("costIcon", event.target.value)}
               />
             </label>
             <div className="button-test-sliders">

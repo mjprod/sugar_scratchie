@@ -3,13 +3,21 @@
  * Add a new entry here when starting work on the next button style.
  */
 
-export type CtaTemplateId = "squircleCTA";
+import type { CtaShape } from "./CtaButton";
+
+export type CtaTemplateId = "squircleCTA" | "hexGoldCTA";
 
 export type CtaTemplateValues = {
   label: string;
+  /** Empty string hides the cost row. */
+  costAmount: string;
+  costIcon: string;
+  shape: CtaShape;
   width: number;
   height: number;
   cornerRadius: number;
+  /** Hex tip depth as a fraction of height. */
+  hexTip: number;
   strokeWidth: number;
   strokeColor: string;
   auroraA: string;
@@ -60,9 +68,13 @@ export const SQUIRCLE_CTA: CtaTemplate = {
   description: "Soft rounded rect with aurora fill and orbiting border glow.",
   values: {
     label: "Start Playing",
+    costAmount: "",
+    costIcon: "💎",
+    shape: "squircle",
     width: 338,
     height: 69,
     cornerRadius: 11,
+    hexTip: 0.27,
     strokeWidth: 1,
     strokeColor: "rgba(255, 255, 255, 0.22)",
     auroraA: "#aa3c6b",
@@ -99,7 +111,57 @@ export const SQUIRCLE_CTA: CtaTemplate = {
   },
 };
 
-export const CTA_TEMPLATES: readonly CtaTemplate[] = [SQUIRCLE_CTA];
+/** Pointed hex badge + gold aurora — Open Pack style. */
+export const HEX_GOLD_CTA: CtaTemplate = {
+  id: "hexGoldCTA",
+  name: "Hex Gold CTA",
+  description: "Pointed hexagon badge with gold aurora fill, cost row, and warm border glow.",
+  values: {
+    label: "OPEN PACK",
+    costAmount: "10",
+    costIcon: "💎",
+    shape: "hex",
+    width: 280,
+    height: 95,
+    cornerRadius: 0,
+    hexTip: 0.27,
+    strokeWidth: 3,
+    strokeColor: "rgba(255, 236, 180, 0.55)",
+    auroraA: "#ffd080",
+    auroraB: "#3d2808",
+    auroraMid: "#3d2808",
+    auroraC: "#ffbc70",
+    auroraSpeed: 0.95,
+    auroraBlend: 0.58,
+    auroraAmplitude: 0.8,
+    auroraBandHeight: 1.4,
+    auroraRotation: 16,
+    auroraBaseColor: "#3d2808",
+    particleCount: 10,
+    particleSize: 0.025,
+    particleSpeed: 2.95,
+    particleOpacity: 0.48,
+    particleColor: "#fff1c2",
+    particleTwinkle: 0.62,
+    labelColor: "#fff8e6",
+    fontSize: 17,
+    glowEnabled: true,
+    glowAlwaysOn: true,
+    glowEdgeSensitivity: 51,
+    glowColor: "42 95 58",
+    glowRadius: 24,
+    glowIntensity: 0.9,
+    glowConeSpread: 28,
+    glowFillOpacity: 0,
+    glowOrbitSpeed: 74,
+    glowAlwaysOnProximity: 92,
+    glowA: "#d37217",
+    glowB: "#ff9c66",
+    glowC: "#ff9f1a",
+  },
+};
+
+export const CTA_TEMPLATES: readonly CtaTemplate[] = [SQUIRCLE_CTA, HEX_GOLD_CTA];
 
 export const DEFAULT_CTA_TEMPLATE_ID: CtaTemplateId = "squircleCTA";
 

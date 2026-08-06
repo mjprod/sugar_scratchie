@@ -5366,7 +5366,8 @@ dd {
   font-weight: 700;
 }
 
-.button-test-panel select {
+.button-test-panel select,
+.button-test-template-mobile select {
   background: #fff;
   border: 1px solid rgba(23, 21, 19, 0.22);
   border-radius: 8px;
@@ -5376,6 +5377,11 @@ dd {
   min-width: 0;
   padding: 10px 12px;
   width: 100%;
+}
+
+/* Desktop keeps the picker in the right panel; mobile shows it under the header. */
+.button-test-template-mobile {
+  display: none;
 }
 
 .button-test-stage-wrap {
@@ -5514,7 +5520,8 @@ dd {
   width: 100%;
 }
 
-.button-test-panel a.secondary-button {
+.button-test-panel a.secondary-button,
+.button-test-template-mobile a.secondary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5529,8 +5536,38 @@ dd {
     grid-template-columns: 1fr;
   }
 
+  .button-test-main {
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .button-test-template-mobile {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .button-test-template-mobile h3 {
+    margin: 0;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Avoid a second template block once the mobile picker is on screen. */
+  .button-test-section--template-desktop {
+    display: none;
+  }
+
   .button-test-panel {
     max-height: none;
+  }
+
+  .button-test-stage-wrap {
+    min-height: min(48vh, 420px);
+  }
+
+  .button-test-page {
+    padding: 14px;
   }
 }
 
@@ -5540,14 +5577,26 @@ dd {
   display: inline-grid;
   width: max-content;
   max-width: 100%;
-  /* Room for the outer bloom so it isn't clipped by neighbors. */
-  margin: 8px;
+  /* Room for the outer bloom / drop-shadow tails so neighbors don't clip them. */
+  margin: 56px;
+  overflow: visible;
+}
+
+.cta-button-glow.cta-button-glow--hex {
+  /* Hex bloom expands further than the rounded-rect box-shadow path. */
+  margin: 72px;
 }
 
 .cta-button-glow > .border-glow-inner {
   display: grid;
   position: relative;
   z-index: 2;
+  overflow: visible;
+}
+
+.button-test-stage,
+.button-test-stage-wrap {
+  overflow: visible;
 }
 
 .cta-button {
@@ -5559,6 +5608,8 @@ dd {
   --cta-aurora-base: #42001b;
   --cta-label-color: #ffe0e8;
   --cta-font-size: 18px;
+  /* Pointed-hex tip depth (fraction of height; default 0.27). */
+  --cta-tip: calc(var(--cta-h) * 0.27);
 
   position: relative;
   z-index: 2;
@@ -5585,6 +5636,10 @@ dd {
   touch-action: manipulation;
   appearance: none;
   transition: transform 160ms ease, filter 160ms ease, opacity 160ms ease;
+}
+
+/* Soft rounded rect (default / squircle template). */
+.cta-button--squircle {
   clip-path: shape(
     from var(--cta-r) 0,
     hline to calc(100% - var(--cta-r)),
@@ -5595,6 +5650,22 @@ dd {
     arc to 0 calc(100% - var(--cta-r)) of var(--cta-r) cw,
     vline to var(--cta-r),
     arc to var(--cta-r) 0 of var(--cta-r) cw,
+    close
+  );
+}
+
+/*
+  Horizontal pointed hex (chevron badge): left/right tips + flat top/bottom.
+  --cta-tip controls tip depth (default 0.27 × height). Tips stay sharp.
+*/
+.cta-button--hex {
+  clip-path: shape(
+    from 0 50%,
+    line to var(--cta-tip) 0,
+    hline to calc(100% - var(--cta-tip)),
+    line to 100% 50%,
+    line to calc(100% - var(--cta-tip)) 100%,
+    hline to var(--cta-tip),
     close
   );
 }
@@ -5626,6 +5697,8 @@ dd {
 
 .cta-button__inner {
   --cta-inner-r: max(0px, calc(var(--cta-r) - var(--cta-stroke)));
+  /* Shrink tip with stroke so the ring stays even at the points. */
+  --cta-inner-tip: max(0px, calc(var(--cta-tip) - var(--cta-stroke) * 0.85));
   position: absolute;
   inset: var(--cta-stroke);
   z-index: 1;
@@ -5635,6 +5708,9 @@ dd {
   /* Fully opaque plate so BorderGlow never shows through the face.
      Also the color seen through transparent aurora pixels. */
   background: var(--cta-aurora-base);
+}
+
+.cta-button--squircle > .cta-button__inner {
   clip-path: shape(
     from var(--cta-inner-r) 0,
     hline to calc(100% - var(--cta-inner-r)),
@@ -5645,6 +5721,18 @@ dd {
     arc to 0 calc(100% - var(--cta-inner-r)) of var(--cta-inner-r) cw,
     vline to var(--cta-inner-r),
     arc to var(--cta-inner-r) 0 of var(--cta-inner-r) cw,
+    close
+  );
+}
+
+.cta-button--hex > .cta-button__inner {
+  clip-path: shape(
+    from 0 50%,
+    line to var(--cta-inner-tip) 0,
+    hline to calc(100% - var(--cta-inner-tip)),
+    line to 100% 50%,
+    line to calc(100% - var(--cta-inner-tip)) 100%,
+    hline to var(--cta-inner-tip),
     close
   );
 }
@@ -5676,8 +5764,10 @@ dd {
   position: relative;
   z-index: 2;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.28em;
   padding: 0 18px;
   color: var(--cta-label-color);
   font-size: var(--cta-font-size);
@@ -5689,6 +5779,44 @@ dd {
   -webkit-user-select: none;
   user-select: none;
   pointer-events: none;
+}
+
+.cta-button--hex .cta-button__label {
+  /* Keep copy clear of the pointed tips. */
+  padding: 0 calc(var(--cta-tip) * 0.55 + 12px);
+  gap: 0.22em;
+}
+
+.cta-button__title {
+  display: block;
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.cta-button__cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28em;
+  font-size: 1.15em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.cta-button__cost-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.cta-button__cost-icon {
+  display: inline-flex;
+  font-size: 0.95em;
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
 }
 
 /* Kill iOS long-press text selection / callout on every layer inside the CTA. */
