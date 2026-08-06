@@ -283,6 +283,56 @@ function playNewSymbolNotes(
   }
 }
 
+function playMatchFindSound(
+  state: SymbolAudioState,
+  enabled: boolean,
+  startOffsetS = 0,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  const t = ctx.currentTime + startOffsetS;
+  // Bright ascending ding — claims a top-bar slot.
+  scheduleTone(ctx, t, 659.25, 0.1, 0.2, "triangle");
+  scheduleTone(ctx, t + 0.055, 880, 0.12, 0.18, "sine");
+  scheduleTone(ctx, t + 0.11, 1174.66, 0.14, 0.12, "sine");
+}
+
+function playMissFindSound(
+  state: SymbolAudioState,
+  enabled: boolean,
+  startOffsetS = 0,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  const t = ctx.currentTime + startOffsetS;
+  // Soft descending dud — found on her, but no top-bar claim left.
+  scheduleSlide(ctx, t, 220, 140, 0.22, 0.14, "sawtooth");
+  scheduleTone(ctx, t + 0.04, 110, 0.18, 0.08, "triangle");
+}
+
+/** Per newly revealed body icon: positive if it lights a top slot, else miss. */
+function playBodyFindSounds(
+  state: SymbolAudioState,
+  top: number[],
+  body: number[],
+  revealedBefore: readonly boolean[],
+  newlyRevealed: readonly number[],
+  enabled: boolean,
+) {
+  if (!enabled || newlyRevealed.length === 0) return;
+  const revealed = revealedBefore.slice();
+  newlyRevealed.forEach((index, i) => {
+    const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    revealed[index] = true;
+    const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    const offset = i * 0.07;
+    if (after > before) playMatchFindSound(state, true, offset);
+    else playMissFindSound(state, true, offset);
+  });
+}
+
 function scheduleTone(
   ctx: AudioContext,
   startAt: number,
@@ -1504,7 +1554,8 @@ export function PhotoScratchTest() {
 
     const bodyPoints = trackedMeshRef.current?.symbolPoints;
     if (bodyPoints && bodyPoints.length === SYMBOL_POINT_COUNT) {
-      let changed = false;
+      const newlyRevealed: number[] = [];
+      const revealedBefore = revealedPointsRef.current.slice();
       const renderer = fgRendererRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
@@ -1523,18 +1574,19 @@ export function PhotoScratchTest() {
           continue;
         }
         revealedPointsRef.current[index] = true;
-        changed = true;
+        newlyRevealed.push(index);
       }
-      if (changed) {
+      if (newlyRevealed.length > 0) {
         const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
-        const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
-        playNewSymbolNotes(
+        playBodyFindSounds(
           symbolAudioRef.current,
-          prevCount,
-          nextSymbolCount,
+          topSymbolsRef.current,
+          sessionSymbolsRef.current,
+          revealedBefore,
+          newlyRevealed,
           soundEnabledRef.current,
         );
         if (nextSymbolCount >= SYMBOL_POINT_COUNT) {
