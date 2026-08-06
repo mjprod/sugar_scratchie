@@ -5302,3 +5302,381 @@ dd {
   padding: 10px 12px;
   width: 100%;
 }
+
+/* ===== Button test lab + CTA button ===== */
+
+.button-test-page {
+  min-height: 100vh;
+  padding: 20px;
+  background: #f4efe7;
+  color: #171513;
+  box-sizing: border-box;
+}
+
+.button-test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.button-test-main {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  min-width: 0;
+}
+
+.button-test-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.button-test-kicker {
+  margin: 0 0 4px;
+  color: #a11;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.button-test-header h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.button-test-status {
+  margin: 0;
+  color: #6e645a;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.button-test-template-label {
+  margin: 6px 0 0;
+  color: #6e645a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.button-test-panel select {
+  background: #fff;
+  border: 1px solid rgba(23, 21, 19, 0.22);
+  border-radius: 8px;
+  color: #171513;
+  font: inherit;
+  font-weight: 600;
+  min-width: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.button-test-stage-wrap {
+  min-height: min(70vh, 640px);
+  border-radius: 16px;
+  border: 1px solid rgba(23, 21, 19, 0.14);
+  background:
+    linear-gradient(45deg, #1a1418 25%, transparent 25%),
+    linear-gradient(-45deg, #1a1418 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1a1418 75%),
+    linear-gradient(-45deg, transparent 75%, #1a1418 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+  background-color: #0d0a0c;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  display: grid;
+  place-items: center;
+  /* Allow BorderGlow bloom to extend past the well edges. */
+  overflow: visible;
+}
+
+.button-test-stage {
+  display: grid;
+  place-items: center;
+  padding: 40px 24px;
+}
+
+.button-test-panel {
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  gap: 18px;
+  align-content: start;
+}
+
+.button-test-section {
+  display: grid;
+  gap: 12px;
+}
+
+.button-test-section h3 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.button-test-hint {
+  margin: 0;
+  color: #6e645a;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.button-test-copy-status {
+  margin: 0;
+  color: #a11;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.button-test-sliders {
+  display: grid;
+  gap: 10px;
+}
+
+.button-test-slider {
+  display: grid !important;
+  gap: 6px !important;
+}
+
+.button-test-slider-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #6e645a;
+}
+
+.button-test-slider-label strong {
+  color: #171513;
+  font-variant-numeric: tabular-nums;
+}
+
+.button-test-check {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 700 !important;
+  color: #171513 !important;
+}
+
+.button-test-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #171513;
+}
+
+.button-test-color-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.button-test-panel input[type="color"] {
+  width: 100%;
+  height: 40px;
+  padding: 4px;
+  border: 1px solid rgba(23, 21, 19, 0.22);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.button-test-panel input[type="text"] {
+  background: #fff;
+  border: 1px solid rgba(23, 21, 19, 0.22);
+  border-radius: 8px;
+  color: #171513;
+  font: inherit;
+  font-weight: 600;
+  min-width: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.button-test-panel a.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 999px;
+  padding: 12px 14px;
+  font-weight: 800;
+}
+
+@media (max-width: 980px) {
+  .button-test {
+    grid-template-columns: 1fr;
+  }
+
+  .button-test-panel {
+    max-height: none;
+  }
+}
+
+/* --- CtaButton layers --- */
+
+.cta-button-glow {
+  display: inline-grid;
+  width: max-content;
+  max-width: 100%;
+  /* Room for the outer bloom so it isn't clipped by neighbors. */
+  margin: 8px;
+}
+
+.cta-button-glow > .border-glow-inner {
+  display: grid;
+  position: relative;
+  z-index: 2;
+}
+
+.cta-button {
+  --cta-w: 240px;
+  --cta-h: 64px;
+  --cta-r: 18px;
+  --cta-stroke: 1px;
+  --cta-stroke-color: rgba(255, 255, 255, 0.22);
+  --cta-aurora-base: #42001b;
+  --cta-label-color: #ffffff;
+  --cta-font-size: 18px;
+
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: stretch;
+  width: var(--cta-w);
+  height: var(--cta-h);
+  padding: 0;
+  border: 0;
+  margin: 0;
+  /*
+    Semi-transparent ring fill: spinning BorderGlow sits under this button.
+    The opaque .cta-button__inner covers the center, so the orbit only reads
+    through this outer stroke band.
+  */
+  background: var(--cta-stroke-color);
+  color: var(--cta-label-color);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  transition: transform 160ms ease, filter 160ms ease, opacity 160ms ease;
+  clip-path: shape(
+    from var(--cta-r) 0,
+    hline to calc(100% - var(--cta-r)),
+    arc to 100% var(--cta-r) of var(--cta-r) cw,
+    vline to calc(100% - var(--cta-r)),
+    arc to calc(100% - var(--cta-r)) 100% of var(--cta-r) cw,
+    hline to var(--cta-r),
+    arc to 0 calc(100% - var(--cta-r)) of var(--cta-r) cw,
+    vline to var(--cta-r),
+    arc to var(--cta-r) 0 of var(--cta-r) cw,
+    close
+  );
+}
+
+.cta-button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.cta-button:hover,
+.cta-button.is-force-hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.cta-button:active,
+.cta-button.is-force-pressed {
+  transform: translateY(1px) scale(0.985);
+  filter: brightness(0.96);
+}
+
+.cta-button:disabled,
+.cta-button.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  filter: grayscale(0.25);
+}
+
+.cta-button__inner {
+  --cta-inner-r: max(0px, calc(var(--cta-r) - var(--cta-stroke)));
+  position: absolute;
+  inset: var(--cta-stroke);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  /* Fully opaque plate so BorderGlow never shows through the face.
+     Also the color seen through transparent aurora pixels. */
+  background: var(--cta-aurora-base);
+  clip-path: shape(
+    from var(--cta-inner-r) 0,
+    hline to calc(100% - var(--cta-inner-r)),
+    arc to 100% var(--cta-inner-r) of var(--cta-inner-r) cw,
+    vline to calc(100% - var(--cta-inner-r)),
+    arc to calc(100% - var(--cta-inner-r)) 100% of var(--cta-inner-r) cw,
+    hline to var(--cta-inner-r),
+    arc to 0 calc(100% - var(--cta-inner-r)) of var(--cta-inner-r) cw,
+    vline to var(--cta-inner-r),
+    arc to var(--cta-inner-r) 0 of var(--cta-inner-r) cw,
+    close
+  );
+}
+
+.cta-button__aurora {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.cta-button__aurora .aurora-container,
+.cta-button__aurora canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Soft veil over aurora transparent regions so the spinner can't bleed.
+   Tinted from the aurora base color so the debug swatch stays coherent. */
+.cta-button__face {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--cta-aurora-base) 18%, transparent);
+}
+
+.cta-button__label {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  color: var(--cta-label-color);
+  font-size: var(--cta-font-size);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  pointer-events: none;
+}

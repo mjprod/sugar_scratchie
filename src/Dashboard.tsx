@@ -1121,6 +1121,12 @@ export function Dashboard() {
                     Transition lab
                   </a>
                 </Button>
+                <Button asChild variant="soft">
+                  <a href="/button-test">
+                    <WandSparkles {...iconProps} />
+                    Button test
+                  </a>
+                </Button>
                 <Button asChild>
                   <a href="/">
                     <ExternalLink {...iconProps} />

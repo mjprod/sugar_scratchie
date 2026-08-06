@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
+import { ButtonTestPage } from "./ButtonTestPage";
 import { Dashboard } from "./Dashboard";
 import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
@@ -56,6 +57,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard") return Dashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
+  if (path === "/button-test") return ButtonTestPage;
   if (path === "/game") return GamePage;
   return ScratchPrototype;
 }
