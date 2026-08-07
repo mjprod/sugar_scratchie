@@ -1067,6 +1067,7 @@ export class GarmentGLRenderer {
     const now = performance.now();
     const dt = this.lastRenderTime > 0 ? Math.min(0.05, (now - this.lastRenderTime) / 1000) : 0;
     this.lastRenderTime = now;
+    const hadFlakes = this.flakes.length > 0;
     this.updateFlakes(dt);
 
     // Display often runs faster than clip fps. When nothing moved — no new
@@ -1086,6 +1087,7 @@ export class GarmentGLRenderer {
     const needsDraw =
       !this.hasPresentedFrame ||
       this.scratchDirty ||
+      hadFlakes ||
       this.flakes.length > 0 ||
       showMesh ||
       camMoved ||
