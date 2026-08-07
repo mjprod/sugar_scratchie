@@ -649,6 +649,30 @@ def _read_photo_scratch_index(cards_dir: Path, card_id: str) -> list[dict]:
     return []
 
 
+def list_photo_scratch_thumb_urls(cards_dir: Path, card_id: str) -> list[str]:
+    """Fast collection thumbs from index.json only (no per-slot FS probes)."""
+    raw = {
+        entry["id"]: entry
+        for entry in _read_photo_scratch_index(cards_dir, card_id)
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    }
+    urls: list[str] = []
+    for index in range(PHOTO_SCRATCH_SLOT_COUNT):
+        slot_id = f"slot_{index + 1:02d}"
+        entry = raw.get(slot_id) or {}
+        thumb = (
+            entry.get("clothes")
+            or entry.get("pending_clothes")
+            or entry.get("bikini")
+            or entry.get("pending_bikini")
+            or entry.get("background")
+            or entry.get("pending_bg")
+            or ""
+        )
+        urls.append(str(thumb or ""))
+    return urls
+
+
 _PHOTO_SCRATCH_LAYER_KEYS = (
     "background",
     "bikini",

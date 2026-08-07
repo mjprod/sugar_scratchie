@@ -5,11 +5,23 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.cards import CardInfo, list_cards, list_photo_scratch_slots, public_url
+from backend.cards import CardInfo, list_cards, list_photo_scratch_thumb_urls, public_url
 from backend.models_store import ModelInfo, list_models
 from backend.themes_store import list_themes, resolve_theme_id
 
 CARDS_PER_GROUP = 3
+
+# Aliases so ?theme=cop matches theme_id=police (card ids like julianaval_cop).
+_THEME_FILTER_CANONICAL: dict[str, str] = {
+    "police": "police",
+    "cop": "police",
+    "nurse": "nurse",
+    "teacher": "teacher",
+    "gym": "gym",
+    "firefighter": "firegirl",
+    "firegirl": "firegirl",
+    "fire": "firegirl",
+}
 
 
 def _safe_id_part(value: str) -> str:
@@ -28,28 +40,40 @@ def _normalize_media_url(value: str | None) -> str:
     return public_url(raw) if "/" in raw else raw
 
 
-def _slot_thumb_src(slot) -> str:
-    return (
-        slot.clothes
-        or slot.pending_clothes
-        or slot.bikini
-        or slot.pending_bikini
-        or slot.background
-        or slot.pending_bg
-        or slot.clothes_cutout
-        or slot.bikini_cutout
-        or ""
-    )
-
-
 def _photo_urls_for_card(cards_dir: Path, card: CardInfo, theme_label: str) -> list[str]:
-    slots = list_photo_scratch_slots(cards_dir, card.id, theme_label)
-    urls = [""] * 10
-    for index in range(10):
-        if index >= len(slots):
-            break
-        urls[index] = _normalize_media_url(_slot_thumb_src(slots[index]))
-    return urls
+    del theme_label  # kept for call-site compatibility
+    return [
+        _normalize_media_url(url)
+        for url in list_photo_scratch_thumb_urls(cards_dir, card.id)
+    ]
+
+
+def _normalize_theme_filter(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").strip().lower())
+
+
+def _canonical_theme_key(value: str | None) -> str:
+    needle = _normalize_theme_filter(value)
+    if not needle:
+        return ""
+    return _THEME_FILTER_CANONICAL.get(needle, needle)
+
+
+def _theme_filter_matches(
+    theme_id: str | None,
+    theme_label: str,
+    theme_filter: str,
+) -> bool:
+    """True when theme_filter is empty or matches this card's theme id/label."""
+    needle = _canonical_theme_key(theme_filter)
+    if not needle:
+        return True
+    card_keys = {
+        _canonical_theme_key(theme_id),
+        _canonical_theme_key(theme_label),
+    }
+    card_keys.discard("")
+    return needle in card_keys
 
 
 def _display_model_name(model: ModelInfo) -> str:
@@ -106,6 +130,7 @@ def build_collection_catalog(
     *,
     draft_themes: dict[str, str] | None = None,
     model_filter: str | None = None,
+    theme_filter: str | None = None,
 ) -> dict:
     models = list_models(models_dir)
     cards = list_cards(root, cards_dir, mesh_dir)
@@ -117,7 +142,11 @@ def build_collection_catalog(
     if filter_id:
         models = [model for model in models if model.id == filter_id]
 
+    theme_needle = (theme_filter or "").strip()
     groups: list[dict] = []
+    theme_index: list[dict] = []
+    seen_theme_keys: set[str] = set()
+
     for model in models:
         model_cards = [
             card
@@ -148,6 +177,20 @@ def build_collection_catalog(
             themed = cards_by_theme[key]
             theme_id = themed[0][0]
             theme_label = themed[0][1]
+            index_key = theme_id or key
+            if index_key not in seen_theme_keys:
+                seen_theme_keys.add(index_key)
+                theme_index.append(
+                    {
+                        "id": theme_id or key,
+                        "label": theme_label,
+                        "modelId": model.id,
+                    }
+                )
+
+            if not _theme_filter_matches(theme_id, theme_label, theme_needle):
+                continue
+
             avatar_url = ""
             if theme_id:
                 avatar_url = model.theme_avatars.get(theme_id, "")
@@ -186,10 +229,16 @@ def build_collection_catalog(
                         "id": f"{_safe_id_part(model.id)}-{_safe_id_part(theme_id or theme_label)}-{part}",
                         "modelId": model.id,
                         "themeId": theme_id,
+                        "themeName": theme_label,
                         "title": title,
                         "avatarUrl": avatar_url or None,
                         "cards": group_cards,
                     }
                 )
 
-    return {"groups": groups}
+    return {
+        "groups": groups,
+        "themes": theme_index,
+        "model": filter_id or None,
+        "theme": theme_needle or None,
+    }

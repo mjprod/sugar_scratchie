@@ -32,6 +32,9 @@ INFLUENCER_META_KEYS = (
     "influencerFlag",
     "cardOverlayColorStart",
     "cardOverlayColorEnd",
+    # Foil pack 3D light rig (hemisphere sky / ground) per girl.
+    "cardLightColor1",
+    "cardLightColor2",
     # Display names for the two foil pack slots (product label prefers these over pack Nº).
     "cardPackName",
     "cardPackName2",
@@ -50,6 +53,8 @@ class ModelInfo(BaseModel):
     influencerFlagSvg: str | None = None
     cardOverlayColorStart: str | None = None
     cardOverlayColorEnd: str | None = None
+    cardLightColor1: str | None = None
+    cardLightColor2: str | None = None
     cardPackName: str | None = None
     cardPackName2: str | None = None
     packFaceVideoUrl: str | None = None
@@ -68,6 +73,8 @@ class CreateModelRequest(BaseModel):
     influencerFlag: str | None = Field(default=None, max_length=16)
     cardOverlayColorStart: str | None = Field(default=None, max_length=32)
     cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardLightColor1: str | None = Field(default=None, max_length=32)
+    cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
 
@@ -80,6 +87,8 @@ class UpdateModelRequest(BaseModel):
     influencerFlag: str | None = Field(default=None, max_length=16)
     cardOverlayColorStart: str | None = Field(default=None, max_length=32)
     cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardLightColor1: str | None = Field(default=None, max_length=32)
+    cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
 
@@ -131,6 +140,8 @@ def _model_info(
         influencerFlagSvg=influencer_flag_svg,
         cardOverlayColorStart=fields.get("cardOverlayColorStart"),
         cardOverlayColorEnd=fields.get("cardOverlayColorEnd"),
+        cardLightColor1=fields.get("cardLightColor1"),
+        cardLightColor2=fields.get("cardLightColor2"),
         cardPackName=fields.get("cardPackName"),
         cardPackName2=fields.get("cardPackName2"),
         packFaceVideoUrl=pack_face_video_url,
@@ -190,6 +201,8 @@ def write_model_meta(
     influencerFlag: str | None = None,
     cardOverlayColorStart: str | None = None,
     cardOverlayColorEnd: str | None = None,
+    cardLightColor1: str | None = None,
+    cardLightColor2: str | None = None,
     cardPackName: str | None = None,
     cardPackName2: str | None = None,
 ) -> None:
@@ -219,6 +232,8 @@ def write_model_meta(
         "influencerFlag": influencerFlag,
         "cardOverlayColorStart": cardOverlayColorStart,
         "cardOverlayColorEnd": cardOverlayColorEnd,
+        "cardLightColor1": cardLightColor1,
+        "cardLightColor2": cardLightColor2,
         "cardPackName": cardPackName,
         "cardPackName2": cardPackName2,
     }
@@ -326,6 +341,8 @@ def write_models_index(models_dir: Path) -> None:
                 "influencerFlagSvg": model.influencerFlagSvg,
                 "cardOverlayColorStart": model.cardOverlayColorStart,
                 "cardOverlayColorEnd": model.cardOverlayColorEnd,
+                "cardLightColor1": model.cardLightColor1,
+                "cardLightColor2": model.cardLightColor2,
                 "cardPackName": model.cardPackName,
                 "cardPackName2": model.cardPackName2,
                 "packFaceVideoUrl": model.packFaceVideoUrl,
@@ -353,6 +370,8 @@ def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
         "influencerFlag": _clean_optional_str(request.influencerFlag),
         "cardOverlayColorStart": _clean_optional_str(request.cardOverlayColorStart),
         "cardOverlayColorEnd": _clean_optional_str(request.cardOverlayColorEnd),
+        "cardLightColor1": _clean_optional_str(request.cardLightColor1),
+        "cardLightColor2": _clean_optional_str(request.cardLightColor2),
         "cardPackName": _clean_optional_str(request.cardPackName),
         "cardPackName2": _clean_optional_str(request.cardPackName2),
     }

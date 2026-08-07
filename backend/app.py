@@ -1009,16 +1009,16 @@ def remove_model_theme_avatar(model_id: str, theme_id: str) -> dict:
 
 
 @app.get("/api/collection")
-def get_collection(model: str = "") -> dict:
+def get_collection(model: str = "", theme: str = "") -> dict:
     draft_themes: dict[str, str] = {}
     for flow in list_flows():
         card_id = str(flow.get("card_id") or "").strip()
         draft = flow.get("draft")
-        theme = ""
+        theme_name = ""
         if isinstance(draft, dict):
-            theme = str(draft.get("theme") or "").strip()
-        if card_id and theme:
-            draft_themes[card_id] = theme
+            theme_name = str(draft.get("theme") or "").strip()
+        if card_id and theme_name:
+            draft_themes[card_id] = theme_name
     return build_collection_catalog(
         ROOT,
         CARDS_DIR,
@@ -1027,6 +1027,7 @@ def get_collection(model: str = "") -> dict:
         THEMES_DIR,
         draft_themes=draft_themes,
         model_filter=model or None,
+        theme_filter=theme or None,
     )
 
 
