@@ -14,7 +14,8 @@
     "video-flow": ".venv/bin/python scripts/video-flow.py",
     "prebuild": "node scripts/copy-dotlottie-wasm.mjs",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "stress:symbols": "node scripts/stress-symbol-perf.mjs"
   },
   "dependencies": {
     "@lottiefiles/dotlottie-react": "^0.19.8",

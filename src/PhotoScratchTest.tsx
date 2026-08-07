@@ -877,6 +877,8 @@ export function PhotoScratchTest() {
   const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
   );
+  const bodyFindHitsRef = useRef(bodyFindHits);
+  bodyFindHitsRef.current = bodyFindHits;
   const [litTopSlots, setLitTopSlots] = useState<boolean[]>(() =>
     Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
   );
@@ -1070,6 +1072,10 @@ export function PhotoScratchTest() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_POINT_COUNT },
+      () => false,
+    );
     setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
     claimedTopSlotsRef.current = Array.from(
       { length: TOP_SYMBOL_COUNT },
@@ -1472,15 +1478,18 @@ export function PhotoScratchTest() {
           const marker = bodyMarkerRefs.current[index];
           if (!marker) continue;
           const revealed = revealedPointsRef.current[index];
+          const visible = revealed && !bodyFindHitsRef.current[index];
           const world = sampleMeshUvToWorld(
             sample,
             bodyPoints[index].u,
             bodyPoints[index].v,
           );
           const stagePos = worldPointToStage(world, fgCanvas, stage, frontCam);
-          marker.style.display = revealed ? "flex" : "none";
-          marker.style.transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
-          marker.classList.toggle("is-revealed", revealed);
+          marker.style.display = visible ? "flex" : "none";
+          if (visible) {
+            marker.style.transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
+          }
+          marker.classList.toggle("is-revealed", visible);
         }
       }
       frameId = requestAnimationFrame(render);
@@ -1588,15 +1597,17 @@ export function PhotoScratchTest() {
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
-        setBodyFindHits((prev) =>
-          applyBodyFindHits(
+        setBodyFindHits((prev) => {
+          const next = applyBodyFindHits(
             topSymbolsRef.current,
             sessionSymbolsRef.current,
             revealedBefore,
             newlyRevealed,
             prev,
-          ),
-        );
+          );
+          bodyFindHitsRef.current = next;
+          return next;
+        });
         playBodyFindSounds(
           symbolAudioRef.current,
           topSymbolsRef.current,
@@ -1954,6 +1965,10 @@ export function PhotoScratchTest() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_POINT_COUNT },
+      () => false,
+    );
     setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
     claimedTopSlotsRef.current = Array.from(
       { length: TOP_SYMBOL_COUNT },
@@ -2574,14 +2589,10 @@ export function PhotoScratchTest() {
                       bodyRevealed[index] && !bodyFindHits[index]
                         ? " is-missed"
                         : ""
-                    }${
-                      flyingMatches.some((coin) => coin.bodyIndex === index)
-                        ? " is-flying"
-                        : ""
                     }`}
                     style={{ display: "none" }}
                   >
-                    {bodyRevealed[index] ? (
+                    {bodyRevealed[index] && !bodyFindHits[index] ? (
                       <span className="body-symbol-icon">
                         <GameSymbolIcon
                           typeId={typeId}

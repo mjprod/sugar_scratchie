@@ -333,6 +333,10 @@ export class GarmentGLRenderer {
   private lastPresentedCam = { x: Number.NaN, y: Number.NaN };
   private lastPresentedZoom = Number.NaN;
   private lastHideForeground: boolean | null = null;
+  /** When true, upload every other bottom video frame (FG stays full rate). */
+  private halfRateBottomUploads = false;
+  /** Alternates true/false across eligible bottom uploads. */
+  private bottomUploadOdd = false;
 
   private bottomTex: WebGLTexture;
   private midTex: WebGLTexture;
@@ -495,6 +499,7 @@ export class GarmentGLRenderer {
     this.lastPresentedCam = { x: Number.NaN, y: Number.NaN };
     this.lastPresentedZoom = Number.NaN;
     this.lastHideForeground = null;
+    this.bottomUploadOdd = false;
     this.clearFlakes();
   }
 
@@ -504,6 +509,12 @@ export class GarmentGLRenderer {
       this.unhookVideoFrames(video);
     }
     this.videoFrameHandles.clear();
+  }
+
+  /** Unhook one video's rVFC chain (e.g. park FG after claim). */
+  detachVideoFrames(video: HTMLVideoElement | null | undefined) {
+    if (!video) return;
+    this.unhookVideoFrames(video);
   }
 
   getFrontPresentCamera() {
@@ -734,6 +745,22 @@ export class GarmentGLRenderer {
       this.videoFrameReady.set(video, false);
     } else if (!sizeChanged && state && state.t === video.currentTime) {
       return;
+    }
+
+    // Hunt-phase knob: keep FG at full clip fps, but only push every other
+    // bottom frame to the GPU (~25% less upload traffic with two videos).
+    // First frame / size change always uploads so the texture stays valid.
+    if (
+      !sizeChanged &&
+      tex === this.bottomTex &&
+      this.halfRateBottomUploads
+    ) {
+      this.bottomUploadOdd = !this.bottomUploadOdd;
+      if (!this.bottomUploadOdd) {
+        // Consume the frame without copying — redraw will reuse last bottomTex.
+        this.videoTexState.set(tex, { w: vw, h: vh, t: video.currentTime });
+        return;
+      }
     }
 
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -1021,8 +1048,11 @@ export class GarmentGLRenderer {
     hideForeground = false,
     foregroundChroma = true,
     overscan = PRESENT_ZOOM,
+    halfRateBottom = false,
   ) {
     const gl = this.gl;
+    this.halfRateBottomUploads = halfRateBottom && !hideForeground;
+    if (!this.halfRateBottomUploads) this.bottomUploadOdd = false;
 
     // The chest-follow camera pans the PRESENTED layers (bottom video in step 1,
     // composite in step 4) by the same clip-space offset, with overscan headroom.

@@ -48,6 +48,7 @@ import {
   unlockCountdownSound,
 } from "./game/InitialCountdown";
 import { TopSymbolBar, TOP_BAR_SHOWCASE_MS, type TopBarPhase } from "./game/TopSymbolBar";
+import { getSymbolRotationStats } from "./game/symbolPlaybackRotation";
 import { fetchThemes } from "./shared/themes";
 import {
   MirrorSlideTransition,
@@ -83,6 +84,18 @@ function DebugHud() {
     // is the signature of decode stutter (the canvas redraws fine, but it's
     // showing the same decoded frame repeatedly).
     const vstate = new Map<HTMLVideoElement, { last: number; count: number }>();
+    const samples: Array<{
+      t: number;
+      fps: number;
+      heapMb: number | null;
+      symReady: number;
+      symPlaying: number;
+      symTotal: number;
+      iconCanvases: number;
+      missed: number;
+      dormant: number;
+      fxActive: number;
+    }> = [];
     const tick = () => {
       frames += 1;
       for (const v of document.querySelectorAll<HTMLVideoElement>(
@@ -102,6 +115,7 @@ function DebugHud() {
 
     let last = performance.now();
     let peakHeap = 0;
+    const startedAt = performance.now();
     const intervalId = window.setInterval(() => {
       const now = performance.now();
       const elapsed = Math.max(1, now - last);
@@ -122,6 +136,25 @@ function DebugHud() {
         `fx ${fx.active} particles (peak ${fx.peak}) ${fx.avgFrameMs.toFixed(2)}ms avg`,
       );
 
+      // Symbol Lottie rotation — after miss/dormant freeze, ready should stay
+      // near hit-count only (not all 12–18 icons).
+      const sym = getSymbolRotationStats();
+      const iconCanvases = document.querySelectorAll(
+        ".game-symbol-lottie canvas",
+      ).length;
+      const missed = document.querySelectorAll(
+        ".body-symbol-marker.is-missed",
+      ).length;
+      const dormant = document.querySelectorAll(
+        ".top-symbol-slot.is-dormant",
+      ).length;
+      out.push(
+        `sym rot ${sym.playing}/${sym.ready} ready · ${sym.total} joined (cap ${sym.maxConcurrent})`,
+      );
+      out.push(
+        `sym ui ${iconCanvases} canvases · ${missed} missed · ${dormant} dormant`,
+      );
+
       // JS heap usage. performance.memory is non-standard (Chromium only) but
       // works on plain http/localhost — unlike measureUserAgentSpecificMemory,
       // which needs cross-origin isolation. Safari exposes neither, so we note
@@ -136,12 +169,14 @@ function DebugHud() {
         }
       ).memory;
       const mb = (n: number) => (n / 1048576).toFixed(1);
+      let heapMb: number | null = null;
       if (mem) {
         // Show one decimal + running peak so small allocations are visible; the
         // whole-MB rounding before made it look frozen. NOTE: this is only the JS
         // heap — GPU textures and video decode buffers (what actually grows while
         // scratching) live outside it, so use Chrome's Task Manager for true RAM.
         if (mem.usedJSHeapSize > peakHeap) peakHeap = mem.usedJSHeapSize;
+        heapMb = mem.usedJSHeapSize / 1048576;
         out.push(
           `heap ${mb(mem.usedJSHeapSize)}MB peak ${mb(peakHeap)} (lim ${mb(mem.jsHeapSizeLimit)})`,
         );
@@ -167,12 +202,42 @@ function DebugHud() {
           `${tag} ${vfps}vfps rs${v.readyState} ${v.paused ? "PAUSED" : "play"}${v.seeking ? " SEEK" : ""} t${v.currentTime.toFixed(2)}${v.error ? ` ERR${v.error.code}` : ""}`,
         );
       });
+
+      samples.push({
+        t: Math.round(now - startedAt),
+        fps,
+        heapMb,
+        symReady: sym.ready,
+        symPlaying: sym.playing,
+        symTotal: sym.total,
+        iconCanvases,
+        missed,
+        dormant,
+        fxActive: fx.active,
+      });
+      if (samples.length > 360) samples.splice(0, samples.length - 360);
+
+      (
+        window as Window & {
+          __scratchPerf?: {
+            latest: (typeof samples)[number] | null;
+            samples: typeof samples;
+            peakHeapMb: number;
+          };
+        }
+      ).__scratchPerf = {
+        latest: samples[samples.length - 1] ?? null,
+        samples,
+        peakHeapMb: peakHeap / 1048576,
+      };
+
       setLines(out);
     }, 500);
 
     return () => {
       cancelAnimationFrame(rafId);
       window.clearInterval(intervalId);
+      delete (window as Window & { __scratchPerf?: unknown }).__scratchPerf;
     };
   }, []);
 
@@ -1195,6 +1260,8 @@ export function ScratchPrototype() {
   }, []);
   const bottomVideoRef = useRef<HTMLVideoElement | null>(null);
   const foregroundVideoRef = useRef<HTMLVideoElement | null>(null);
+  /** After claim, FG is paused + rVFC-unhooked so it stops decoding. */
+  const fgParkedRef = useRef(false);
   const glRendererRef = useRef<GarmentGLRenderer | null>(null);
   const marksRef = useRef<ScratchMark[]>([]);
   const hoverPointRef = useRef<Vec2 | null>(null);
@@ -1393,6 +1460,8 @@ export function ScratchPrototype() {
   const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
   );
+  const bodyFindHitsRef = useRef(bodyFindHits);
+  bodyFindHitsRef.current = bodyFindHits;
   const [litTopSlots, setLitTopSlots] = useState<boolean[]>(() =>
     Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
   );
@@ -1553,6 +1622,19 @@ export function ScratchPrototype() {
     }, TOP_BAR_DOCK_MS);
   }
 
+  function parkForegroundDecoder() {
+    if (fgParkedRef.current) return;
+    const foregroundVideo = foregroundVideoRef.current;
+    if (!foregroundVideo) return;
+    fgParkedRef.current = true;
+    try {
+      foregroundVideo.pause();
+    } catch {
+      // ignore
+    }
+    glRendererRef.current?.detachVideoFrames(foregroundVideo);
+  }
+
   function kickGameVideos() {
     if (uiStateRef.current.isPaused) return;
     const bottomVideo = bottomVideoRef.current;
@@ -1560,7 +1642,10 @@ export function ScratchPrototype() {
     if (!bottomVideo || !foregroundVideo) return;
     // Safari sometimes keeps readyState high but stops presenting frames after
     // the theme-intro decoder is torn down — a tiny seek nudges a fresh frame.
-    for (const video of [bottomVideo, foregroundVideo]) {
+    const videos = fgParkedRef.current
+      ? [bottomVideo]
+      : [bottomVideo, foregroundVideo];
+    for (const video of videos) {
       try {
         if (video.readyState >= 2 && !video.seeking) {
           const t = video.currentTime;
@@ -1572,9 +1657,10 @@ export function ScratchPrototype() {
         // ignore seek failures
       }
     }
-    void Promise.all([bottomVideo.play(), foregroundVideo.play()]).catch(
-      () => undefined,
-    );
+    const plays = fgParkedRef.current
+      ? [bottomVideo.play()]
+      : [bottomVideo.play(), foregroundVideo.play()];
+    void Promise.all(plays).catch(() => undefined);
   }
 
   function dismissThemeIntro(options?: { immediate?: boolean }) {
@@ -1895,11 +1981,11 @@ export function ScratchPrototype() {
       // Sample the mesh on the FOREGROUND clock — the mesh was tracked from the
       // foreground (performer) clip, so this keeps scratch holes glued to the
       // body regardless of any residual drift between the two free-running
-      // videos. The bottom video is just the revealed image underneath, where a
-      // few frames of offset is invisible. Fall back to the bottom clock, then
-      // wall-clock, before either video has a valid currentTime.
-      const meshTime =
-        foregroundVideo?.currentTime ?? bottomVideo?.currentTime ?? time;
+      // videos. After claim the FG decoder is parked; fall back to bottom so
+      // chest-follow can keep moving with the remaining clip.
+      const meshTime = fgParkedRef.current
+        ? (bottomVideo?.currentTime ?? time)
+        : (foregroundVideo?.currentTime ?? bottomVideo?.currentTime ?? time);
       const trackedSample = trackedMeshNow
         ? sampleTrackedMesh(trackedMeshNow, meshTime)
         : null;
@@ -2006,6 +2092,7 @@ export function ScratchPrototype() {
       if (
         bottomVideo &&
         foregroundVideo &&
+        !fgParkedRef.current &&
         bottomVideo.readyState >= 2 &&
         foregroundVideo.readyState >= 2
       ) {
@@ -2055,6 +2142,8 @@ export function ScratchPrototype() {
         setClaimed(true);
         tryResolveGameRef.current();
       }
+      // Stop FG decode + rVFC once the performer layer is off-screen.
+      if (hideForeground) parkForegroundDecoder();
 
       renderer.render(
         bottomVideo,
@@ -2064,6 +2153,9 @@ export function ScratchPrototype() {
         camera,
         hideForeground,
         chromaKeyRef.current,
+        PRESENT_ZOOM,
+        // Body hunt (docked bar): half-rate bottom uploads; FG stays full rate.
+        useBodySymbolsRef.current && topBarPhaseRef.current === "docked",
       );
 
       // Skip body-marker transforms while the intro countdown covers the stage —
@@ -2139,6 +2231,8 @@ export function ScratchPrototype() {
         for (let index = 0; index < SYMBOL_SLOT_COUNT; index += 1) {
           const marker = bodyMarkerRefs.current[index];
           const revealed = revealedPointsRef.current[index];
+          // Matches leave the body (fly to the top bar) — only misses stay mounted.
+          const visible = revealed && !bodyFindHitsRef.current[index];
           if (!marker) continue;
           // Writing an unchanged style value still dirties style for that
           // element. Blindly re-assigning display + transform on all six markers
@@ -2150,13 +2244,13 @@ export function ScratchPrototype() {
             applied = { el: marker, transform: "", revealed: null };
             bodyMarkerStyleRef.current[index] = applied;
           }
-          if (applied.revealed !== revealed) {
-            marker.style.display = revealed ? "flex" : "none";
-            marker.classList.toggle("is-revealed", revealed);
-            applied.revealed = revealed;
+          if (applied.revealed !== visible) {
+            marker.style.display = visible ? "flex" : "none";
+            marker.classList.toggle("is-revealed", visible);
+            applied.revealed = visible;
           }
           // A hidden marker has no box — positioning it is invisible work.
-          if (!revealed) continue;
+          if (!visible) continue;
           const world = sampleMeshUvToWorld(
             trackedSample,
             bodyPoints[index].u,
@@ -2421,6 +2515,7 @@ export function ScratchPrototype() {
     revealedCountRef.current = 0;
     progressRef.current = 0;
     claimedRef.current = false;
+    fgParkedRef.current = false;
     huntHintActivityAtRef.current = performance.now();
     huntHintCycleRef.current = { index: -1, shownAt: 0, phase: "show" };
     resetGameOutcome();
@@ -2437,6 +2532,10 @@ export function ScratchPrototype() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_SLOT_COUNT },
+      () => false,
+    );
     setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
     claimedTopSlotsRef.current = Array.from(
       { length: TOP_SYMBOL_COUNT },
@@ -2511,6 +2610,7 @@ export function ScratchPrototype() {
     }
 
     let cancelled = false;
+    fgParkedRef.current = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
     setGameVideosReady(false);
@@ -2590,7 +2690,8 @@ export function ScratchPrototype() {
       const bottomVideo = bottomVideoRef.current;
       const foregroundVideo = foregroundVideoRef.current;
       if (bottomVideo?.paused) void bottomVideo.play().catch(() => undefined);
-      if (foregroundVideo?.paused)
+      // After claim FG is intentionally parked — do not revive its decoder.
+      if (!fgParkedRef.current && foregroundVideo?.paused)
         void foregroundVideo.play().catch(() => undefined);
     };
 
@@ -2803,6 +2904,7 @@ export function ScratchPrototype() {
     revealedCountRef.current = 0;
     progressRef.current = 0;
     claimedRef.current = false;
+    fgParkedRef.current = false;
     huntHintActivityAtRef.current = performance.now();
     huntHintCycleRef.current = { index: -1, shownAt: 0, phase: "show" };
     resetGameOutcome();
@@ -2819,6 +2921,10 @@ export function ScratchPrototype() {
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
     setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_SLOT_COUNT },
+      () => false,
+    );
     setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
     claimedTopSlotsRef.current = Array.from(
       { length: TOP_SYMBOL_COUNT },
@@ -2850,6 +2956,7 @@ export function ScratchPrototype() {
     resetGameOutcome();
     setClaimed(false);
     claimedRef.current = false;
+    fgParkedRef.current = false;
     setSelectedCardId(transition.nextCardId);
   }
 
@@ -2906,6 +3013,7 @@ export function ScratchPrototype() {
     resetGameOutcome();
     setClaimed(false);
     claimedRef.current = false;
+    fgParkedRef.current = false;
     if (nextCard) {
       setSelectedCardId(nextCard.id);
       return;
@@ -3277,15 +3385,17 @@ export function ScratchPrototype() {
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
-        setBodyFindHits((prev) =>
-          applyBodyFindHits(
+        setBodyFindHits((prev) => {
+          const next = applyBodyFindHits(
             topSymbolsRef.current,
             sessionSymbolsRef.current,
             revealedBefore,
             newlyRevealed,
             prev,
-          ),
-        );
+          );
+          bodyFindHitsRef.current = next;
+          return next;
+        });
         playBodyFindSounds(
           symbolAudioRef.current,
           topSymbolsRef.current,
@@ -3380,6 +3490,7 @@ export function ScratchPrototype() {
 
     if (bottomVideo) bottomVideo.currentTime = nextTime;
     if (
+      !fgParkedRef.current &&
       foregroundVideo &&
       Number.isFinite(foregroundVideo.duration) &&
       foregroundVideo.duration > 0 &&
@@ -3405,12 +3516,12 @@ export function ScratchPrototype() {
 
     if (bottomVideo.paused) {
       void bottomVideo.play();
-      void foregroundVideo.play();
+      if (!fgParkedRef.current) void foregroundVideo.play();
       uiStateRef.current = { ...uiStateRef.current, isPaused: false };
       setIsPaused(false);
     } else {
       bottomVideo.pause();
-      foregroundVideo.pause();
+      if (!fgParkedRef.current) foregroundVideo.pause();
       uiStateRef.current = { ...uiStateRef.current, isPaused: true };
       setIsPaused(true);
     }
@@ -3938,20 +4049,16 @@ export function ScratchPrototype() {
                     bodyRevealed[index] && !bodyFindHits[index]
                       ? " is-missed"
                       : ""
-                  }${
-                    flyingCoins.some((coin) => coin.bodyIndex === index)
-                      ? " is-flying"
-                      : ""
                   }`}
                   style={{ display: "none" }}
                 >
-                  {bodyRevealed[index] ? (
+                  {/* Matches unmount immediately — the flying coin owns the only
+                      Lottie copy, then the top-bar slot keeps it. Misses stay. */}
+                  {bodyRevealed[index] && !bodyFindHits[index] ? (
                     <span className="body-symbol-icon">
                       <GameSymbolIcon
                         typeId={typeId}
                         size={BODY_SYMBOL_ICON_PX}
-                        // Body markers are static finds — flight uses its own
-                        // paused copy. Never leave these workers animating.
                         paused
                       />
                     </span>
@@ -4057,7 +4164,7 @@ export function ScratchPrototype() {
               const foregroundVideo = foregroundVideoRef.current;
               if (bottomVideo?.paused)
                 void bottomVideo.play().catch(() => undefined);
-              if (foregroundVideo?.paused)
+              if (!fgParkedRef.current && foregroundVideo?.paused)
                 void foregroundVideo.play().catch(() => undefined);
               drawingRef.current = true;
               setIsScratching(true);
