@@ -5,13 +5,13 @@
  *
  * Usage:
  *   node scripts/stress-symbol-perf.mjs
- *   STRESS_URL='https://127.0.0.1:5080/?model=julianaval&card=julianaval_gym&debug=1' node scripts/stress-symbol-perf.mjs
+ *   STRESS_URL='http://127.0.0.1:5080/?model=julianaval&card=julianaval_gym&debug=1' node scripts/stress-symbol-perf.mjs
  */
 
 const CDP_HTTP = process.env.CDP_HTTP || "http://127.0.0.1:9222";
 const TARGET_URL =
   process.env.STRESS_URL ||
-  "https://127.0.0.1:5080/?model=julianaval&card=julianaval_gym&debug=1";
+  "http://127.0.0.1:5080/?model=julianaval&card=julianaval_gym&debug=1";
 const OUT_PATH =
   process.env.STRESS_OUT ||
   new URL("../.tmp/stress-symbol-perf.json", import.meta.url).pathname;
