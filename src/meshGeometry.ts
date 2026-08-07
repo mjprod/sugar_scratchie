@@ -163,19 +163,41 @@ export function sampleTrackedMesh(mesh: TrackedMesh, time: number): TrackedMeshS
 
   const span = next.t - previous.t;
   const blend = span > 0 ? (loopTime - previous.t) / span : 0;
-  const verts = previous.verts.map((point, index) => {
-    const target = next.verts[index] ?? point;
-    return {
-      x: point.x + (target.x - point.x) * blend,
-      y: point.y + (target.y - point.y) * blend,
-    };
-  });
-  const vis = previous.vis.map((value, index) =>
-    value && next.vis[index] ? 1 : 0,
-  );
+  const count = previous.verts.length;
 
-  return { cols: mesh.cols, rows: mesh.rows, uv: mesh.uv, verts, vis };
+  // Reuse one sample per mesh identity so the hot path doesn't allocate ~864
+  // Vec2 objects + a vis array every animation frame (major GC win).
+  let sample = meshSamplePool.get(mesh);
+  if (!sample || sample.verts.length !== count) {
+    sample = {
+      cols: mesh.cols,
+      rows: mesh.rows,
+      uv: mesh.uv,
+      verts: Array.from({ length: count }, () => ({ x: 0, y: 0 })),
+      vis: new Array(count).fill(0),
+    };
+    meshSamplePool.set(mesh, sample);
+  } else {
+    sample.cols = mesh.cols;
+    sample.rows = mesh.rows;
+    sample.uv = mesh.uv;
+  }
+
+  const verts = sample.verts;
+  const vis = sample.vis;
+  for (let index = 0; index < count; index += 1) {
+    const point = previous.verts[index];
+    const target = next.verts[index] ?? point;
+    const out = verts[index];
+    out.x = point.x + (target.x - point.x) * blend;
+    out.y = point.y + (target.y - point.y) * blend;
+    vis[index] = previous.vis[index] && next.vis[index] ? 1 : 0;
+  }
+
+  return sample;
 }
+
+const meshSamplePool = new WeakMap<TrackedMesh, TrackedMeshSample>();
 
 export function meshVertexAt(sample: TrackedMeshSample, col: number, row: number) {
   return sample.verts[row * sample.cols + col];

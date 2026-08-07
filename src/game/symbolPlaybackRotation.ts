@@ -109,3 +109,19 @@ export function joinSymbolRotation(onTurn: () => void): SymbolTurn {
     },
   };
 }
+
+/** Snapshot for `?debug=1` / stress probes — cheap to poll. */
+export function getSymbolRotationStats() {
+  let ready = 0;
+  let playing = 0;
+  for (const entry of rotation) {
+    if (entry.ready) ready += 1;
+    if (entry.playing) playing += 1;
+  }
+  return {
+    total: rotation.length,
+    ready,
+    playing,
+    maxConcurrent: MAX_CONCURRENT_TURNS,
+  };
+}

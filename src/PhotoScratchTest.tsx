@@ -1,5 +1,5 @@
 import { Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   GarmentGLRenderer,
   MAX_PIXEL_RATIO,
@@ -17,12 +17,15 @@ import {
   type GameSession,
 } from "./game/gameSession";
 import {
+  applyBodyFindHits,
   buildBodySymbols,
   buildTopSymbols,
+  claimNextTopSlot,
   loadSymbolTypes,
-  matchResultDetail,
+  matchedTopSlots,
   resolveMatchGame,
   SYMBOL_TYPE_COUNT,
+  TOP_SYMBOL_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
 import {
@@ -34,7 +37,7 @@ import {
   resolveStageCoachPhase,
   StageCoachHint,
 } from "./game/StageCoachHint";
-import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { TopSymbolBar, TOP_BAR_SHOWCASE_MS, type TopBarPhase } from "./game/TopSymbolBar";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -134,6 +137,23 @@ const SYMBOL_SCRATCH_REVEAL_THRESHOLD = 0.55;
 /** Lottie backing store matches the CSS marker so the find-bounce doesn't
  * upscale a soft 42px canvas. */
 const BODY_SYMBOL_ICON_PX = 72;
+
+type FlyingMatch = {
+  id: number;
+  typeId: number;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  midX: number;
+  midY: number;
+  delayMs: number;
+  bodyIndex: number;
+  topSlot: number;
+};
+
+const MATCH_FLIGHT_DURATION_MS = 1250;
+const MATCH_FLIGHT_STAGGER_MS = 90;
 
 function clamp(value: number, lo: number, hi: number) {
   return value < lo ? lo : value > hi ? hi : value;
@@ -280,6 +300,42 @@ function playNewSymbolNotes(
   for (let slot = prevCount; slot < nextCount; slot += 1) {
     playSymbolSlotNote(state, slot);
   }
+}
+
+function playMatchFindSound(
+  state: SymbolAudioState,
+  enabled: boolean,
+  startOffsetS = 0,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  const t = ctx.currentTime + startOffsetS;
+  // Bright ascending ding — claims a top-bar slot.
+  scheduleTone(ctx, t, 659.25, 0.1, 0.2, "triangle");
+  scheduleTone(ctx, t + 0.055, 880, 0.12, 0.18, "sine");
+  scheduleTone(ctx, t + 0.11, 1174.66, 0.14, 0.12, "sine");
+}
+
+/** Per newly revealed body icon: ding only when it claims a top-bar slot. */
+function playBodyFindSounds(
+  state: SymbolAudioState,
+  top: number[],
+  body: number[],
+  revealedBefore: readonly boolean[],
+  newlyRevealed: readonly number[],
+  enabled: boolean,
+) {
+  if (!enabled || newlyRevealed.length === 0) return;
+  const revealed = revealedBefore.slice();
+  newlyRevealed.forEach((index, i) => {
+    const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    revealed[index] = true;
+    const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    if (after > before) {
+      playMatchFindSound(state, true, i * 0.07);
+    }
+  });
 }
 
 function scheduleTone(
@@ -818,6 +874,22 @@ export function PhotoScratchTest() {
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
   );
+  const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_POINT_COUNT }, () => false),
+  );
+  const bodyFindHitsRef = useRef(bodyFindHits);
+  bodyFindHitsRef.current = bodyFindHits;
+  const [litTopSlots, setLitTopSlots] = useState<boolean[]>(() =>
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const [flyingMatches, setFlyingMatches] = useState<FlyingMatch[]>([]);
+  const claimedTopSlotsRef = useRef<boolean[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const topBarSlotElsRef = useRef<(HTMLDivElement | null)[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => null),
+  );
+  const matchFlightIdRef = useRef(0);
   const [hasBodySymbols, setHasBodySymbols] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
@@ -952,25 +1024,6 @@ export function PhotoScratchTest() {
     setMatchOutcome(null);
   }
 
-  function beginLeaveGameResult() {
-    if (gameResultLeaving) return;
-    const reduceMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      advanceAfterScratchRef.current();
-      return;
-    }
-    setGameResultLeaving(true);
-    if (gameResultLeaveTimerRef.current !== null) {
-      window.clearTimeout(gameResultLeaveTimerRef.current);
-    }
-    gameResultLeaveTimerRef.current = window.setTimeout(() => {
-      gameResultLeaveTimerRef.current = null;
-      advanceAfterScratchRef.current();
-    }, 760);
-  }
-
   function resetMatchRound() {
     clearIntroDockTimer();
     setTopSymbols(buildTopSymbols());
@@ -1018,6 +1071,17 @@ export function PhotoScratchTest() {
     resetMatchRound();
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_POINT_COUNT },
+      () => false,
+    );
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
+    setFlyingMatches([]);
     setHasBodySymbols(mesh.symbolPoints?.length === SYMBOL_POINT_COUNT);
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
@@ -1414,15 +1478,18 @@ export function PhotoScratchTest() {
           const marker = bodyMarkerRefs.current[index];
           if (!marker) continue;
           const revealed = revealedPointsRef.current[index];
+          const visible = revealed && !bodyFindHitsRef.current[index];
           const world = sampleMeshUvToWorld(
             sample,
             bodyPoints[index].u,
             bodyPoints[index].v,
           );
           const stagePos = worldPointToStage(world, fgCanvas, stage, frontCam);
-          marker.style.display = revealed ? "flex" : "none";
-          marker.style.transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
-          marker.classList.toggle("is-revealed", revealed);
+          marker.style.display = visible ? "flex" : "none";
+          if (visible) {
+            marker.style.transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
+          }
+          marker.classList.toggle("is-revealed", visible);
         }
       }
       frameId = requestAnimationFrame(render);
@@ -1503,7 +1570,8 @@ export function PhotoScratchTest() {
 
     const bodyPoints = trackedMeshRef.current?.symbolPoints;
     if (bodyPoints && bodyPoints.length === SYMBOL_POINT_COUNT) {
-      let changed = false;
+      const newlyRevealed: number[] = [];
+      const revealedBefore = revealedPointsRef.current.slice();
       const renderer = fgRendererRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
@@ -1522,20 +1590,33 @@ export function PhotoScratchTest() {
           continue;
         }
         revealedPointsRef.current[index] = true;
-        changed = true;
+        newlyRevealed.push(index);
       }
-      if (changed) {
+      if (newlyRevealed.length > 0) {
         const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
-        const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
-        playNewSymbolNotes(
+        setBodyFindHits((prev) => {
+          const next = applyBodyFindHits(
+            topSymbolsRef.current,
+            sessionSymbolsRef.current,
+            revealedBefore,
+            newlyRevealed,
+            prev,
+          );
+          bodyFindHitsRef.current = next;
+          return next;
+        });
+        playBodyFindSounds(
           symbolAudioRef.current,
-          prevCount,
-          nextSymbolCount,
+          topSymbolsRef.current,
+          sessionSymbolsRef.current,
+          revealedBefore,
+          newlyRevealed,
           soundEnabledRef.current,
         );
+        spawnBodyMatchFlights(newlyRevealed);
         if (nextSymbolCount >= SYMBOL_POINT_COUNT) {
           beginFinishAutoScratch();
         }
@@ -1561,6 +1642,110 @@ export function PhotoScratchTest() {
     }
   }
   applyScratchAtUvRef.current = applyScratchAtUv;
+
+  function removeFlyingMatch(id: number) {
+    setFlyingMatches((current) => {
+      const coin = current.find((entry) => entry.id === id);
+      const rest = current.filter((entry) => entry.id !== id);
+      if (coin && coin.topSlot >= 0) {
+        const slot = coin.topSlot;
+        queueMicrotask(() => {
+          setLitTopSlots((prev) => {
+            if (prev[slot]) return prev;
+            const next = prev.slice();
+            next[slot] = true;
+            return next;
+          });
+        });
+      }
+      return rest;
+    });
+  }
+
+  function spawnBodyMatchFlights(newlyRevealed: readonly number[]) {
+    const stage = stageRef.current;
+    const sample = trackedSampleRef.current;
+    const bodyPoints = trackedMeshRef.current?.symbolPoints;
+    const fgCanvas = fgCanvasRef.current;
+    if (
+      !stage ||
+      !sample ||
+      !bodyPoints ||
+      !fgCanvas ||
+      newlyRevealed.length === 0
+    ) {
+      return;
+    }
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const stageRect = stage.getBoundingClientRect();
+    const frontCam = fgRendererRef.current?.getFrontPresentCamera() ?? {
+      x: 0,
+      y: 0,
+    };
+    const top = topSymbolsRef.current;
+    const body = sessionSymbolsRef.current;
+    const claimed = claimedTopSlotsRef.current.slice();
+    const coins: FlyingMatch[] = [];
+    let flightIndex = 0;
+
+    for (const bodyIndex of newlyRevealed) {
+      const typeId = body[bodyIndex];
+      if (typeId === undefined) continue;
+      const topSlot = claimNextTopSlot(top, typeId, claimed);
+      if (topSlot < 0) continue;
+      claimed[topSlot] = true;
+
+      if (reduceMotion) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const point = bodyPoints[bodyIndex];
+      const world = sampleMeshUvToWorld(sample, point.u, point.v);
+      const from = worldPointToStage(world, fgCanvas, stage, frontCam);
+      const slotEl = topBarSlotElsRef.current[topSlot];
+      if (!slotEl) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const slotRect = slotEl.getBoundingClientRect();
+      const toX = slotRect.left - stageRect.left + slotRect.width / 2;
+      const toY = slotRect.top - stageRect.top + slotRect.height / 2;
+      coins.push({
+        id: (matchFlightIdRef.current += 1),
+        typeId,
+        fromX: from.x,
+        fromY: from.y,
+        toX,
+        toY,
+        midX: from.x + (toX - from.x) * 0.28,
+        midY: Math.min(from.y - 28, toY + (from.y - toY) * 0.55) - 36,
+        delayMs: flightIndex * MATCH_FLIGHT_STAGGER_MS,
+        bodyIndex,
+        topSlot,
+      });
+      flightIndex += 1;
+    }
+
+    claimedTopSlotsRef.current = claimed;
+    if (coins.length > 0) {
+      setFlyingMatches((current) => [...current, ...coins]);
+    }
+  }
 
   function addScratch(clientX: number, clientY: number) {
     const point = getCanvasPoint(clientX, clientY);
@@ -1666,13 +1851,27 @@ export function PhotoScratchTest() {
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    // Skip the win/lose overlay — sting then next card / hub.
     const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
     );
     clearGameResultTimer();
+    if (hasBodySymbolsRef.current) {
+      setTopBarPhase("showcase");
+      topBarPhaseRef.current = "showcase";
+      const reduceMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const showcaseMs = reduceMotion
+        ? Math.min(advanceDelayMs, 600)
+        : Math.max(advanceDelayMs, TOP_BAR_SHOWCASE_MS);
+      gameResultTimerRef.current = window.setTimeout(() => {
+        gameResultTimerRef.current = null;
+        advanceAfterScratchRef.current();
+      }, showcaseMs);
+      return;
+    }
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
       advanceAfterScratchRef.current();
@@ -1689,8 +1888,6 @@ export function PhotoScratchTest() {
 
     const inGame = isGameModeUrl() && loadGameSession()?.phase === "photo";
     const match = matchOutcomeRef.current ?? matchOutcome;
-    // Pending is set by tryResolveGame and not wiped by the render-time
-    // gameResultRef sync (overlay is skipped, so gameResult stays null).
     const result =
       gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let diamonds = 0;
@@ -1767,6 +1964,17 @@ export function PhotoScratchTest() {
     resetMatchRound();
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_POINT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_POINT_COUNT },
+      () => false,
+    );
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
+    setFlyingMatches([]);
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
 
@@ -2279,7 +2487,9 @@ export function PhotoScratchTest() {
 
         <div
           ref={stageRef}
-          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${gameResult ? " is-game-over" : ""}${
+          className={`stage photo-scratch-stage${ready ? " is-ready" : ""}${isScratching ? " is-finger-dragging is-scratching" : ""}${showLayerBg ? "" : " is-bg-hidden"}${
+            gameResult ? " is-game-over" : ""
+          }${topBarPhase === "showcase" ? " is-showcase-phase" : ""}${
             hasBodySymbols && !introActive && topBarPhase === "center"
               ? " is-bar-phase"
               : ""
@@ -2321,6 +2531,8 @@ export function PhotoScratchTest() {
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
+              matchedSlots={litTopSlots}
+              slotElsOutRef={topBarSlotElsRef}
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}
@@ -2373,20 +2585,58 @@ export function PhotoScratchTest() {
                     ref={(el) => {
                       bodyMarkerRefs.current[index] = el;
                     }}
-                    className="body-symbol-marker"
+                    className={`body-symbol-marker${
+                      bodyRevealed[index] && !bodyFindHits[index]
+                        ? " is-missed"
+                        : ""
+                    }`}
                     style={{ display: "none" }}
                   >
-                    {bodyRevealed[index] ? (
+                    {bodyRevealed[index] && !bodyFindHits[index] ? (
                       <span className="body-symbol-icon">
                         <GameSymbolIcon
                           typeId={typeId}
                           size={BODY_SYMBOL_ICON_PX}
+                          paused
                         />
                       </span>
                     ) : null}
                   </div>
                 ))
               : null}
+            {flyingMatches.map((coin) => (
+              <div
+                key={coin.id}
+                className="flying-coin is-match-fly"
+                style={
+                  {
+                    "--coin-from-x": `${coin.fromX}px`,
+                    "--coin-from-y": `${coin.fromY}px`,
+                    "--coin-mid-x": `${coin.midX}px`,
+                    "--coin-mid-y": `${coin.midY}px`,
+                    "--coin-to-x": `${coin.toX}px`,
+                    "--coin-to-y": `${coin.toY}px`,
+                    animationDuration: `${MATCH_FLIGHT_DURATION_MS}ms`,
+                    animationDelay: `${coin.delayMs}ms`,
+                  } as CSSProperties
+                }
+                onAnimationEnd={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  removeFlyingMatch(coin.id);
+                }}
+                aria-hidden="true"
+              >
+                <span className="flying-coin-spin">
+                  <span
+                    className="flying-coin-plane flying-coin-plane--back"
+                    aria-hidden="true"
+                  />
+                  <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
+                    <GameSymbolIcon typeId={coin.typeId} size={68} paused />
+                  </span>
+                </span>
+              </div>
+            ))}
           </div>
           <div className="mobile-sound-wrap">
             <button
@@ -2403,43 +2653,6 @@ export function PhotoScratchTest() {
               )}
             </button>
           </div>
-          {gameResult ? (
-            <div
-              className={`game-result game-result--${gameResult}${
-                gameResultLeaving ? " is-leaving" : ""
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <div className="game-result-iris">
-                <div className="game-result-surface">
-                  <div className="game-result-card">
-                    <p className="game-result-title">
-                      {gameResult === "win" ? "You win!" : "No luck this time"}
-                    </p>
-                    <p className="game-result-detail">
-                      {matchOutcome
-                        ? matchResultDetail(matchOutcome, "diamonds")
-                        : gameResult === "win"
-                          ? "Three matching symbols — nice!"
-                          : "No three-of-a-kind — try again."}
-                    </p>
-                    <button
-                      type="button"
-                      className="game-result-button"
-                      onClick={beginLeaveGameResult}
-                    >
-                      {remainingCards.length > 1
-                        ? "Next card"
-                        : isGameModeUrl()
-                          ? "See diamonds"
-                          : "Done"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       </section>
     </main>

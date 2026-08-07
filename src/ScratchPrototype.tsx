@@ -16,13 +16,16 @@ import {
 import { GarmentGLRenderer, PRESENT_ZOOM } from "./glRenderer";
 import { GameSymbolIcon } from "./game/GameSymbolIcon";
 import {
+  applyBodyFindHits,
   buildBodySymbols,
   buildTopSymbols,
+  claimNextTopSlot,
   loadSymbolTypes,
-  matchResultDetail,
+  matchedTopSlots,
   resolveMatchGame,
   SYMBOL_TYPES,
   SYMBOL_TYPE_COUNT,
+  TOP_SYMBOL_COUNT,
   type MatchGameOutcome,
 } from "./game/matchGame";
 import {
@@ -44,7 +47,8 @@ import {
   TOP_BAR_DOCK_MS,
   unlockCountdownSound,
 } from "./game/InitialCountdown";
-import { TopSymbolBar, type TopBarPhase } from "./game/TopSymbolBar";
+import { TopSymbolBar, TOP_BAR_SHOWCASE_MS, type TopBarPhase } from "./game/TopSymbolBar";
+import { getSymbolRotationStats } from "./game/symbolPlaybackRotation";
 import { fetchThemes } from "./shared/themes";
 import {
   MirrorSlideTransition,
@@ -80,6 +84,18 @@ function DebugHud() {
     // is the signature of decode stutter (the canvas redraws fine, but it's
     // showing the same decoded frame repeatedly).
     const vstate = new Map<HTMLVideoElement, { last: number; count: number }>();
+    const samples: Array<{
+      t: number;
+      fps: number;
+      heapMb: number | null;
+      symReady: number;
+      symPlaying: number;
+      symTotal: number;
+      iconCanvases: number;
+      missed: number;
+      dormant: number;
+      fxActive: number;
+    }> = [];
     const tick = () => {
       frames += 1;
       for (const v of document.querySelectorAll<HTMLVideoElement>(
@@ -99,6 +115,7 @@ function DebugHud() {
 
     let last = performance.now();
     let peakHeap = 0;
+    const startedAt = performance.now();
     const intervalId = window.setInterval(() => {
       const now = performance.now();
       const elapsed = Math.max(1, now - last);
@@ -119,6 +136,25 @@ function DebugHud() {
         `fx ${fx.active} particles (peak ${fx.peak}) ${fx.avgFrameMs.toFixed(2)}ms avg`,
       );
 
+      // Symbol Lottie rotation — after miss/dormant freeze, ready should stay
+      // near hit-count only (not all 12–18 icons).
+      const sym = getSymbolRotationStats();
+      const iconCanvases = document.querySelectorAll(
+        ".game-symbol-lottie canvas",
+      ).length;
+      const missed = document.querySelectorAll(
+        ".body-symbol-marker.is-missed",
+      ).length;
+      const dormant = document.querySelectorAll(
+        ".top-symbol-slot.is-dormant",
+      ).length;
+      out.push(
+        `sym rot ${sym.playing}/${sym.ready} ready · ${sym.total} joined (cap ${sym.maxConcurrent})`,
+      );
+      out.push(
+        `sym ui ${iconCanvases} canvases · ${missed} missed · ${dormant} dormant`,
+      );
+
       // JS heap usage. performance.memory is non-standard (Chromium only) but
       // works on plain http/localhost — unlike measureUserAgentSpecificMemory,
       // which needs cross-origin isolation. Safari exposes neither, so we note
@@ -133,12 +169,14 @@ function DebugHud() {
         }
       ).memory;
       const mb = (n: number) => (n / 1048576).toFixed(1);
+      let heapMb: number | null = null;
       if (mem) {
         // Show one decimal + running peak so small allocations are visible; the
         // whole-MB rounding before made it look frozen. NOTE: this is only the JS
         // heap — GPU textures and video decode buffers (what actually grows while
         // scratching) live outside it, so use Chrome's Task Manager for true RAM.
         if (mem.usedJSHeapSize > peakHeap) peakHeap = mem.usedJSHeapSize;
+        heapMb = mem.usedJSHeapSize / 1048576;
         out.push(
           `heap ${mb(mem.usedJSHeapSize)}MB peak ${mb(peakHeap)} (lim ${mb(mem.jsHeapSizeLimit)})`,
         );
@@ -164,12 +202,42 @@ function DebugHud() {
           `${tag} ${vfps}vfps rs${v.readyState} ${v.paused ? "PAUSED" : "play"}${v.seeking ? " SEEK" : ""} t${v.currentTime.toFixed(2)}${v.error ? ` ERR${v.error.code}` : ""}`,
         );
       });
+
+      samples.push({
+        t: Math.round(now - startedAt),
+        fps,
+        heapMb,
+        symReady: sym.ready,
+        symPlaying: sym.playing,
+        symTotal: sym.total,
+        iconCanvases,
+        missed,
+        dormant,
+        fxActive: fx.active,
+      });
+      if (samples.length > 360) samples.splice(0, samples.length - 360);
+
+      (
+        window as Window & {
+          __scratchPerf?: {
+            latest: (typeof samples)[number] | null;
+            samples: typeof samples;
+            peakHeapMb: number;
+          };
+        }
+      ).__scratchPerf = {
+        latest: samples[samples.length - 1] ?? null,
+        samples,
+        peakHeapMb: peakHeap / 1048576,
+      };
+
       setLines(out);
     }, 500);
 
     return () => {
       cancelAnimationFrame(rafId);
       window.clearInterval(intervalId);
+      delete (window as Window & { __scratchPerf?: unknown }).__scratchPerf;
     };
   }, []);
 
@@ -214,10 +282,15 @@ type FlyingCoin = {
   midX: number;
   midY: number;
   delayMs: number;
+  /** Body-hunt match flight: source body index + destination top slot. */
+  bodyIndex?: number;
+  topSlot?: number;
 };
 
 const COIN_FLIGHT_DURATION_MS = 620;
 const COIN_FLIGHT_STAGGER_MS = 80;
+const MATCH_FLIGHT_DURATION_MS = 1250;
+const MATCH_FLIGHT_STAGGER_MS = 90;
 // A card pairs the reveal (bottom) video, the green-screen foreground video, and
 // the tracked mesh generated from that foreground. Switching cards swaps all
 // three together so the scratch holes line up with the right clip.
@@ -498,6 +571,42 @@ function playNewSymbolNotes(
   }
 }
 
+function playMatchFindSound(
+  state: SymbolAudioState,
+  enabled: boolean,
+  startOffsetS = 0,
+) {
+  if (!enabled) return;
+  const ctx = ensureSymbolAudio(state);
+  if (!ctx) return;
+  const t = ctx.currentTime + startOffsetS;
+  // Bright ascending ding — claims a top-bar slot.
+  scheduleTone(ctx, t, 659.25, 0.1, 0.2, "triangle");
+  scheduleTone(ctx, t + 0.055, 880, 0.12, 0.18, "sine");
+  scheduleTone(ctx, t + 0.11, 1174.66, 0.14, 0.12, "sine");
+}
+
+/** Per newly revealed body icon: ding only when it claims a top-bar slot. */
+function playBodyFindSounds(
+  state: SymbolAudioState,
+  top: number[],
+  body: number[],
+  revealedBefore: readonly boolean[],
+  newlyRevealed: readonly number[],
+  enabled: boolean,
+) {
+  if (!enabled || newlyRevealed.length === 0) return;
+  const revealed = revealedBefore.slice();
+  newlyRevealed.forEach((index, i) => {
+    const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    revealed[index] = true;
+    const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    if (after > before) {
+      playMatchFindSound(state, true, i * 0.07);
+    }
+  });
+}
+
 function scheduleTone(
   ctx: AudioContext,
   startAt: number,
@@ -646,12 +755,14 @@ function worldPointToStageWithRects(
   canvasRect: DOMRect,
   stageRect: DOMRect,
   camera: { x: number; y: number },
+  overscan = PRESENT_ZOOM,
 ): Vec2 {
+  const zoom = Math.max(1, overscan);
   const refClipX = (worldPoint.x / CANVAS_WIDTH) * 2 - 1;
   const refClipY = 1 - (worldPoint.y / CANVAS_HEIGHT) * 2;
-  const presentX = ((refClipX * PRESENT_ZOOM + camera.x + 1) / 2) * CANVAS_WIDTH;
+  const presentX = ((refClipX * zoom + camera.x + 1) / 2) * CANVAS_WIDTH;
   const presentY =
-    ((1 - (refClipY * PRESENT_ZOOM + camera.y)) / 2) * CANVAS_HEIGHT;
+    ((1 - (refClipY * zoom + camera.y)) / 2) * CANVAS_HEIGHT;
   const clientX =
     canvasRect.left + (presentX / CANVAS_WIDTH) * canvasRect.width;
   const clientY =
@@ -664,12 +775,14 @@ function worldPointToStage(
   canvas: HTMLCanvasElement,
   stage: HTMLElement,
   camera: { x: number; y: number },
+  overscan = PRESENT_ZOOM,
 ): Vec2 {
   return worldPointToStageWithRects(
     worldPoint,
     canvas.getBoundingClientRect(),
     stage.getBoundingClientRect(),
     camera,
+    overscan,
   );
 }
 
@@ -856,6 +969,27 @@ const CHEST_TARGET_UV = { x: 0.5, y: 0.4 };
 const CHEST_FOLLOW_STRENGTH = 0.7;
 const CHEST_CAM_MAX = Math.min(0.05, PRESENT_ZOOM - 1);
 const CHEST_SMOOTH = 0.08;
+
+// Show a pulsar on one unfound body mark at a time once this many (or fewer)
+// remain, but only after the player has been idle for HINT_IDLE_MS. Hold each
+// mark for HINT_PULSE_DWELL_MS, then pause HINT_PULSE_GAP_MS before the next.
+const HINT_REMAINING_MAX = 3;
+const HINT_IDLE_MS = 2200;
+const HINT_PULSE_DWELL_MS = 2600;
+const HINT_PULSE_GAP_MS = 1600;
+
+function pickNextUnfoundSymbol(
+  revealed: boolean[],
+  afterIndex: number,
+): number {
+  const unfound: number[] = [];
+  for (let i = 0; i < revealed.length; i += 1) {
+    if (!revealed[i]) unfound.push(i);
+  }
+  if (unfound.length === 0) return -1;
+  const next = unfound.find((i) => i > afterIndex);
+  return next ?? unfound[0];
+}
 
 // Bilinearly interpolate the deformed mesh at a fractional UV grid position to
 // get its current canvas-pixel location (the mesh UV grid is regular 0..1).
@@ -1126,6 +1260,8 @@ export function ScratchPrototype() {
   }, []);
   const bottomVideoRef = useRef<HTMLVideoElement | null>(null);
   const foregroundVideoRef = useRef<HTMLVideoElement | null>(null);
+  /** After claim, FG is paused + rVFC-unhooked so it stops decoding. */
+  const fgParkedRef = useRef(false);
   const glRendererRef = useRef<GarmentGLRenderer | null>(null);
   const marksRef = useRef<ScratchMark[]>([]);
   const hoverPointRef = useRef<Vec2 | null>(null);
@@ -1222,6 +1358,27 @@ export function ScratchPrototype() {
   const bodyMarkerStyleRef = useRef<
     ({ el: HTMLDivElement; transform: string; revealed: boolean | null } | null)[]
   >([]);
+  /** Throttle getBoundingClientRect — layout is stable between resizes. */
+  const bodyMarkerLayoutRef = useRef<{
+    canvasRect: DOMRect | null;
+    stageRect: DOMRect | null;
+    framesUntilRefresh: number;
+  }>({ canvasRect: null, stageRect: null, framesUntilRefresh: 0 });
+  /** Single shared pulsar — repositioned onto one unfound mark at a time. */
+  const huntPulsarRef = useRef<HTMLDivElement | null>(null);
+  const huntPulsarStyleRef = useRef({
+    transform: "",
+    active: false,
+    index: -1,
+  });
+  /** Last scratch / pointer activity — pulsars wait HINT_IDLE_MS after this. */
+  const huntHintActivityAtRef = useRef(performance.now());
+  /** One-at-a-time pulsar: show one mark, then gap, then the next. */
+  const huntHintCycleRef = useRef({
+    index: -1,
+    shownAt: 0,
+    phase: "show" as "show" | "gap",
+  });
   const useBodySymbolsRef = useRef(false);
   const revealedPointsRef = useRef<boolean[]>(
     Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
@@ -1299,6 +1456,20 @@ export function ScratchPrototype() {
   const [revealedSymbols, setRevealedSymbols] = useState(0);
   const [bodyRevealed, setBodyRevealed] = useState<boolean[]>(() =>
     Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
+  );
+  const [bodyFindHits, setBodyFindHits] = useState<boolean[]>(() =>
+    Array.from({ length: SYMBOL_SLOT_COUNT }, () => false),
+  );
+  const bodyFindHitsRef = useRef(bodyFindHits);
+  bodyFindHitsRef.current = bodyFindHits;
+  const [litTopSlots, setLitTopSlots] = useState<boolean[]>(() =>
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const claimedTopSlotsRef = useRef<boolean[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => false),
+  );
+  const topBarSlotElsRef = useRef<(HTMLDivElement | null)[]>(
+    Array.from({ length: TOP_SYMBOL_COUNT }, () => null),
   );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(18.8);
@@ -1451,6 +1622,19 @@ export function ScratchPrototype() {
     }, TOP_BAR_DOCK_MS);
   }
 
+  function parkForegroundDecoder() {
+    if (fgParkedRef.current) return;
+    const foregroundVideo = foregroundVideoRef.current;
+    if (!foregroundVideo) return;
+    fgParkedRef.current = true;
+    try {
+      foregroundVideo.pause();
+    } catch {
+      // ignore
+    }
+    glRendererRef.current?.detachVideoFrames(foregroundVideo);
+  }
+
   function kickGameVideos() {
     if (uiStateRef.current.isPaused) return;
     const bottomVideo = bottomVideoRef.current;
@@ -1458,7 +1642,10 @@ export function ScratchPrototype() {
     if (!bottomVideo || !foregroundVideo) return;
     // Safari sometimes keeps readyState high but stops presenting frames after
     // the theme-intro decoder is torn down — a tiny seek nudges a fresh frame.
-    for (const video of [bottomVideo, foregroundVideo]) {
+    const videos = fgParkedRef.current
+      ? [bottomVideo]
+      : [bottomVideo, foregroundVideo];
+    for (const video of videos) {
       try {
         if (video.readyState >= 2 && !video.seeking) {
           const t = video.currentTime;
@@ -1470,9 +1657,10 @@ export function ScratchPrototype() {
         // ignore seek failures
       }
     }
-    void Promise.all([bottomVideo.play(), foregroundVideo.play()]).catch(
-      () => undefined,
-    );
+    const plays = fgParkedRef.current
+      ? [bottomVideo.play()]
+      : [bottomVideo.play(), foregroundVideo.play()];
+    void Promise.all(plays).catch(() => undefined);
   }
 
   function dismissThemeIntro(options?: { immediate?: boolean }) {
@@ -1566,27 +1754,6 @@ export function ScratchPrototype() {
     setGameResult(null);
     setGameResultLeaving(false);
     setMatchOutcome(null);
-  }
-
-  function beginLeaveGameResult() {
-    if (gameResultLeaving) return;
-    const reduceMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      advanceAfterScratchRef.current();
-      return;
-    }
-    setGameResultLeaving(true);
-    if (gameResultLeaveTimerRef.current !== null) {
-      window.clearTimeout(gameResultLeaveTimerRef.current);
-    }
-    // Don't rely only on animationend — some browsers skip it when the
-    // leave animation replaces an in-flight open animation.
-    gameResultLeaveTimerRef.current = window.setTimeout(() => {
-      gameResultLeaveTimerRef.current = null;
-      advanceAfterScratchRef.current();
-    }, 760);
   }
 
   function resetMatchRound() {
@@ -1814,11 +1981,11 @@ export function ScratchPrototype() {
       // Sample the mesh on the FOREGROUND clock — the mesh was tracked from the
       // foreground (performer) clip, so this keeps scratch holes glued to the
       // body regardless of any residual drift between the two free-running
-      // videos. The bottom video is just the revealed image underneath, where a
-      // few frames of offset is invisible. Fall back to the bottom clock, then
-      // wall-clock, before either video has a valid currentTime.
-      const meshTime =
-        foregroundVideo?.currentTime ?? bottomVideo?.currentTime ?? time;
+      // videos. After claim the FG decoder is parked; fall back to bottom so
+      // chest-follow can keep moving with the remaining clip.
+      const meshTime = fgParkedRef.current
+        ? (bottomVideo?.currentTime ?? time)
+        : (foregroundVideo?.currentTime ?? bottomVideo?.currentTime ?? time);
       const trackedSample = trackedMeshNow
         ? sampleTrackedMesh(trackedMeshNow, meshTime)
         : null;
@@ -1925,6 +2092,7 @@ export function ScratchPrototype() {
       if (
         bottomVideo &&
         foregroundVideo &&
+        !fgParkedRef.current &&
         bottomVideo.readyState >= 2 &&
         foregroundVideo.readyState >= 2
       ) {
@@ -1974,6 +2142,8 @@ export function ScratchPrototype() {
         setClaimed(true);
         tryResolveGameRef.current();
       }
+      // Stop FG decode + rVFC once the performer layer is off-screen.
+      if (hideForeground) parkForegroundDecoder();
 
       renderer.render(
         bottomVideo,
@@ -1983,6 +2153,9 @@ export function ScratchPrototype() {
         camera,
         hideForeground,
         chromaKeyRef.current,
+        PRESENT_ZOOM,
+        // Body hunt (docked bar): half-rate bottom uploads; FG stays full rate.
+        useBodySymbolsRef.current && topBarPhaseRef.current === "docked",
       );
 
       // Skip body-marker transforms while the intro countdown covers the stage —
@@ -1999,12 +2172,68 @@ export function ScratchPrototype() {
         stage &&
         canvas
       ) {
-        const canvasRect = canvas.getBoundingClientRect();
-        const stageRect = stage.getBoundingClientRect();
+        const layout = bodyMarkerLayoutRef.current;
+        if (
+          layout.framesUntilRefresh <= 0 ||
+          !layout.canvasRect ||
+          !layout.stageRect
+        ) {
+          layout.canvasRect = canvas.getBoundingClientRect();
+          layout.stageRect = stage.getBoundingClientRect();
+          layout.framesUntilRefresh = 8;
+        } else {
+          layout.framesUntilRefresh -= 1;
+        }
+        const canvasRect = layout.canvasRect;
+        const stageRect = layout.stageRect;
+        const remainingSymbols =
+          SYMBOL_SLOT_COUNT - revealedSymbolsRef.current;
+        const nowMs = performance.now();
+        const idleLongEnough =
+          !drawingRef.current &&
+          nowMs - huntHintActivityAtRef.current >= HINT_IDLE_MS;
+        const pulsarEligible =
+          useBodySymbolsRef.current &&
+          topBarPhaseRef.current === "docked" &&
+          !claimedRef.current &&
+          !isBodyScratchLocked() &&
+          remainingSymbols > 0 &&
+          remainingSymbols <= HINT_REMAINING_MAX &&
+          idleLongEnough;
+        const cycle = huntHintCycleRef.current;
+        if (!pulsarEligible) {
+          cycle.index = -1;
+          cycle.shownAt = 0;
+          cycle.phase = "show";
+        } else {
+          const revealed = revealedPointsRef.current;
+          if (cycle.phase === "gap") {
+            if (nowMs - cycle.shownAt >= HINT_PULSE_GAP_MS) {
+              cycle.index = pickNextUnfoundSymbol(revealed, cycle.index);
+              cycle.shownAt = nowMs;
+              cycle.phase = "show";
+            }
+          } else if (cycle.index < 0) {
+            cycle.index = pickNextUnfoundSymbol(revealed, -1);
+            cycle.shownAt = nowMs;
+            cycle.phase = "show";
+          } else if (revealed[cycle.index]) {
+            // Found while showing — clear, then gap before the next mark.
+            cycle.phase = "gap";
+            cycle.shownAt = nowMs;
+          } else if (nowMs - cycle.shownAt >= HINT_PULSE_DWELL_MS) {
+            cycle.phase = "gap";
+            cycle.shownAt = nowMs;
+          }
+        }
+        const activePulsarIndex =
+          pulsarEligible && cycle.phase === "show" ? cycle.index : -1;
         for (let index = 0; index < SYMBOL_SLOT_COUNT; index += 1) {
           const marker = bodyMarkerRefs.current[index];
-          if (!marker) continue;
           const revealed = revealedPointsRef.current[index];
+          // Matches leave the body (fly to the top bar) — only misses stay mounted.
+          const visible = revealed && !bodyFindHitsRef.current[index];
+          if (!marker) continue;
           // Writing an unchanged style value still dirties style for that
           // element. Blindly re-assigning display + transform on all six markers
           // cost ~1440 style recalcs/second even with nothing revealed, so track
@@ -2015,13 +2244,13 @@ export function ScratchPrototype() {
             applied = { el: marker, transform: "", revealed: null };
             bodyMarkerStyleRef.current[index] = applied;
           }
-          if (applied.revealed !== revealed) {
-            marker.style.display = revealed ? "flex" : "none";
-            marker.classList.toggle("is-revealed", revealed);
-            applied.revealed = revealed;
+          if (applied.revealed !== visible) {
+            marker.style.display = visible ? "flex" : "none";
+            marker.classList.toggle("is-revealed", visible);
+            applied.revealed = visible;
           }
           // A hidden marker has no box — positioning it is invisible work.
-          if (!revealed) continue;
+          if (!visible) continue;
           const world = sampleMeshUvToWorld(
             trackedSample,
             bodyPoints[index].u,
@@ -2038,6 +2267,55 @@ export function ScratchPrototype() {
             marker.style.transform = transform;
             applied.transform = transform;
           }
+        }
+
+        // One shared pulsar node — never more than one hint on screen.
+        const pulsar = huntPulsarRef.current;
+        const pulsarApplied = huntPulsarStyleRef.current;
+        const showPulsar =
+          activePulsarIndex >= 0 &&
+          !revealedPointsRef.current[activePulsarIndex];
+        if (pulsar) {
+          if (showPulsar) {
+            const pt = bodyPoints[activePulsarIndex];
+            const world = sampleMeshUvToWorld(trackedSample, pt.u, pt.v);
+            const stagePos = worldPointToStageWithRects(
+              world,
+              canvasRect,
+              stageRect,
+              camera,
+            );
+            const transform = `translate(${stagePos.x}px, ${stagePos.y}px)`;
+            if (
+              !pulsarApplied.active ||
+              pulsarApplied.index !== activePulsarIndex
+            ) {
+              pulsar.style.display = "flex";
+              pulsar.classList.add("is-active");
+              pulsarApplied.active = true;
+              pulsarApplied.index = activePulsarIndex;
+            }
+            if (pulsarApplied.transform !== transform) {
+              pulsar.style.transform = transform;
+              pulsarApplied.transform = transform;
+            }
+          } else if (pulsarApplied.active) {
+            pulsar.style.display = "none";
+            pulsar.classList.remove("is-active");
+            pulsarApplied.active = false;
+            pulsarApplied.index = -1;
+            pulsarApplied.transform = "";
+          }
+        }
+      } else {
+        const pulsar = huntPulsarRef.current;
+        const pulsarApplied = huntPulsarStyleRef.current;
+        if (pulsar && pulsarApplied.active) {
+          pulsar.style.display = "none";
+          pulsar.classList.remove("is-active");
+          pulsarApplied.active = false;
+          pulsarApplied.index = -1;
+          pulsarApplied.transform = "";
         }
       }
 
@@ -2237,6 +2515,9 @@ export function ScratchPrototype() {
     revealedCountRef.current = 0;
     progressRef.current = 0;
     claimedRef.current = false;
+    fgParkedRef.current = false;
+    huntHintActivityAtRef.current = performance.now();
+    huntHintCycleRef.current = { index: -1, shownAt: 0, phase: "show" };
     resetGameOutcome();
     revealedSymbolsRef.current = 0;
     revealedPointsRef.current = Array.from(
@@ -2250,6 +2531,16 @@ export function ScratchPrototype() {
     setClaimed(false);
     setRevealedSymbols(0);
     setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_SLOT_COUNT },
+      () => false,
+    );
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
     setFlyingCoins([]);
     setGameResult(null);
     setAutoScratch((current) => ({ ...current, enabled: false }));
@@ -2319,6 +2610,7 @@ export function ScratchPrototype() {
     }
 
     let cancelled = false;
+    fgParkedRef.current = false;
     uiStateRef.current = { ...uiStateRef.current, isPaused: false };
     setIsPaused(false);
     setGameVideosReady(false);
@@ -2398,7 +2690,8 @@ export function ScratchPrototype() {
       const bottomVideo = bottomVideoRef.current;
       const foregroundVideo = foregroundVideoRef.current;
       if (bottomVideo?.paused) void bottomVideo.play().catch(() => undefined);
-      if (foregroundVideo?.paused)
+      // After claim FG is intentionally parked — do not revive its decoder.
+      if (!fgParkedRef.current && foregroundVideo?.paused)
         void foregroundVideo.play().catch(() => undefined);
     };
 
@@ -2611,6 +2904,9 @@ export function ScratchPrototype() {
     revealedCountRef.current = 0;
     progressRef.current = 0;
     claimedRef.current = false;
+    fgParkedRef.current = false;
+    huntHintActivityAtRef.current = performance.now();
+    huntHintCycleRef.current = { index: -1, shownAt: 0, phase: "show" };
     resetGameOutcome();
     revealedSymbolsRef.current = 0;
     revealedPointsRef.current = Array.from(
@@ -2623,6 +2919,17 @@ export function ScratchPrototype() {
     setProgress(0);
     setClaimed(false);
     setRevealedSymbols(0);
+    setBodyRevealed(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    setBodyFindHits(Array.from({ length: SYMBOL_SLOT_COUNT }, () => false));
+    bodyFindHitsRef.current = Array.from(
+      { length: SYMBOL_SLOT_COUNT },
+      () => false,
+    );
+    setLitTopSlots(Array.from({ length: TOP_SYMBOL_COUNT }, () => false));
+    claimedTopSlotsRef.current = Array.from(
+      { length: TOP_SYMBOL_COUNT },
+      () => false,
+    );
     setFlyingCoins([]);
     setAutoScratch((current) => ({ ...current, enabled: false }));
   }
@@ -2649,6 +2956,7 @@ export function ScratchPrototype() {
     resetGameOutcome();
     setClaimed(false);
     claimedRef.current = false;
+    fgParkedRef.current = false;
     setSelectedCardId(transition.nextCardId);
   }
 
@@ -2658,8 +2966,6 @@ export function ScratchPrototype() {
     if (cardTransitionActiveRef.current) return;
 
     const match = matchOutcomeRef.current ?? matchOutcome;
-    // Pending is set by tryResolveGame and not wiped by the render-time
-    // gameResultRef sync (overlay is skipped, so gameResult stays null).
     const result =
       gameResultPendingRef.current ?? gameResultRef.current ?? gameResult;
     let prize = 0;
@@ -2707,6 +3013,7 @@ export function ScratchPrototype() {
     resetGameOutcome();
     setClaimed(false);
     claimedRef.current = false;
+    fgParkedRef.current = false;
     if (nextCard) {
       setSelectedCardId(nextCard.id);
       return;
@@ -2770,13 +3077,28 @@ export function ScratchPrototype() {
     setAutoScratch((current) =>
       current.enabled ? { ...current, enabled: false } : current,
     );
-    // Play the outcome sting, then skip the win/lose overlay and go next.
     const advanceDelayMs = playGameOutcomeSound(
       symbolAudioRef.current,
       outcome,
       soundEnabledRef.current,
     );
     clearGameResultTimer();
+    // Body-hunt cards: bar flies back to center and pulses finds, then next card.
+    if (useBodySymbolsRef.current) {
+      setTopBarPhase("showcase");
+      topBarPhaseRef.current = "showcase";
+      const reduceMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const showcaseMs = reduceMotion
+        ? Math.min(advanceDelayMs, 600)
+        : Math.max(advanceDelayMs, TOP_BAR_SHOWCASE_MS);
+      gameResultTimerRef.current = window.setTimeout(() => {
+        gameResultTimerRef.current = null;
+        advanceAfterScratchRef.current();
+      }, showcaseMs);
+      return;
+    }
     gameResultTimerRef.current = window.setTimeout(() => {
       gameResultTimerRef.current = null;
       advanceAfterScratchRef.current();
@@ -2899,7 +3221,97 @@ export function ScratchPrototype() {
   }
 
   function removeFlyingCoin(id: number) {
-    setFlyingCoins((current) => current.filter((coin) => coin.id !== id));
+    setFlyingCoins((current) => {
+      const coin = current.find((entry) => entry.id === id);
+      const rest = current.filter((entry) => entry.id !== id);
+      if (coin && typeof coin.topSlot === "number" && coin.topSlot >= 0) {
+        const slot = coin.topSlot;
+        queueMicrotask(() => {
+          setLitTopSlots((prev) => {
+            if (prev[slot]) return prev;
+            const next = prev.slice();
+            next[slot] = true;
+            return next;
+          });
+        });
+      }
+      return rest;
+    });
+  }
+
+  function spawnBodyMatchFlights(newlyRevealed: readonly number[]) {
+    const stage = stageRef.current;
+    const sample = trackedSampleRef.current;
+    const bodyPoints = trackedMeshRef.current?.symbolPoints;
+    if (!stage || !sample || !bodyPoints || newlyRevealed.length === 0) return;
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const stageRect = stage.getBoundingClientRect();
+    const top = topSymbolsRef.current;
+    const body = sessionSymbolsRef.current;
+    const claimed = claimedTopSlotsRef.current.slice();
+    const coins: FlyingCoin[] = [];
+    let flightIndex = 0;
+
+    for (const bodyIndex of newlyRevealed) {
+      const typeId = body[bodyIndex];
+      if (typeId === undefined) continue;
+      const topSlot = claimNextTopSlot(top, typeId, claimed);
+      if (topSlot < 0) continue;
+      claimed[topSlot] = true;
+
+      if (reduceMotion) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const point = bodyPoints[bodyIndex];
+      const world = sampleMeshUvToWorld(sample, point.u, point.v);
+      const from = worldToStagePoint(world);
+      const slotEl = topBarSlotElsRef.current[topSlot];
+      if (!from || !slotEl) {
+        setLitTopSlots((prev) => {
+          if (prev[topSlot]) return prev;
+          const next = prev.slice();
+          next[topSlot] = true;
+          return next;
+        });
+        continue;
+      }
+
+      const slotRect = slotEl.getBoundingClientRect();
+      const toX = slotRect.left - stageRect.left + slotRect.width / 2;
+      const toY = slotRect.top - stageRect.top + slotRect.height / 2;
+      // Arc hangs near the find, then rises hard into the slot.
+      const midX = from.x + (toX - from.x) * 0.28;
+      const midY = Math.min(from.y - 28, toY + (from.y - toY) * 0.55) - 36;
+      coins.push({
+        id: (coinIdRef.current += 1),
+        typeId,
+        fromX: from.x,
+        fromY: from.y,
+        toX,
+        toY,
+        midX,
+        midY,
+        delayMs: flightIndex * MATCH_FLIGHT_STAGGER_MS,
+        bodyIndex,
+        topSlot,
+      });
+      flightIndex += 1;
+    }
+
+    claimedTopSlotsRef.current = claimed;
+    if (coins.length > 0) {
+      setFlyingCoins((current) => [...current, ...coins]);
+    }
   }
 
   function applyScratchAtUv(
@@ -2913,6 +3325,8 @@ export function ScratchPrototype() {
     if (isBodyScratchLocked()) {
       return;
     }
+
+    if (finalize) huntHintActivityAtRef.current = performance.now();
 
     marksRef.current = [...marksRef.current, { u, v, radius }].slice(-180);
     glRendererRef.current?.paintScratch(u, v, radius);
@@ -2944,7 +3358,8 @@ export function ScratchPrototype() {
     const autoMode = autoScratchRef.current.enabled;
     if (useBodySymbolsRef.current && trackedMeshRef.current?.symbolPoints) {
       const bodyPoints = trackedMeshRef.current.symbolPoints;
-      let changed = false;
+      const newlyRevealed: number[] = [];
+      const revealedBefore = revealedPointsRef.current.slice();
       const renderer = glRendererRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
@@ -2963,20 +3378,33 @@ export function ScratchPrototype() {
           continue;
         }
         revealedPointsRef.current[index] = true;
-        changed = true;
+        newlyRevealed.push(index);
       }
-      if (changed) {
+      if (newlyRevealed.length > 0) {
         const nextSymbolCount = revealedPointsRef.current.filter(Boolean).length;
-        const prevCount = revealedSymbolsRef.current;
         revealedSymbolsRef.current = nextSymbolCount;
         setRevealedSymbols(nextSymbolCount);
         setBodyRevealed(revealedPointsRef.current.slice());
-        playNewSymbolNotes(
+        setBodyFindHits((prev) => {
+          const next = applyBodyFindHits(
+            topSymbolsRef.current,
+            sessionSymbolsRef.current,
+            revealedBefore,
+            newlyRevealed,
+            prev,
+          );
+          bodyFindHitsRef.current = next;
+          return next;
+        });
+        playBodyFindSounds(
           symbolAudioRef.current,
-          prevCount,
-          nextSymbolCount,
+          topSymbolsRef.current,
+          sessionSymbolsRef.current,
+          revealedBefore,
+          newlyRevealed,
           soundEnabledRef.current,
         );
+        spawnBodyMatchFlights(newlyRevealed);
         if (nextSymbolCount >= SYMBOL_SLOT_COUNT) {
           beginFinishAutoScratch();
         }
@@ -3062,6 +3490,7 @@ export function ScratchPrototype() {
 
     if (bottomVideo) bottomVideo.currentTime = nextTime;
     if (
+      !fgParkedRef.current &&
       foregroundVideo &&
       Number.isFinite(foregroundVideo.duration) &&
       foregroundVideo.duration > 0 &&
@@ -3087,12 +3516,12 @@ export function ScratchPrototype() {
 
     if (bottomVideo.paused) {
       void bottomVideo.play();
-      void foregroundVideo.play();
+      if (!fgParkedRef.current) void foregroundVideo.play();
       uiStateRef.current = { ...uiStateRef.current, isPaused: false };
       setIsPaused(false);
     } else {
       bottomVideo.pause();
-      foregroundVideo.pause();
+      if (!fgParkedRef.current) foregroundVideo.pause();
       uiStateRef.current = { ...uiStateRef.current, isPaused: true };
       setIsPaused(true);
     }
@@ -3482,6 +3911,8 @@ export function ScratchPrototype() {
         <div
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
+            topBarPhase === "showcase" ? " is-showcase-phase" : ""
+          }${
             useBodySymbols &&
             matchStartUnlocked &&
             topBarPhase === "center" &&
@@ -3565,6 +3996,8 @@ export function ScratchPrototype() {
               symbols={topSymbols}
               phase={topBarPhase}
               roundKey={topBarRound}
+              matchedSlots={litTopSlots}
+              slotElsOutRef={topBarSlotElsRef}
               onAllRevealed={onTopBarAllRevealed}
             />
           ) : null}
@@ -3612,21 +4045,38 @@ export function ScratchPrototype() {
                   ref={(el) => {
                     bodyMarkerRefs.current[index] = el;
                   }}
-                  className="body-symbol-marker"
+                  className={`body-symbol-marker${
+                    bodyRevealed[index] && !bodyFindHits[index]
+                      ? " is-missed"
+                      : ""
+                  }`}
                   style={{ display: "none" }}
                 >
-                  {bodyRevealed[index] ? (
+                  {/* Matches unmount immediately — the flying coin owns the only
+                      Lottie copy, then the top-bar slot keeps it. Misses stay. */}
+                  {bodyRevealed[index] && !bodyFindHits[index] ? (
                     <span className="body-symbol-icon">
                       <GameSymbolIcon
                         typeId={typeId}
                         size={BODY_SYMBOL_ICON_PX}
-                        paused={isScratching}
+                        paused
                       />
                     </span>
                   ) : null}
                 </div>
               ))
             : null}
+          {useBodySymbols ? (
+            <div
+              ref={huntPulsarRef}
+              className="hunt-hint-pulsar"
+              aria-hidden="true"
+            >
+              <span className="hunt-hint-pulsar-ring" />
+              <span className="hunt-hint-pulsar-ring hunt-hint-pulsar-ring--delay" />
+              <span className="hunt-hint-pulsar-core" />
+            </div>
+          ) : null}
           {!useBodySymbols
             ? flyingCoins.map((coin) => (
             <div
@@ -3650,7 +4100,39 @@ export function ScratchPrototype() {
               <GameSymbolIcon typeId={coin.typeId} />
             </div>
           ))
-            : null}
+            : flyingCoins.map((coin) => (
+            <div
+              key={coin.id}
+              className="flying-coin is-match-fly"
+              style={
+                {
+                  "--coin-from-x": `${coin.fromX}px`,
+                  "--coin-from-y": `${coin.fromY}px`,
+                  "--coin-mid-x": `${coin.midX}px`,
+                  "--coin-mid-y": `${coin.midY}px`,
+                  "--coin-to-x": `${coin.toX}px`,
+                  "--coin-to-y": `${coin.toY}px`,
+                  animationDuration: `${MATCH_FLIGHT_DURATION_MS}ms`,
+                  animationDelay: `${coin.delayMs}ms`,
+                } as CSSProperties
+              }
+              onAnimationEnd={(event) => {
+                if (event.target !== event.currentTarget) return;
+                removeFlyingCoin(coin.id);
+              }}
+              aria-hidden="true"
+            >
+              <span className="flying-coin-spin">
+                <span
+                  className="flying-coin-plane flying-coin-plane--back"
+                  aria-hidden="true"
+                />
+                <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
+                  <GameSymbolIcon typeId={coin.typeId} size={68} paused />
+                </span>
+              </span>
+            </div>
+          ))}
           <video
             ref={bottomVideoRef}
             className="source-video"
@@ -3675,13 +4157,14 @@ export function ScratchPrototype() {
             style={cardTransition ? { pointerEvents: "none" } : undefined}
             onPointerDown={(event) => {
               if (cardTransitionActiveRef.current) return;
+              huntHintActivityAtRef.current = performance.now();
               if (soundEnabledRef.current)
                 ensureSymbolAudio(symbolAudioRef.current);
               const bottomVideo = bottomVideoRef.current;
               const foregroundVideo = foregroundVideoRef.current;
               if (bottomVideo?.paused)
                 void bottomVideo.play().catch(() => undefined);
-              if (foregroundVideo?.paused)
+              if (!fgParkedRef.current && foregroundVideo?.paused)
                 void foregroundVideo.play().catch(() => undefined);
               drawingRef.current = true;
               setIsScratching(true);
@@ -3900,43 +4383,6 @@ export function ScratchPrototype() {
               </div>
             )}
           </div>
-          {gameResult ? (
-            <div
-              className={`game-result game-result--${gameResult}${
-                gameResultLeaving ? " is-leaving" : ""
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <div className="game-result-iris">
-                <div className="game-result-surface">
-                  <div className="game-result-card">
-                    <p className="game-result-title">
-                      {gameResult === "win" ? "You win!" : "No luck this time"}
-                    </p>
-                    <p className="game-result-detail">
-                      {matchOutcome
-                        ? matchResultDetail(matchOutcome, "photo_scratches")
-                        : gameResult === "win"
-                          ? "Three matching symbols — nice!"
-                          : "No three-of-a-kind — try again."}
-                    </p>
-                    <button
-                      type="button"
-                      className="game-result-button"
-                      onClick={beginLeaveGameResult}
-                    >
-                      {remainingCards.length > 1
-                        ? "Next card"
-                        : gameMode
-                          ? "Claim photo scratches"
-                          : "Done"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
         <aside className="panel">
           <div>

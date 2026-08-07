@@ -158,6 +158,73 @@ export function countMatches(top: number[], body: number[]): number {
   return matches;
 }
 
+/**
+ * Which top-bar slots light up during the hunt: each revealed body symbol of
+ * type T claims one still-dark top slot of type T (left-to-right).
+ */
+export function matchedTopSlots(
+  top: number[],
+  body: number[],
+  bodyRevealed: readonly boolean[],
+): boolean[] {
+  const bodyCounts = new Array(SYMBOL_TYPE_COUNT).fill(0);
+  const n = Math.min(body.length, bodyRevealed.length);
+  for (let i = 0; i < n; i += 1) {
+    if (!bodyRevealed[i]) continue;
+    const id = body[i];
+    if (id >= 0 && id < SYMBOL_TYPE_COUNT) bodyCounts[id] += 1;
+  }
+  const matched = Array.from({ length: TOP_SYMBOL_COUNT }, () => false);
+  for (let i = 0; i < TOP_SYMBOL_COUNT; i += 1) {
+    const id = top[i];
+    if (id === undefined || id < 0 || id >= SYMBOL_TYPE_COUNT) continue;
+    if (bodyCounts[id] > 0) {
+      bodyCounts[id] -= 1;
+      matched[i] = true;
+    }
+  }
+  return matched;
+}
+
+/**
+ * Sticky per-body-find hit flags: true when that reveal claimed a top slot.
+ * Matches `playBodyFindSounds` order so icons never flip hit↔miss later.
+ */
+export function applyBodyFindHits(
+  top: number[],
+  body: number[],
+  revealedBefore: readonly boolean[],
+  newlyRevealed: readonly number[],
+  previousHits: readonly boolean[],
+): boolean[] {
+  const hits = previousHits.slice();
+  while (hits.length < body.length) hits.push(false);
+  const revealed = revealedBefore.slice();
+  for (const index of newlyRevealed) {
+    if (index < 0 || index >= body.length) continue;
+    const before = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    revealed[index] = true;
+    const after = matchedTopSlots(top, body, revealed).filter(Boolean).length;
+    hits[index] = after > before;
+  }
+  return hits;
+}
+
+/** Next still-open top slot of this type (left-to-right), or -1. */
+export function claimNextTopSlot(
+  top: number[],
+  typeId: number,
+  alreadyClaimed: readonly boolean[],
+): number {
+  if (typeId < 0 || typeId >= SYMBOL_TYPE_COUNT) return -1;
+  const n = Math.min(TOP_SYMBOL_COUNT, top.length);
+  for (let i = 0; i < n; i += 1) {
+    if (alreadyClaimed[i]) continue;
+    if (top[i] === typeId) return i;
+  }
+  return -1;
+}
+
 export function prizeForMatches(matches: number): number {
   const clamped = Math.max(0, Math.min(TOP_SYMBOL_COUNT, Math.floor(matches)));
   return PRIZE_BY_MATCHES[clamped] ?? 0;

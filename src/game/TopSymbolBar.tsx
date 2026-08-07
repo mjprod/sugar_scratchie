@@ -5,8 +5,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { GameSymbolIcon } from "./GameSymbolIcon";
 import { SYMBOL_TYPES, TOP_SYMBOL_COUNT } from "./matchGame";
 
@@ -25,19 +27,17 @@ const PEEL_LOTTIE_CYCLE_MS = PEEL_LOTTIE_DURATION_MS + PEEL_LOTTIE_PAUSE_MS;
 /** Beat after foil clears before the bar flies up to dock. */
 const CLEAR_CELEBRATE_MS = 420;
 
-// Flying foil flakes on scratch — same feel as the main game's fabric flakes
-// (glRenderer's spawnFlakes/drawFlakes), but colored by sampling the actual
-// scratch-coating texture instead of the video fabric.
+// Flying foil flakes on scratch — colored by sampling the scratch coating.
+// Sized in CSS pixels (converted with DPR at spawn) so they stay small on
+// retina. Portaled to the full `.stage` so gravity can carry them off-screen.
 const FLAKE_COUNT_PER_SCRATCH = 2;
 const FLAKE_MAX = 90;
-const FLAKE_LIFE = 0.7;
+const FLAKE_LIFE = 1.15;
 const FLAKE_SCALE_MIN = 0.5;
-const FLAKE_SCALE_MAX = 1.1;
-const FLAKE_BASE_SIZE = 6;
-const FLAKE_GRAVITY = 800;
-/** Extra canvas height below the bar (as a multiple of bar height) so flakes
- * stay drawable while gravity pulls them past the pill. */
-const FLAKE_FALL_EXTEND_RATIO = 1.2;
+const FLAKE_SCALE_MAX = 0.85;
+/** Base half-extent in CSS px before DPR. */
+const FLAKE_BASE_SIZE_CSS = 3.6;
+const FLAKE_GRAVITY = 980;
 const FLAKE_FALLBACK_COLORS = [
   "#d4d0cb",
   "#b5b0aa",
@@ -46,7 +46,10 @@ const FLAKE_FALLBACK_COLORS = [
   "#6a6662",
 ];
 
-export type TopBarPhase = "center" | "docked";
+export type TopBarPhase = "center" | "docked" | "showcase";
+
+/** Fly back to center + pulse matched finds before advancing. */
+export const TOP_BAR_SHOWCASE_MS = 2400;
 
 type TopSymbolBarProps = {
   symbols: number[];
@@ -54,6 +57,10 @@ type TopSymbolBarProps = {
   onAllRevealed: () => void;
   roundKey?: string | number;
   forceRevealed?: boolean;
+  /** Docked hunt: slots that have been found on the body (full color again). */
+  matchedSlots?: boolean[];
+  /** Optional mirror of slot DOM nodes for fly-to-slot animations. */
+  slotElsOutRef?: MutableRefObject<(HTMLDivElement | null)[]>;
 };
 
 let scratchTexture: HTMLImageElement | null = null;
@@ -268,6 +275,8 @@ export function TopSymbolBar({
   onAllRevealed,
   roundKey = 0,
   forceRevealed = false,
+  matchedSlots,
+  slotElsOutRef,
 }: TopSymbolBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<CoatingCanvas | null>(null);
@@ -275,6 +284,7 @@ export function TopSymbolBar({
   const flakesRef = useRef<Flake[]>([]);
   const flakeRafRef = useRef<number | null>(null);
   const flakeLastTsRef = useRef<number | null>(null);
+  const flakeDprRef = useRef(1);
   const slotElsRef = useRef<(HTMLDivElement | null)[]>(
     Array.from({ length: TOP_SYMBOL_COUNT }, () => null),
   );
@@ -296,14 +306,22 @@ export function TopSymbolBar({
   const [peelHidden, setPeelHidden] = useState(false);
   // Bumping this remounts DotLottieReact for the next peel cycle.
   const [peelPlayKey, setPeelPlayKey] = useState(0);
+  /** Stage host for the full-screen flake layer (portaled out of the pill). */
+  const [stageEl, setStageEl] = useState<HTMLElement | null>(null);
+  /** Only mount the flake canvas once scratching starts — never during idle/load. */
+  const [flakesActive, setFlakesActive] = useState(false);
 
   const slots = symbols.slice(0, TOP_SYMBOL_COUNT);
   while (slots.length < TOP_SYMBOL_COUNT) slots.push(0);
 
   const showCoating = phase === "center" && !coatingDone && !forceRevealed;
-  // Keep flake canvas alive through the clear celebration (coating unmounts).
+  // Flakes only while the player is scratching (or the clear burst). Idle /
+  // peel / entrance must not show a particle layer.
   const showParticles =
-    phase === "center" && !forceRevealed && (!coatingDone || clearedBurst);
+    flakesActive &&
+    phase === "center" &&
+    !forceRevealed &&
+    (!coatingDone || clearedBurst);
 
   // Timed remount loop: play 3s → hold last frame 1.8s → remount + autoplay.
   // Does not rely on DotLottie's `complete` event (unreliable with this player).
@@ -346,25 +364,24 @@ export function TopSymbolBar({
     });
   }, []);
 
-  /** Particle canvas matches coating width and X/Y origin, but extends below
-   * the bar so falling flakes aren't clipped at the pill edge. */
-  const syncParticleCanvasSize = useCallback((w: number, h: number) => {
+  /** Full-stage flake canvas so gravity can carry flecks past the small pill. */
+  const syncParticleCanvasSize = useCallback(() => {
     const pc = particleCanvasRef.current;
-    if (!pc) return;
-    const ph = Math.max(1, Math.round(h * (1 + FLAKE_FALL_EXTEND_RATIO)));
-    pc.style.position = "absolute";
-    pc.style.inset = "auto";
-    pc.style.top = "0";
-    pc.style.left = "0";
-    pc.style.width = "100%";
-    pc.style.height = `${(ph / Math.max(1, h)) * 100}%`;
-    pc.style.pointerEvents = "none";
-    pc.style.display = "block";
-    if (pc.width !== w || pc.height !== ph) {
-      pc.width = w;
-      pc.height = ph;
+    const stage = stageEl ?? barRef.current?.closest(".stage");
+    if (!pc || !stage) return;
+    const rect = stage.getBoundingClientRect();
+    const cssW = Math.max(1, Math.round(rect.width));
+    const cssH = Math.max(1, Math.round(rect.height));
+    if (cssW < 2 || cssH < 2) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    flakeDprRef.current = dpr;
+    const nextW = Math.max(1, Math.round(cssW * dpr));
+    const nextH = Math.max(1, Math.round(cssH * dpr));
+    if (pc.width !== nextW || pc.height !== nextH) {
+      pc.width = nextW;
+      pc.height = nextH;
     }
-  }, []);
+  }, [stageEl]);
 
   const syncAndPaint = useCallback(() => {
     const bar = barRef.current;
@@ -372,7 +389,7 @@ export function TopSymbolBar({
     if (!bar || !canvas || forceRevealed) return false;
     if (canvas.__locked) {
       paintedRef.current = true;
-      syncParticleCanvasSize(canvas.width, canvas.height);
+      syncParticleCanvasSize();
       return true;
     }
 
@@ -382,7 +399,7 @@ export function TopSymbolBar({
     const cssH = Math.max(1, Math.round(rect.height));
     if (cssW < 40 || cssH < 20) return false;
 
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const nextW = Math.max(1, Math.round(cssW * dpr));
     const nextH = Math.max(1, Math.round(cssH * dpr));
 
@@ -394,7 +411,7 @@ export function TopSymbolBar({
     canvas.style.pointerEvents = "none";
     canvas.style.zIndex = "2";
     canvas.style.display = "block";
-    syncParticleCanvasSize(nextW, nextH);
+    syncParticleCanvasSize();
 
     if (canvas.width !== nextW || canvas.height !== nextH) {
       canvas.width = nextW;
@@ -420,6 +437,7 @@ export function TopSymbolBar({
     setClearedBurst(false);
     setPeelHidden(false);
     setPeelPlayKey(0);
+    setFlakesActive(false);
     drawingRef.current = false;
     lastPtRef.current = null;
     paintedRef.current = false;
@@ -433,6 +451,11 @@ export function TopSymbolBar({
     const pc = particleCanvasRef.current;
     if (pc) pc.getContext("2d")?.clearRect(0, 0, pc.width, pc.height);
   }, [symbols, forceRevealed, roundKey]);
+
+  useLayoutEffect(() => {
+    const stage = barRef.current?.closest(".stage");
+    setStageEl(stage instanceof HTMLElement ? stage : null);
+  }, [phase, showCoating, roundKey]);
 
   useEffect(() => {
     return () => {
@@ -452,6 +475,7 @@ export function TopSymbolBar({
     const dt = last === null ? 0 : Math.min(0.05, (ts - last) / 1000);
     flakeLastTsRef.current = ts;
 
+    const dpr = flakeDprRef.current || 1;
     const next: Flake[] = [];
     for (const f of flakesRef.current) {
       const age = f.age + dt;
@@ -459,7 +483,7 @@ export function TopSymbolBar({
         f.age = age;
         f.x += f.vx * dt;
         f.y += f.vy * dt;
-        f.vy += FLAKE_GRAVITY * dt;
+        f.vy += FLAKE_GRAVITY * dpr * dt;
         f.rotation += f.angularVel * dt;
         next.push(f);
       }
@@ -500,50 +524,86 @@ export function TopSymbolBar({
     } else {
       flakeRafRef.current = null;
       flakeLastTsRef.current = null;
+      setFlakesActive(false);
     }
   }, []);
 
-  const spawnFlakes = useCallback(
+  /** Spawn at stage-canvas pixel coords; `sampleX/Y/H` stay in coating space
+   * so flake color still matches the foil under the brush. Canvas mounts via
+   * `flakesActive` — the layout effect below kicks the RAF once it's in the DOM. */
+  const spawnFlakesAtStage = useCallback(
     (
-      x: number,
-      y: number,
-      canvasHeight: number,
+      stageX: number,
+      stageY: number,
+      sampleX: number,
+      sampleY: number,
+      coatingHeight: number,
       count = FLAKE_COUNT_PER_SCRATCH,
     ) => {
+      flakeDprRef.current = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = flakeDprRef.current;
+      const sizePx = FLAKE_BASE_SIZE_CSS * dpr;
       for (let i = 0; i < count; i += 1) {
         const angle = (Math.random() - 0.5) * Math.PI * 0.9;
-        const speed = 50 + Math.random() * 70;
+        const speed = (70 + Math.random() * 110) * dpr;
         flakesRef.current.push({
-          x: x + (Math.random() - 0.5) * 6,
-          y: y + (Math.random() - 0.5) * 6,
+          x: stageX + (Math.random() - 0.5) * 6 * dpr,
+          y: stageY + (Math.random() - 0.5) * 6 * dpr,
           // Bias outward/down: small side scatter, then gravity takes over.
-          vx: Math.sin(angle) * speed * 0.55,
-          vy: 60 + Math.random() * 90,
+          vx: Math.sin(angle) * speed * 0.45,
+          vy: (40 + Math.random() * 80) * dpr,
           age: 0,
-          life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
-          size: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
+          life: FLAKE_LIFE * (0.85 + Math.random() * 0.35),
+          size: sizePx * (0.7 + Math.random() * 0.45),
           rotation: Math.random() * Math.PI * 2,
-          angularVel: (Math.random() - 0.5) * 10,
-          color: sampleScratchTextureColor(x, y, canvasHeight),
+          angularVel: (Math.random() - 0.5) * 12,
+          color: sampleScratchTextureColor(sampleX, sampleY, coatingHeight),
         });
       }
       while (flakesRef.current.length > FLAKE_MAX) flakesRef.current.shift();
-      if (flakeRafRef.current === null) {
+      setFlakesActive(true);
+      if (particleCanvasRef.current && flakeRafRef.current === null) {
+        syncParticleCanvasSize();
         flakeLastTsRef.current = null;
         flakeRafRef.current = requestAnimationFrame(stepFlakes);
       }
     },
-    [stepFlakes],
+    [stepFlakes, syncParticleCanvasSize],
   );
 
-  // Foil just cleared — burst flakes, hold the celebrate pose, then dock.
+  // Canvas is portaled only while flakes are active — size it and start the
+  // loop as soon as the node lands (covers the first-scratch mount race).
+  useLayoutEffect(() => {
+    if (!showParticles) return;
+    syncParticleCanvasSize();
+    if (flakesRef.current.length > 0 && flakeRafRef.current === null) {
+      flakeLastTsRef.current = null;
+      flakeRafRef.current = requestAnimationFrame(stepFlakes);
+    }
+  }, [showParticles, stepFlakes, syncParticleCanvasSize]);
+
+  // Foil just cleared — burst flakes across the bar, hold celebrate, then dock.
   useEffect(() => {
     if (!clearedBurst || phase !== "center" || forceRevealed) return;
-    const pc = particleCanvasRef.current;
-    if (pc && pc.width > 1) {
-      const h = pc.height / (1 + FLAKE_FALL_EXTEND_RATIO);
+    const bar = barRef.current;
+    const stage = stageEl ?? bar?.closest(".stage");
+    const coating = canvasRef.current;
+    if (bar && stage && coating && coating.width > 1) {
+      syncParticleCanvasSize();
+      const barRect = bar.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      const dpr = flakeDprRef.current || 1;
       for (let i = 0; i < 8; i += 1) {
-        spawnFlakes((pc.width * (i + 0.5)) / 8, h * 0.45, h, 3);
+        const cssX = barRect.left - stageRect.left + (barRect.width * (i + 0.5)) / 8;
+        const cssY = barRect.top - stageRect.top + barRect.height * 0.45;
+        spawnFlakesAtStage(
+          cssX * dpr,
+          cssY * dpr,
+          (coating.width * (i + 0.5)) / 8,
+          coating.height * 0.45,
+          coating.height,
+          3,
+        );
       }
     }
     const reduceMotion =
@@ -554,7 +614,14 @@ export function TopSymbolBar({
       onAllRevealedRef.current();
     }, delay);
     return () => window.clearTimeout(id);
-  }, [clearedBurst, forceRevealed, phase, spawnFlakes]);
+  }, [
+    clearedBurst,
+    forceRevealed,
+    phase,
+    spawnFlakesAtStage,
+    stageEl,
+    syncParticleCanvasSize,
+  ]);
 
   useLayoutEffect(() => {
     if (!showCoating) return;
@@ -667,10 +734,31 @@ export function TopSymbolBar({
       canvas.__locked = true;
       // First scratch stroke — peel cue gets out of the way immediately.
       setPeelHidden(true);
-      spawnFlakes(x, y, canvas.height);
+
+      const stage = stageEl ?? barRef.current?.closest(".stage");
+      if (stage) {
+        syncParticleCanvasSize();
+        const stageRect = stage.getBoundingClientRect();
+        const dpr = flakeDprRef.current || 1;
+        spawnFlakesAtStage(
+          (clientX - stageRect.left) * dpr,
+          (clientY - stageRect.top) * dpr,
+          x,
+          y,
+          canvas.height,
+        );
+      }
       checkReveals();
     },
-    [checkReveals, coatingDone, phase, spawnFlakes, syncAndPaint],
+    [
+      checkReveals,
+      coatingDone,
+      phase,
+      spawnFlakesAtStage,
+      stageEl,
+      syncAndPaint,
+      syncParticleCanvasSize,
+    ],
   );
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
@@ -699,6 +787,11 @@ export function TopSymbolBar({
   }
 
   const revealedCount = revealedMask.filter(Boolean).length;
+  const particleHost =
+    stageEl ??
+    (barRef.current?.closest(".stage") instanceof HTMLElement
+      ? (barRef.current.closest(".stage") as HTMLElement)
+      : null);
 
   return (
     <div
@@ -716,19 +809,33 @@ export function TopSymbolBar({
       style={{ touchAction: "none" }}
     >
       {slots.map((typeId, index) => {
-        const revealed = revealedMask[index] || forceRevealed;
+        const revealed = revealedMask[index] || forceRevealed || phase === "showcase";
+        const matched = Boolean(matchedSlots?.[index]);
+        const dormant =
+          (phase === "docked" || phase === "showcase") && revealed && !matched;
+        const pulsing = phase === "showcase" && matched;
         return (
           <div
             key={`${roundKey}-${index}-${typeId}`}
             ref={(el) => {
               slotElsRef.current[index] = el;
+              if (slotElsOutRef) slotElsOutRef.current[index] = el;
             }}
             className={`symbol-slot top-symbol-slot${
               revealed ? " is-revealed" : ""
+            }${dormant ? " is-dormant" : ""}${matched ? " is-matched" : ""}${
+              pulsing ? " is-pulsing" : ""
             }`}
             title={revealed ? SYMBOL_TYPES[typeId]?.label : "Scratch to reveal"}
           >
-            <GameSymbolIcon typeId={typeId} size={28} paused={!revealed} />
+            <GameSymbolIcon
+              typeId={typeId}
+              size={28}
+              // Only animate during the center foil reveal. Docked / showcase
+              // use CSS (dormant desat, pulse) — keeps DotLottie workers frozen
+              // for the whole hunt, which is the long expensive stretch.
+              paused={!revealed || dormant || phase !== "center"}
+            />
           </div>
         );
       })}
@@ -736,13 +843,6 @@ export function TopSymbolBar({
         <canvas
           ref={canvasRef}
           className="top-symbol-bar-scratch-canvas"
-          aria-hidden="true"
-        />
-      ) : null}
-      {showParticles ? (
-        <canvas
-          ref={particleCanvasRef}
-          className="top-symbol-bar-particle-canvas"
           aria-hidden="true"
         />
       ) : null}
@@ -769,6 +869,16 @@ export function TopSymbolBar({
           </div>
         </div>
       ) : null}
+      {showParticles && particleHost
+        ? createPortal(
+            <canvas
+              ref={particleCanvasRef}
+              className="top-symbol-bar-particle-canvas"
+              aria-hidden="true"
+            />,
+            particleHost,
+          )
+        : null}
     </div>
   );
 }

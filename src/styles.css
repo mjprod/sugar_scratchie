@@ -212,6 +212,8 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Match-6 top bar: starts mid-screen (scratchable), docks to top after reveal. */
@@ -405,6 +407,164 @@ textarea:focus-visible {
   }
 }
 
+/* After dock: cascade right→left into grayscale via keyframed filter. */
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.45;
+  animation: top-bar-slot-go-dormant 520ms cubic-bezier(0.33, 1, 0.4, 1) both;
+}
+
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(6) {
+  animation-delay: 380ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(5) {
+  animation-delay: 440ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(4) {
+  animation-delay: 500ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(3) {
+  animation-delay: 560ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(2) {
+  animation-delay: 620ms;
+}
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant:nth-child(1) {
+  animation-delay: 680ms;
+}
+
+@keyframes top-bar-slot-go-dormant {
+  0% {
+    filter: saturate(1) brightness(1);
+    transform: scale(1) translateX(0);
+    opacity: 1;
+  }
+  45% {
+    filter: saturate(0.35) brightness(1.12);
+    transform: scale(0.9) translateX(-6px);
+  }
+  100% {
+    filter: saturate(0) brightness(1.25);
+    transform: scale(1) translateX(0);
+    opacity: 0.45;
+  }
+}
+
+/* Found on her body — full color again with a match pop. */
+.top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched {
+  animation: top-bar-slot-reactivate 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+@keyframes top-bar-slot-reactivate {
+  0% {
+    filter: saturate(0) brightness(1.25);
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  42% {
+    filter: saturate(1) brightness(1.4);
+    transform: scale(1.26);
+    opacity: 1;
+    border-color: rgba(255, 230, 160, 0.95);
+    background: rgba(255, 220, 140, 0.28);
+  }
+  100% {
+    filter: none;
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* End-of-card: fly dock → center and pulse the finds. */
+.top-symbol-bar.is-phase-showcase {
+  top: 50%;
+  transform: translateY(-50%) scale(1.04);
+  pointer-events: none;
+  cursor: default;
+  transition: none;
+  z-index: 9;
+  /* Beat game-over / stage filters — symbols must stay crisp. */
+  filter: none !important;
+  animation: top-bar-showcase-fly 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 217, 120, 0.55),
+    0 0 52px rgba(255, 200, 120, 0.35);
+  border-color: rgba(255, 217, 120, 0.75);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@keyframes top-bar-showcase-fly {
+  0% {
+    top: max(12px, env(safe-area-inset-top));
+    transform: translateY(0) scale(0.94);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.35),
+      0 0 0 1px rgba(255, 255, 255, 0.12);
+  }
+  55% {
+    transform: translateY(-54%) scale(1.08);
+  }
+  100% {
+    top: 50%;
+    transform: translateY(-50%) scale(1.04);
+    box-shadow:
+      0 18px 48px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 217, 120, 0.55),
+      0 0 52px rgba(255, 200, 120, 0.35);
+  }
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-dormant {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.45;
+  animation: none;
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing {
+  filter: none;
+  opacity: 1;
+  animation: top-bar-slot-found-pulse 700ms ease-in-out 720ms infinite;
+}
+
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(1) {
+  animation-delay: 720ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(2) {
+  animation-delay: 780ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(3) {
+  animation-delay: 840ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(4) {
+  animation-delay: 900ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(5) {
+  animation-delay: 960ms;
+}
+.top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing:nth-child(6) {
+  animation-delay: 1020ms;
+}
+
+@keyframes top-bar-slot-found-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+    border-color: rgba(255, 220, 140, 0.75);
+    background: rgba(255, 210, 120, 0.16);
+    box-shadow: 0 0 0 0 rgba(255, 200, 100, 0.35);
+  }
+  50% {
+    transform: scale(1.22);
+    filter: brightness(1.35);
+    border-color: rgba(255, 235, 170, 1);
+    background: rgba(255, 220, 140, 0.38);
+    box-shadow: 0 0 22px 4px rgba(255, 200, 100, 0.55);
+  }
+}
+
 .top-symbol-bar .top-symbol-slot {
   position: relative;
   z-index: 1;
@@ -424,8 +584,7 @@ textarea:focus-visible {
   cursor: default;
 }
 
-.top-symbol-bar-scratch-canvas,
-.top-symbol-bar-particle-canvas {
+.top-symbol-bar-scratch-canvas {
   position: absolute !important;
   inset: 0 !important;
   top: 0 !important;
@@ -442,23 +601,24 @@ textarea:focus-visible {
   pointer-events: none !important;
   display: block !important;
   flex: none !important;
-}
-
-.top-symbol-bar-scratch-canvas {
   z-index: 2 !important;
 }
 
-/* Flying foil flakes: taller than the bar so gravity can carry them downward
-   past the pill before they fade. Coating canvas stays pill-clipped via radius. */
+/* Flying foil flakes: portaled onto `.stage` (full viewport) so gravity can
+   carry flecks past the small pill. Beat mobile `.stage canvas` contain rules. */
 .top-symbol-bar-particle-canvas {
-  z-index: 3 !important;
-  border-radius: 0 !important;
-  inset: auto !important;
+  position: absolute !important;
+  inset: 0 !important;
   top: 0 !important;
   left: 0 !important;
   width: 100% !important;
-  /* Extra fall room below the bar (~2.2× bar height). */
-  height: 220% !important;
+  height: 100% !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  pointer-events: none !important;
+  display: block !important;
+  flex: none !important;
+  z-index: 10 !important;
   overflow: visible !important;
 }
 
@@ -541,14 +701,24 @@ textarea:focus-visible {
   overflow: hidden;
 }
 
-.game-symbol-lottie,
+.game-symbol-lottie {
+  display: block;
+  flex-shrink: 0;
+  line-height: 0;
+  /* Fixed box from GameSymbolIcon inline style. Never 100% — Chrome's
+     transferred OffscreenCanvas uses size×DPR as intrinsic width and will
+     blow past the parent if the host isn't a definite px box. */
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .game-symbol-lottie canvas {
   display: block;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100%;
-  max-height: 100%;
-  flex-shrink: 0;
+  /* Explicit px from JS (setProperty … important). Avoid width:100% here —
+     Chrome ignores % on OffscreenCanvas placeholders and falls back to the
+     backing-store pixel size (~2× on retina). */
+  max-width: none;
+  max-height: none;
   pointer-events: none;
 }
 
@@ -607,6 +777,25 @@ textarea:focus-visible {
   filter: blur(5px);
 }
 
+/* Showcase: soft-focus the stage only — never the results bar. */
+.stage.is-showcase-phase .game-stage-canvas,
+.stage.is-showcase-phase canvas.photo-scratch-fg-layer,
+.stage.is-showcase-phase .photo-scratch-bg-layer,
+.stage.is-showcase-phase .bg-drag-scale {
+  filter: blur(4px) brightness(0.78);
+  pointer-events: none;
+}
+
+.stage.is-showcase-phase .body-symbol-marker {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage.is-showcase-phase .top-symbol-bar,
+.stage.is-showcase-phase .top-symbol-bar.is-phase-showcase {
+  filter: none !important;
+}
+
 .stage.is-bar-phase canvas,
 .stage.is-countdown-phase canvas {
   pointer-events: none;
@@ -636,6 +825,8 @@ textarea:focus-visible {
   line-height: 1.2;
   white-space: nowrap;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   transform: translateX(-50%);
@@ -844,12 +1035,28 @@ textarea:focus-visible {
   .top-symbol-bar.is-phase-center.is-scratchable::after,
   .top-symbol-bar.is-phase-center.is-cleared,
   .top-symbol-bar.is-phase-docked,
+  .top-symbol-bar.is-phase-showcase,
   .top-symbol-bar.is-cleared .top-symbol-slot.is-revealed,
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant,
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched.is-pulsing,
   .lottie-clipper-peel,
   .stage-coach--bar,
   .stage-coach--hunt,
   .stage-coach--hunt .stage-coach-label {
     animation: none !important;
+    filter: none !important;
+    opacity: 1;
+  }
+
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-dormant,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-dormant {
+    filter: saturate(0) brightness(1.25) !important;
+    opacity: 0.45 !important;
+  }
+
+  .top-symbol-bar.is-phase-docked .top-symbol-slot.is-matched,
+  .top-symbol-bar.is-phase-showcase .top-symbol-slot.is-matched {
     filter: none !important;
     opacity: 1;
   }
@@ -952,6 +1159,84 @@ textarea:focus-visible {
   animation-fill-mode: both;
 }
 
+/* Body match: light 2.5D — one glow plate + paused symbol (no blend modes). */
+.flying-coin.is-match-fly {
+  z-index: 12;
+  width: 84px;
+  height: 84px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  perspective: 760px;
+  perspective-origin: 50% 42%;
+  animation-name: matchFly;
+  animation-timing-function: cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+
+/* Virtual camera / rig — orbits so layered planes parallax. */
+.flying-coin.is-match-fly .flying-coin-spin {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+  animation-name: matchFlySpin;
+  animation-timing-function: cubic-bezier(0.28, 0.15, 0.3, 1);
+  animation-duration: inherit;
+  animation-delay: inherit;
+  animation-fill-mode: both;
+}
+
+.flying-coin.is-match-fly .flying-coin-plane {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* Warm fill behind the icon — reads as volume under the art. */
+.flying-coin.is-match-fly .flying-coin-plane--back {
+  inset: 6%;
+  background: radial-gradient(
+    circle at 40% 35%,
+    rgba(255, 220, 140, 0.5) 0%,
+    rgba(255, 160, 60, 0.18) 48%,
+    transparent 70%
+  );
+  transform: translateZ(-14px) scale(1.02);
+}
+
+/* Art plane — only Lottie in the stack (paused). */
+.flying-coin.is-match-fly .flying-coin-face {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  transform: translateZ(0);
+}
+
+.flying-coin.is-match-fly::before {
+  content: "";
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 230, 150, 0.4) 0%,
+    rgba(255, 190, 80, 0.12) 42%,
+    transparent 70%
+  );
+  z-index: -1;
+  pointer-events: none;
+  animation: matchFlyGlow 1250ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation-delay: inherit;
+}
+
 @keyframes coinFly {
   0% {
     transform: translate(var(--coin-from-x), var(--coin-from-y))
@@ -973,6 +1258,111 @@ textarea:focus-visible {
       translate(-50%, -50%) scale(0.45);
     opacity: 0;
   }
+}
+
+@keyframes matchFlyGlow {
+  0%,
+  8% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  22% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  40% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  48% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+}
+
+/*
+ * Camera orbit through the multiplane stack (parallax depth).
+ * Transform-only — no second Lottie, no CSS filter on the art.
+ */
+@keyframes matchFlySpin {
+  0% {
+    transform: translateZ(0) rotateY(-22deg) rotateX(10deg);
+  }
+  18% {
+    transform: translateZ(44px) rotateY(14deg) rotateX(-6deg);
+  }
+  40% {
+    transform: translateZ(56px) rotateY(-10deg) rotateX(8deg);
+  }
+  48% {
+    transform: translateZ(36px) rotateY(8deg) rotateX(-4deg);
+  }
+  72% {
+    transform: translateZ(14px) rotateY(-16deg) rotateX(6deg);
+  }
+  100% {
+    transform: translateZ(0) rotateY(28deg) rotateX(-8deg);
+  }
+}
+
+@keyframes matchFly {
+  /* Appear + surge toward camera — transform/opacity only (no CSS filter). */
+  0% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(0.35);
+    opacity: 0;
+  }
+  7% {
+    opacity: 1;
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(1.05);
+  }
+  18% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(2.2);
+  }
+  /* Settle and hold in front. */
+  30% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(1.78);
+  }
+  40% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(1.72);
+    opacity: 1;
+  }
+  /* Anticipation squash, then launch upward. */
+  46% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(1.42);
+  }
+  68% {
+    transform: translate(var(--coin-mid-x), var(--coin-mid-y))
+      translate(-50%, -50%) scale(1.08);
+    opacity: 1;
+  }
+  88% {
+    transform: translate(var(--coin-to-x), var(--coin-to-y))
+      translate(-50%, -50%) scale(0.55);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(var(--coin-to-x), var(--coin-to-y))
+      translate(-50%, -50%) scale(0.32);
+    opacity: 0;
+  }
+}
+
+.body-symbol-marker.is-flying .body-symbol-icon {
+  opacity: 0;
+  transform: scale(0.35);
+  transition:
+    opacity 90ms ease,
+    transform 90ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1079,9 +1469,73 @@ textarea:focus-visible {
 
 .game-result-detail {
   margin: 0;
+  color: rgba(255, 246, 236, 0.78);
   font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.45;
+}
+
+.game-result-symbols {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.game-result-symbol {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(20, 16, 12, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.game-result-symbol.is-matched {
+  border-color: rgba(255, 220, 140, 0.85);
+  background: rgba(255, 210, 120, 0.18);
+  box-shadow: 0 0 14px rgba(255, 200, 100, 0.35);
+  animation: game-result-symbol-pop 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.game-result-symbol.is-missed {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.45;
+}
+
+.game-result-symbol.is-matched:nth-child(1) {
+  animation-delay: 520ms;
+}
+.game-result-symbol.is-matched:nth-child(2) {
+  animation-delay: 580ms;
+}
+.game-result-symbol.is-matched:nth-child(3) {
+  animation-delay: 640ms;
+}
+.game-result-symbol.is-matched:nth-child(4) {
+  animation-delay: 700ms;
+}
+.game-result-symbol.is-matched:nth-child(5) {
+  animation-delay: 760ms;
+}
+.game-result-symbol.is-matched:nth-child(6) {
+  animation-delay: 820ms;
+}
+
+@keyframes game-result-symbol-pop {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .game-result-button {
@@ -1191,7 +1645,8 @@ textarea:focus-visible {
   .game-result-card,
   .game-result.is-leaving .game-result-iris,
   .game-result.is-leaving .game-result-card,
-  .game-result-surface::before {
+  .game-result-surface::before,
+  .game-result-symbol.is-matched {
     animation: none;
   }
 
@@ -2740,13 +3195,90 @@ dd {
   margin: -36px 0 0 -36px;
   border: none;
   background: transparent;
-  overflow: visible;
+  overflow: hidden;
   pointer-events: none;
 }
 
 .body-symbol-marker.is-revealed {
   display: flex;
   animation: none;
+}
+
+/* Found on her body but no top-bar claim left — same desat as dormant slots. */
+.body-symbol-marker.is-missed {
+  filter: saturate(0) brightness(1.25);
+  opacity: 0.45;
+}
+
+/* Soft rings on one unfound body mark at a time when ≤3 remain (idle). */
+.hunt-hint-pulsar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  pointer-events: none;
+}
+
+.hunt-hint-pulsar.is-active {
+  display: flex;
+}
+
+.hunt-hint-pulsar-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 236, 180, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+  opacity: 0;
+  transform: scale(0.35);
+  animation: hunt-hint-pulsar-beat 1.5s ease-out infinite;
+}
+
+.hunt-hint-pulsar-ring--delay {
+  animation-delay: 0.75s;
+}
+
+.hunt-hint-pulsar-core {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 242, 200, 0.95);
+  box-shadow: 0 0 6px rgba(255, 230, 160, 0.55);
+  animation: hunt-hint-pulsar-core 1.5s ease-in-out infinite;
+}
+
+@keyframes hunt-hint-pulsar-beat {
+  0% {
+    opacity: 0.75;
+    transform: scale(0.35);
+  }
+  70% {
+    opacity: 0.15;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes hunt-hint-pulsar-core {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
 }
 
 .body-symbol-icon {
