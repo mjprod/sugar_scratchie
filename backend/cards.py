@@ -669,7 +669,7 @@ def list_photo_scratch_thumb_urls(cards_dir: Path, card_id: str) -> list[str]:
             or entry.get("pending_bg")
             or ""
         )
-        urls.append(str(thumb or ""))
+        urls.append(thumb.strip() if isinstance(thumb, str) else "")
     return urls
 
 
