@@ -256,9 +256,12 @@ function modelLocationLine(model: ModelInfo): string {
   return city || country;
 }
 
-function modelGradientCss(model: Pick<ModelInfo, "cardOverlayColorStart" | "cardOverlayColorEnd">): string {
-  const start = model.cardOverlayColorStart?.trim() ?? "";
-  const end = model.cardOverlayColorEnd?.trim() ?? "";
+function modelGradientCss(
+  startRaw: string | null | undefined,
+  endRaw: string | null | undefined,
+): string {
+  const start = startRaw?.trim() ?? "";
+  const end = endRaw?.trim() ?? "";
   if (!start && !end) return "";
   if (start && end) return `linear-gradient(90deg, ${start}, ${end})`;
   return start || end;
@@ -471,12 +474,16 @@ export function ModelsPage() {
   const [editingFlag, setEditingFlag] = useState("");
   const [editingColorStart, setEditingColorStart] = useState("");
   const [editingColorEnd, setEditingColorEnd] = useState("");
+  const [editingLightColor1, setEditingLightColor1] = useState("");
+  const [editingLightColor2, setEditingLightColor2] = useState("");
   const [newModelName, setNewModelName] = useState("");
   const [newModelCity, setNewModelCity] = useState("");
   const [newModelCountry, setNewModelCountry] = useState("");
   const [newModelFlagFile, setNewModelFlagFile] = useState<File | null>(null);
   const [newModelColorStart, setNewModelColorStart] = useState("");
   const [newModelColorEnd, setNewModelColorEnd] = useState("");
+  const [newModelLightColor1, setNewModelLightColor1] = useState("");
+  const [newModelLightColor2, setNewModelLightColor2] = useState("");
   const [creatingCardFor, setCreatingCardFor] = useState("");
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
@@ -602,6 +609,8 @@ export function ModelsPage() {
     setNewModelFlagFile(null);
     setNewModelColorStart("");
     setNewModelColorEnd("");
+    setNewModelLightColor1("");
+    setNewModelLightColor2("");
   }
 
   async function handleCreateModel() {
@@ -617,6 +626,8 @@ export function ModelsPage() {
           influencerCountry: newModelCountry.trim() || null,
           cardOverlayColorStart: newModelColorStart.trim() || null,
           cardOverlayColorEnd: newModelColorEnd.trim() || null,
+          cardLightColor1: newModelLightColor1.trim() || null,
+          cardLightColor2: newModelLightColor2.trim() || null,
         },
       );
       if (newModelFlagFile) {
@@ -644,6 +655,8 @@ export function ModelsPage() {
         influencerFlag: editingFlag.trim(),
         cardOverlayColorStart: editingColorStart.trim(),
         cardOverlayColorEnd: editingColorEnd.trim(),
+        cardLightColor1: editingLightColor1.trim(),
+        cardLightColor2: editingLightColor2.trim(),
       });
       setEditingId("");
       setEditingLabel("");
@@ -653,6 +666,8 @@ export function ModelsPage() {
       setEditingFlag("");
       setEditingColorStart("");
       setEditingColorEnd("");
+      setEditingLightColor1("");
+      setEditingLightColor2("");
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -987,6 +1002,8 @@ export function ModelsPage() {
               editingCity={editingCity}
               editingColorEnd={editingColorEnd}
               editingColorStart={editingColorStart}
+              editingLightColor1={editingLightColor1}
+              editingLightColor2={editingLightColor2}
               editingCountry={editingCountry}
               editingFlag={editingFlag}
               editingId={editingId}
@@ -1046,6 +1063,8 @@ export function ModelsPage() {
                 setEditingFlag("");
                 setEditingColorStart("");
                 setEditingColorEnd("");
+                setEditingLightColor1("");
+                setEditingLightColor2("");
               }}
               onCardIdChange={setNewCardId}
               onCardLabelChange={setNewCardLabel}
@@ -1056,6 +1075,8 @@ export function ModelsPage() {
               onEditingCityChange={setEditingCity}
               onEditingColorEndChange={setEditingColorEnd}
               onEditingColorStartChange={setEditingColorStart}
+              onEditingLightColor1Change={setEditingLightColor1}
+              onEditingLightColor2Change={setEditingLightColor2}
               onEditingCountryChange={setEditingCountry}
               onEditingFlagChange={setEditingFlag}
               onEditingLabelChange={setEditingLabel}
@@ -1073,6 +1094,8 @@ export function ModelsPage() {
                 setEditingFlag(selectedModel.influencerFlag ?? "");
                 setEditingColorStart(selectedModel.cardOverlayColorStart ?? "");
                 setEditingColorEnd(selectedModel.cardOverlayColorEnd ?? "");
+                setEditingLightColor1(selectedModel.cardLightColor1 ?? "");
+                setEditingLightColor2(selectedModel.cardLightColor2 ?? "");
               }}
             />
           ) : (
@@ -1094,6 +1117,8 @@ export function ModelsPage() {
                     modelCity={newModelCity}
                     modelColorEnd={newModelColorEnd}
                     modelColorStart={newModelColorStart}
+                    modelLightColor1={newModelLightColor1}
+                    modelLightColor2={newModelLightColor2}
                     modelCountry={newModelCountry}
                     modelFlagFile={newModelFlagFile}
                     modelId={newModelId}
@@ -1103,6 +1128,8 @@ export function ModelsPage() {
                     onModelCityChange={setNewModelCity}
                     onModelColorEndChange={setNewModelColorEnd}
                     onModelColorStartChange={setNewModelColorStart}
+                    onModelLightColor1Change={setNewModelLightColor1}
+                    onModelLightColor2Change={setNewModelLightColor2}
                     onModelCountryChange={setNewModelCountry}
                     onModelFlagCountrySelect={(countryCode) =>
                       void handleNewModelFlagCountrySelect(countryCode)
@@ -1561,6 +1588,8 @@ function ModelDetail({
   editingCity,
   editingColorEnd,
   editingColorStart,
+  editingLightColor1,
+  editingLightColor2,
   editingCountry,
   editingFlag,
   editingId,
@@ -1590,6 +1619,8 @@ function ModelDetail({
   onEditingCityChange,
   onEditingColorEndChange,
   onEditingColorStartChange,
+  onEditingLightColor1Change,
+  onEditingLightColor2Change,
   onEditingCountryChange,
   onEditingFlagChange,
   onEditingLabelChange,
@@ -1610,6 +1641,8 @@ function ModelDetail({
   editingCity: string;
   editingColorEnd: string;
   editingColorStart: string;
+  editingLightColor1: string;
+  editingLightColor2: string;
   editingCountry: string;
   editingFlag: string;
   editingId: string;
@@ -1639,6 +1672,8 @@ function ModelDetail({
   onEditingCityChange: (value: string) => void;
   onEditingColorEndChange: (value: string) => void;
   onEditingColorStartChange: (value: string) => void;
+  onEditingLightColor1Change: (value: string) => void;
+  onEditingLightColor2Change: (value: string) => void;
   onEditingCountryChange: (value: string) => void;
   onEditingFlagChange: (value: string) => void;
   onEditingLabelChange: (value: string) => void;
@@ -1657,7 +1692,14 @@ function ModelDetail({
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
   const locationLine = modelLocationLine(model);
-  const gradientCss = modelGradientCss(model);
+  const gradientCss = modelGradientCss(
+    model.cardOverlayColorStart,
+    model.cardOverlayColorEnd,
+  );
+  const lightGradientCss = modelGradientCss(
+    model.cardLightColor1,
+    model.cardLightColor2,
+  );
   const [packNameDraft, setPackNameDraft] = useState(model.cardPackName ?? "");
   const [packName2Draft, setPackName2Draft] = useState(model.cardPackName2 ?? "");
 
@@ -1803,6 +1845,25 @@ function ModelDetail({
                     />
                   </Grid>
                 </Box>
+                <Box>
+                  <Text as="div" mb="2" size="1" weight="bold">
+                    Card light
+                  </Text>
+                  <Grid columns={{ initial: "1", sm: "2" }} gap="2">
+                    <ColorField
+                      busy={busy}
+                      label="Light 1"
+                      value={editingLightColor1}
+                      onChange={onEditingLightColor1Change}
+                    />
+                    <ColorField
+                      busy={busy}
+                      label="Light 2"
+                      value={editingLightColor2}
+                      onChange={onEditingLightColor2Change}
+                    />
+                  </Grid>
+                </Box>
                 <Flex align="center" gap="2" wrap="wrap">
                   <Button disabled={busy} size="1" onClick={onRename}>
                     Save
@@ -1830,7 +1891,24 @@ function ModelDetail({
                         background: gradientCss,
                         border: "1px solid var(--gray-a6)",
                       }}
-                      title={`${model.cardOverlayColorStart} → ${model.cardOverlayColorEnd}`}
+                      title={
+                        model.cardOverlayColorStart && model.cardOverlayColorEnd
+                          ? `Overlay ${model.cardOverlayColorStart} → ${model.cardOverlayColorEnd}`
+                          : `Overlay ${model.cardOverlayColorStart ?? model.cardOverlayColorEnd ?? ""}`
+                      }
+                    />
+                  ) : null}
+                  {lightGradientCss ? (
+                    <Box
+                      aria-hidden
+                      style={{
+                        width: 56,
+                        height: 18,
+                        borderRadius: 999,
+                        background: lightGradientCss,
+                        border: "1px solid var(--gray-a6)",
+                      }}
+                      title={`Light ${model.cardLightColor1} → ${model.cardLightColor2}`}
                     />
                   ) : null}
                 </Flex>
@@ -2754,6 +2832,8 @@ function CreateModelFields({
   modelCity,
   modelColorEnd,
   modelColorStart,
+  modelLightColor1,
+  modelLightColor2,
   modelCountry,
   modelFlagFile,
   modelId,
@@ -2763,6 +2843,8 @@ function CreateModelFields({
   onModelCityChange,
   onModelColorEndChange,
   onModelColorStartChange,
+  onModelLightColor1Change,
+  onModelLightColor2Change,
   onModelCountryChange,
   onModelFlagCountrySelect,
   onModelFlagFileChange,
@@ -2775,6 +2857,8 @@ function CreateModelFields({
   modelCity: string;
   modelColorEnd: string;
   modelColorStart: string;
+  modelLightColor1: string;
+  modelLightColor2: string;
   modelCountry: string;
   modelFlagFile: File | null;
   modelId: string;
@@ -2784,6 +2868,8 @@ function CreateModelFields({
   onModelCityChange: (value: string) => void;
   onModelColorEndChange: (value: string) => void;
   onModelColorStartChange: (value: string) => void;
+  onModelLightColor1Change: (value: string) => void;
+  onModelLightColor2Change: (value: string) => void;
   onModelCountryChange: (value: string) => void;
   onModelFlagCountrySelect: (countryCode: string) => void;
   onModelFlagFileChange: (file: File | null) => void;
@@ -2909,6 +2995,25 @@ function CreateModelFields({
             label="End"
             value={modelColorEnd}
             onChange={onModelColorEndChange}
+          />
+        </Grid>
+      </Box>
+      <Box>
+        <Text as="div" mb="2" size="2" weight="bold">
+          Card light
+        </Text>
+        <Grid columns={stacked ? "1" : { initial: "1", md: "2" }} gap="3">
+          <ColorField
+            busy={busy}
+            label="Light 1"
+            value={modelLightColor1}
+            onChange={onModelLightColor1Change}
+          />
+          <ColorField
+            busy={busy}
+            label="Light 2"
+            value={modelLightColor2}
+            onChange={onModelLightColor2Change}
           />
         </Grid>
       </Box>

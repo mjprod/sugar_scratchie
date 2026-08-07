@@ -16,6 +16,10 @@ export type ModelInfluencerProfile = {
   cardOverlayColorStart?: string | null;
   /** Card overlay gradient end, e.g. "#ff0a54". */
   cardOverlayColorEnd?: string | null;
+  /** Foil pack 3D light 1 (hemisphere sky / key), e.g. "#ffffff". */
+  cardLightColor1?: string | null;
+  /** Foil pack 3D light 2 (hemisphere ground / fill), e.g. "#1a1020". */
+  cardLightColor2?: string | null;
 };
 
 export type ModelGlobalMedia = {

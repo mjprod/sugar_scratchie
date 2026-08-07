@@ -178,6 +178,8 @@ function getModelsIndexPayload() {
     influencerFlagSvg: string | null;
     cardOverlayColorStart: string | null;
     cardOverlayColorEnd: string | null;
+    cardLightColor1: string | null;
+    cardLightColor2: string | null;
     cardPackName: string | null;
     cardPackName2: string | null;
     packFaceVideoUrl: string | null;
@@ -197,6 +199,8 @@ function getModelsIndexPayload() {
       let influencerFlag: string | null = null;
       let cardOverlayColorStart: string | null = null;
       let cardOverlayColorEnd: string | null = null;
+      let cardLightColor1: string | null = null;
+      let cardLightColor2: string | null = null;
       let cardPackName: string | null = null;
       let cardPackName2: string | null = null;
       if (existsSync(metaPath)) {
@@ -209,6 +213,8 @@ function getModelsIndexPayload() {
             influencerFlag?: string;
             cardOverlayColorStart?: string;
             cardOverlayColorEnd?: string;
+            cardLightColor1?: string;
+            cardLightColor2?: string;
             influencerColorStart?: string;
             influencerColorEnd?: string;
             cardPackName?: string;
@@ -225,6 +231,8 @@ function getModelsIndexPayload() {
           cardOverlayColorEnd = optionalMetaString(
             data.cardOverlayColorEnd ?? data.influencerColorEnd,
           );
+          cardLightColor1 = optionalMetaString(data.cardLightColor1);
+          cardLightColor2 = optionalMetaString(data.cardLightColor2);
           cardPackName = optionalMetaString(data.cardPackName);
           cardPackName2 = optionalMetaString(data.cardPackName2);
         } catch {
@@ -243,6 +251,8 @@ function getModelsIndexPayload() {
         influencerFlagSvg: findModelFlagSvg(entry.name),
         cardOverlayColorStart,
         cardOverlayColorEnd,
+        cardLightColor1,
+        cardLightColor2,
         cardPackName,
         cardPackName2,
         packFaceVideoUrl: findModelVideo(entry.name, "pack-face.mp4"),
