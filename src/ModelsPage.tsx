@@ -1891,7 +1891,11 @@ function ModelDetail({
                         background: gradientCss,
                         border: "1px solid var(--gray-a6)",
                       }}
-                      title={`Overlay ${model.cardOverlayColorStart} → ${model.cardOverlayColorEnd}`}
+                      title={
+                        model.cardOverlayColorStart && model.cardOverlayColorEnd
+                          ? `Overlay ${model.cardOverlayColorStart} → ${model.cardOverlayColorEnd}`
+                          : `Overlay ${model.cardOverlayColorStart ?? model.cardOverlayColorEnd ?? ""}`
+                      }
                     />
                   ) : null}
                   {lightGradientCss ? (
