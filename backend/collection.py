@@ -136,6 +136,7 @@ def build_collection_catalog(
     cards = list_cards(root, cards_dir, mesh_dir)
     themes = list_themes(themes_dir)
     themes_by_id = {theme.id: theme.label for theme in themes}
+    themes_info = {theme.id: theme for theme in themes}
     drafts = draft_themes or {}
 
     filter_id = (model_filter or "").strip()
@@ -194,6 +195,7 @@ def build_collection_catalog(
             avatar_url = ""
             if theme_id:
                 avatar_url = model.theme_avatars.get(theme_id, "")
+            theme_info = themes_info.get(theme_id) if theme_id else None
 
             for offset in range(0, len(themed), CARDS_PER_GROUP):
                 part = offset // CARDS_PER_GROUP + 1
@@ -232,6 +234,10 @@ def build_collection_catalog(
                         "themeName": theme_label,
                         "title": title,
                         "avatarUrl": avatar_url or None,
+                        "cardOverlayColorStart": theme_info.cardOverlayColorStart if theme_info else None,
+                        "cardOverlayColorEnd": theme_info.cardOverlayColorEnd if theme_info else None,
+                        "cardLightColor1": theme_info.cardLightColor1 if theme_info else None,
+                        "cardLightColor2": theme_info.cardLightColor2 if theme_info else None,
                         "cards": group_cards,
                     }
                 )

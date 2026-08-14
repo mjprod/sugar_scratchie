@@ -6,10 +6,19 @@ import shutil
 import time
 from pathlib import Path
 
+from typing import Any
+
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.cards import public_url
+
+THEME_COLOR_KEYS = (
+    "cardOverlayColorStart",
+    "cardOverlayColorEnd",
+    "cardLightColor1",
+    "cardLightColor2",
+)
 
 THEME_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 INTRO_EXTENSIONS = {".mp4", ".webm"}
@@ -31,20 +40,43 @@ class ThemeInfo(BaseModel):
     # One-time intro clip played in-game before the player's first scratch on
     # any motion card that belongs to this theme.
     intro: str | None = None
+    cardOverlayColorStart: str | None = None
+    cardOverlayColorEnd: str | None = None
+    cardLightColor1: str | None = None
+    cardLightColor2: str | None = None
 
 
 class CreateThemeRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=120)
+    cardOverlayColorStart: str | None = Field(default=None, max_length=32)
+    cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardLightColor1: str | None = Field(default=None, max_length=32)
+    cardLightColor2: str | None = Field(default=None, max_length=32)
 
 
 class UpdateThemeRequest(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = None
+    cardOverlayColorStart: str | None = Field(default=None, max_length=32)
+    cardOverlayColorEnd: str | None = Field(default=None, max_length=32)
+    cardLightColor1: str | None = Field(default=None, max_length=32)
+    cardLightColor2: str | None = Field(default=None, max_length=32)
 
 
 class ReorderThemesRequest(BaseModel):
     theme_ids: list[str] = Field(min_length=1)
+
+
+def _clean_optional_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _color_fields(source: Any) -> dict[str, str | None]:
+    return {key: _clean_optional_str(getattr(source, key, None)) for key in THEME_COLOR_KEYS}
 
 
 def safe_theme_id(value: str) -> str:
@@ -98,6 +130,11 @@ def _write_index(themes_dir: Path, themes: list[ThemeInfo]) -> None:
                 "sort_order": theme.sort_order,
                 "created_at": theme.created_at,
                 **({"intro": theme.intro} if theme.intro else {}),
+                **{
+                    key: value
+                    for key, value in _color_fields(theme).items()
+                    if value
+                },
             }
             for theme in themes
         ]
@@ -122,6 +159,10 @@ def _parse_theme(entry: dict, fallback_order: int, themes_dir: Path) -> ThemeInf
         sort_order=sort_order if isinstance(sort_order, int) else fallback_order,
         created_at=created_at if isinstance(created_at, (int, float)) else None,
         intro=find_theme_intro(themes_dir, theme_id),
+        cardOverlayColorStart=_clean_optional_str(entry.get("cardOverlayColorStart")),
+        cardOverlayColorEnd=_clean_optional_str(entry.get("cardOverlayColorEnd")),
+        cardLightColor1=_clean_optional_str(entry.get("cardLightColor1")),
+        cardLightColor2=_clean_optional_str(entry.get("cardLightColor2")),
     )
 
 
@@ -187,6 +228,7 @@ def create_theme(themes_dir: Path, request: CreateThemeRequest) -> ThemeInfo:
         label=label,
         sort_order=next_order,
         created_at=time.time(),
+        **_color_fields(request),
     )
     themes.append(created)
     themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
@@ -213,12 +255,18 @@ def update_theme(themes_dir: Path, theme_id: str, request: UpdateThemeRequest) -
             raise HTTPException(status_code=409, detail=f"Theme label “{label}” already exists")
 
     sort_order = current.sort_order if request.sort_order is None else request.sort_order
+    color_updates = {}
+    for key in THEME_COLOR_KEYS:
+        incoming = getattr(request, key)
+        if incoming is not None:
+            color_updates[key] = _clean_optional_str(incoming)
     updated = ThemeInfo(
-        id=current.id,
-        label=label,
-        sort_order=sort_order,
-        created_at=current.created_at,
-        intro=current.intro,
+        **{
+            **current.dict(),
+            "label": label,
+            "sort_order": sort_order,
+            **color_updates,
+        }
     )
     themes[index] = updated
     themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
@@ -254,13 +302,7 @@ def reorder_themes(themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
         if theme.id not in seen:
             ordered.append(theme)
     rewritten = [
-        ThemeInfo(
-            id=theme.id,
-            label=theme.label,
-            sort_order=index,
-            created_at=theme.created_at,
-            intro=theme.intro,
-        )
+        ThemeInfo(**{**theme.dict(), "sort_order": index})
         for index, theme in enumerate(ordered)
     ]
     _write_index(themes_dir, rewritten)
