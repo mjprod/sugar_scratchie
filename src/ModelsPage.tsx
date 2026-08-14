@@ -3107,6 +3107,7 @@ function TagsEditor({
         ))}
         <input
           className="model-tags-input"
+          aria-label="Add tag"
           disabled={busy}
           placeholder={tags.length === 0 ? "Type a tag and press Enter" : "Add another…"}
           value={draft}
