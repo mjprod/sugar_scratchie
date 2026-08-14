@@ -1330,7 +1330,21 @@ export function ModelsPage() {
                                   color={tagColor(tag)}
                                   size="1"
                                   variant={selectedTags.includes(tag) ? "solid" : "soft"}
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-pressed={selectedTags.includes(tag)}
+                                  style={{ cursor: "pointer" }}
                                   onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setSelectedTags((current) =>
+                                      current.includes(tag)
+                                        ? current.filter((item) => item !== tag)
+                                        : [...current, tag],
+                                    );
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter" && event.key !== " ") return;
                                     event.preventDefault();
                                     event.stopPropagation();
                                     setSelectedTags((current) =>
