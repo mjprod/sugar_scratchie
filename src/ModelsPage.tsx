@@ -1893,7 +1893,7 @@ function ModelDetail({
     return () => {
       if (tagsSaveTimer.current != null) window.clearTimeout(tagsSaveTimer.current);
     };
-  }, []);
+  }, [model.id]);
 
   const packNamesDirty =
     packNameDraft.trim() !== (model.cardPackName ?? "").trim() ||
