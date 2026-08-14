@@ -415,7 +415,14 @@ def cors_origins() -> list[str]:
     raw = os.environ.get("CORS_ORIGINS", "").strip()
     if raw:
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
-    return ["http://localhost:5080", "http://127.0.0.1:5080"]
+    return [
+        "http://localhost:5080",
+        "http://127.0.0.1:5080",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
 
 
 app = FastAPI(title="Sugar Scratchie Dashboard API")
