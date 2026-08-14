@@ -271,10 +271,10 @@ export function ThemesPage() {
     setError("");
     try {
       await createTheme(id, label, {
-        cardOverlayColorStart: newOverlayStart.trim() || null,
-        cardOverlayColorEnd: newOverlayEnd.trim() || null,
-        cardLightColor1: newLight1.trim() || null,
-        cardLightColor2: newLight2.trim() || null,
+        cardOverlayColorStart: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newOverlayStart.trim()) ? newOverlayStart.trim() : null,
+        cardOverlayColorEnd: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newOverlayEnd.trim()) ? newOverlayEnd.trim() : null,
+        cardLightColor1: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newLight1.trim()) ? newLight1.trim() : null,
+        cardLightColor2: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newLight2.trim()) ? newLight2.trim() : null,
       });
       setNewId("");
       setNewLabel("");
