@@ -28,7 +28,7 @@ export async function createTheme(
 ): Promise<ThemeInfo> {
   return api<ThemeInfo>("/api/themes", {
     method: "POST",
-    body: JSON.stringify({ id, label, ...colors }),
+    body: JSON.stringify({ id, label, ...(colors ?? {}) }),
   });
 }
 
