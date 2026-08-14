@@ -166,6 +166,20 @@ function optionalMetaString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function optionalMetaTags(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const tag = item.trim().toLowerCase();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
 function getModelsIndexPayload() {
   const models: Array<{
     id: string;
@@ -186,6 +200,7 @@ function getModelsIndexPayload() {
     packFaceVideoUrl2: string | null;
     swipeVideoUrl: string | null;
     theme_avatars?: Record<string, string>;
+    tags: string[];
   }> = [];
   try {
     for (const entry of readdirSync(modelsDirectory, { withFileTypes: true })) {
@@ -203,6 +218,7 @@ function getModelsIndexPayload() {
       let cardLightColor2: string | null = null;
       let cardPackName: string | null = null;
       let cardPackName2: string | null = null;
+      let tags: string[] = [];
       if (existsSync(metaPath)) {
         try {
           const data = JSON.parse(readFileSync(metaPath, "utf8")) as {
@@ -219,6 +235,7 @@ function getModelsIndexPayload() {
             influencerColorEnd?: string;
             cardPackName?: string;
             cardPackName2?: string;
+            tags?: unknown;
           };
           if (typeof data.label === "string" && data.label.trim()) label = data.label.trim();
           influencerName = optionalMetaString(data.influencerName);
@@ -235,6 +252,7 @@ function getModelsIndexPayload() {
           cardLightColor2 = optionalMetaString(data.cardLightColor2);
           cardPackName = optionalMetaString(data.cardPackName);
           cardPackName2 = optionalMetaString(data.cardPackName2);
+          tags = optionalMetaTags(data.tags);
         } catch {
           // keep fallback label
         }
@@ -258,6 +276,7 @@ function getModelsIndexPayload() {
         packFaceVideoUrl: findModelVideo(entry.name, "pack-face.mp4"),
         packFaceVideoUrl2: findModelVideo(entry.name, "pack-face-2.mp4"),
         swipeVideoUrl: findModelVideo(entry.name, "swipe.mp4"),
+        tags,
         ...(themeAvatars ? { theme_avatars: themeAvatars } : {}),
       });
     }

@@ -62,6 +62,7 @@ class ModelInfo(BaseModel):
     swipeVideoUrl: str | None = None
     # theme_id → public URL for model×theme collection avatar.
     theme_avatars: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
 
 class CreateModelRequest(BaseModel):
@@ -77,6 +78,7 @@ class CreateModelRequest(BaseModel):
     cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
+    tags: list[str] | None = None
 
 
 class UpdateModelRequest(BaseModel):
@@ -91,6 +93,7 @@ class UpdateModelRequest(BaseModel):
     cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
+    tags: list[str] | None = None
 
 
 def safe_model_id(value: str) -> str:
@@ -110,6 +113,28 @@ def _clean_optional_str(value: Any) -> str | None:
     return cleaned or None
 
 
+def _normalize_tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.split(",")
+    elif isinstance(value, list):
+        raw = value
+    else:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        tag = item.strip().lower()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag)
+    return out
+
+
 def _influencer_from_meta(meta: dict) -> dict[str, str | None]:
     return {key: _clean_optional_str(meta.get(key)) for key in INFLUENCER_META_KEYS}
 
@@ -126,6 +151,7 @@ def _model_info(
     pack_face_video_url_2: str | None = None,
     swipe_video_url: str | None = None,
     theme_avatars: dict[str, str] | None = None,
+    tags: list[str] | None = None,
 ) -> ModelInfo:
     fields = influencer or {key: None for key in INFLUENCER_META_KEYS}
     return ModelInfo(
@@ -148,6 +174,7 @@ def _model_info(
         packFaceVideoUrl2=pack_face_video_url_2,
         swipeVideoUrl=swipe_video_url,
         theme_avatars=theme_avatars or {},
+        tags=tags or [],
     )
 
 
@@ -165,6 +192,7 @@ def _model_info_from_dir(model_dir: Path, *, label: str, created_at: float | Non
         pack_face_video_url_2=videos.get("packFaceVideoUrl2"),
         swipe_video_url=videos.get("swipeVideoUrl"),
         theme_avatars=find_theme_avatars(model_dir),
+        tags=_normalize_tags(meta.get("tags")),
     )
 
 
@@ -205,6 +233,7 @@ def write_model_meta(
     cardLightColor2: str | None = None,
     cardPackName: str | None = None,
     cardPackName2: str | None = None,
+    tags: Any = ...,
 ) -> None:
     meta = model_dir / "meta.json"
     data: dict = {}
@@ -243,6 +272,13 @@ def write_model_meta(
             data[key] = cleaned
         else:
             data.pop(key, None)
+
+    if tags is not ...:
+        cleaned_tags = _normalize_tags(tags)
+        if cleaned_tags:
+            data["tags"] = cleaned_tags
+        else:
+            data.pop("tags", None)
 
     model_dir.mkdir(parents=True, exist_ok=True)
     meta.write_text(json.dumps(data, indent=2) + "\n")
@@ -349,6 +385,7 @@ def write_models_index(models_dir: Path) -> None:
                 "packFaceVideoUrl2": model.packFaceVideoUrl2,
                 "swipeVideoUrl": model.swipeVideoUrl,
                 "theme_avatars": model.theme_avatars,
+                "tags": model.tags,
             }
             for model in models
         ]
@@ -375,11 +412,13 @@ def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
         "cardPackName": _clean_optional_str(request.cardPackName),
         "cardPackName2": _clean_optional_str(request.cardPackName2),
     }
+    tags = _normalize_tags(request.tags)
     write_model_meta(
         model_dir,
         label=request.label,
         created_at=created_at,
         **influencer,
+        tags=tags,
     )
     write_models_index(models_dir)
     return _model_info(
@@ -392,6 +431,7 @@ def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
         pack_face_video_url=None,
         pack_face_video_url_2=None,
         swipe_video_url=None,
+        tags=tags,
     )
 
 
@@ -413,7 +453,12 @@ def update_model(models_dir: Path, model_id: str, request: UpdateModelRequest) -
         )
         for key in INFLUENCER_META_KEYS
     }
-    write_model_meta(model_dir, label=label, **influencer)
+    tags = (
+        _normalize_tags(request.tags)
+        if "tags" in set_fields
+        else _normalize_tags(meta.get("tags"))
+    )
+    write_model_meta(model_dir, label=label, tags=tags, **influencer)
     write_models_index(models_dir)
     created_at = meta.get("created_at")
     return _model_info_from_dir(

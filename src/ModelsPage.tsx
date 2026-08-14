@@ -256,6 +256,59 @@ function modelLocationLine(model: ModelInfo): string {
   return city || country;
 }
 
+function parseTagInput(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of value.split(",")) {
+    const tag = part.trim().toLowerCase();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+function formatTagsInput(tags: string[] | null | undefined): string {
+  return (tags ?? []).join(", ");
+}
+
+function modelTags(model: ModelInfo): string[] {
+  return model.tags ?? [];
+}
+
+const PRESET_MODEL_TAGS = ["featured", "new", "vip", "exclusive", "latina"];
+
+const TAG_COLORS = [
+  "crimson",
+  "pink",
+  "plum",
+  "violet",
+  "indigo",
+  "cyan",
+  "teal",
+  "amber",
+  "orange",
+] as const;
+
+function tagColor(tag: string): (typeof TAG_COLORS)[number] {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i += 1) {
+    hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
+  }
+  return TAG_COLORS[hash % TAG_COLORS.length]!;
+}
+
+function mergeTagSuggestions(existing: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tag of [...PRESET_MODEL_TAGS, ...existing]) {
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
 function modelGradientCss(
   startRaw: string | null | undefined,
   endRaw: string | null | undefined,
@@ -484,6 +537,9 @@ export function ModelsPage() {
   const [newModelColorEnd, setNewModelColorEnd] = useState("");
   const [newModelLightColor1, setNewModelLightColor1] = useState("");
   const [newModelLightColor2, setNewModelLightColor2] = useState("");
+  const [newModelTags, setNewModelTags] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [creatingCardFor, setCreatingCardFor] = useState("");
   const [newCardId, setNewCardId] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
@@ -586,6 +642,41 @@ export function ModelsPage() {
     [models, selectedModelId],
   );
 
+  const allModelTags = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const model of models) {
+      for (const tag of modelTags(model)) {
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        out.push(tag);
+      }
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [models]);
+
+  const filteredModels = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    return models.filter((model) => {
+      const tags = modelTags(model);
+      if (selectedTags.length > 0 && !selectedTags.every((tag) => tags.includes(tag))) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        model.id,
+        model.label,
+        model.influencerName ?? "",
+        model.influencerCity ?? "",
+        model.influencerCountry ?? "",
+        ...tags,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [modelSearch, models, selectedTags]);
+
   async function handleNewModelFlagCountrySelect(countryCode: string) {
     setError("");
     try {
@@ -611,6 +702,7 @@ export function ModelsPage() {
     setNewModelColorEnd("");
     setNewModelLightColor1("");
     setNewModelLightColor2("");
+    setNewModelTags("");
   }
 
   async function handleCreateModel() {
@@ -628,6 +720,7 @@ export function ModelsPage() {
           cardOverlayColorEnd: newModelColorEnd.trim() || null,
           cardLightColor1: newModelLightColor1.trim() || null,
           cardLightColor2: newModelLightColor2.trim() || null,
+          tags: parseTagInput(newModelTags),
         },
       );
       if (newModelFlagFile) {
@@ -668,6 +761,19 @@ export function ModelsPage() {
       setEditingColorEnd("");
       setEditingLightColor1("");
       setEditingLightColor2("");
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveTags(modelId: string, tags: string[]) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateModel(modelId, { tags });
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1020,6 +1126,7 @@ export function ModelsPage() {
                   ? themeCatalog.map((theme) => theme.label)
                   : [...PREFERRED_THEME_ORDER]
               }
+              suggestedTags={allModelTags}
               themeCatalog={themeCatalog}
               onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
               onAvatarClick={() => {
@@ -1053,6 +1160,7 @@ export function ModelsPage() {
               onSavePackNames={(cardPackName, cardPackName2) =>
                 void handleSavePackNames(selectedModel.id, cardPackName, cardPackName2)
               }
+              onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
@@ -1124,6 +1232,7 @@ export function ModelsPage() {
                     modelId={newModelId}
                     modelLabel={newModelLabel}
                     modelName={newModelName}
+                    modelTags={newModelTags}
                     stacked
                     onModelCityChange={setNewModelCity}
                     onModelColorEndChange={setNewModelColorEnd}
@@ -1138,6 +1247,8 @@ export function ModelsPage() {
                     onModelIdChange={setNewModelId}
                     onModelLabelChange={setNewModelLabel}
                     onModelNameChange={setNewModelName}
+                    onModelTagsChange={setNewModelTags}
+                    suggestedTags={allModelTags}
                     onSubmit={() => void handleCreateModel()}
                   />
                   <Flex gap="2" mt="3" justify="end">
@@ -1153,9 +1264,44 @@ export function ModelsPage() {
               {models.length > 0 ? (
                 <Flex direction="column" gap="3">
                   <Heading size="4">Models</Heading>
-                  {models.map((model) => {
+                  <TextField.Root
+                    placeholder="Search name, city, country, or tag"
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.currentTarget.value)}
+                  >
+                    <TextField.Slot>
+                      <Search {...iconProps} />
+                    </TextField.Slot>
+                  </TextField.Root>
+                  {allModelTags.length > 0 ? (
+                    <Flex gap="2" wrap="wrap">
+                      {allModelTags.map((tag) => {
+                        const active = selectedTags.includes(tag);
+                        return (
+                          <Button
+                            key={tag}
+                            color={tagColor(tag)}
+                            size="1"
+                            variant={active ? "solid" : "soft"}
+                            onClick={() =>
+                              setSelectedTags((current) =>
+                                current.includes(tag)
+                                  ? current.filter((item) => item !== tag)
+                                  : [...current, tag],
+                              )
+                            }
+                          >
+                            {tag}
+                          </Button>
+                        );
+                      })}
+                    </Flex>
+                  ) : null}
+                  {filteredModels.length > 0 ? (
+                    filteredModels.map((model) => {
                     const count = (cardsByModel.get(model.id) ?? []).length;
                     const location = modelLocationLine(model);
+                    const tags = modelTags(model);
                     return (
                       <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
                         <ModelAvatar model={model} size={44} />
@@ -1176,10 +1322,38 @@ export function ModelsPage() {
                               {count} motion card{count === 1 ? "" : "s"}
                             </Text>
                           ) : null}
+                          {tags.length > 0 ? (
+                            <Flex gap="1" mt="1" wrap="wrap">
+                              {tags.map((tag) => (
+                                <Badge
+                                  key={tag}
+                                  color={tagColor(tag)}
+                                  size="1"
+                                  variant={selectedTags.includes(tag) ? "solid" : "soft"}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setSelectedTags((current) =>
+                                      current.includes(tag)
+                                        ? current.filter((item) => item !== tag)
+                                        : [...current, tag],
+                                    );
+                                  }}
+                                >
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </Flex>
+                          ) : null}
                         </Box>
                       </a>
                     );
-                  })}
+                  })
+                  ) : (
+                    <Text color="gray" size="2">
+                      No models match this search.
+                    </Text>
+                  )}
                 </Flex>
               ) : (
                 <Card size="3">
@@ -1602,6 +1776,7 @@ function ModelDetail({
   newCardId,
   newCardLabel,
   preferredThemeOrder,
+  suggestedTags,
   themeCatalog,
   onAssignCard,
   onAvatarClick,
@@ -1635,6 +1810,7 @@ function ModelDetail({
   onStartRename,
   onVideoClick,
   onSavePackNames,
+  onSaveTags,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -1655,6 +1831,7 @@ function ModelDetail({
   newCardId: string;
   newCardLabel: string;
   preferredThemeOrder: string[];
+  suggestedTags: string[];
   themeCatalog: ThemeInfo[];
   onAssignCard: (cardId: string, modelId: string) => void;
   onAvatarClick: () => void;
@@ -1688,6 +1865,7 @@ function ModelDetail({
   onStartRename: () => void;
   onVideoClick: (kind: ModelVideoKind) => void;
   onSavePackNames: (cardPackName: string, cardPackName2: string) => void;
+  onSaveTags: (tags: string[]) => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
@@ -1702,15 +1880,36 @@ function ModelDetail({
   );
   const [packNameDraft, setPackNameDraft] = useState(model.cardPackName ?? "");
   const [packName2Draft, setPackName2Draft] = useState(model.cardPackName2 ?? "");
+  const [tagsDraft, setTagsDraft] = useState(formatTagsInput(model.tags));
+  const tagsSaveTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setPackNameDraft(model.cardPackName ?? "");
     setPackName2Draft(model.cardPackName2 ?? "");
-  }, [model.id, model.cardPackName, model.cardPackName2]);
+    setTagsDraft(formatTagsInput(model.tags));
+  }, [model.id, model.cardPackName, model.cardPackName2, model.tags]);
+
+  useEffect(() => {
+    return () => {
+      if (tagsSaveTimer.current != null) window.clearTimeout(tagsSaveTimer.current);
+    };
+  }, []);
 
   const packNamesDirty =
     packNameDraft.trim() !== (model.cardPackName ?? "").trim() ||
     packName2Draft.trim() !== (model.cardPackName2 ?? "").trim();
+  const savedTagsKey = formatTagsInput(model.tags);
+  const tagsDirty = formatTagsInput(parseTagInput(tagsDraft)) !== savedTagsKey;
+
+  function commitTags(nextValue: string) {
+    setTagsDraft(nextValue);
+    const nextTags = parseTagInput(nextValue);
+    if (formatTagsInput(nextTags) === savedTagsKey) return;
+    if (tagsSaveTimer.current != null) window.clearTimeout(tagsSaveTimer.current);
+    tagsSaveTimer.current = window.setTimeout(() => {
+      onSaveTags(nextTags);
+    }, 250);
+  }
 
   return (
     <Flex direction="column" gap="3">
@@ -1881,6 +2080,11 @@ function ModelDetail({
                   <Badge color="plum" variant="soft">
                     {model.id}
                   </Badge>
+                  {modelTags(model).map((tag) => (
+                    <Badge key={tag} color={tagColor(tag)} variant="soft">
+                      {tag}
+                    </Badge>
+                  ))}
                   {gradientCss ? (
                     <Box
                       aria-hidden
@@ -1959,6 +2163,36 @@ function ModelDetail({
             Delete
           </Button>
         </Flex>
+
+        <Box mb="3">
+          <div className="model-tags-section">
+          <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+            <Box>
+              <Text as="div" size="2" weight="bold">
+                Tags
+              </Text>
+              <Text as="div" color="gray" size="1">
+                Click a suggestion or type your own. Saves as you add or remove.
+              </Text>
+            </Box>
+            {tagsDirty ? (
+              <Badge color="amber" variant="soft">
+                Saving…
+              </Badge>
+            ) : (
+              <Badge color="gray" variant="soft">
+                Saved
+              </Badge>
+            )}
+          </Flex>
+          <TagsEditor
+            busy={busy}
+            suggestions={suggestedTags}
+            value={tagsDraft}
+            onChange={commitTags}
+          />
+        </div>
+        </Box>
 
         <Box mb="3">
           <Text as="div" mb="1" size="2" weight="bold">
@@ -2799,6 +3033,113 @@ function MotionCardRow({
   );
 }
 
+function TagsEditor({
+  busy,
+  suggestions = [],
+  value,
+  onChange,
+}: {
+  busy: boolean;
+  suggestions?: string[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const tags = parseTagInput(value);
+  const query = draft.trim().toLowerCase();
+  const availableSuggestions = mergeTagSuggestions(suggestions)
+    .filter((tag) => !tags.includes(tag))
+    .filter((tag) => !query || tag.includes(query));
+
+  function setTags(next: string[]) {
+    onChange(formatTagsInput(next));
+  }
+
+  function addTags(raw: string) {
+    const incoming = parseTagInput(raw);
+    if (incoming.length === 0) {
+      setDraft("");
+      return;
+    }
+    const next = [...tags];
+    const seen = new Set(next);
+    let added = false;
+    for (const tag of incoming) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      next.push(tag);
+      added = true;
+    }
+    setDraft("");
+    if (added) setTags(next);
+  }
+
+  return (
+    <Flex direction="column" gap="2">
+      <div className="model-tags-well">
+        {tags.map((tag) => (
+          <Badge key={tag} className="model-tags-chip" color={tagColor(tag)} size="2" variant="soft">
+            {tag}
+            <button
+              aria-label={`Remove ${tag}`}
+              className="model-tags-chip-remove"
+              disabled={busy}
+              type="button"
+              onClick={() => setTags(tags.filter((item) => item !== tag))}
+            >
+              <X size={12} strokeWidth={2.5} />
+            </button>
+          </Badge>
+        ))}
+        <input
+          className="model-tags-input"
+          disabled={busy}
+          placeholder={tags.length === 0 ? "Type a tag and press Enter" : "Add another…"}
+          value={draft}
+          onChange={(event) => {
+            const next = event.currentTarget.value;
+            if (next.includes(",")) {
+              addTags(next);
+              return;
+            }
+            setDraft(next);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Backspace" && !draft && tags.length > 0) {
+              setTags(tags.slice(0, -1));
+              return;
+            }
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            if (availableSuggestions.length === 1 && query) {
+              addTags(availableSuggestions[0]!);
+              return;
+            }
+            addTags(draft);
+          }}
+        />
+      </div>
+      {availableSuggestions.length > 0 ? (
+        <div className="model-tags-suggest">
+          {availableSuggestions.map((tag) => (
+            <Button
+              key={tag}
+              color={tagColor(tag)}
+              disabled={busy}
+              size="1"
+              variant="soft"
+              onClick={() => addTags(tag)}
+            >
+              <Plus size={12} strokeWidth={2.5} />
+              {tag}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </Flex>
+  );
+}
+
 function FlagSvgFilePreview({ file, size = 28 }: { file: File; size?: number }) {
   const [src, setSrc] = useState("");
 
@@ -2839,7 +3180,9 @@ function CreateModelFields({
   modelId,
   modelLabel,
   modelName,
+  modelTags,
   stacked = false,
+  suggestedTags = [],
   onModelCityChange,
   onModelColorEndChange,
   onModelColorStartChange,
@@ -2851,6 +3194,7 @@ function CreateModelFields({
   onModelIdChange,
   onModelLabelChange,
   onModelNameChange,
+  onModelTagsChange,
   onSubmit,
 }: {
   busy: boolean;
@@ -2864,7 +3208,9 @@ function CreateModelFields({
   modelId: string;
   modelLabel: string;
   modelName: string;
+  modelTags: string;
   stacked?: boolean;
+  suggestedTags?: string[];
   onModelCityChange: (value: string) => void;
   onModelColorEndChange: (value: string) => void;
   onModelColorStartChange: (value: string) => void;
@@ -2876,6 +3222,7 @@ function CreateModelFields({
   onModelIdChange: (value: string) => void;
   onModelLabelChange: (value: string) => void;
   onModelNameChange: (value: string) => void;
+  onModelTagsChange: (value: string) => void;
   onSubmit: () => void;
 }) {
   return (
@@ -2979,6 +3326,17 @@ function CreateModelFields({
           />
         </label>
       </Grid>
+      <Box>
+        <Text as="div" mb="1" size="2" weight="medium">
+          Tags
+        </Text>
+        <TagsEditor
+          busy={busy}
+          suggestions={suggestedTags}
+          value={modelTags}
+          onChange={onModelTagsChange}
+        />
+      </Box>
       <Box>
         <Text as="div" mb="2" size="2" weight="bold">
           Card overlay

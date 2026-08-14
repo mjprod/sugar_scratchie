@@ -20,6 +20,8 @@ export type ModelInfluencerProfile = {
   cardLightColor1?: string | null;
   /** Foil pack 3D light 2 (hemisphere ground / fill), e.g. "#1a1020". */
   cardLightColor2?: string | null;
+  /** Freeform labels for dashboard filtering, e.g. ["latina", "featured"]. */
+  tags?: string[];
 };
 
 export type ModelGlobalMedia = {
