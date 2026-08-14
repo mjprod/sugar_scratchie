@@ -3296,6 +3296,75 @@ dd {
   padding-bottom: 12px !important;
 }
 
+.model-tags-section {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--gray-4);
+  background: var(--gray-2);
+}
+
+.model-tags-well {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--gray-5);
+  background: var(--color-background);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.model-tags-well:focus-within {
+  border-color: var(--crimson-7);
+  box-shadow: 0 0 0 3px var(--crimson-a4);
+}
+
+.model-tags-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.model-tags-chip-remove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: inline-flex;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.model-tags-chip-remove:hover {
+  opacity: 1;
+}
+
+.model-tags-input {
+  flex: 1 1 160px;
+  min-width: 140px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: inherit;
+}
+
+.model-tags-input:disabled {
+  opacity: 0.5;
+}
+
+.model-tags-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .models-list-card {
   display: flex;
   align-items: center;
