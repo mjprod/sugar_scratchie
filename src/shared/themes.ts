@@ -1,5 +1,12 @@
 import { api } from "./api";
 
+export type ThemeCardColors = {
+  cardOverlayColorStart?: string | null;
+  cardOverlayColorEnd?: string | null;
+  cardLightColor1?: string | null;
+  cardLightColor2?: string | null;
+};
+
 export type ThemeInfo = {
   id: string;
   label: string;
@@ -7,23 +14,27 @@ export type ThemeInfo = {
   created_at?: number | null;
   /** One-time in-game intro clip shared by every motion card in this theme. */
   intro?: string | null;
-};
+} & ThemeCardColors;
 
 export async function fetchThemes(): Promise<ThemeInfo[]> {
   const data = await api<{ themes: ThemeInfo[] }>("/api/themes");
   return Array.isArray(data.themes) ? data.themes : [];
 }
 
-export async function createTheme(id: string, label: string): Promise<ThemeInfo> {
+export async function createTheme(
+  id: string,
+  label: string,
+  colors?: ThemeCardColors,
+): Promise<ThemeInfo> {
   return api<ThemeInfo>("/api/themes", {
     method: "POST",
-    body: JSON.stringify({ id, label }),
+    body: JSON.stringify({ id, label, ...(colors ?? {}) }),
   });
 }
 
 export async function updateTheme(
   themeId: string,
-  payload: { label?: string; sort_order?: number },
+  payload: { label?: string; sort_order?: number } & ThemeCardColors,
 ): Promise<ThemeInfo> {
   return api<ThemeInfo>(`/api/themes/${encodeURIComponent(themeId)}`, {
     method: "PUT",

@@ -18,6 +18,7 @@ import {
   Card,
   Container,
   Flex,
+  Grid,
   Heading,
   Text,
   TextField,
@@ -35,14 +36,220 @@ import { labelFromProjectId, PROJECT_ID_PATTERN, slugifyProjectId } from "./vide
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 
+function normalizeHexColor(value: string): string {
+  const raw = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    const [, a, b, c] = raw;
+    return `#${a}${a}${b}${b}${c}${c}`.toLowerCase();
+  }
+  return "#000000";
+}
+
+function ColorField({
+  busy,
+  label,
+  value,
+  onChange,
+}: {
+  busy: boolean;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const trimmed = value.trim();
+  const hasValue = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed);
+  const pickerValue = normalizeHexColor(trimmed || "#ffffff");
+  return (
+    <label style={{ minWidth: 0 }}>
+      <Text as="div" mb="1" size="1" weight="medium" color="gray">
+        {label}
+      </Text>
+      <Flex align="center" gap="2">
+        <input
+          disabled={busy}
+          type="color"
+          value={pickerValue}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          style={{
+            width: 32,
+            height: 32,
+            flexShrink: 0,
+            padding: 0,
+            border: "1px solid var(--gray-a6)",
+            borderRadius: 6,
+            background: hasValue ? pickerValue : "var(--gray-3)",
+            cursor: busy ? "not-allowed" : "pointer",
+            opacity: hasValue ? 1 : 0.55,
+          }}
+        />
+        <TextField.Root
+          disabled={busy}
+          placeholder="#ff8fab"
+          size="2"
+          style={{ flex: 1, minWidth: 0 }}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+      </Flex>
+    </label>
+  );
+}
+
+function CardColorFields({
+  busy,
+  overlayStart,
+  overlayEnd,
+  light1,
+  light2,
+  onOverlayStart,
+  onOverlayEnd,
+  onLight1,
+  onLight2,
+}: {
+  busy: boolean;
+  overlayStart: string;
+  overlayEnd: string;
+  light1: string;
+  light2: string;
+  onOverlayStart: (value: string) => void;
+  onOverlayEnd: (value: string) => void;
+  onLight1: (value: string) => void;
+  onLight2: (value: string) => void;
+}) {
+  return (
+    <Grid columns={{ initial: "1", sm: "2", md: "4" }} gap="2">
+      <ColorField busy={busy} label="Overlay start" value={overlayStart} onChange={onOverlayStart} />
+      <ColorField busy={busy} label="Overlay end" value={overlayEnd} onChange={onOverlayEnd} />
+      <ColorField busy={busy} label="Light 1" value={light1} onChange={onLight1} />
+      <ColorField busy={busy} label="Light 2" value={light2} onChange={onLight2} />
+    </Grid>
+  );
+}
+
+function CollapsibleCardColors({
+  busy,
+  open,
+  onOpenChange,
+  overlayStart,
+  overlayEnd,
+  light1,
+  light2,
+  onOverlayStart,
+  onOverlayEnd,
+  onLight1,
+  onLight2,
+}: {
+  busy: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  overlayStart: string;
+  overlayEnd: string;
+  light1: string;
+  light2: string;
+  onOverlayStart: (value: string) => void;
+  onOverlayEnd: (value: string) => void;
+  onLight1: (value: string) => void;
+  onLight2: (value: string) => void;
+}) {
+  return (
+    <Box>
+      <Flex align="center" gap="3" wrap="wrap">
+        <Button
+          color="gray"
+          size="1"
+          type="button"
+          variant="soft"
+          onClick={() => onOpenChange(!open)}
+        >
+          {open ? <ChevronUp {...iconProps} /> : <ChevronDown {...iconProps} />}
+          Card colours
+        </Button>
+        {open ? null : (
+          <Flex align="center" gap="4" wrap="wrap">
+            <ThemeColorChip label="Overlay" start={overlayStart} end={overlayEnd} />
+            <ThemeColorChip label="Light" start={light1} end={light2} />
+          </Flex>
+        )}
+      </Flex>
+      {open ? (
+        <Box mt="3">
+          <CardColorFields
+            busy={busy}
+            overlayStart={overlayStart}
+            overlayEnd={overlayEnd}
+            light1={light1}
+            light2={light2}
+            onOverlayStart={onOverlayStart}
+            onOverlayEnd={onOverlayEnd}
+            onLight1={onLight1}
+            onLight2={onLight2}
+          />
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+function gradientCss(start?: string | null, end?: string | null): string {
+  const a = (start ?? "").trim();
+  const b = (end ?? "").trim();
+  if (!a && !b) return "";
+  if (a && b) return `linear-gradient(90deg, ${a}, ${b})`;
+  return a || b;
+}
+
+function ThemeColorChip({
+  label,
+  start,
+  end,
+}: {
+  label: string;
+  start?: string | null;
+  end?: string | null;
+}) {
+  const fill = gradientCss(start, end);
+  return (
+    <Flex align="center" gap="2" style={{ flexShrink: 0 }}>
+      <Text size="1" color="gray">
+        {label}
+      </Text>
+      <Box
+        aria-hidden
+        title={
+          start && end ? `${start} → ${end}` : start || end || `${label} unset`
+        }
+        style={{
+          width: 72,
+          height: 18,
+          borderRadius: 999,
+          background: fill || "var(--gray-4)",
+          border: "1px solid var(--gray-a6)",
+          boxShadow: fill ? `inset 0 0 0 1px ${start || end}` : undefined,
+        }}
+      />
+    </Flex>
+  );
+}
+
 export function ThemesPage() {
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [newId, setNewId] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [newOverlayStart, setNewOverlayStart] = useState("");
+  const [newOverlayEnd, setNewOverlayEnd] = useState("");
+  const [newLight1, setNewLight1] = useState("");
+  const [newLight2, setNewLight2] = useState("");
+  const [showNewColors, setShowNewColors] = useState(false);
   const [editingId, setEditingId] = useState("");
   const [editingLabel, setEditingLabel] = useState("");
+  const [editingOverlayStart, setEditingOverlayStart] = useState("");
+  const [editingOverlayEnd, setEditingOverlayEnd] = useState("");
+  const [editingLight1, setEditingLight1] = useState("");
+  const [editingLight2, setEditingLight2] = useState("");
+  const [showEditColors, setShowEditColors] = useState(false);
 
   const refresh = useCallback(async () => {
     const next = await fetchThemes();
@@ -63,9 +270,19 @@ export function ThemesPage() {
     setBusy(true);
     setError("");
     try {
-      await createTheme(id, label);
+      await createTheme(id, label, {
+        cardOverlayColorStart: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newOverlayStart.trim()) ? newOverlayStart.trim() : null,
+        cardOverlayColorEnd: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newOverlayEnd.trim()) ? newOverlayEnd.trim() : null,
+        cardLightColor1: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newLight1.trim()) ? newLight1.trim() : null,
+        cardLightColor2: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(newLight2.trim()) ? newLight2.trim() : null,
+      });
       setNewId("");
       setNewLabel("");
+      setNewOverlayStart("");
+      setNewOverlayEnd("");
+      setNewLight1("");
+      setNewLight2("");
+      setShowNewColors(false);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -83,9 +300,20 @@ export function ThemesPage() {
     setBusy(true);
     setError("");
     try {
-      await updateTheme(themeId, { label });
+      await updateTheme(themeId, {
+        label,
+        cardOverlayColorStart: editingOverlayStart.trim(),
+        cardOverlayColorEnd: editingOverlayEnd.trim(),
+        cardLightColor1: editingLight1.trim(),
+        cardLightColor2: editingLight2.trim(),
+      });
       setEditingId("");
       setEditingLabel("");
+      setEditingOverlayStart("");
+      setEditingOverlayEnd("");
+      setEditingLight1("");
+      setEditingLight2("");
+      setShowEditColors(false);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -132,7 +360,7 @@ export function ThemesPage() {
 
   return (
     <main className="dashboard-root">
-      <Container size="3">
+      <Container size="4">
         <Flex direction="column" gap="4" py="6">
           <Flex align="center" justify="between" wrap="wrap" gap="3">
             <Box>
@@ -191,14 +419,9 @@ export function ThemesPage() {
                 Add theme
               </Heading>
             </Flex>
-            <Flex
-              align={{ initial: "stretch", sm: "end" }}
-              direction={{ initial: "column", sm: "row" }}
-              gap="2"
-              wrap="wrap"
-            >
-              <label style={{ flex: 1, minWidth: 140 }}>
-                <Text as="div" mb="1" size="1" weight="medium">
+            <Grid columns={{ initial: "1", sm: "2", md: "3" }} gap="2" mb="3">
+              <label>
+                <Text as="div" mb="1" size="1" weight="medium" color="gray">
                   Id
                 </Text>
                 <TextField.Root
@@ -214,8 +437,8 @@ export function ThemesPage() {
                   }}
                 />
               </label>
-              <label style={{ flex: 1, minWidth: 140 }}>
-                <Text as="div" mb="1" size="1" weight="medium">
+              <label>
+                <Text as="div" mb="1" size="1" weight="medium" color="gray">
                   Label
                 </Text>
                 <TextField.Root
@@ -225,11 +448,30 @@ export function ThemesPage() {
                   onChange={(event) => setNewLabel(event.currentTarget.value)}
                 />
               </label>
-              <Button disabled={busy || !newId.trim()} onClick={() => void handleCreate()}>
-                <Plus {...iconProps} />
-                Create theme
-              </Button>
-            </Flex>
+              <Flex align="end">
+                <Button
+                  disabled={busy || !newId.trim()}
+                  style={{ width: "100%" }}
+                  onClick={() => void handleCreate()}
+                >
+                  <Plus {...iconProps} />
+                  Create theme
+                </Button>
+              </Flex>
+            </Grid>
+            <CollapsibleCardColors
+              busy={busy}
+              open={showNewColors}
+              onOpenChange={setShowNewColors}
+              overlayStart={newOverlayStart}
+              overlayEnd={newOverlayEnd}
+              light1={newLight1}
+              light2={newLight2}
+              onOverlayStart={setNewOverlayStart}
+              onOverlayEnd={setNewOverlayEnd}
+              onLight1={setNewLight1}
+              onLight2={setNewLight2}
+            />
           </Card>
 
           <Card>
@@ -242,51 +484,84 @@ export function ThemesPage() {
               </Text>
             ) : (
               <Flex direction="column" gap="2">
-                {themes.map((theme, index) => (
+                {themes.map((theme, index) => {
+                  const stripe = gradientCss(
+                    theme.cardOverlayColorStart,
+                    theme.cardOverlayColorEnd,
+                  );
+                  const editing = editingId === theme.id;
+                  return (
                   <Flex
                     key={theme.id}
-                    align="center"
-                    gap="2"
-                    justify="between"
-                    wrap="wrap"
+                    align={editing ? "stretch" : "center"}
+                    gap="3"
                     style={{
-                      padding: "10px 12px",
+                      padding: editing ? 12 : "8px 10px 8px 8px",
                       borderRadius: 10,
                       border: "1px solid var(--gray-5)",
                       background: "var(--gray-2)",
                     }}
                   >
+                    {editing ? null : (
+                      <Box
+                        aria-hidden
+                        style={{
+                          width: 8,
+                          alignSelf: "stretch",
+                          minHeight: 28,
+                          borderRadius: 6,
+                          background: stripe || "var(--gray-5)",
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
                     <Box style={{ minWidth: 0, flex: 1 }}>
-                      {editingId === theme.id ? (
-                        <Flex align="end" gap="2" wrap="wrap">
-                          <label style={{ flex: 1, minWidth: 160 }}>
-                            <Text as="div" mb="1" size="1" weight="medium">
-                              Label
-                            </Text>
-                            <TextField.Root
+                      {editing ? (
+                        <Flex direction="column" gap="3">
+                          <Flex align="end" gap="2" wrap="wrap">
+                            <label style={{ flex: 1, minWidth: 160 }}>
+                              <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                                Label
+                              </Text>
+                              <TextField.Root
+                                disabled={busy}
+                                value={editingLabel}
+                                onChange={(event) => setEditingLabel(event.currentTarget.value)}
+                              />
+                            </label>
+                            <Button disabled={busy} onClick={() => void handleRename(theme.id)}>
+                              Save
+                            </Button>
+                            <Button
+                              color="gray"
                               disabled={busy}
-                              value={editingLabel}
-                              onChange={(event) => setEditingLabel(event.currentTarget.value)}
-                            />
-                          </label>
-                          <Button disabled={busy} onClick={() => void handleRename(theme.id)}>
-                            Save
-                          </Button>
-                          <Button
-                            color="gray"
-                            disabled={busy}
-                            variant="soft"
-                            onClick={() => {
-                              setEditingId("");
-                              setEditingLabel("");
-                            }}
-                          >
-                            Cancel
-                          </Button>
+                              variant="soft"
+                              onClick={() => {
+                                setEditingId("");
+                                setEditingLabel("");
+                                setShowEditColors(false);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </Flex>
+                          <CollapsibleCardColors
+                            busy={busy}
+                            open={showEditColors}
+                            onOpenChange={setShowEditColors}
+                            overlayStart={editingOverlayStart}
+                            overlayEnd={editingOverlayEnd}
+                            light1={editingLight1}
+                            light2={editingLight2}
+                            onOverlayStart={setEditingOverlayStart}
+                            onOverlayEnd={setEditingOverlayEnd}
+                            onLight1={setEditingLight1}
+                            onLight2={setEditingLight2}
+                          />
                         </Flex>
                       ) : (
-                        <>
-                          <Flex align="center" gap="2" wrap="wrap">
+                        <Flex align="center" gap="3" wrap="wrap">
+                          <Flex align="center" gap="2" wrap="wrap" style={{ flex: 1, minWidth: 160 }}>
                             <Text size="3" weight="medium">
                               {theme.label}
                             </Text>
@@ -299,11 +574,23 @@ export function ThemesPage() {
                               </Badge>
                             ) : null}
                           </Flex>
-                        </>
+                          <Flex align="center" gap="4" wrap="wrap">
+                            <ThemeColorChip
+                              label="Overlay"
+                              start={theme.cardOverlayColorStart}
+                              end={theme.cardOverlayColorEnd}
+                            />
+                            <ThemeColorChip
+                              label="Light"
+                              start={theme.cardLightColor1}
+                              end={theme.cardLightColor2}
+                            />
+                          </Flex>
+                        </Flex>
                       )}
                     </Box>
-                    {editingId === theme.id ? null : (
-                      <Flex gap="1">
+                    {editing ? null : (
+                      <Flex gap="1" style={{ flexShrink: 0 }}>
                         <Button
                           color="gray"
                           disabled={busy || index <= 0}
@@ -330,6 +617,11 @@ export function ThemesPage() {
                           onClick={() => {
                             setEditingId(theme.id);
                             setEditingLabel(theme.label);
+                            setEditingOverlayStart(theme.cardOverlayColorStart ?? "");
+                            setEditingOverlayEnd(theme.cardOverlayColorEnd ?? "");
+                            setEditingLight1(theme.cardLightColor1 ?? "");
+                            setEditingLight2(theme.cardLightColor2 ?? "");
+                            setShowEditColors(false);
                           }}
                         >
                           <Pencil {...iconProps} />
@@ -346,7 +638,8 @@ export function ThemesPage() {
                       </Flex>
                     )}
                   </Flex>
-                ))}
+                  );
+                })}
               </Flex>
             )}
           </Card>
