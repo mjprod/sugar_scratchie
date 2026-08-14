@@ -256,10 +256,10 @@ def update_theme(themes_dir: Path, theme_id: str, request: UpdateThemeRequest) -
 
     sort_order = current.sort_order if request.sort_order is None else request.sort_order
     color_updates = {}
+    set_fields = request.model_fields_set
     for key in THEME_COLOR_KEYS:
-        incoming = getattr(request, key)
-        if incoming is not None:
-            color_updates[key] = _clean_optional_str(incoming)
+        if key in set_fields:
+            color_updates[key] = _clean_optional_str(getattr(request, key))
     updated = ThemeInfo(
         **{
             **current.dict(),
