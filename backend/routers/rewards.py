@@ -22,9 +22,8 @@ class RedeemBody(BaseModel):
 
 
 def _next_midnight() -> datetime:
-    today = datetime.now().date()
-    return datetime.combine(today + timedelta(days=1), time.min)
-
+    today = utcnow().date()
+    return datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone.utc)
 
 @router.get("/daily")
 def daily_status(db: Annotated[Session, Depends(get_session)], user: Annotated[User, Depends(current_user)]):
