@@ -126,10 +126,11 @@ def purchase_pack(
     existing = db.query(PackPurchase).filter(PackPurchase.idempotency_key == key).one_or_none()
     if existing:
         instances = db.query(PackInstance).filter(PackInstance.pack_purchase_id == existing.id).all()
+        wallet = ensure_wallet(db, user.id)
         return {
             "purchaseId": str(existing.id),
             "instances": [_instance_public(i, pack) for i in instances],
-            "wallet": {"diamonds": ensure_wallet(db, user.id).diamonds, "coins": ensure_wallet(db, user.id).coins},
+            "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
         }
 
     unit = pack.diamond_cost
