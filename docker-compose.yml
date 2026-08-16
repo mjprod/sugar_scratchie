@@ -4,9 +4,9 @@ services:
     container_name: sugar-scratchie-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: sugar
-      POSTGRES_PASSWORD: sugar
-      POSTGRES_DB: sugar
+      POSTGRES_USER: ${POSTGRES_USER:-sugar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sugar}
+      POSTGRES_DB: ${POSTGRES_DB:-sugar}
     ports:
       - "5433:5432"
     volumes:
