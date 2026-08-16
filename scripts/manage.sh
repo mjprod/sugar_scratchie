@@ -65,9 +65,12 @@ cmd_setup() {
   need_venv
   cyan "Installing backend Python deps…"
   "$PYTHON" -m pip install -r backend/requirements.txt
-  cyan "Installing frontend-new deps…"
-  (cd frontend-new && npm install)
-  green "setup: ok"
+  if [[ -d "${ROOT}/frontend-new" ]]; then
+    cyan "Installing frontend-new deps…"
+    (cd frontend-new && npm install)
+  else
+    cyan "frontend-new/ not found; skipping separate frontend install"
+  fi
 }
 
 cmd_db_up() {
