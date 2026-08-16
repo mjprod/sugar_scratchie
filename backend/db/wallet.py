@@ -42,6 +42,9 @@ def apply_delta(
     if existing is not None:
         return wallet
 
+    if currency not in ("diamonds", "coins"):
+        raise ValueError(f"invalid currency: {currency}")
+
     current = wallet.diamonds if currency == "diamonds" else wallet.coins
     next_balance = current + delta
     if next_balance < 0:
