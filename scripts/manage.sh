@@ -23,8 +23,8 @@ Sugar Scratchie stack manager
 Usage: ./scripts/manage.sh <command>
 
   setup      Install Python + frontend-new deps
-  db-up      Start Postgres + pgAdmin (Docker)
-  db-down    Stop Postgres + pgAdmin
+  db-up      Start Postgres (Docker)
+  db-down    Stop Postgres
   migrate    Run Alembic migrations
   seed       Seed store / packs / redeem codes
   reset-db   Ensure DB + migrate + seed (Docker if available)
@@ -122,13 +122,12 @@ cmd_setup() {
 
 cmd_db_up() {
   need_docker
-  cyan "Starting Postgres on :5433 and pgAdmin on :5050…"
-  docker compose up -d postgres pgadmin
+  cyan "Starting Postgres on :5433…"
+  docker compose up -d postgres
   # Wait until ready
   for _ in $(seq 1 30); do
     if docker compose exec -T postgres pg_isready -U sugar -d sugar >/dev/null 2>&1; then
       green "Postgres is ready"
-      green "pgAdmin: http://127.0.0.1:5050  (admin@sugar.local / admin)"
       return 0
     fi
     sleep 1
@@ -228,7 +227,7 @@ cmd_status() {
   if docker_available; then
     if docker compose ps postgres 2>/dev/null | grep -q "running\|Up"; then
       green "postgres container is up"
-      docker compose ps postgres pgadmin
+      docker compose ps postgres
     elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "sugar-scratchie-postgres"; then
       green "sugar-scratchie-postgres is running"
       docker ps --filter name=sugar-scratchie- --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
@@ -245,7 +244,7 @@ cmd_status() {
   fi
   echo
   echo "—— Ports ——"
-  for port in 5432 5433 5050 8090 5080 5173; do
+  for port in 5432 5433 8090 5080 5173; do
     pids="$(port_pids "$port")"
     if [[ -n "$pids" ]]; then
       green ":${port} listening (pid ${pids})"
