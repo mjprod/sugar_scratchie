@@ -27,8 +27,8 @@ Usage: ./scripts/manage.sh <command>
   db-down    Stop Postgres + pgAdmin
   migrate    Run Alembic migrations
   seed       Seed store / packs / redeem codes
-  reset-db   db-up + migrate + seed
-  start      Start API + media (:5080) + frontend-new (:5173)
+  reset-db   Ensure DB + migrate + seed (Docker if available)
+  start      Ensure DB, migrate, seed, then API + media + frontend-new
   stop       Stop API / media / frontend-new (not Postgres)
   status     Show ports, Docker, and /api/health
   logs       Tail docker postgres logs
@@ -39,8 +39,28 @@ Typical first run:
   ./scripts/manage.sh reset-db
   ./scripts/manage.sh start
 
+Without Docker: install Postgres locally, set DATABASE_URL in .env
+(e.g. postgresql+psycopg://sugar:sugar@127.0.0.1:5432/sugar), then setup/migrate/seed/start.
+
 Then open: ${APP_URL}
 EOF
+}
+
+load_dotenv() {
+  local env_file="$ROOT/.env"
+  [[ -f "$env_file" ]] || return 0
+  # Export KEY=VALUE lines (skip comments / blanks). Does not evaluate shell.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+      # Strip surrounding quotes
+      if [[ "$val" =~ ^\"(.*)\"$ ]]; then val="${BASH_REMATCH[1]}"; fi
+      if [[ "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
+      export "$key=$val"
+    fi
+  done < "$env_file"
 }
 
 need_docker() {
@@ -54,11 +74,38 @@ need_docker() {
   fi
 }
 
+docker_available() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
 need_venv() {
   if [[ ! -x "$PYTHON" ]]; then
     red "Missing .venv. Create it, then: .venv/bin/pip install -r backend/requirements.txt"
     exit 1
   fi
+}
+
+db_reachable() {
+  need_venv
+  "$PYTHON" -c "from backend.db.engine import ping_db; raise SystemExit(0 if ping_db().get('ok') else 1)" 2>/dev/null
+}
+
+ensure_db() {
+  load_dotenv
+  if docker_available; then
+    cmd_db_up
+    return 0
+  fi
+  if db_reachable; then
+    green "Postgres reachable (no Docker) via ${DATABASE_URL:-default}"
+    return 0
+  fi
+  red "Postgres is not reachable and Docker is not available."
+  echo "Either install Docker Desktop and re-run, or:"
+  echo "  1. Install Postgres locally and create user/db sugar"
+  echo "  2. Set in .env: DATABASE_URL=postgresql+psycopg://sugar:sugar@127.0.0.1:5432/sugar"
+  echo "  3. Re-run: ./scripts/manage.sh migrate && ./scripts/manage.sh seed && ./scripts/manage.sh start"
+  exit 1
 }
 
 cmd_setup() {
@@ -98,6 +145,7 @@ cmd_db_down() {
 
 cmd_migrate() {
   need_venv
+  load_dotenv
   cyan "Running migrations…"
   "$ALEMBIC" -c backend/alembic.ini upgrade head
   green "migrate: ok"
@@ -105,13 +153,14 @@ cmd_migrate() {
 
 cmd_seed() {
   need_venv
+  load_dotenv
   cyan "Seeding player DB…"
   "$PYTHON" -m backend.db.seed
   green "seed: ok"
 }
 
 cmd_reset_db() {
-  cmd_db_up
+  ensure_db
   cmd_migrate
   cmd_seed
 }
@@ -150,8 +199,7 @@ cmd_stop() {
 
 cmd_start() {
   need_venv
-  need_docker
-  cmd_db_up
+  ensure_db
   cmd_migrate
   cmd_seed
 
@@ -175,8 +223,9 @@ cmd_start() {
 }
 
 cmd_status() {
-  echo "—— Docker Postgres / pgAdmin ——"
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  load_dotenv
+  echo "—— Database ——"
+  if docker_available; then
     if docker compose ps postgres 2>/dev/null | grep -q "running\|Up"; then
       green "postgres container is up"
       docker compose ps postgres pgadmin
@@ -187,11 +236,16 @@ cmd_status() {
       red "Postgres container not running (try: ./scripts/manage.sh db-up)"
     fi
   else
-    red "Docker daemon not reachable"
+    cyan "Docker not available — checking DATABASE_URL"
+    if db_reachable; then
+      green "Postgres reachable via ${DATABASE_URL:-default}"
+    else
+      red "Postgres not reachable (${DATABASE_URL:-default 5433})"
+    fi
   fi
   echo
   echo "—— Ports ——"
-  for port in 5433 5050 8090 5080 5173; do
+  for port in 5432 5433 5050 8090 5080 5173; do
     pids="$(port_pids "$port")"
     if [[ -n "$pids" ]]; then
       green ":${port} listening (pid ${pids})"
@@ -214,6 +268,7 @@ cmd_logs() {
 
 main() {
   local cmd="${1:-help}"
+  load_dotenv
   case "$cmd" in
     setup) cmd_setup ;;
     db-up) cmd_db_up ;;
