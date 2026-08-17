@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backend.db.models import Wallet, WalletTransaction, utcnow
@@ -37,36 +37,36 @@ def apply_delta(
     ref_type: str | None = None,
     ref_id: str | None = None,
 ) -> Wallet:
-    existing = session.scalar(select(WalletTransaction).where(WalletTransaction.idempotency_key == idempotency_key))
-    wallet = ensure_wallet(session, user_id)
-    if existing is not None:
-        return wallet
-
     if currency not in ("diamonds", "coins"):
         raise ValueError(f"invalid currency: {currency}")
+
+    wallet = ensure_wallet(session, user_id)
 
     current = wallet.diamonds if currency == "diamonds" else wallet.coins
     next_balance = current + delta
     if next_balance < 0:
         raise InsufficientFunds(f"insufficient {currency}")
 
+    stmt = pg_insert(WalletTransaction).values(
+        user_id=user_id,
+        currency=currency,
+        delta=delta,
+        balance_after=next_balance,
+        reason=reason,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        idempotency_key=idempotency_key,
+    ).on_conflict_do_nothing(constraint="wallet_tx_idempotency_key_uq")
+    result = session.execute(stmt)
+    if result.rowcount == 0:
+        # duplicate idempotency key — already applied, return current wallet
+        return wallet
+
     if currency == "diamonds":
         wallet.diamonds = next_balance
     else:
         wallet.coins = next_balance
     wallet.updated_at = utcnow()
-    session.add(
-        WalletTransaction(
-            user_id=user_id,
-            currency=currency,
-            delta=delta,
-            balance_after=next_balance,
-            reason=reason,
-            ref_type=ref_type,
-            ref_id=ref_id,
-            idempotency_key=idempotency_key,
-        )
-    )
     session.flush()
     return wallet
 
