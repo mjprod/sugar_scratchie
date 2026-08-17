@@ -19,6 +19,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from backend.db.engine import ping_db
+from backend.routers import auth as auth_router
+from backend.routers import collection as collection_router
+from backend.routers import inbox as inbox_router
+from backend.routers import me as me_router
+from backend.routers import packs as packs_router
+from backend.routers import rewards as rewards_router
+from backend.routers import store as store_router
+from backend.routers import wallet as wallet_router
+
 from backend.cards import (
     CardInfo,
     CreateCardRequest,
@@ -422,6 +432,10 @@ def cors_origins() -> list[str]:
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://localhost:5173",
+        "https://127.0.0.1:5173",
+        "https://localhost:5080",
+        "https://127.0.0.1:5080",
     ]
 
 
@@ -433,6 +447,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router.router)
+app.include_router(me_router.router)
+app.include_router(wallet_router.router)
+app.include_router(store_router.router)
+app.include_router(packs_router.router)
+app.include_router(collection_router.router)
+app.include_router(rewards_router.router)
+app.include_router(inbox_router.router)
 
 
 @app.on_event("startup")
@@ -556,10 +578,12 @@ def health() -> dict:
         ".env": (ROOT / ".env").exists(),
         "backend/.env": (ROOT / "backend" / ".env").exists(),
     }
+    db = ping_db()
     return {
         "ok": True,
         "root": str(ROOT),
         "env_files": env_files,
+        "db": db,
         "xai_key_loaded": bool(os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY")),
         "wavespeed_key_loaded": bool(os.environ.get("WAVESPEED_API_KEY")),
         "ffmpeg_available": shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,
