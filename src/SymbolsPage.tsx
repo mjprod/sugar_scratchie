@@ -68,15 +68,20 @@ export function SymbolsPage() {
   const fileInputs = useRef<Map<string, HTMLInputElement>>(new Map());
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
+  const loadSeq = useRef(0);
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
+  const selectValue = groups.some((group) => group.id === selectedGroupId)
+    ? selectedGroupId
+    : groups.find((group) => group.is_default)?.id || groups[0]?.id || "";
 
   const loadSymbolsForGroup = useCallback(async (groupId: string) => {
     if (!groupId) {
-      setSymbols([]);
       return;
     }
+    const seq = ++loadSeq.current;
     const next = await fetchSymbols(groupId);
+    if (seq !== loadSeq.current) return;
     setSymbols(next);
     const defaultId = groupsRef.current.find((group) => group.is_default)?.id;
     if (!defaultId || defaultId === groupId) {
@@ -98,23 +103,32 @@ export function SymbolsPage() {
     setSelectedGroupId(active);
     if (active) {
       await loadSymbolsForGroup(active);
-    } else {
-      setSymbols([]);
     }
   }, [loadSymbolsForGroup, selectedGroupId]);
 
   useEffect(() => {
+    let cancelled = false;
     refresh()
-      .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+      .catch((caught) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+      });
     loadSymbolTypes().catch(() => undefined);
+    return () => {
+      cancelled = true;
+      loadSeq.current += 1;
+    };
   }, []);
 
   useEffect(() => {
-    if (!selectedGroupId) return;
-    loadSymbolsForGroup(selectedGroupId).catch((caught) =>
+    if (!selectValue) return;
+    if (selectValue !== selectedGroupId) {
+      setSelectedGroupId(selectValue);
+      return;
+    }
+    loadSymbolsForGroup(selectValue).catch((caught) =>
       setError(caught instanceof Error ? caught.message : String(caught)),
     );
-  }, [selectedGroupId, loadSymbolsForGroup]);
+  }, [selectValue, selectedGroupId, loadSymbolsForGroup]);
 
   function patchSymbol(updated: SymbolInfo) {
     setSymbols((prev) => {
@@ -266,8 +280,12 @@ export function SymbolsPage() {
     setGroupBusy(true);
     setError("");
     try {
+      const fallbackId =
+        groups.find((group) => group.is_default)?.id ||
+        groups.find((group) => group.id !== selectedGroup.id)?.id ||
+        "";
       await deleteSymbolGroup(selectedGroup.id);
-      await refresh();
+      await refresh(fallbackId || undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -347,8 +365,12 @@ export function SymbolsPage() {
                     Active group
                   </Text>
                   <Select.Root
-                    value={selectedGroupId || undefined}
-                    onValueChange={setSelectedGroupId}
+                    value={selectValue || undefined}
+                    onValueChange={(value) => {
+                      if (groups.some((group) => group.id === value)) {
+                        setSelectedGroupId(value);
+                      }
+                    }}
                     disabled={groups.length === 0}
                   >
                     <Select.Trigger placeholder="Select group" style={{ width: "100%" }} />
