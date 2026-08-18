@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from backend.cards import CardInfo, list_cards, list_photo_scratch_thumb_urls, public_url
-from backend.models_store import ModelInfo, list_models
+from backend.models_store import ModelInfo, list_models_standalone
 from backend.themes_store import list_themes_standalone, resolve_theme_id_standalone
 
 CARDS_PER_GROUP = 3
@@ -132,7 +132,7 @@ def build_collection_catalog(
     model_filter: str | None = None,
     theme_filter: str | None = None,
 ) -> dict:
-    models = list_models(models_dir)
+    models = list_models_standalone(models_dir)
     cards = list_cards(root, cards_dir, mesh_dir)
     themes = list_themes_standalone(themes_dir)
     themes_by_id = {theme.id: theme.label for theme in themes}

@@ -180,6 +180,28 @@ class Theme(Base):
     card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Creator(Base):
+    """Admin catalog of creators / models (metadata only; avatars/flags/videos stay on disk)."""
+
+    __tablename__ = "models"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    influencer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    influencer_city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    influencer_country: Mapped[str | None] = mapped_column(Text, nullable=True)
+    influencer_flag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_overlay_color_start: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_overlay_color_end: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_light_color_1: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_pack_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_pack_name_2: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+
+
 class StorePurchase(Base):
     __tablename__ = "store_purchases"
     __table_args__ = (

@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from backend.cards import delete_card, list_cards, public_url
+from backend.db.models import Creator
 
 MODEL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -32,13 +35,24 @@ INFLUENCER_META_KEYS = (
     "influencerFlag",
     "cardOverlayColorStart",
     "cardOverlayColorEnd",
-    # Foil pack 3D light rig (hemisphere sky / ground) per girl.
     "cardLightColor1",
     "cardLightColor2",
-    # Display names for the two foil pack slots (product label prefers these over pack Nº).
     "cardPackName",
     "cardPackName2",
 )
+
+_INFLUENCER_COLUMNS = {
+    "influencerName": "influencer_name",
+    "influencerCity": "influencer_city",
+    "influencerCountry": "influencer_country",
+    "influencerFlag": "influencer_flag",
+    "cardOverlayColorStart": "card_overlay_color_start",
+    "cardOverlayColorEnd": "card_overlay_color_end",
+    "cardLightColor1": "card_light_color_1",
+    "cardLightColor2": "card_light_color_2",
+    "cardPackName": "card_pack_name",
+    "cardPackName2": "card_pack_name_2",
+}
 
 
 class ModelInfo(BaseModel):
@@ -135,75 +149,18 @@ def _normalize_tags(value: Any) -> list[str]:
     return out
 
 
-def _influencer_from_meta(meta: dict) -> dict[str, str | None]:
-    return {key: _clean_optional_str(meta.get(key)) for key in INFLUENCER_META_KEYS}
-
-
-def _model_info(
-    model_id: str,
-    *,
-    label: str,
-    avatar: str | None,
-    created_at: float | None,
-    influencer: dict[str, str | None] | None = None,
-    influencer_flag_svg: str | None = None,
-    pack_face_video_url: str | None = None,
-    pack_face_video_url_2: str | None = None,
-    swipe_video_url: str | None = None,
-    theme_avatars: dict[str, str] | None = None,
-    tags: list[str] | None = None,
-) -> ModelInfo:
-    fields = influencer or {key: None for key in INFLUENCER_META_KEYS}
-    return ModelInfo(
-        id=model_id,
-        label=label,
-        avatar=avatar,
-        created_at=created_at,
-        influencerName=fields.get("influencerName"),
-        influencerCity=fields.get("influencerCity"),
-        influencerCountry=fields.get("influencerCountry"),
-        influencerFlag=fields.get("influencerFlag"),
-        influencerFlagSvg=influencer_flag_svg,
-        cardOverlayColorStart=fields.get("cardOverlayColorStart"),
-        cardOverlayColorEnd=fields.get("cardOverlayColorEnd"),
-        cardLightColor1=fields.get("cardLightColor1"),
-        cardLightColor2=fields.get("cardLightColor2"),
-        cardPackName=fields.get("cardPackName"),
-        cardPackName2=fields.get("cardPackName2"),
-        packFaceVideoUrl=pack_face_video_url,
-        packFaceVideoUrl2=pack_face_video_url_2,
-        swipeVideoUrl=swipe_video_url,
-        theme_avatars=theme_avatars or {},
-        tags=tags or [],
-    )
-
-
-def _model_info_from_dir(model_dir: Path, *, label: str, created_at: float | None) -> ModelInfo:
-    meta = read_model_meta(model_dir, label)
-    videos = find_model_videos(model_dir)
-    return _model_info(
-        model_dir.name,
-        label=label,
-        avatar=find_avatar(model_dir),
-        created_at=created_at,
-        influencer=_influencer_from_meta(meta),
-        influencer_flag_svg=find_flag_svg(model_dir),
-        pack_face_video_url=videos.get("packFaceVideoUrl"),
-        pack_face_video_url_2=videos.get("packFaceVideoUrl2"),
-        swipe_video_url=videos.get("swipeVideoUrl"),
-        theme_avatars=find_theme_avatars(model_dir),
-        tags=_normalize_tags(meta.get("tags")),
-    )
+def _influencer_fields(source: Any) -> dict[str, str | None]:
+    return {key: _clean_optional_str(getattr(source, key, None)) for key in INFLUENCER_META_KEYS}
 
 
 def read_model_meta(model_dir: Path, default_label: str) -> dict:
+    """Read legacy meta.json (bootstrap only)."""
     meta = model_dir / "meta.json"
     if not meta.exists():
         return {"label": default_label}
     try:
         data = json.loads(meta.read_text())
         if isinstance(data, dict):
-            # Migrate short-lived influencerColor* keys → cardOverlayColor*.
             if not data.get("cardOverlayColorStart") and data.get("influencerColorStart"):
                 data["cardOverlayColorStart"] = data.pop("influencerColorStart")
             elif "influencerColorStart" in data:
@@ -216,72 +173,6 @@ def read_model_meta(model_dir: Path, default_label: str) -> dict:
     except Exception:
         pass
     return {"label": default_label}
-
-
-def write_model_meta(
-    model_dir: Path,
-    *,
-    label: str,
-    created_at: float | None = None,
-    influencerName: str | None = None,
-    influencerCity: str | None = None,
-    influencerCountry: str | None = None,
-    influencerFlag: str | None = None,
-    cardOverlayColorStart: str | None = None,
-    cardOverlayColorEnd: str | None = None,
-    cardLightColor1: str | None = None,
-    cardLightColor2: str | None = None,
-    cardPackName: str | None = None,
-    cardPackName2: str | None = None,
-    tags: Any = ...,
-) -> None:
-    meta = model_dir / "meta.json"
-    data: dict = {}
-    if meta.exists():
-        try:
-            loaded = json.loads(meta.read_text())
-            if isinstance(loaded, dict):
-                data = loaded
-        except Exception:
-            pass
-    data["label"] = label.strip()
-    if created_at is not None:
-        data["created_at"] = created_at
-    elif "created_at" not in data:
-        data["created_at"] = time.time()
-
-    # Drop renamed legacy keys if present.
-    data.pop("influencerColorStart", None)
-    data.pop("influencerColorEnd", None)
-
-    influencer = {
-        "influencerName": influencerName,
-        "influencerCity": influencerCity,
-        "influencerCountry": influencerCountry,
-        "influencerFlag": influencerFlag,
-        "cardOverlayColorStart": cardOverlayColorStart,
-        "cardOverlayColorEnd": cardOverlayColorEnd,
-        "cardLightColor1": cardLightColor1,
-        "cardLightColor2": cardLightColor2,
-        "cardPackName": cardPackName,
-        "cardPackName2": cardPackName2,
-    }
-    for key, value in influencer.items():
-        cleaned = _clean_optional_str(value)
-        if cleaned:
-            data[key] = cleaned
-        else:
-            data.pop(key, None)
-
-    if tags is not ...:
-        cleaned_tags = _normalize_tags(tags)
-        if cleaned_tags:
-            data["tags"] = cleaned_tags
-        else:
-            data.pop("tags", None)
-
-    model_dir.mkdir(parents=True, exist_ok=True)
-    meta.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def find_avatar(model_dir: Path) -> str | None:
@@ -317,8 +208,6 @@ def find_flag_svg(model_dir: Path) -> str | None:
         candidate = model_dir / f"flag{ext}"
         if candidate.is_file():
             url = public_url(f"models/{model_dir.name}/flag{ext}")
-            # Cache-bust with mtime so the browser refetches after a re-upload —
-            # the filename ("flag.svg") never changes, only its contents.
             try:
                 version = int(candidate.stat().st_mtime)
             except OSError:
@@ -342,130 +231,190 @@ def find_model_videos(model_dir: Path) -> dict[str, str | None]:
     }
 
 
-def list_models(models_dir: Path) -> list[ModelInfo]:
-    if not models_dir.exists():
-        return []
-    models: list[ModelInfo] = []
+def _created_at_unix(value: datetime | None) -> float | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
+
+
+def _parse_legacy_created_at(value: Any) -> datetime:
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
+    model_dir = models_dir / row.id
+    videos = find_model_videos(model_dir) if model_dir.is_dir() else {}
+    return ModelInfo(
+        id=row.id,
+        label=row.label,
+        avatar=find_avatar(model_dir) if model_dir.is_dir() else None,
+        created_at=_created_at_unix(row.created_at),
+        influencerName=row.influencer_name,
+        influencerCity=row.influencer_city,
+        influencerCountry=row.influencer_country,
+        influencerFlag=row.influencer_flag,
+        influencerFlagSvg=find_flag_svg(model_dir) if model_dir.is_dir() else None,
+        cardOverlayColorStart=row.card_overlay_color_start,
+        cardOverlayColorEnd=row.card_overlay_color_end,
+        cardLightColor1=row.card_light_color_1,
+        cardLightColor2=row.card_light_color_2,
+        cardPackName=row.card_pack_name,
+        cardPackName2=row.card_pack_name_2,
+        packFaceVideoUrl=videos.get("packFaceVideoUrl"),
+        packFaceVideoUrl2=videos.get("packFaceVideoUrl2"),
+        swipeVideoUrl=videos.get("swipeVideoUrl"),
+        theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
+        tags=_normalize_tags(row.tags),
+    )
+
+
+def _model_count(db: Session) -> int:
+    return int(db.scalar(select(func.count()).select_from(Creator)) or 0)
+
+
+def _require_creator(db: Session, model_id: str) -> Creator:
+    slug = safe_model_id(model_id)
+    row = db.get(Creator, slug)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {slug}")
+    return row
+
+
+def _import_from_disk(db: Session, models_dir: Path) -> int:
+    if not models_dir.is_dir():
+        return 0
+    imported = 0
     for directory in sorted(path for path in models_dir.iterdir() if path.is_dir()):
-        meta = read_model_meta(directory, directory.name.replace("_", " ").title())
+        model_id = directory.name
+        if not MODEL_ID_PATTERN.match(model_id):
+            continue
+        if db.get(Creator, model_id) is not None:
+            continue
+        meta = read_model_meta(directory, model_id.replace("_", " ").title())
         label = meta.get("label")
         if not isinstance(label, str) or not label.strip():
-            label = directory.name.replace("_", " ").title()
-        created_at = meta.get("created_at")
-        models.append(
-            _model_info_from_dir(
-                directory,
-                label=label.strip(),
-                created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
+            label = model_id.replace("_", " ").title()
+        else:
+            label = label.strip()
+        kwargs = {
+            col: _clean_optional_str(meta.get(key)) for key, col in _INFLUENCER_COLUMNS.items()
+        }
+        db.add(
+            Creator(
+                id=model_id,
+                label=label,
+                created_at=_parse_legacy_created_at(meta.get("created_at")),
+                updated_at=datetime.now(timezone.utc),
+                tags=_normalize_tags(meta.get("tags")),
+                **kwargs,
             )
         )
-    return models
+        imported += 1
+    if imported:
+        db.flush()
+    return imported
 
 
-def write_models_index(models_dir: Path) -> None:
-    models = list_models(models_dir)
-    payload = {
-        "models": [
-            {
-                "id": model.id,
-                "label": model.label,
-                "avatar": model.avatar,
-                "influencerName": model.influencerName,
-                "influencerCity": model.influencerCity,
-                "influencerCountry": model.influencerCountry,
-                "influencerFlag": model.influencerFlag,
-                "influencerFlagSvg": model.influencerFlagSvg,
-                "cardOverlayColorStart": model.cardOverlayColorStart,
-                "cardOverlayColorEnd": model.cardOverlayColorEnd,
-                "cardLightColor1": model.cardLightColor1,
-                "cardLightColor2": model.cardLightColor2,
-                "cardPackName": model.cardPackName,
-                "cardPackName2": model.cardPackName2,
-                "packFaceVideoUrl": model.packFaceVideoUrl,
-                "packFaceVideoUrl2": model.packFaceVideoUrl2,
-                "swipeVideoUrl": model.swipeVideoUrl,
-                "theme_avatars": model.theme_avatars,
-                "tags": model.tags,
-            }
-            for model in models
-        ]
-    }
-    models_dir.mkdir(parents=True, exist_ok=True)
-    (models_dir / "index.json").write_text(json.dumps(payload, indent=2) + "\n")
+def ensure_models_bootstrapped(db: Session, models_dir: Path) -> list[ModelInfo]:
+    """Seed models from on-disk meta.json when the table is empty."""
+    if _model_count(db) == 0:
+        _import_from_disk(db, models_dir)
+    return list_models(db, models_dir)
 
 
-def create_model(models_dir: Path, request: CreateModelRequest) -> ModelInfo:
+def list_models(db: Session, models_dir: Path) -> list[ModelInfo]:
+    rows = db.scalars(select(Creator).order_by(Creator.label, Creator.id)).all()
+    return [_row_to_info(row, models_dir) for row in rows]
+
+
+def get_model(db: Session, models_dir: Path, model_id: str) -> ModelInfo:
+    row = _require_creator(db, model_id)
+    return _row_to_info(row, models_dir)
+
+
+def model_exists(db: Session, model_id: str) -> bool:
+    try:
+        slug = safe_model_id(model_id)
+    except HTTPException:
+        return False
+    return db.get(Creator, slug) is not None
+
+
+def create_model(db: Session, models_dir: Path, request: CreateModelRequest) -> ModelInfo:
     model_id = safe_model_id(request.id)
-    model_dir = models_dir / model_id
-    if model_dir.exists():
+    label = request.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Model label is required")
+
+    if db.get(Creator, model_id) is not None:
         raise HTTPException(status_code=409, detail=f"Model already exists: {model_id}")
-    created_at = time.time()
-    influencer = {
-        "influencerName": _clean_optional_str(request.influencerName),
-        "influencerCity": _clean_optional_str(request.influencerCity),
-        "influencerCountry": _clean_optional_str(request.influencerCountry),
-        "influencerFlag": _clean_optional_str(request.influencerFlag),
-        "cardOverlayColorStart": _clean_optional_str(request.cardOverlayColorStart),
-        "cardOverlayColorEnd": _clean_optional_str(request.cardOverlayColorEnd),
-        "cardLightColor1": _clean_optional_str(request.cardLightColor1),
-        "cardLightColor2": _clean_optional_str(request.cardLightColor2),
-        "cardPackName": _clean_optional_str(request.cardPackName),
-        "cardPackName2": _clean_optional_str(request.cardPackName2),
-    }
+
+    clash = db.scalar(select(Creator.id).where(func.lower(Creator.label) == label.lower()).limit(1))
+    if clash is not None:
+        raise HTTPException(status_code=409, detail=f"Model label “{label}” already exists")
+
+    influencer = _influencer_fields(request)
     tags = _normalize_tags(request.tags)
-    write_model_meta(
-        model_dir,
-        label=request.label,
-        created_at=created_at,
-        **influencer,
-        tags=tags,
-    )
-    write_models_index(models_dir)
-    return _model_info(
-        model_id,
-        label=request.label.strip(),
-        avatar=None,
-        created_at=created_at,
-        influencer=influencer,
-        influencer_flag_svg=None,
-        pack_face_video_url=None,
-        pack_face_video_url_2=None,
-        swipe_video_url=None,
-        tags=tags,
-    )
-
-
-def update_model(models_dir: Path, model_id: str, request: UpdateModelRequest) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = request.label.strip() if request.label is not None else str(meta.get("label", model_id))
-    existing = _influencer_from_meta(meta)
-    # Fields present in the JSON body (including null/"") clear or replace;
-    # omitted fields keep their stored value.
-    set_fields = request.model_fields_set
-    influencer = {
-        key: (
-            _clean_optional_str(getattr(request, key))
-            if key in set_fields
-            else existing[key]
-        )
-        for key in INFLUENCER_META_KEYS
-    }
-    tags = (
-        _normalize_tags(request.tags)
-        if "tags" in set_fields
-        else _normalize_tags(meta.get("tags"))
-    )
-    write_model_meta(model_dir, label=label, tags=tags, **influencer)
-    write_models_index(models_dir)
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
+    now = datetime.now(timezone.utc)
+    row = Creator(
+        id=model_id,
         label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
+        created_at=now,
+        updated_at=now,
+        tags=tags,
+        influencer_name=influencer["influencerName"],
+        influencer_city=influencer["influencerCity"],
+        influencer_country=influencer["influencerCountry"],
+        influencer_flag=influencer["influencerFlag"],
+        card_overlay_color_start=influencer["cardOverlayColorStart"],
+        card_overlay_color_end=influencer["cardOverlayColorEnd"],
+        card_light_color_1=influencer["cardLightColor1"],
+        card_light_color_2=influencer["cardLightColor2"],
+        card_pack_name=influencer["cardPackName"],
+        card_pack_name_2=influencer["cardPackName2"],
     )
+    db.add(row)
+    db.flush()
+    (models_dir / model_id).mkdir(parents=True, exist_ok=True)
+    return _row_to_info(row, models_dir)
+
+
+def update_model(
+    db: Session,
+    models_dir: Path,
+    model_id: str,
+    request: UpdateModelRequest,
+) -> ModelInfo:
+    row = _require_creator(db, model_id)
+    set_fields = request.model_fields_set
+
+    if request.label is not None:
+        label = request.label.strip()
+        if not label:
+            raise HTTPException(status_code=400, detail="Model label is required")
+        clash = db.scalar(
+            select(Creator.id)
+            .where(func.lower(Creator.label) == label.lower(), Creator.id != row.id)
+            .limit(1)
+        )
+        if clash is not None:
+            raise HTTPException(status_code=409, detail=f"Model label “{label}” already exists")
+        row.label = label
+
+    for api_key, column in _INFLUENCER_COLUMNS.items():
+        if api_key in set_fields:
+            setattr(row, column, _clean_optional_str(getattr(request, api_key)))
+
+    if "tags" in set_fields:
+        row.tags = _normalize_tags(request.tags)
+
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return _row_to_info(row, models_dir)
 
 
 def _linked_card_ids(
@@ -499,6 +448,7 @@ def _linked_card_ids(
 
 
 def delete_model(
+    db: Session,
     root: Path,
     models_dir: Path,
     cards_dir: Path,
@@ -506,23 +456,30 @@ def delete_model(
     model_id: str,
 ) -> None:
     """Delete a model and recursively delete all of its motion cards."""
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    for card_id in _linked_card_ids(root, cards_dir, mesh_dir, model_id):
+    row = _require_creator(db, model_id)
+    slug = row.id
+    for card_id in _linked_card_ids(root, cards_dir, mesh_dir, slug):
         try:
             delete_card(root, cards_dir, mesh_dir, card_id)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise
-    shutil.rmtree(model_dir)
-    write_models_index(models_dir)
+    db.delete(row)
+    db.flush()
+    model_dir = models_dir / slug
+    if model_dir.is_dir():
+        shutil.rmtree(model_dir, ignore_errors=True)
 
 
-async def upload_model_avatar(models_dir: Path, model_id: str, upload: UploadFile) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+async def upload_model_avatar(
+    db: Session,
+    models_dir: Path,
+    model_id: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
+    model_dir.mkdir(parents=True, exist_ok=True)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in AVATAR_EXTENSIONS:
@@ -534,23 +491,19 @@ async def upload_model_avatar(models_dir: Path, model_id: str, upload: UploadFil
         old = model_dir / f"avatar{old_ext}"
         if old.exists():
             old.unlink()
-    target = model_dir / f"avatar{ext}"
-    target.write_bytes(data)
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+    (model_dir / f"avatar{ext}").write_bytes(data)
+    return _row_to_info(row, models_dir)
 
 
-async def upload_model_flag_svg(models_dir: Path, model_id: str, upload: UploadFile) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+async def upload_model_flag_svg(
+    db: Session,
+    models_dir: Path,
+    model_id: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
+    model_dir.mkdir(parents=True, exist_ok=True)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in FLAG_EXTENSIONS:
@@ -558,7 +511,6 @@ async def upload_model_flag_svg(models_dir: Path, model_id: str, upload: UploadF
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded flag is empty")
-    # Basic sanity check — reject obvious non-SVG payloads.
     head = data[:256].lstrip().lower()
     if b"<svg" not in head and not head.startswith(b"<?xml"):
         raise HTTPException(status_code=400, detail="Flag file does not look like SVG")
@@ -566,23 +518,13 @@ async def upload_model_flag_svg(models_dir: Path, model_id: str, upload: UploadF
         old = model_dir / f"flag{old_ext}"
         if old.exists():
             old.unlink()
-    target = model_dir / f"flag{ext}"
-    target.write_bytes(data)
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+    (model_dir / f"flag{ext}").write_bytes(data)
+    return _row_to_info(row, models_dir)
 
 
-def delete_model_flag_svg(models_dir: Path, model_id: str) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+def delete_model_flag_svg(db: Session, models_dir: Path, model_id: str) -> ModelInfo:
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
     removed = False
     for ext in FLAG_EXTENSIONS:
         path = model_dir / f"flag{ext}"
@@ -590,19 +532,12 @@ def delete_model_flag_svg(models_dir: Path, model_id: str) -> ModelInfo:
             path.unlink()
             removed = True
     if not removed:
-        raise HTTPException(status_code=404, detail=f"Flag SVG not found for model {model_id}")
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+        raise HTTPException(status_code=404, detail=f"Flag SVG not found for model {row.id}")
+    return _row_to_info(row, models_dir)
 
 
 async def upload_model_video(
+    db: Session,
     models_dir: Path,
     model_id: str,
     stem: str,
@@ -610,9 +545,9 @@ async def upload_model_video(
 ) -> ModelInfo:
     if stem not in MODEL_VIDEO_STEMS:
         raise HTTPException(status_code=400, detail=f"Unknown video kind: {stem}")
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
+    model_dir.mkdir(parents=True, exist_ok=True)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in VIDEO_EXTENSIONS:
@@ -624,28 +559,19 @@ async def upload_model_video(
         old = model_dir / f"{stem}{old_ext}"
         if old.exists():
             old.unlink()
-    target = model_dir / f"{stem}{ext}"
-    target.write_bytes(data)
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+    (model_dir / f"{stem}{ext}").write_bytes(data)
+    return _row_to_info(row, models_dir)
 
 
 async def upload_model_theme_avatar(
+    db: Session,
     models_dir: Path,
     model_id: str,
     theme_id: str,
     upload: UploadFile,
 ) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
     slug = safe_model_id(theme_id)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
@@ -660,27 +586,18 @@ async def upload_model_theme_avatar(
         old = theme_dir / f"avatar{old_ext}"
         if old.exists():
             old.unlink()
-    target = theme_dir / f"avatar{ext}"
-    target.write_bytes(data)
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+    (theme_dir / f"avatar{ext}").write_bytes(data)
+    return _row_to_info(row, models_dir)
 
 
 def delete_model_theme_avatar(
+    db: Session,
     models_dir: Path,
     model_id: str,
     theme_id: str,
 ) -> ModelInfo:
-    model_dir = models_dir / model_id
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
     slug = safe_model_id(theme_id)
     theme_dir = model_dir / "themes" / slug
     removed = False
@@ -692,16 +609,21 @@ def delete_model_theme_avatar(
     if not removed:
         raise HTTPException(
             status_code=404,
-            detail=f"Theme avatar not found for model {model_id} / theme {slug}",
+            detail=f"Theme avatar not found for model {row.id} / theme {slug}",
         )
     if theme_dir.is_dir() and not any(theme_dir.iterdir()):
         theme_dir.rmdir()
-    write_models_index(models_dir)
-    meta = read_model_meta(model_dir, model_id.replace("_", " ").title())
-    label = str(meta.get("label", model_id))
-    created_at = meta.get("created_at")
-    return _model_info_from_dir(
-        model_dir,
-        label=label,
-        created_at=float(created_at) if isinstance(created_at, (int, float)) else None,
-    )
+    return _row_to_info(row, models_dir)
+
+
+def list_models_standalone(models_dir: Path) -> list[ModelInfo]:
+    """List models using a short-lived DB session (non-request call sites)."""
+    import backend.db.engine as db_engine
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        return list_models(session, models_dir)
+    finally:
+        session.close()

@@ -112,22 +112,24 @@ def seed() -> None:
                 existing.sort_order = product.sort_order
                 existing.available = product.available
 
+        from backend.models_store import ensure_models_bootstrapped, list_models
         from backend.themes_store import ensure_themes_bootstrapped
 
         ensure_themes_bootstrapped(session, PUBLIC / "themes")
+        ensure_models_bootstrapped(session, PUBLIC / "models")
+        catalog_models = list_models(session, PUBLIC / "models")
 
-        models = _load_json(PUBLIC / "models" / "index.json").get("models") or []
         cards = _load_json(PUBLIC / "cards" / "index.json").get("cards") or []
         cards_by_model: dict[str, list[dict]] = {}
         for card in cards:
             mid = card.get("model_id") or ""
             cards_by_model.setdefault(mid, []).append(card)
 
-        for index, model in enumerate(models):
-            model_id = str(model.get("id") or "")
+        for index, model in enumerate(catalog_models):
+            model_id = model.id
             if not model_id:
                 continue
-            name = model.get("influencerName") or model.get("label") or model_id
+            name = model.influencerName or model.label or model_id
             model_cards = cards_by_model.get(model_id) or []
             theme_id = None
             if model_cards:
@@ -138,8 +140,8 @@ def seed() -> None:
             pack.model_id = model_id
             pack.theme_id = theme_id
             pack.name = name
-            pack.pack_title = model.get("cardPackName") or f"{name} Pack"
-            pack.cover_url = model.get("avatar")
+            pack.pack_title = model.cardPackName or f"{name} Pack"
+            pack.cover_url = model.avatar
             pack.diamond_cost = 80
             pack.card_count = 3
             pack.available = True
