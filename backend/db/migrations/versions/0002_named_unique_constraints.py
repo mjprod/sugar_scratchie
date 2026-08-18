@@ -15,8 +15,8 @@ depends_on = None
 
 def upgrade() -> None:
     # 0001 originally used inline UNIQUE, so Postgres named the constraints
-    # {table}_{columns}_key. Wallet inserts use ON CONFLICT ON CONSTRAINT
-    # wallet_tx_idempotency_key_uq, which must match the live name.
+    # {table}_{columns}_key. Align names with SQLAlchemy UniqueConstraint names.
+    # See 0003 if the unique is missing entirely (rename alone is a no-op).
     op.execute(
         """
         DO $$
