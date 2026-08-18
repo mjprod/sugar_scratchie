@@ -101,14 +101,21 @@ from backend.themes_store import (
     upload_theme_intro,
 )
 from backend.symbols_store import (
+    CreateSymbolGroupRequest,
     RewriteSymbolJsonRequest,
+    UpdateSymbolGroupRequest,
     UpdateSymbolRequest,
+    create_symbol_group,
+    delete_symbol_group,
+    ensure_symbols_bootstrapped,
+    list_symbol_groups,
     list_symbols,
     read_symbol_json,
     rewrite_symbol_json,
+    set_default_symbol_group,
     update_symbol,
+    update_symbol_group,
     upload_symbol_lottie,
-    write_symbols_index,
 )
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
 from backend.services.grok import edit_video, image_dress_flow as run_image_dress_flow, image_to_video as run_image_to_video
@@ -465,8 +472,7 @@ app.include_router(inbox_router.router)
 
 @app.on_event("startup")
 def ensure_indexes() -> None:
-    write_symbols_index(LOTTIES_DIR)
-    # Theme + model + card metadata live in Postgres; seed from on-disk legacy files if empty.
+    # Catalog metadata lives in Postgres; seed from on-disk legacy files if empty.
     import backend.db.engine as db_engine
 
     db_engine.get_engine()
@@ -477,6 +483,7 @@ def ensure_indexes() -> None:
         ensure_models_bootstrapped(session, MODELS_DIR)
         ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
         write_cards_index(session, ROOT, CARDS_DIR, MESH_DIR)
+        ensure_symbols_bootstrapped(session, LOTTIES_DIR)
         session.commit()
     except Exception:
         session.rollback()
@@ -1206,33 +1213,98 @@ def remove_theme_intro(
     return theme.dict()
 
 
+@app.get("/api/symbol-groups")
+def get_symbol_groups(db: Annotated[Session, Depends(get_session)]) -> dict:
+    groups = list_symbol_groups(db, LOTTIES_DIR)
+    return {"groups": [group.dict() for group in groups]}
+
+
+@app.post("/api/symbol-groups")
+def post_symbol_group(
+    request: CreateSymbolGroupRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    group = create_symbol_group(db, LOTTIES_DIR, request)
+    return group.dict()
+
+
+@app.put("/api/symbol-groups/{group_id}")
+def put_symbol_group(
+    group_id: str,
+    request: UpdateSymbolGroupRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    group = update_symbol_group(db, LOTTIES_DIR, group_id, request)
+    return group.dict()
+
+
+@app.post("/api/symbol-groups/{group_id}/default")
+def post_default_symbol_group(
+    group_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    group = set_default_symbol_group(db, LOTTIES_DIR, group_id)
+    return group.dict()
+
+
+@app.delete("/api/symbol-groups/{group_id}")
+def remove_symbol_group(
+    group_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_symbol_group(db, LOTTIES_DIR, group_id)
+    return {"ok": True, "id": group_id}
+
+
 @app.get("/api/symbols")
-def get_symbols() -> dict:
-    symbols = list_symbols(LOTTIES_DIR)
+def get_symbols(
+    db: Annotated[Session, Depends(get_session)],
+    group_id: str | None = None,
+) -> dict:
+    symbols = list_symbols(db, LOTTIES_DIR, group_id=group_id)
     return {"symbols": [symbol.dict() for symbol in symbols]}
 
 
 @app.put("/api/symbols/{symbol_id}")
-def put_symbol(symbol_id: str, request: UpdateSymbolRequest) -> dict:
-    symbol = update_symbol(LOTTIES_DIR, symbol_id, request)
+def put_symbol(
+    symbol_id: str,
+    request: UpdateSymbolRequest,
+    db: Annotated[Session, Depends(get_session)],
+    group_id: str | None = None,
+) -> dict:
+    symbol = update_symbol(db, LOTTIES_DIR, symbol_id, request, group_id=group_id)
     return symbol.dict()
 
 
 @app.post("/api/symbols/{symbol_id}/lottie")
-async def post_symbol_lottie(symbol_id: str, file: UploadFile = File(...)) -> dict:
-    symbol = await upload_symbol_lottie(LOTTIES_DIR, symbol_id, file)
+async def post_symbol_lottie(
+    symbol_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+    group_id: str | None = None,
+) -> dict:
+    symbol = await upload_symbol_lottie(db, LOTTIES_DIR, symbol_id, file, group_id=group_id)
     return symbol.dict()
 
 
 @app.get("/api/symbols/{symbol_id}/json")
-def get_symbol_json(symbol_id: str) -> dict:
-    payload = read_symbol_json(LOTTIES_DIR, symbol_id)
+def get_symbol_json(
+    symbol_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    group_id: str | None = None,
+) -> dict:
+    payload = read_symbol_json(db, LOTTIES_DIR, symbol_id, group_id=group_id)
     return payload.dict()
 
 
 @app.put("/api/symbols/{symbol_id}/json")
-def put_symbol_json(symbol_id: str, request: RewriteSymbolJsonRequest) -> dict:
-    symbol = rewrite_symbol_json(LOTTIES_DIR, symbol_id, request)
+def put_symbol_json(
+    symbol_id: str,
+    request: RewriteSymbolJsonRequest,
+    db: Annotated[Session, Depends(get_session)],
+    group_id: str | None = None,
+) -> dict:
+    symbol = rewrite_symbol_json(db, LOTTIES_DIR, symbol_id, request, group_id=group_id)
     return symbol.dict()
 
 
