@@ -287,6 +287,8 @@ function getModelsIndexPayload() {
 }
 
 function writeModelsIndex() {
+  // Optional offline/static mirror scanned from disk. Source of truth for model
+  // metadata is Postgres via /api/models (frontend falls back to this file).
   mkdirSync(modelsDirectory, { recursive: true });
   writeFileSync(modelsIndexFile, JSON.stringify(getModelsIndexPayload(), null, 2));
 }

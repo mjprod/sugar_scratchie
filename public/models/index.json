@@ -18,14 +18,14 @@
       "packFaceVideoUrl": "/models/julianaval/pack-face.mp4",
       "packFaceVideoUrl2": "/models/julianaval/pack-face-2.mp4",
       "swipeVideoUrl": "/models/julianaval/swipe.mp4",
-      "theme_avatars": {
-        "police": "/models/julianaval/themes/police/avatar.jpg"
-      },
       "tags": [
         "exclusive",
         "latina",
         "blond"
-      ]
+      ],
+      "theme_avatars": {
+        "police": "/models/julianaval/themes/police/avatar.jpg"
+      }
     }
   ]
 }

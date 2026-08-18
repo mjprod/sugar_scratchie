@@ -74,13 +74,14 @@ from backend.models_store import (
     delete_model,
     delete_model_flag_svg,
     delete_model_theme_avatar,
+    ensure_models_bootstrapped,
     list_models,
+    model_exists,
     update_model,
     upload_model_avatar,
     upload_model_flag_svg,
     upload_model_theme_avatar,
     upload_model_video,
-    write_models_index,
 )
 from backend.themes_store import (
     CreateThemeRequest,
@@ -461,9 +462,8 @@ app.include_router(inbox_router.router)
 @app.on_event("startup")
 def ensure_indexes() -> None:
     write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
-    write_models_index(MODELS_DIR)
     write_symbols_index(LOTTIES_DIR)
-    # Theme metadata lives in Postgres; seed from legacy index.json / defaults if empty.
+    # Theme + model metadata live in Postgres; seed from on-disk legacy files if empty.
     import backend.db.engine as db_engine
 
     db_engine.get_engine()
@@ -471,6 +471,7 @@ def ensure_indexes() -> None:
     session = db_engine.SessionLocal()
     try:
         ensure_themes_bootstrapped(session, THEMES_DIR)
+        ensure_models_bootstrapped(session, MODELS_DIR)
         session.commit()
     except Exception:
         session.rollback()
@@ -628,9 +629,13 @@ def post_card(request: CreateCardRequest) -> dict:
 
 
 @app.put("/api/cards/{card_id}")
-def put_card(card_id: str, request: UpdateCardRequest) -> dict:
+def put_card(
+    card_id: str,
+    request: UpdateCardRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
     if request.model_id:
-        if not (MODELS_DIR / request.model_id).is_dir():
+        if not model_exists(db, request.model_id):
             raise HTTPException(status_code=404, detail=f"Model not found: {request.model_id}")
     card = update_card(ROOT, CARDS_DIR, MESH_DIR, card_id, request)
     if request.model_id is not None:
@@ -639,8 +644,12 @@ def put_card(card_id: str, request: UpdateCardRequest) -> dict:
 
 
 @app.put("/api/models/{model_id}/cards/order")
-def put_model_card_order(model_id: str, request: ReorderCardsRequest) -> dict:
-    if not (MODELS_DIR / model_id).is_dir():
+def put_model_card_order(
+    model_id: str,
+    request: ReorderCardsRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    if not model_exists(db, model_id):
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     cards = reorder_model_cards(ROOT, CARDS_DIR, MESH_DIR, model_id, request.card_ids)
     return {"cards": [card.dict() for card in cards]}
@@ -978,62 +987,95 @@ def delete_photo_scratch_layer_endpoint(
 
 
 @app.get("/api/models")
-def get_models() -> dict:
-    models = list_models(MODELS_DIR)
+def get_models(db: Annotated[Session, Depends(get_session)]) -> dict:
+    models = list_models(db, MODELS_DIR)
     return {"models": [model.dict() for model in models]}
 
 
 @app.post("/api/models")
-def post_model(request: CreateModelRequest) -> dict:
-    model = create_model(MODELS_DIR, request)
+def post_model(
+    request: CreateModelRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = create_model(db, MODELS_DIR, request)
     return model.dict()
 
 
 @app.put("/api/models/{model_id}")
-def put_model(model_id: str, request: UpdateModelRequest) -> dict:
-    model = update_model(MODELS_DIR, model_id, request)
+def put_model(
+    model_id: str,
+    request: UpdateModelRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = update_model(db, MODELS_DIR, model_id, request)
     return model.dict()
 
 
 @app.delete("/api/models/{model_id}")
-def remove_model(model_id: str) -> dict:
-    delete_model(ROOT, MODELS_DIR, CARDS_DIR, MESH_DIR, model_id)
+def remove_model(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_model(db, ROOT, MODELS_DIR, CARDS_DIR, MESH_DIR, model_id)
     return {"ok": True, "id": model_id}
 
 
 @app.post("/api/models/{model_id}/avatar")
-async def post_model_avatar(model_id: str, file: UploadFile = File(...)) -> dict:
-    model = await upload_model_avatar(MODELS_DIR, model_id, file)
+async def post_model_avatar(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_avatar(db, MODELS_DIR, model_id, file)
     return model.dict()
 
 
 @app.post("/api/models/{model_id}/flag")
-async def post_model_flag(model_id: str, file: UploadFile = File(...)) -> dict:
-    model = await upload_model_flag_svg(MODELS_DIR, model_id, file)
+async def post_model_flag(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_flag_svg(db, MODELS_DIR, model_id, file)
     return model.dict()
 
 
 @app.delete("/api/models/{model_id}/flag")
-def remove_model_flag(model_id: str) -> dict:
-    model = delete_model_flag_svg(MODELS_DIR, model_id)
+def remove_model_flag(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = delete_model_flag_svg(db, MODELS_DIR, model_id)
     return model.dict()
 
 
 @app.post("/api/models/{model_id}/pack-face")
-async def post_model_pack_face(model_id: str, file: UploadFile = File(...)) -> dict:
-    model = await upload_model_video(MODELS_DIR, model_id, "pack-face", file)
+async def post_model_pack_face(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_video(db, MODELS_DIR, model_id, "pack-face", file)
     return model.dict()
 
 
 @app.post("/api/models/{model_id}/pack-face-2")
-async def post_model_pack_face_2(model_id: str, file: UploadFile = File(...)) -> dict:
-    model = await upload_model_video(MODELS_DIR, model_id, "pack-face-2", file)
+async def post_model_pack_face_2(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_video(db, MODELS_DIR, model_id, "pack-face-2", file)
     return model.dict()
 
 
 @app.post("/api/models/{model_id}/swipe")
-async def post_model_swipe(model_id: str, file: UploadFile = File(...)) -> dict:
-    model = await upload_model_video(MODELS_DIR, model_id, "swipe", file)
+async def post_model_swipe(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_video(db, MODELS_DIR, model_id, "swipe", file)
     return model.dict()
 
 
@@ -1041,15 +1083,20 @@ async def post_model_swipe(model_id: str, file: UploadFile = File(...)) -> dict:
 async def post_model_theme_avatar(
     model_id: str,
     theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
     file: UploadFile = File(...),
 ) -> dict:
-    model = await upload_model_theme_avatar(MODELS_DIR, model_id, theme_id, file)
+    model = await upload_model_theme_avatar(db, MODELS_DIR, model_id, theme_id, file)
     return model.dict()
 
 
 @app.delete("/api/models/{model_id}/themes/{theme_id}/avatar")
-def remove_model_theme_avatar(model_id: str, theme_id: str) -> dict:
-    model = delete_model_theme_avatar(MODELS_DIR, model_id, theme_id)
+def remove_model_theme_avatar(
+    model_id: str,
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = delete_model_theme_avatar(db, MODELS_DIR, model_id, theme_id)
     return model.dict()
 
 
