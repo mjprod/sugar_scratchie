@@ -112,6 +112,10 @@ def seed() -> None:
                 existing.sort_order = product.sort_order
                 existing.available = product.available
 
+        from backend.themes_store import ensure_themes_bootstrapped
+
+        ensure_themes_bootstrapped(session, PUBLIC / "themes")
+
         models = _load_json(PUBLIC / "models" / "index.json").get("models") or []
         cards = _load_json(PUBLIC / "cards" / "index.json").get("cards") or []
         cards_by_model: dict[str, list[dict]] = {}

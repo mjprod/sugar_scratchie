@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import time
+from datetime import datetime, timezone
 from pathlib import Path
-
 from typing import Any
 
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from backend.cards import public_url
+from backend.db.models import Theme
 
 THEME_COLOR_KEYS = (
     "cardOverlayColorStart",
@@ -19,6 +21,13 @@ THEME_COLOR_KEYS = (
     "cardLightColor1",
     "cardLightColor2",
 )
+
+_THEME_COLOR_COLUMNS = {
+    "cardOverlayColorStart": "card_overlay_color_start",
+    "cardOverlayColorEnd": "card_overlay_color_end",
+    "cardLightColor1": "card_light_color_1",
+    "cardLightColor2": "card_light_color_2",
+}
 
 THEME_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 INTRO_EXTENSIONS = {".mp4", ".webm"}
@@ -89,11 +98,50 @@ def safe_theme_id(value: str) -> str:
     return slug
 
 
+def find_theme_intro(themes_dir: Path, theme_id: str) -> str | None:
+    theme_dir = themes_dir / theme_id
+    if not theme_dir.is_dir():
+        return None
+    for ext in INTRO_EXTENSIONS:
+        candidate = theme_dir / f"intro{ext}"
+        if candidate.is_file():
+            return public_url(f"themes/{theme_id}/intro{ext}")
+    return None
+
+
+def _created_at_unix(value: datetime | None) -> float | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
+
+
+def _row_to_info(row: Theme, themes_dir: Path) -> ThemeInfo:
+    return ThemeInfo(
+        id=row.id,
+        label=row.label,
+        sort_order=row.sort_order,
+        created_at=_created_at_unix(row.created_at),
+        intro=find_theme_intro(themes_dir, row.id),
+        cardOverlayColorStart=row.card_overlay_color_start,
+        cardOverlayColorEnd=row.card_overlay_color_end,
+        cardLightColor1=row.card_light_color_1,
+        cardLightColor2=row.card_light_color_2,
+    )
+
+
+def _parse_legacy_created_at(value: Any) -> datetime:
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
 def _index_path(themes_dir: Path) -> Path:
     return themes_dir / "index.json"
 
 
-def _read_index(themes_dir: Path) -> list[dict]:
+def _read_legacy_index(themes_dir: Path) -> list[dict]:
     path = _index_path(themes_dir)
     if not path.exists():
         return []
@@ -109,208 +157,200 @@ def _read_index(themes_dir: Path) -> list[dict]:
     return [entry for entry in themes if isinstance(entry, dict)]
 
 
-def find_theme_intro(themes_dir: Path, theme_id: str) -> str | None:
-    theme_dir = themes_dir / theme_id
-    if not theme_dir.is_dir():
-        return None
-    for ext in INTRO_EXTENSIONS:
-        candidate = theme_dir / f"intro{ext}"
-        if candidate.is_file():
-            return public_url(f"themes/{theme_id}/intro{ext}")
-    return None
+def _theme_count(db: Session) -> int:
+    return int(db.scalar(select(func.count()).select_from(Theme)) or 0)
 
 
-def _write_index(themes_dir: Path, themes: list[ThemeInfo]) -> None:
-    themes_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "themes": [
-            {
-                "id": theme.id,
-                "label": theme.label,
-                "sort_order": theme.sort_order,
-                "created_at": theme.created_at,
-                **({"intro": theme.intro} if theme.intro else {}),
-                **{
-                    key: value
-                    for key, value in _color_fields(theme).items()
-                    if value
-                },
-            }
-            for theme in themes
-        ]
-    }
-    _index_path(themes_dir).write_text(json.dumps(payload, indent=2) + "\n")
+def _insert_defaults(db: Session) -> None:
+    now = datetime.now(timezone.utc)
+    for index, (theme_id, label) in enumerate(DEFAULT_THEMES):
+        db.add(
+            Theme(
+                id=theme_id,
+                label=label,
+                sort_order=index,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    db.flush()
 
 
-def _parse_theme(entry: dict, fallback_order: int, themes_dir: Path) -> ThemeInfo | None:
-    theme_id = entry.get("id")
-    label = entry.get("label")
-    if not isinstance(theme_id, str) or not isinstance(label, str):
-        return None
-    theme_id = theme_id.strip()
-    label = label.strip()
-    if not theme_id or not label:
-        return None
-    sort_order = entry.get("sort_order")
-    created_at = entry.get("created_at")
-    return ThemeInfo(
-        id=theme_id,
-        label=label,
-        sort_order=sort_order if isinstance(sort_order, int) else fallback_order,
-        created_at=created_at if isinstance(created_at, (int, float)) else None,
-        intro=find_theme_intro(themes_dir, theme_id),
-        cardOverlayColorStart=_clean_optional_str(entry.get("cardOverlayColorStart")),
-        cardOverlayColorEnd=_clean_optional_str(entry.get("cardOverlayColorEnd")),
-        cardLightColor1=_clean_optional_str(entry.get("cardLightColor1")),
-        cardLightColor2=_clean_optional_str(entry.get("cardLightColor2")),
-    )
+def _import_legacy_index(db: Session, themes_dir: Path) -> int:
+    imported = 0
+    for index, entry in enumerate(_read_legacy_index(themes_dir)):
+        theme_id = entry.get("id")
+        label = entry.get("label")
+        if not isinstance(theme_id, str) or not isinstance(label, str):
+            continue
+        theme_id = theme_id.strip()
+        label = label.strip()
+        if not theme_id or not label:
+            continue
+        if db.get(Theme, theme_id) is not None:
+            continue
+        sort_order = entry.get("sort_order")
+        colors = {col: _clean_optional_str(entry.get(key)) for key, col in _THEME_COLOR_COLUMNS.items()}
+        db.add(
+            Theme(
+                id=theme_id,
+                label=label,
+                sort_order=sort_order if isinstance(sort_order, int) else index,
+                created_at=_parse_legacy_created_at(entry.get("created_at")),
+                updated_at=datetime.now(timezone.utc),
+                **colors,
+            )
+        )
+        imported += 1
+    if imported:
+        db.flush()
+    return imported
 
 
-def ensure_default_themes(themes_dir: Path) -> list[ThemeInfo]:
-    """Create the themes index with the starter set if missing/empty."""
-    existing = list_themes(themes_dir, ensure_defaults=False)
-    if existing:
-        return existing
-    now = time.time()
-    themes = [
-        ThemeInfo(id=theme_id, label=label, sort_order=index, created_at=now)
-        for index, (theme_id, label) in enumerate(DEFAULT_THEMES)
-    ]
-    _write_index(themes_dir, themes)
-    return themes
+def ensure_themes_bootstrapped(db: Session, themes_dir: Path) -> list[ThemeInfo]:
+    """Seed themes from legacy index.json (or defaults) when the table is empty."""
+    if _theme_count(db) == 0:
+        imported = _import_legacy_index(db, themes_dir)
+        if imported == 0:
+            _insert_defaults(db)
+    return list_themes(db, themes_dir, ensure_defaults=False)
 
 
-def list_themes(themes_dir: Path, *, ensure_defaults: bool = True) -> list[ThemeInfo]:
-    if ensure_defaults and not _index_path(themes_dir).exists():
-        return ensure_default_themes(themes_dir)
+def list_themes(
+    db: Session,
+    themes_dir: Path,
+    *,
+    ensure_defaults: bool = True,
+) -> list[ThemeInfo]:
+    if ensure_defaults and _theme_count(db) == 0:
+        return ensure_themes_bootstrapped(db, themes_dir)
 
-    themes: list[ThemeInfo] = []
-    for index, entry in enumerate(_read_index(themes_dir)):
-        parsed = _parse_theme(entry, index, themes_dir)
-        if parsed:
-            themes.append(parsed)
-
-    if ensure_defaults and not themes:
-        return ensure_default_themes(themes_dir)
-
-    themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
-    return themes
+    rows = db.scalars(select(Theme).order_by(Theme.sort_order, Theme.label, Theme.id)).all()
+    if ensure_defaults and not rows:
+        return ensure_themes_bootstrapped(db, themes_dir)
+    return [_row_to_info(row, themes_dir) for row in rows]
 
 
-def write_themes_index(themes_dir: Path) -> None:
-    themes = list_themes(themes_dir)
-    _write_index(themes_dir, themes)
-
-
-def get_theme(themes_dir: Path, theme_id: str) -> ThemeInfo:
+def get_theme(db: Session, themes_dir: Path, theme_id: str) -> ThemeInfo:
     slug = safe_theme_id(theme_id)
-    for theme in list_themes(themes_dir):
-        if theme.id == slug:
-            return theme
-    raise HTTPException(status_code=404, detail=f"Theme “{slug}” not found")
+    row = db.get(Theme, slug)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Theme “{slug}” not found")
+    return _row_to_info(row, themes_dir)
 
 
-def create_theme(themes_dir: Path, request: CreateThemeRequest) -> ThemeInfo:
+def create_theme(db: Session, themes_dir: Path, request: CreateThemeRequest) -> ThemeInfo:
     theme_id = safe_theme_id(request.id)
     label = request.label.strip()
     if not label:
         raise HTTPException(status_code=400, detail="Theme label is required")
 
-    themes = list_themes(themes_dir)
-    if any(theme.id == theme_id for theme in themes):
+    if db.get(Theme, theme_id) is not None:
         raise HTTPException(status_code=409, detail=f"Theme “{theme_id}” already exists")
-    if any(theme.label.lower() == label.lower() for theme in themes):
+
+    existing_label = db.scalar(select(Theme.id).where(func.lower(Theme.label) == label.lower()).limit(1))
+    if existing_label is not None:
         raise HTTPException(status_code=409, detail=f"Theme label “{label}” already exists")
 
-    next_order = max((theme.sort_order for theme in themes), default=-1) + 1
-    created = ThemeInfo(
+    max_order = db.scalar(select(func.max(Theme.sort_order)))
+    next_order = (max_order if max_order is not None else -1) + 1
+    colors = _color_fields(request)
+    now = datetime.now(timezone.utc)
+    row = Theme(
         id=theme_id,
         label=label,
         sort_order=next_order,
-        created_at=time.time(),
-        **_color_fields(request),
+        created_at=now,
+        updated_at=now,
+        card_overlay_color_start=colors["cardOverlayColorStart"],
+        card_overlay_color_end=colors["cardOverlayColorEnd"],
+        card_light_color_1=colors["cardLightColor1"],
+        card_light_color_2=colors["cardLightColor2"],
     )
-    themes.append(created)
-    themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
-    _write_index(themes_dir, themes)
-    return created
+    db.add(row)
+    db.flush()
+    return _row_to_info(row, themes_dir)
 
 
-def update_theme(themes_dir: Path, theme_id: str, request: UpdateThemeRequest) -> ThemeInfo:
+def update_theme(
+    db: Session,
+    themes_dir: Path,
+    theme_id: str,
+    request: UpdateThemeRequest,
+) -> ThemeInfo:
     slug = safe_theme_id(theme_id)
-    themes = list_themes(themes_dir)
-    index = next((i for i, theme in enumerate(themes) if theme.id == slug), None)
-    if index is None:
+    row = db.get(Theme, slug)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Theme “{slug}” not found")
 
-    current = themes[index]
-    label = current.label
     if request.label is not None:
         label = request.label.strip()
         if not label:
             raise HTTPException(status_code=400, detail="Theme label is required")
-        if any(
-            theme.label.lower() == label.lower() and theme.id != slug for theme in themes
-        ):
+        clash = db.scalar(
+            select(Theme.id)
+            .where(func.lower(Theme.label) == label.lower(), Theme.id != slug)
+            .limit(1)
+        )
+        if clash is not None:
             raise HTTPException(status_code=409, detail=f"Theme label “{label}” already exists")
+        row.label = label
 
-    sort_order = current.sort_order if request.sort_order is None else request.sort_order
-    color_updates = {}
+    if request.sort_order is not None:
+        row.sort_order = request.sort_order
+
     set_fields = request.model_fields_set
-    for key in THEME_COLOR_KEYS:
-        if key in set_fields:
-            color_updates[key] = _clean_optional_str(getattr(request, key))
-    updated = ThemeInfo(
-        **{
-            **current.dict(),
-            "label": label,
-            "sort_order": sort_order,
-            **color_updates,
-        }
-    )
-    themes[index] = updated
-    themes.sort(key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
-    _write_index(themes_dir, themes)
-    return updated
+    for api_key, column in _THEME_COLOR_COLUMNS.items():
+        if api_key in set_fields:
+            setattr(row, column, _clean_optional_str(getattr(request, api_key)))
+
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return _row_to_info(row, themes_dir)
 
 
-def delete_theme(themes_dir: Path, theme_id: str) -> None:
+def delete_theme(db: Session, themes_dir: Path, theme_id: str) -> None:
     slug = safe_theme_id(theme_id)
-    themes = list_themes(themes_dir)
-    next_themes = [theme for theme in themes if theme.id != slug]
-    if len(next_themes) == len(themes):
+    row = db.get(Theme, slug)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Theme “{slug}” not found")
-    _write_index(themes_dir, next_themes)
+    db.delete(row)
+    db.flush()
     theme_dir = themes_dir / slug
     if theme_dir.is_dir():
         shutil.rmtree(theme_dir, ignore_errors=True)
 
 
-def reorder_themes(themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
-    themes = list_themes(themes_dir)
-    by_id = {theme.id: theme for theme in themes}
-    ordered: list[ThemeInfo] = []
+def reorder_themes(db: Session, themes_dir: Path, theme_ids: list[str]) -> list[ThemeInfo]:
+    rows = list(db.scalars(select(Theme)).all())
+    by_id = {row.id: row for row in rows}
+    ordered: list[Theme] = []
     seen: set[str] = set()
     for raw_id in theme_ids:
         slug = safe_theme_id(raw_id)
-        theme = by_id.get(slug)
-        if not theme or slug in seen:
+        row = by_id.get(slug)
+        if not row or slug in seen:
             continue
-        ordered.append(theme)
+        ordered.append(row)
         seen.add(slug)
-    for theme in themes:
-        if theme.id not in seen:
-            ordered.append(theme)
-    rewritten = [
-        ThemeInfo(**{**theme.dict(), "sort_order": index})
-        for index, theme in enumerate(ordered)
-    ]
-    _write_index(themes_dir, rewritten)
-    return rewritten
+    for row in rows:
+        if row.id not in seen:
+            ordered.append(row)
+    now = datetime.now(timezone.utc)
+    for index, row in enumerate(ordered):
+        row.sort_order = index
+        row.updated_at = now
+    db.flush()
+    return [_row_to_info(row, themes_dir) for row in ordered]
 
 
-async def upload_theme_intro(themes_dir: Path, theme_id: str, upload: UploadFile) -> ThemeInfo:
-    theme = get_theme(themes_dir, theme_id)
+async def upload_theme_intro(
+    db: Session,
+    themes_dir: Path,
+    theme_id: str,
+    upload: UploadFile,
+) -> ThemeInfo:
+    theme = get_theme(db, themes_dir, theme_id)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in INTRO_EXTENSIONS:
@@ -326,12 +366,11 @@ async def upload_theme_intro(themes_dir: Path, theme_id: str, upload: UploadFile
             old.unlink()
     target = theme_dir / f"intro{ext}"
     target.write_bytes(data)
-    write_themes_index(themes_dir)
-    return get_theme(themes_dir, theme.id)
+    return get_theme(db, themes_dir, theme.id)
 
 
-def delete_theme_intro(themes_dir: Path, theme_id: str) -> ThemeInfo:
-    theme = get_theme(themes_dir, theme_id)
+def delete_theme_intro(db: Session, themes_dir: Path, theme_id: str) -> ThemeInfo:
+    theme = get_theme(db, themes_dir, theme_id)
     theme_dir = themes_dir / theme.id
     removed = False
     for ext in INTRO_EXTENSIONS:
@@ -341,27 +380,56 @@ def delete_theme_intro(themes_dir: Path, theme_id: str) -> ThemeInfo:
             removed = True
     if not removed:
         raise HTTPException(status_code=404, detail=f"Intro not found for theme: {theme.id}")
-    write_themes_index(themes_dir)
-    return get_theme(themes_dir, theme.id)
+    return get_theme(db, themes_dir, theme.id)
 
 
-def resolve_theme_id(themes_dir: Path, theme_or_label: str) -> str | None:
+def resolve_theme_id(db: Session, theme_or_label: str) -> str | None:
     """Map a theme id or display label to a catalog theme id."""
     raw = (theme_or_label or "").strip()
     if not raw:
         return None
-    themes = list_themes(themes_dir)
     lower = raw.lower()
-    for theme in themes:
-        if theme.id == lower or theme.id == raw:
-            return theme.id
-    for theme in themes:
-        if theme.label.lower() == lower:
-            return theme.id
-    # Best-effort slug if it already looks like a theme id.
+    by_id = db.get(Theme, lower) or db.get(Theme, raw)
+    if by_id is not None:
+        return by_id.id
+    by_label = db.scalar(select(Theme).where(func.lower(Theme.label) == lower).limit(1))
+    if by_label is not None:
+        return by_label.id
     slug = re.sub(r"[^a-z0-9_]+", "_", lower).strip("_")
     if slug and THEME_ID_PATTERN.match(slug):
-        for theme in themes:
-            if theme.id == slug:
-                return theme.id
+        by_slug = db.get(Theme, slug)
+        if by_slug is not None:
+            return by_slug.id
     return None
+
+
+def resolve_theme_id_standalone(theme_or_label: str) -> str | None:
+    """Resolve a theme id using a short-lived DB session (non-request call sites)."""
+    import backend.db.engine as db_engine
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        return resolve_theme_id(session, theme_or_label)
+    finally:
+        session.close()
+
+
+def list_themes_standalone(themes_dir: Path, *, ensure_defaults: bool = True) -> list[ThemeInfo]:
+    """List themes using a short-lived DB session (non-request call sites)."""
+    import backend.db.engine as db_engine
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        themes = list_themes(session, themes_dir, ensure_defaults=ensure_defaults)
+        if ensure_defaults:
+            session.commit()
+        return themes
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

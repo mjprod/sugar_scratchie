@@ -11,15 +11,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from io import TextIOBase
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Annotated, Callable, Literal
 from urllib.parse import unquote
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from backend.db.engine import ping_db
+from backend.db.engine import get_session, ping_db
 from backend.routers import auth as auth_router
 from backend.routers import collection as collection_router
 from backend.routers import inbox as inbox_router
@@ -88,11 +89,11 @@ from backend.themes_store import (
     create_theme,
     delete_theme,
     delete_theme_intro,
+    ensure_themes_bootstrapped,
     list_themes,
     reorder_themes,
     update_theme,
     upload_theme_intro,
-    write_themes_index,
 )
 from backend.symbols_store import (
     RewriteSymbolJsonRequest,
@@ -461,8 +462,21 @@ app.include_router(inbox_router.router)
 def ensure_indexes() -> None:
     write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
     write_models_index(MODELS_DIR)
-    write_themes_index(THEMES_DIR)
     write_symbols_index(LOTTIES_DIR)
+    # Theme metadata lives in Postgres; seed from legacy index.json / defaults if empty.
+    import backend.db.engine as db_engine
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        ensure_themes_bootstrapped(session, THEMES_DIR)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 class JobLogWriter(TextIOBase):
@@ -1063,44 +1077,64 @@ def get_collection(model: str = "", theme: str = "") -> dict:
 
 
 @app.get("/api/themes")
-def get_themes() -> dict:
-    themes = list_themes(THEMES_DIR)
+def get_themes(db: Annotated[Session, Depends(get_session)]) -> dict:
+    themes = list_themes(db, THEMES_DIR)
     return {"themes": [theme.dict() for theme in themes]}
 
 
 @app.post("/api/themes")
-def post_theme(request: CreateThemeRequest) -> dict:
-    theme = create_theme(THEMES_DIR, request)
+def post_theme(
+    request: CreateThemeRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    theme = create_theme(db, THEMES_DIR, request)
     return theme.dict()
 
 
 @app.put("/api/themes/order")
-def put_themes_order(request: ReorderThemesRequest) -> dict:
-    themes = reorder_themes(THEMES_DIR, request.theme_ids)
+def put_themes_order(
+    request: ReorderThemesRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    themes = reorder_themes(db, THEMES_DIR, request.theme_ids)
     return {"themes": [theme.dict() for theme in themes]}
 
 
 @app.put("/api/themes/{theme_id}")
-def put_theme(theme_id: str, request: UpdateThemeRequest) -> dict:
-    theme = update_theme(THEMES_DIR, theme_id, request)
+def put_theme(
+    theme_id: str,
+    request: UpdateThemeRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    theme = update_theme(db, THEMES_DIR, theme_id, request)
     return theme.dict()
 
 
 @app.delete("/api/themes/{theme_id}")
-def remove_theme(theme_id: str) -> dict:
-    delete_theme(THEMES_DIR, theme_id)
+def remove_theme(
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_theme(db, THEMES_DIR, theme_id)
     return {"ok": True, "id": theme_id}
 
 
 @app.post("/api/themes/{theme_id}/intro")
-async def post_theme_intro(theme_id: str, file: UploadFile = File(...)) -> dict:
-    theme = await upload_theme_intro(THEMES_DIR, theme_id, file)
+async def post_theme_intro(
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    theme = await upload_theme_intro(db, THEMES_DIR, theme_id, file)
     return theme.dict()
 
 
 @app.delete("/api/themes/{theme_id}/intro")
-def remove_theme_intro(theme_id: str) -> dict:
-    theme = delete_theme_intro(THEMES_DIR, theme_id)
+def remove_theme_intro(
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    theme = delete_theme_intro(db, THEMES_DIR, theme_id)
     return theme.dict()
 
 
