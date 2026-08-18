@@ -202,6 +202,22 @@ class Creator(Base):
     tags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
 
 
+class MotionCard(Base):
+    """Admin catalog of motion cards (metadata only; videos/mesh/photos stay on disk)."""
+
+    __tablename__ = "cards"
+    __table_args__ = (Index("cards_model_sort_idx", "model_id", "sort_order"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str | None] = mapped_column(Text, ForeignKey("models.id", ondelete="CASCADE"), nullable=True)
+    theme_id: Mapped[str | None] = mapped_column(Text, ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    photos: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class StorePurchase(Base):
     __tablename__ = "store_purchases"
     __table_args__ = (

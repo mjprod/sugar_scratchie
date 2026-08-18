@@ -112,17 +112,19 @@ def seed() -> None:
                 existing.sort_order = product.sort_order
                 existing.available = product.available
 
+        from backend.cards_store import ensure_cards_bootstrapped, list_cards
         from backend.models_store import ensure_models_bootstrapped, list_models
         from backend.themes_store import ensure_themes_bootstrapped
 
         ensure_themes_bootstrapped(session, PUBLIC / "themes")
         ensure_models_bootstrapped(session, PUBLIC / "models")
+        ensure_cards_bootstrapped(session, ROOT, PUBLIC / "cards", PUBLIC / "mesh")
         catalog_models = list_models(session, PUBLIC / "models")
+        catalog_cards = list_cards(session, ROOT, PUBLIC / "cards", PUBLIC / "mesh")
 
-        cards = _load_json(PUBLIC / "cards" / "index.json").get("cards") or []
-        cards_by_model: dict[str, list[dict]] = {}
-        for card in cards:
-            mid = card.get("model_id") or ""
+        cards_by_model: dict[str, list] = {}
+        for card in catalog_cards:
+            mid = card.model_id or ""
             cards_by_model.setdefault(mid, []).append(card)
 
         for index, model in enumerate(catalog_models):
@@ -133,7 +135,7 @@ def seed() -> None:
             model_cards = cards_by_model.get(model_id) or []
             theme_id = None
             if model_cards:
-                theme_id = model_cards[0].get("theme_id")
+                theme_id = model_cards[0].theme_id
             pack_id = f"{model_id}-pack"
             existing = session.get(Pack, pack_id)
             pack = existing or Pack(id=pack_id)

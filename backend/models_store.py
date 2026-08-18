@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.cards import delete_card, list_cards, public_url
+from backend.cards import public_url
+from backend.cards_store import delete_card_standalone, list_cards_standalone
 from backend.db.models import Creator
 
 MODEL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -425,7 +426,7 @@ def _linked_card_ids(
 ) -> list[str]:
     """Published cards + video-flow drafts assigned to this model."""
     linked: set[str] = {
-        card.id for card in list_cards(root, cards_dir, mesh_dir) if card.model_id == model_id
+        card.id for card in list_cards_standalone(root, cards_dir, mesh_dir) if card.model_id == model_id
     }
     work_root = root / ".tmp" / "video-flow"
     if work_root.is_dir():
@@ -460,7 +461,7 @@ def delete_model(
     slug = row.id
     for card_id in _linked_card_ids(root, cards_dir, mesh_dir, slug):
         try:
-            delete_card(root, cards_dir, mesh_dir, card_id)
+            delete_card_standalone(root, cards_dir, mesh_dir, card_id)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise

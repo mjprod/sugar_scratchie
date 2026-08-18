@@ -10,7 +10,7 @@ from typing import Literal
 
 from fastapi import HTTPException
 
-from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths, create_card, update_card
+from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths
 from backend.services.ai_provider import (
     edit_clothes_layer,
     edit_image_scenery,
@@ -842,18 +842,32 @@ def _publish_card(
     # the old "dir exists → update" branch deadlocked Create card forever.
     if bg_dst.is_file() and fg_dst.is_file():
         try:
-            card = update_card(
-                ROOT,
-                CARDS_DIR,
-                MESH_DIR,
-                card_id,
-                UpdateCardRequest(
-                    label=card_label,
-                    background=background,
-                    foreground=foreground,
-                    model_id=effective_model_id,
-                ),
-            )
+            import backend.db.engine as db_engine
+            from backend.cards_store import update_card as update_card_db
+
+            db_engine.get_engine()
+            assert db_engine.SessionLocal is not None
+            session = db_engine.SessionLocal()
+            try:
+                card = update_card_db(
+                    session,
+                    ROOT,
+                    CARDS_DIR,
+                    MESH_DIR,
+                    card_id,
+                    UpdateCardRequest(
+                        label=card_label,
+                        background=background,
+                        foreground=foreground,
+                        model_id=effective_model_id,
+                    ),
+                )
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         except HTTPException as exc:
             raise RuntimeError(str(exc.detail)) from exc
         draft = read_flow_draft(card_id) or {}
@@ -861,18 +875,32 @@ def _publish_card(
         print(f"Card updated: {card.id} ({card.label})")
         return
     try:
-        card = create_card(
-            ROOT,
-            CARDS_DIR,
-            MESH_DIR,
-            CreateCardRequest(
-                id=card_id,
-                label=card_label,
-                background=background,
-                foreground=foreground,
-                model_id=effective_model_id,
-            ),
-        )
+        import backend.db.engine as db_engine
+        from backend.cards_store import create_card as create_card_db
+
+        db_engine.get_engine()
+        assert db_engine.SessionLocal is not None
+        session = db_engine.SessionLocal()
+        try:
+            card = create_card_db(
+                session,
+                ROOT,
+                CARDS_DIR,
+                MESH_DIR,
+                CreateCardRequest(
+                    id=card_id,
+                    label=card_label,
+                    background=background,
+                    foreground=foreground,
+                    model_id=effective_model_id,
+                ),
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
     except HTTPException as exc:
         raise RuntimeError(str(exc.detail)) from exc
     draft = read_flow_draft(card_id) or {}
@@ -1072,16 +1100,29 @@ def save_flow_draft(
 
 
 def _sync_card_theme_id(card_id: str, theme_label: str) -> None:
-    """Persist catalog theme_id onto card meta when the card folder exists."""
-    from backend.cards import write_card_theme_id, write_cards_index
+    """Persist catalog theme_id onto the cards table when the card exists."""
+    import backend.db.engine as db_engine
+    from backend.cards_store import set_card_theme_id
     from backend.themes_store import resolve_theme_id_standalone
 
     card_dir = CARDS_DIR / card_id
     if not card_dir.is_dir():
         return
     theme_id = resolve_theme_id_standalone(theme_label) if theme_label else None
-    write_card_theme_id(card_dir, theme_id)
-    write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        set_card_theme_id(session, ROOT, CARDS_DIR, MESH_DIR, card_id, theme_id)
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        # Card may not be in catalog yet during early flow steps.
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 def patch_flow_draft_model(card_id: str, model_id: str) -> None:
     """Sync an existing flow draft's model_id after a card is re-assigned.
