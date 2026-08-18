@@ -7,7 +7,7 @@ from pathlib import Path
 
 from backend.cards import CardInfo, list_cards, list_photo_scratch_thumb_urls, public_url
 from backend.models_store import ModelInfo, list_models
-from backend.themes_store import list_themes, resolve_theme_id
+from backend.themes_store import list_themes_standalone, resolve_theme_id_standalone
 
 CARDS_PER_GROUP = 3
 
@@ -113,7 +113,7 @@ def _theme_label_for_card(
 
     draft = (draft_themes.get(card.id) or "").strip()
     if draft:
-        resolved = resolve_theme_id(themes_dir, draft)
+        resolved = resolve_theme_id_standalone(draft)
         if resolved and resolved in themes_by_id:
             return resolved, themes_by_id[resolved]
         return resolved, draft
@@ -134,7 +134,7 @@ def build_collection_catalog(
 ) -> dict:
     models = list_models(models_dir)
     cards = list_cards(root, cards_dir, mesh_dir)
-    themes = list_themes(themes_dir)
+    themes = list_themes_standalone(themes_dir)
     themes_by_id = {theme.id: theme.label for theme in themes}
     themes_info = {theme.id: theme for theme in themes}
     drafts = draft_themes or {}

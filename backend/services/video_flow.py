@@ -1074,13 +1074,12 @@ def save_flow_draft(
 def _sync_card_theme_id(card_id: str, theme_label: str) -> None:
     """Persist catalog theme_id onto card meta when the card folder exists."""
     from backend.cards import write_card_theme_id, write_cards_index
-    from backend.themes_store import resolve_theme_id
+    from backend.themes_store import resolve_theme_id_standalone
 
     card_dir = CARDS_DIR / card_id
     if not card_dir.is_dir():
         return
-    themes_dir = ROOT / "public" / "themes"
-    theme_id = resolve_theme_id(themes_dir, theme_label) if theme_label else None
+    theme_id = resolve_theme_id_standalone(theme_label) if theme_label else None
     write_card_theme_id(card_dir, theme_id)
     write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
 

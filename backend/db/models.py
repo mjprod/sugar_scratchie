@@ -163,6 +163,23 @@ class StoreProduct(Base):
     available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class Theme(Base):
+    """Admin catalog of motion-card / photo-scratch themes (metadata only; intros stay on disk)."""
+
+    __tablename__ = "themes"
+    __table_args__ = (Index("themes_sort_order_idx", "sort_order"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    card_overlay_color_start: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_overlay_color_end: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_light_color_1: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class StorePurchase(Base):
     __tablename__ = "store_purchases"
     __table_args__ = (
