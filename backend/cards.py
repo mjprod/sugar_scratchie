@@ -53,6 +53,7 @@ class CreateCardRequest(BaseModel):
     background: str
     foreground: str
     model_id: str | None = None
+    theme_id: str | None = None
 
 
 class UpdateCardRequest(BaseModel):
@@ -60,6 +61,7 @@ class UpdateCardRequest(BaseModel):
     background: str | None = None
     foreground: str | None = None
     model_id: str | None = None
+    theme_id: str | None = None
     sort_order: int | None = None
 
 
@@ -85,63 +87,13 @@ def safe_card_id(value: str) -> str:
     return slug
 
 
-def read_card_meta(card_dir: Path, default_label: str) -> dict:
-    meta = card_dir / "meta.json"
-    if not meta.exists():
-        return {"label": default_label}
-    try:
-        data = json.loads(meta.read_text())
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {"label": default_label}
-
-
-def read_card_label(card_dir: Path, default: str) -> str:
-    meta = read_card_meta(card_dir, default)
-    label = meta.get("label")
-    if isinstance(label, str) and label.strip():
-        return label.strip()
-    return default
-
-
-def read_card_model_id(card_dir: Path) -> str | None:
-    meta = read_card_meta(card_dir, "")
-    model_id = meta.get("model_id")
-    if isinstance(model_id, str) and model_id.strip():
-        return model_id.strip()
-    return None
-
-
-def read_card_sort_order(card_dir: Path) -> int:
-    meta = read_card_meta(card_dir, "")
-    value = meta.get("sort_order")
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0
-
-
-def read_card_theme_id(card_dir: Path) -> str | None:
-    meta = read_card_meta(card_dir, "")
-    theme_id = meta.get("theme_id")
-    if isinstance(theme_id, str) and theme_id.strip():
-        return theme_id.strip()
-    return None
-
-
-def write_card_theme_id(card_dir: Path, theme_id: str | None) -> None:
-    if theme_id and theme_id.strip():
-        write_card_meta(card_dir, theme_id=theme_id.strip())
-    else:
-        data = read_card_meta(card_dir, card_dir.name.replace("_", " ").title())
-        data.pop("theme_id", None)
-        card_dir.mkdir(parents=True, exist_ok=True)
-        (card_dir / "meta.json").write_text(json.dumps(data, indent=2) + "\n")
+def public_url(workspace_path: str) -> str:
+    trimmed = workspace_path.strip()
+    if trimmed.startswith("public/"):
+        trimmed = trimmed.removeprefix("public/")
+    parts = [part for part in trimmed.split("/") if part]
+    encoded = "/".join(quote(part) for part in parts)
+    return f"/{encoded}"
 
 
 def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
@@ -152,192 +104,10 @@ def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
     return None
 
 
-def write_card_sort_order(card_dir: Path, sort_order: int) -> None:
-    write_card_meta(card_dir, sort_order=int(sort_order))
-
-
-def next_sort_order_for_model(cards_dir: Path, model_id: str | None) -> int:
-    if not model_id or not cards_dir.exists():
-        return 0
-    highest = -1
-    for directory in cards_dir.iterdir():
-        if not directory.is_dir():
-            continue
-        if read_card_model_id(directory) != model_id:
-            continue
-        highest = max(highest, read_card_sort_order(directory))
-    return highest + 1
-
-
-def read_card_photos(card_dir: Path, card_id: str) -> list[PhotoInfo]:
-    meta = read_card_meta(card_dir, card_id)
-    raw = meta.get("photos")
-    if not isinstance(raw, list):
-        return []
-    photos: list[PhotoInfo] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        photo_id = entry.get("id")
-        src = entry.get("src")
-        if isinstance(photo_id, str) and photo_id.strip() and isinstance(src, str) and src.strip():
-            photos.append(PhotoInfo(id=photo_id.strip(), src=src.strip()))
-    return photos
-
-
-def write_card_meta(card_dir: Path, **updates: object) -> None:
-    default_label = card_dir.name.replace("_", " ").title()
-    data = read_card_meta(card_dir, default_label)
-    for key, value in updates.items():
-        if value is not None:
-            data[key] = value
-    card_dir.mkdir(parents=True, exist_ok=True)
-    (card_dir / "meta.json").write_text(json.dumps(data, indent=2) + "\n")
-
-
-def write_card_label(card_dir: Path, label: str) -> None:
-    write_card_meta(card_dir, label=label.strip())
-
-
-def write_card_model_id(card_dir: Path, model_id: str | None) -> None:
-    if model_id and model_id.strip():
-        write_card_meta(card_dir, model_id=model_id.strip())
-    else:
-        data = read_card_meta(card_dir, card_dir.name.replace("_", " ").title())
-        data.pop("model_id", None)
-        card_dir.mkdir(parents=True, exist_ok=True)
-        (card_dir / "meta.json").write_text(json.dumps(data, indent=2) + "\n")
-
-
-def write_card_photos(card_dir: Path, photos: list[PhotoInfo]) -> None:
-    write_card_meta(
-        card_dir,
-        photos=[{"id": photo.id, "src": photo.src} for photo in photos],
-    )
-
-
 def mesh_names(mesh_dir: Path) -> set[str]:
     if not mesh_dir.exists():
         return set()
     return {path.name for path in mesh_dir.glob("*.json") if path.name != "index.json"}
-
-
-def list_cards(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
-    meshes = mesh_names(mesh_dir)
-    cards: list[CardInfo] = [
-        CardInfo(
-            id=ORIGINAL_ID,
-            label=read_card_label(cards_dir, "Original"),
-            background=ORIGINAL_BACKGROUND,
-            foreground=ORIGINAL_FOREGROUND,
-            mesh=ORIGINAL_MESH,
-            has_mesh=ORIGINAL_MESH in meshes,
-            sort_order=0,
-        )
-    ]
-
-    if not cards_dir.exists():
-        return cards
-
-    discovered: list[CardInfo] = []
-    for directory in cards_dir.iterdir():
-        if not directory.is_dir():
-            continue
-        background = directory / "background.mp4"
-        foreground = directory / "foreground.mp4"
-        if not background.exists() or not foreground.exists():
-            continue
-        card_id = directory.name
-        mesh = f"{card_id}.json"
-        done, draft, mesh_count, symbols_count = _photo_scratch_card_counts(
-            cards_dir, card_id
-        )
-        discovered.append(
-            CardInfo(
-                id=card_id,
-                label=read_card_label(directory, card_id.replace("_", " ").title()),
-                background=relative(root, background),
-                foreground=relative(root, foreground),
-                mesh=mesh,
-                has_mesh=mesh in meshes,
-                model_id=read_card_model_id(directory),
-                sort_order=read_card_sort_order(directory),
-                photos=read_card_photos(directory, card_id),
-                photo_scratch_done=done,
-                photo_scratch_draft=draft,
-                photo_scratch_mesh_count=mesh_count,
-                photo_scratch_symbols_count=symbols_count,
-                theme_id=read_card_theme_id(directory),
-                trailer=find_card_trailer(directory, card_id),
-            )
-        )
-    discovered.sort(key=lambda card: (card.model_id or "", card.sort_order, card.id))
-    cards.extend(discovered)
-    return cards
-
-
-def write_cards_index(root: Path, cards_dir: Path, mesh_dir: Path) -> None:
-    cards = list_cards(root, cards_dir, mesh_dir)
-    payload = {
-        "cards": [
-            {
-                "id": card.id,
-                "label": card.label,
-                "bottom": public_url(card.background),
-                "foreground": public_url(card.foreground),
-                "mesh": card.mesh,
-                "chroma_key": card.id == ORIGINAL_ID,
-                "sort_order": card.sort_order,
-                **({"model_id": card.model_id} if card.model_id else {}),
-                **({"theme_id": card.theme_id} if card.theme_id else {}),
-                **({"trailer": card.trailer} if card.trailer else {}),
-                **(
-                    {"photos": [{"id": photo.id, "src": photo.src} for photo in card.photos]}
-                    if card.photos
-                    else {}
-                ),
-            }
-            for card in cards
-        ]
-    }
-    cards_dir.mkdir(parents=True, exist_ok=True)
-    (cards_dir / "index.json").write_text(json.dumps(payload, indent=2) + "\n")
-
-
-def reorder_model_cards(
-    root: Path,
-    cards_dir: Path,
-    mesh_dir: Path,
-    model_id: str,
-    card_ids: list[str],
-) -> list[CardInfo]:
-    if not card_ids:
-        raise HTTPException(status_code=400, detail="card_ids must not be empty")
-    if len(set(card_ids)) != len(card_ids):
-        raise HTTPException(status_code=400, detail="card_ids must be unique")
-
-    cards = list_cards(root, cards_dir, mesh_dir)
-    owned = [card for card in cards if card.model_id == model_id]
-    owned_ids = {card.id for card in owned}
-    if set(card_ids) != owned_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="card_ids must include every motion card for this model, and only those cards",
-        )
-
-    for index, card_id in enumerate(card_ids):
-        write_card_sort_order(card_directory(cards_dir, card_id), index)
-    write_cards_index(root, cards_dir, mesh_dir)
-    return [card for card in list_cards(root, cards_dir, mesh_dir) if card.model_id == model_id]
-
-
-def public_url(workspace_path: str) -> str:
-    trimmed = workspace_path.strip()
-    if trimmed.startswith("public/"):
-        trimmed = trimmed.removeprefix("public/")
-    parts = [part for part in trimmed.split("/") if part]
-    encoded = "/".join(quote(part) for part in parts)
-    return f"/{encoded}"
 
 
 def resolve_source(root: Path, value: str) -> Path:
@@ -370,94 +140,10 @@ def card_directory(cards_dir: Path, card_id: str) -> Path:
     return cards_dir / card_id
 
 
-def create_card(root: Path, cards_dir: Path, mesh_dir: Path, request: CreateCardRequest) -> CardInfo:
-    card_id = safe_card_id(request.id)
+def card_photos_dir(cards_dir: Path, card_id: str) -> Path:
     if card_id == ORIGINAL_ID:
-        raise HTTPException(status_code=400, detail="Cannot create a card with id 'original'")
-    card_dir = cards_dir / card_id
-    background_dst, foreground_dst = card_paths(root, cards_dir, card_id)
-    # Empty leftover folders (e.g. aborted publish) block create AND update —
-    # list_cards skips dirs without both videos, create_card used to 409 on any dir.
-    if card_dir.exists() and (background_dst.is_file() or foreground_dst.is_file()):
-        raise HTTPException(status_code=409, detail=f"Card already exists: {card_id}")
-    card_dir.mkdir(parents=True, exist_ok=True)
-
-    background_src = resolve_source(root, request.background)
-    foreground_src = resolve_source(root, request.foreground)
-    copy_video(background_src, background_dst)
-    copy_video(foreground_src, foreground_dst)
-    write_card_label(card_dir, request.label)
-    sort_order = next_sort_order_for_model(cards_dir, request.model_id) if request.model_id else 0
-    if request.model_id:
-        write_card_model_id(card_dir, request.model_id)
-        write_card_sort_order(card_dir, sort_order)
-    write_cards_index(root, cards_dir, mesh_dir)
-    meshes = mesh_names(mesh_dir)
-    mesh = f"{card_id}.json"
-    return CardInfo(
-        id=card_id,
-        label=request.label.strip(),
-        background=relative(root, background_dst),
-        foreground=relative(root, foreground_dst),
-        mesh=mesh,
-        has_mesh=mesh in meshes,
-        model_id=request.model_id,
-        sort_order=sort_order,
-        photos=[],
-        photo_scratch_done=count_done_photo_scratch_slots(cards_dir, card_id),
-        photo_scratch_draft=count_draft_photo_scratch_slots(cards_dir, card_id),
-        photo_scratch_mesh_count=count_photo_scratch_mesh_slots(cards_dir, card_id),
-        photo_scratch_symbols_count=count_photo_scratch_symbols_slots(cards_dir, card_id),
-        theme_id=read_card_theme_id(card_dir),
-        trailer=find_card_trailer(card_dir, card_id),
-    )
-
-
-def update_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str, request: UpdateCardRequest) -> CardInfo:
-    cards = list_cards(root, cards_dir, mesh_dir)
-    card = next((entry for entry in cards if entry.id == card_id), None)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-
-    card_dir = card_directory(cards_dir, card_id)
-    background_dst, foreground_dst = card_paths(root, cards_dir, card_id)
-
-    if request.background is not None:
-        copy_video(resolve_source(root, request.background), background_dst)
-    if request.foreground is not None:
-        copy_video(resolve_source(root, request.foreground), foreground_dst)
-
-    label = card.label
-    if request.label is not None:
-        label = request.label.strip()
-        write_card_label(card_dir, label)
-    if request.model_id is not None:
-        previous_model = card.model_id
-        if request.model_id and request.model_id != previous_model and request.sort_order is None:
-            write_card_sort_order(card_dir, next_sort_order_for_model(cards_dir, request.model_id))
-        write_card_model_id(card_dir, request.model_id)
-    if request.sort_order is not None:
-        write_card_sort_order(card_dir, request.sort_order)
-
-    write_cards_index(root, cards_dir, mesh_dir)
-    meshes = mesh_names(mesh_dir)
-    return CardInfo(
-        id=card.id,
-        label=label,
-        background=relative(root, background_dst),
-        foreground=relative(root, foreground_dst),
-        mesh=card.mesh,
-        has_mesh=card.mesh in meshes,
-        model_id=read_card_model_id(card_dir),
-        sort_order=read_card_sort_order(card_dir),
-        photos=read_card_photos(card_dir, card.id),
-        photo_scratch_done=count_done_photo_scratch_slots(cards_dir, card.id),
-        photo_scratch_draft=count_draft_photo_scratch_slots(cards_dir, card.id),
-        photo_scratch_mesh_count=count_photo_scratch_mesh_slots(cards_dir, card.id),
-        photo_scratch_symbols_count=count_photo_scratch_symbols_slots(cards_dir, card.id),
-        theme_id=read_card_theme_id(card_dir),
-        trailer=find_card_trailer(card_dir, card.id),
-    )
+        raise HTTPException(status_code=400, detail="Cannot add photos to the original card")
+    return cards_dir / card_id / "photos"
 
 
 def prune_published_photo_scratch(root: Path, card_id: str) -> int:
@@ -482,40 +168,6 @@ def prune_published_photo_scratch(root: Path, card_id: str) -> int:
     if removed:
         index_path.write_text(json.dumps({"cards": kept}, indent=2) + "\n")
     return removed
-
-
-def delete_card(root: Path, cards_dir: Path, mesh_dir: Path, card_id: str) -> None:
-    """Recursively delete a motion card and all related artifacts.
-
-    Removes:
-    - public/cards/<id>/ (videos, photos, photo-scratch slots)
-    - public/mesh/<id>.json
-    - .tmp/video-flow/<id>/ (draft + pipeline workdir)
-    - matching entries in public/photo-scratch/index.json
-    """
-    if card_id == ORIGINAL_ID:
-        raise HTTPException(status_code=400, detail="The original card cannot be deleted")
-
-    card_dir = cards_dir / card_id
-    mesh_path = mesh_dir / f"{card_id}.json"
-    work_dir = root / ".tmp" / "video-flow" / card_id
-    found = card_dir.exists() or mesh_path.exists() or work_dir.exists()
-    if not found:
-        # Still allow prune-only if published photo games linger without a card dir.
-        removed = prune_published_photo_scratch(root, card_id)
-        if not removed:
-            raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-        write_cards_index(root, cards_dir, mesh_dir)
-        return
-
-    if card_dir.exists():
-        shutil.rmtree(card_dir)
-    if mesh_path.is_file():
-        mesh_path.unlink()
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    prune_published_photo_scratch(root, card_id)
-    write_cards_index(root, cards_dir, mesh_dir)
 
 
 def compress_card(
@@ -1786,8 +1438,18 @@ def publish_photo_scratch_game(
                 ),
             )
 
-    model_id = read_card_model_id(card_dir)
-    theme_id = read_card_theme_id(card_dir)
+    model_id = None
+    theme_id = None
+    import backend.db.engine as db_engine
+    from backend.cards_store import card_model_theme_ids
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        model_id, theme_id = card_model_theme_ids(session, card_id)
+    finally:
+        session.close()
     intro_url: str | None = None
     if theme_id and themes_dir is not None:
         from backend.themes_store import find_theme_intro
@@ -1861,125 +1523,3 @@ def reject_photo_scratch_bg(
 ) -> PhotoScratchSlot:
     """Thin wrapper — prefer reject_photo_scratch_layer."""
     return reject_photo_scratch_layer(cards_dir, card_id, slot_id, "background", theme)
-
-
-def card_photos_dir(cards_dir: Path, card_id: str) -> Path:
-    if card_id == ORIGINAL_ID:
-        raise HTTPException(status_code=400, detail="Cannot add photos to the original card")
-    return cards_dir / card_id / "photos"
-
-
-async def upload_card_photo(
-    root: Path,
-    cards_dir: Path,
-    mesh_dir: Path,
-    card_id: str,
-    upload: UploadFile,
-) -> PhotoInfo:
-    cards = list_cards(root, cards_dir, mesh_dir)
-    card = next((entry for entry in cards if entry.id == card_id), None)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    original = Path(upload.filename or "").name
-    ext = Path(original).suffix.lower()
-    if ext not in PHOTO_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Photo must be JPG, PNG, or WebP")
-    data = await upload.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Uploaded photo is empty")
-    photo_id = uuid.uuid4().hex[:12]
-    photos_dir = card_photos_dir(cards_dir, card_id)
-    photos_dir.mkdir(parents=True, exist_ok=True)
-    target = photos_dir / f"{photo_id}{ext}"
-    target.write_bytes(data)
-    src = public_url(f"cards/{card_id}/photos/{photo_id}{ext}")
-    photos = [*card.photos, PhotoInfo(id=photo_id, src=src)]
-    write_card_photos(cards_dir / card_id, photos)
-    write_cards_index(root, cards_dir, mesh_dir)
-    return PhotoInfo(id=photo_id, src=src)
-
-
-def delete_card_photo(
-    root: Path,
-    cards_dir: Path,
-    mesh_dir: Path,
-    card_id: str,
-    photo_id: str,
-) -> None:
-    cards = list_cards(root, cards_dir, mesh_dir)
-    card = next((entry for entry in cards if entry.id == card_id), None)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    photo = next((entry for entry in card.photos if entry.id == photo_id), None)
-    if not photo:
-        raise HTTPException(status_code=404, detail=f"Photo not found: {photo_id}")
-    photos_dir = card_photos_dir(cards_dir, card_id)
-    for path in photos_dir.glob(f"{photo_id}.*"):
-        if path.is_file():
-            path.unlink()
-    remaining = [entry for entry in card.photos if entry.id != photo_id]
-    write_card_photos(cards_dir / card_id, remaining)
-    write_cards_index(root, cards_dir, mesh_dir)
-
-
-async def upload_card_trailer(
-    root: Path,
-    cards_dir: Path,
-    mesh_dir: Path,
-    card_id: str,
-    upload: UploadFile,
-) -> CardInfo:
-    if card_id == ORIGINAL_ID:
-        raise HTTPException(status_code=400, detail="Cannot upload a trailer for the original card")
-    cards = list_cards(root, cards_dir, mesh_dir)
-    card = next((entry for entry in cards if entry.id == card_id), None)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    original = Path(upload.filename or "").name
-    ext = Path(original).suffix.lower()
-    if ext not in TRAILER_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Trailer must be MP4 or WebM")
-    data = await upload.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Uploaded trailer is empty")
-    card_dir = cards_dir / card_id
-    card_dir.mkdir(parents=True, exist_ok=True)
-    for old_ext in TRAILER_EXTENSIONS:
-        old = card_dir / f"trailer{old_ext}"
-        if old.exists():
-            old.unlink()
-    target = card_dir / f"trailer{ext}"
-    target.write_bytes(data)
-    write_cards_index(root, cards_dir, mesh_dir)
-    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
-    if not refreshed:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    return refreshed
-
-
-def delete_card_trailer(
-    root: Path,
-    cards_dir: Path,
-    mesh_dir: Path,
-    card_id: str,
-) -> CardInfo:
-    if card_id == ORIGINAL_ID:
-        raise HTTPException(status_code=400, detail="Cannot delete a trailer for the original card")
-    cards = list_cards(root, cards_dir, mesh_dir)
-    card = next((entry for entry in cards if entry.id == card_id), None)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    card_dir = cards_dir / card_id
-    removed = False
-    for ext in TRAILER_EXTENSIONS:
-        path = card_dir / f"trailer{ext}"
-        if path.is_file():
-            path.unlink()
-            removed = True
-    if not removed:
-        raise HTTPException(status_code=404, detail=f"Trailer not found for card: {card_id}")
-    write_cards_index(root, cards_dir, mesh_dir)
-    refreshed = next((entry for entry in list_cards(root, cards_dir, mesh_dir) if entry.id == card_id), None)
-    if not refreshed:
-        raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
-    return refreshed

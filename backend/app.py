@@ -30,6 +30,20 @@ from backend.routers import rewards as rewards_router
 from backend.routers import store as store_router
 from backend.routers import wallet as wallet_router
 
+from backend.cards_store import (
+    ensure_cards_bootstrapped,
+    create_card,
+    delete_card,
+    delete_card_photo,
+    delete_card_trailer,
+    list_cards,
+    reorder_model_cards,
+    update_card,
+    upload_card_photo,
+    upload_card_trailer,
+    write_cards_index,
+    write_cards_index_standalone,
+)
 from backend.cards import (
     CardInfo,
     CreateCardRequest,
@@ -40,12 +54,7 @@ from backend.cards import (
     approve_photo_scratch_bg,
     approve_photo_scratch_layer,
     compress_card,
-    create_card,
-    delete_card,
-    delete_card_photo,
-    delete_card_trailer,
     delete_photo_scratch_layer,
-    list_cards,
     list_photo_scratch_slots,
     confirm_photo_scratch_slot_adjust,
     cutout_photo_scratch_slot,
@@ -55,13 +64,8 @@ from backend.cards import (
     read_photo_scratch_slot_symbols,
     reject_photo_scratch_bg,
     reject_photo_scratch_layer,
-    reorder_model_cards,
     set_photo_scratch_slot_prompt,
-    update_card,
-    upload_card_photo,
-    upload_card_trailer,
     upload_photo_scratch_layer,
-    write_cards_index,
     write_photo_scratch_slot_symbols,
     zoom_photo_scratch_slot,
 )
@@ -461,9 +465,8 @@ app.include_router(inbox_router.router)
 
 @app.on_event("startup")
 def ensure_indexes() -> None:
-    write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
     write_symbols_index(LOTTIES_DIR)
-    # Theme + model metadata live in Postgres; seed from on-disk legacy files if empty.
+    # Theme + model + card metadata live in Postgres; seed from on-disk legacy files if empty.
     import backend.db.engine as db_engine
 
     db_engine.get_engine()
@@ -472,6 +475,8 @@ def ensure_indexes() -> None:
     try:
         ensure_themes_bootstrapped(session, THEMES_DIR)
         ensure_models_bootstrapped(session, MODELS_DIR)
+        ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
+        write_cards_index(session, ROOT, CARDS_DIR, MESH_DIR)
         session.commit()
     except Exception:
         session.rollback()
@@ -607,9 +612,9 @@ def health() -> dict:
 
 
 @app.get("/api/assets")
-def assets() -> dict:
+def assets(db: Annotated[Session, Depends(get_session)]) -> dict:
     meshes = sorted(MESH_DIR.glob("*.json"))
-    cards = list_cards(ROOT, CARDS_DIR, MESH_DIR)
+    cards = list_cards(db, ROOT, CARDS_DIR, MESH_DIR)
     return {
         "cards": [card.dict() for card in cards],
         "meshes": [read_mesh_info(path).dict() for path in meshes if path.name != "index.json"],
@@ -617,14 +622,17 @@ def assets() -> dict:
 
 
 @app.get("/api/cards")
-def get_cards() -> dict:
-    cards = list_cards(ROOT, CARDS_DIR, MESH_DIR)
+def get_cards(db: Annotated[Session, Depends(get_session)]) -> dict:
+    cards = list_cards(db, ROOT, CARDS_DIR, MESH_DIR)
     return {"cards": [card.dict() for card in cards]}
 
 
 @app.post("/api/cards")
-def post_card(request: CreateCardRequest) -> dict:
-    card = create_card(ROOT, CARDS_DIR, MESH_DIR, request)
+def post_card(
+    request: CreateCardRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    card = create_card(db, ROOT, CARDS_DIR, MESH_DIR, request)
     return card.dict()
 
 
@@ -634,10 +642,7 @@ def put_card(
     request: UpdateCardRequest,
     db: Annotated[Session, Depends(get_session)],
 ) -> dict:
-    if request.model_id:
-        if not model_exists(db, request.model_id):
-            raise HTTPException(status_code=404, detail=f"Model not found: {request.model_id}")
-    card = update_card(ROOT, CARDS_DIR, MESH_DIR, card_id, request)
+    card = update_card(db, ROOT, CARDS_DIR, MESH_DIR, card_id, request)
     if request.model_id is not None:
         patch_flow_draft_model(card_id, request.model_id)
     return card.dict()
@@ -649,39 +654,55 @@ def put_model_card_order(
     request: ReorderCardsRequest,
     db: Annotated[Session, Depends(get_session)],
 ) -> dict:
-    if not model_exists(db, model_id):
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    cards = reorder_model_cards(ROOT, CARDS_DIR, MESH_DIR, model_id, request.card_ids)
+    cards = reorder_model_cards(db, ROOT, CARDS_DIR, MESH_DIR, model_id, request.card_ids)
     return {"cards": [card.dict() for card in cards]}
 
 
 @app.delete("/api/cards/{card_id}")
-def remove_card(card_id: str) -> dict:
-    delete_card(ROOT, CARDS_DIR, MESH_DIR, card_id)
+def remove_card(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_card(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
     return {"ok": True, "id": card_id}
 
 
 @app.post("/api/cards/{card_id}/photos")
-async def post_card_photo(card_id: str, file: UploadFile = File(...)) -> dict:
-    photo = await upload_card_photo(ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+async def post_card_photo(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    photo = await upload_card_photo(db, ROOT, CARDS_DIR, MESH_DIR, card_id, file)
     return photo.dict()
 
 
 @app.delete("/api/cards/{card_id}/photos/{photo_id}")
-def remove_card_photo(card_id: str, photo_id: str) -> dict:
-    delete_card_photo(ROOT, CARDS_DIR, MESH_DIR, card_id, photo_id)
+def remove_card_photo(
+    card_id: str,
+    photo_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_card_photo(db, ROOT, CARDS_DIR, MESH_DIR, card_id, photo_id)
     return {"ok": True, "id": photo_id}
 
 
 @app.post("/api/cards/{card_id}/trailer")
-async def post_card_trailer(card_id: str, file: UploadFile = File(...)) -> dict:
-    card = await upload_card_trailer(ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+async def post_card_trailer(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    card = await upload_card_trailer(db, ROOT, CARDS_DIR, MESH_DIR, card_id, file)
     return card.dict()
 
 
 @app.delete("/api/cards/{card_id}/trailer")
-def remove_card_trailer(card_id: str) -> dict:
-    card = delete_card_trailer(ROOT, CARDS_DIR, MESH_DIR, card_id)
+def remove_card_trailer(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    card = delete_card_trailer(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
     return card.dict()
 
 
@@ -1229,7 +1250,7 @@ def compress_card_videos(card_id: str, request: CompressCardRequest) -> dict:
             write_webm=write_webm,
             compress_preset=compress_preset,
         )
-        write_cards_index(ROOT, CARDS_DIR, MESH_DIR)
+        write_cards_index_standalone(ROOT, CARDS_DIR, MESH_DIR)
 
     job = enqueue(
         "compress-card",

@@ -110,6 +110,8 @@ function getCardsIndexPayload() {
 }
 
 function writeCardsIndex() {
+  // Optional disk-scan fallback. Source of truth for card metadata is Postgres
+  // via /api/cards; Python write_cards_index writes the authoritative public/cards/index.json.
   mkdirSync(cardsDirectory, { recursive: true });
   writeFileSync(cardsIndexFile, JSON.stringify(getCardsIndexPayload(), null, 2));
 }

@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.cards import CardInfo, list_cards, list_photo_scratch_thumb_urls, public_url
+from backend.cards import CardInfo, list_photo_scratch_thumb_urls, public_url
+from backend.cards_store import list_cards_standalone
 from backend.models_store import ModelInfo, list_models_standalone
 from backend.themes_store import list_themes_standalone, resolve_theme_id_standalone
 
@@ -133,7 +134,7 @@ def build_collection_catalog(
     theme_filter: str | None = None,
 ) -> dict:
     models = list_models_standalone(models_dir)
-    cards = list_cards(root, cards_dir, mesh_dir)
+    cards = list_cards_standalone(root, cards_dir, mesh_dir)
     themes = list_themes_standalone(themes_dir)
     themes_by_id = {theme.id: theme.label for theme in themes}
     themes_info = {theme.id: theme for theme in themes}
