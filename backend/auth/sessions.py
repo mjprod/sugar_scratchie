@@ -15,7 +15,7 @@ from backend.db.models import User, utcnow
 
 COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "sugar_session")
 SESSION_DAYS = 30
-PASSWORD_MIN_LENGTH = 12
+PASSWORD_MIN_LENGTH = 8
 
 
 def _cookie_secure() -> bool:

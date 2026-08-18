@@ -93,8 +93,9 @@ def upgrade() -> None:
             )),
             ref_type TEXT,
             ref_id TEXT,
-            idempotency_key TEXT NOT NULL UNIQUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            idempotency_key TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT wallet_tx_idempotency_key_uq UNIQUE (idempotency_key)
         );
         CREATE INDEX wallet_tx_user_created_idx ON wallet_transactions(user_id, created_at);
 
@@ -163,8 +164,9 @@ def upgrade() -> None:
             pack_id TEXT NOT NULL REFERENCES packs(id),
             quantity INTEGER NOT NULL,
             diamond_cost INTEGER NOT NULL,
-            idempotency_key TEXT NOT NULL UNIQUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            idempotency_key TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT pack_purchases_idempotency_key_uq UNIQUE (idempotency_key)
         );
         CREATE INDEX pack_purchases_user_id_idx ON pack_purchases(user_id);
 
@@ -227,7 +229,7 @@ def upgrade() -> None:
             duplicates INTEGER NOT NULL DEFAULT 0,
             seen_at TIMESTAMPTZ,
             source_opening_card_id UUID REFERENCES pack_opening_cards(id),
-            UNIQUE (user_id, card_kind, card_id, photo_slot_id)
+            CONSTRAINT user_cards_unique_owned UNIQUE (user_id, card_kind, card_id, photo_slot_id)
         );
         CREATE INDEX user_cards_user_model_idx ON user_cards(user_id, model_id);
 
@@ -268,7 +270,7 @@ def upgrade() -> None:
             diamonds INTEGER NOT NULL DEFAULT 10,
             coins INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            UNIQUE (user_id, claim_date)
+            CONSTRAINT daily_reward_claims_user_date_uq UNIQUE (user_id, claim_date)
         );
 
         CREATE TABLE redeem_codes (
@@ -288,7 +290,7 @@ def upgrade() -> None:
             code TEXT NOT NULL REFERENCES redeem_codes(code),
             reward JSONB NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            UNIQUE (user_id, code)
+            CONSTRAINT redeem_redemptions_user_code_uq UNIQUE (user_id, code)
         );
 
         CREATE TABLE inbox_messages (
