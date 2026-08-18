@@ -218,6 +218,38 @@ class MotionCard(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class SymbolGroup(Base):
+    """Named pack of 12 match-game symbols; one row is the global default."""
+
+    __tablename__ = "symbol_groups"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class Symbol(Base):
+    """Admin catalog of match-game symbols (metadata only; .lottie files stay on disk)."""
+
+    __tablename__ = "symbols"
+    __table_args__ = (
+        CheckConstraint("id ~ '^(0[1-9]|1[0-2])$'", name="symbols_id_chk"),
+        Index("symbols_group_id_idx", "group_id"),
+    )
+
+    group_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("symbol_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    file: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class StorePurchase(Base):
     __tablename__ = "store_purchases"
     __table_args__ = (

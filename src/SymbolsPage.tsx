@@ -6,7 +6,10 @@ import {
   Home,
   LoaderCircle,
   Pencil,
+  Plus,
   Sparkles,
+  Star,
+  Trash2,
   Upload,
 } from "lucide-react";
 import {
@@ -20,17 +23,24 @@ import {
   Flex,
   Grid,
   Heading,
+  Select,
   Text,
   TextArea,
   TextField,
 } from "@radix-ui/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  createSymbolGroup,
+  deleteSymbolGroup,
+  fetchSymbolGroups,
   fetchSymbolJson,
   fetchSymbols,
   rewriteSymbolJson,
+  setDefaultSymbolGroup,
+  updateSymbolGroupLabel,
   updateSymbolLabel,
   uploadSymbolLottie,
+  type SymbolGroupInfo,
   type SymbolInfo,
 } from "./shared/symbols";
 import { applySymbolCatalog, loadSymbolTypes } from "./game/matchGame";
@@ -38,32 +48,80 @@ import { applySymbolCatalog, loadSymbolTypes } from "./game/matchGame";
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 
 export function SymbolsPage() {
+  const [groups, setGroups] = useState<SymbolGroupInfo[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
   const [symbols, setSymbols] = useState<SymbolInfo[]>([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
   const [editingId, setEditingId] = useState("");
   const [editingLabel, setEditingLabel] = useState("");
   const [rewriteId, setRewriteId] = useState("");
   const [rewritePath, setRewritePath] = useState("");
   const [rewriteText, setRewriteText] = useState("");
   const [rewriteBusy, setRewriteBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createId, setCreateId] = useState("");
+  const [createLabel, setCreateLabel] = useState("");
+  const [renameGroupOpen, setRenameGroupOpen] = useState(false);
+  const [renameGroupLabel, setRenameGroupLabel] = useState("");
   const fileInputs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
 
-  const refresh = useCallback(async () => {
-    const next = await fetchSymbols();
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
+
+  const loadSymbolsForGroup = useCallback(async (groupId: string) => {
+    if (!groupId) {
+      setSymbols([]);
+      return;
+    }
+    const next = await fetchSymbols(groupId);
     setSymbols(next);
-    applySymbolCatalog(next);
+    const defaultId = groupsRef.current.find((group) => group.is_default)?.id;
+    if (!defaultId || defaultId === groupId) {
+      applySymbolCatalog(next);
+    }
+  }, []);
+
+  const refresh = useCallback(async (preferId?: string) => {
+    const nextGroups = await fetchSymbolGroups();
+    setGroups(nextGroups);
+    const active =
+      (preferId && nextGroups.some((group) => group.id === preferId) ? preferId : "") ||
+      (selectedGroupId && nextGroups.some((group) => group.id === selectedGroupId)
+        ? selectedGroupId
+        : "") ||
+      nextGroups.find((group) => group.is_default)?.id ||
+      nextGroups[0]?.id ||
+      "";
+    setSelectedGroupId(active);
+    if (active) {
+      await loadSymbolsForGroup(active);
+    } else {
+      setSymbols([]);
+    }
+  }, [loadSymbolsForGroup, selectedGroupId]);
+
+  useEffect(() => {
+    refresh()
+      .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+    loadSymbolTypes().catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    refresh().catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
-    loadSymbolTypes().catch(() => undefined);
-  }, [refresh]);
+    if (!selectedGroupId) return;
+    loadSymbolsForGroup(selectedGroupId).catch((caught) =>
+      setError(caught instanceof Error ? caught.message : String(caught)),
+    );
+  }, [selectedGroupId, loadSymbolsForGroup]);
 
   function patchSymbol(updated: SymbolInfo) {
     setSymbols((prev) => {
       const next = prev.map((entry) => (entry.id === updated.id ? updated : entry));
-      applySymbolCatalog(next);
+      if (selectedGroup?.is_default) {
+        applySymbolCatalog(next);
+      }
       return next;
     });
   }
@@ -77,7 +135,7 @@ export function SymbolsPage() {
     setBusyId(symbolId);
     setError("");
     try {
-      const updated = await updateSymbolLabel(symbolId, label);
+      const updated = await updateSymbolLabel(symbolId, label, selectedGroupId);
       patchSymbol(updated);
       setEditingId("");
       setEditingLabel("");
@@ -97,7 +155,7 @@ export function SymbolsPage() {
     setBusyId(symbol.id);
     setError("");
     try {
-      const updated = await uploadSymbolLottie(symbol.id, file);
+      const updated = await uploadSymbolLottie(symbol.id, file, selectedGroupId);
       patchSymbol(updated);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -112,7 +170,7 @@ export function SymbolsPage() {
     setBusyId(symbol.id);
     setError("");
     try {
-      const payload = await fetchSymbolJson(symbol.id);
+      const payload = await fetchSymbolJson(symbol.id, selectedGroupId);
       setRewriteId(symbol.id);
       setRewritePath(payload.path);
       setRewriteText(payload.json_text);
@@ -128,7 +186,7 @@ export function SymbolsPage() {
     setRewriteBusy(true);
     setError("");
     try {
-      const updated = await rewriteSymbolJson(rewriteId, rewriteText);
+      const updated = await rewriteSymbolJson(rewriteId, rewriteText, selectedGroupId);
       patchSymbol(updated);
       setRewriteId("");
       setRewritePath("");
@@ -137,6 +195,83 @@ export function SymbolsPage() {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setRewriteBusy(false);
+    }
+  }
+
+  async function handleCreateGroup() {
+    const id = createId.trim();
+    const label = createLabel.trim();
+    if (!id || !label) {
+      setError("Group id and label are required.");
+      return;
+    }
+    setGroupBusy(true);
+    setError("");
+    try {
+      const created = await createSymbolGroup(id, label, selectedGroupId || undefined);
+      setCreateOpen(false);
+      setCreateId("");
+      setCreateLabel("");
+      await refresh(created.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function handleSetDefault() {
+    if (!selectedGroupId) return;
+    setGroupBusy(true);
+    setError("");
+    try {
+      await setDefaultSymbolGroup(selectedGroupId);
+      await refresh(selectedGroupId);
+      await loadSymbolTypes();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function handleRenameGroup() {
+    if (!selectedGroupId) return;
+    const label = renameGroupLabel.trim();
+    if (!label) {
+      setError("Group label is required.");
+      return;
+    }
+    setGroupBusy(true);
+    setError("");
+    try {
+      await updateSymbolGroupLabel(selectedGroupId, label);
+      setRenameGroupOpen(false);
+      await refresh(selectedGroupId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function handleDeleteGroup() {
+    if (!selectedGroup || selectedGroup.is_default) {
+      setError("Cannot delete the default symbol group.");
+      return;
+    }
+    if (!window.confirm(`Delete symbol group “${selectedGroup.label}”? This cannot be undone.`)) {
+      return;
+    }
+    setGroupBusy(true);
+    setError("");
+    try {
+      await deleteSymbolGroup(selectedGroup.id);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setGroupBusy(false);
     }
   }
 
@@ -153,8 +288,8 @@ export function SymbolsPage() {
               </Text>
               <Heading size="7">Symbols</Heading>
               <Text color="gray" size="2">
-                Replace uploads a new .lottie. Rewrite edits the animation JSON. Preview updates
-                immediately.
+                Groups are packs of 12 symbols. Set one as default for the game. Replace uploads a
+                new .lottie; Rewrite edits the animation JSON.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -196,12 +331,88 @@ export function SymbolsPage() {
             </Callout.Root>
           ) : null}
 
+          <Card size="2">
+            <Flex direction="column" gap="3">
+              <Flex align="center" justify="between" wrap="wrap" gap="2">
+                <Text weight="medium">Symbol group</Text>
+                {selectedGroup?.is_default ? (
+                  <Badge color="amber" variant="soft">
+                    Default for game
+                  </Badge>
+                ) : null}
+              </Flex>
+              <Flex gap="2" wrap="wrap" align="end">
+                <Box style={{ minWidth: 200, flex: 1 }}>
+                  <Text size="1" color="gray" mb="1">
+                    Active group
+                  </Text>
+                  <Select.Root
+                    value={selectedGroupId || undefined}
+                    onValueChange={setSelectedGroupId}
+                    disabled={groups.length === 0}
+                  >
+                    <Select.Trigger placeholder="Select group" style={{ width: "100%" }} />
+                    <Select.Content>
+                      {groups.map((group) => (
+                        <Select.Item key={group.id} value={group.id}>
+                          {group.label}
+                          {group.is_default ? " (default)" : ""}
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Root>
+                </Box>
+                <Button
+                  variant="soft"
+                  disabled={groupBusy || !selectedGroupId}
+                  onClick={() => {
+                    setRenameGroupLabel(selectedGroup?.label ?? "");
+                    setRenameGroupOpen(true);
+                  }}
+                >
+                  <Pencil {...iconProps} />
+                  Rename
+                </Button>
+                <Button
+                  variant="soft"
+                  color="amber"
+                  disabled={groupBusy || !selectedGroupId || Boolean(selectedGroup?.is_default)}
+                  onClick={() => handleSetDefault().catch(() => undefined)}
+                >
+                  <Star {...iconProps} />
+                  Set default
+                </Button>
+                <Button
+                  variant="soft"
+                  disabled={groupBusy}
+                  onClick={() => {
+                    setCreateId("");
+                    setCreateLabel("");
+                    setCreateOpen(true);
+                  }}
+                >
+                  <Plus {...iconProps} />
+                  New group
+                </Button>
+                <Button
+                  variant="soft"
+                  color="red"
+                  disabled={groupBusy || !selectedGroup || selectedGroup.is_default}
+                  onClick={() => handleDeleteGroup().catch(() => undefined)}
+                >
+                  <Trash2 {...iconProps} />
+                  Delete
+                </Button>
+              </Flex>
+            </Flex>
+          </Card>
+
           <Grid columns={{ initial: "1", sm: "2", md: "3" }} gap="3">
             {symbols.map((symbol) => {
               const busy = busyId === symbol.id;
               const editing = editingId === symbol.id;
               return (
-                <Card key={symbol.id} size="2">
+                <Card key={`${symbol.group_id}-${symbol.id}`} size="2">
                   <Flex direction="column" gap="3">
                     <Flex align="center" justify="between" gap="2">
                       <Badge color="gray" variant="soft">
@@ -222,7 +433,7 @@ export function SymbolsPage() {
                       }}
                     >
                       <DotLottieReact
-                        key={`${symbol.id}-${symbol.updated_at}-${symbol.src}`}
+                        key={`${symbol.group_id}-${symbol.id}-${symbol.updated_at}-${symbol.src}`}
                         src={symbol.src}
                         autoplay
                         loop
@@ -337,6 +548,88 @@ export function SymbolsPage() {
           ) : null}
         </Flex>
       </Container>
+
+      <Dialog.Root
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (!groupBusy) setCreateOpen(open);
+        }}
+      >
+        <Dialog.Content maxWidth="420px">
+          <Dialog.Title>New symbol group</Dialog.Title>
+          <Dialog.Description size="2" color="gray" mb="3">
+            Copies the 12 symbols from the currently selected group
+            {selectedGroup ? ` (“${selectedGroup.label}”)` : ""}. You can edit them after.
+          </Dialog.Description>
+          <Flex direction="column" gap="3">
+            <Box>
+              <Text size="1" color="gray" mb="1">
+                Id (slug)
+              </Text>
+              <TextField.Root
+                value={createId}
+                onChange={(event) => setCreateId(event.target.value)}
+                placeholder="premium"
+              />
+            </Box>
+            <Box>
+              <Text size="1" color="gray" mb="1">
+                Label
+              </Text>
+              <TextField.Root
+                value={createLabel}
+                onChange={(event) => setCreateLabel(event.target.value)}
+                placeholder="Premium"
+              />
+            </Box>
+          </Flex>
+          <Flex gap="2" mt="4" justify="end">
+            <Dialog.Close>
+              <Button variant="soft" color="gray" disabled={groupBusy}>
+                Cancel
+              </Button>
+            </Dialog.Close>
+            <Button
+              disabled={groupBusy || !createId.trim() || !createLabel.trim()}
+              onClick={() => handleCreateGroup().catch(() => undefined)}
+            >
+              {groupBusy ? <LoaderCircle {...iconProps} /> : <Plus {...iconProps} />}
+              Create
+            </Button>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
+
+      <Dialog.Root
+        open={renameGroupOpen}
+        onOpenChange={(open) => {
+          if (!groupBusy) setRenameGroupOpen(open);
+        }}
+      >
+        <Dialog.Content maxWidth="420px">
+          <Dialog.Title>Rename group</Dialog.Title>
+          <Box mt="3">
+            <TextField.Root
+              value={renameGroupLabel}
+              onChange={(event) => setRenameGroupLabel(event.target.value)}
+              placeholder="Label"
+            />
+          </Box>
+          <Flex gap="2" mt="4" justify="end">
+            <Dialog.Close>
+              <Button variant="soft" color="gray" disabled={groupBusy}>
+                Cancel
+              </Button>
+            </Dialog.Close>
+            <Button
+              disabled={groupBusy || !renameGroupLabel.trim()}
+              onClick={() => handleRenameGroup().catch(() => undefined)}
+            >
+              Save
+            </Button>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
 
       <Dialog.Root
         open={Boolean(rewriteId)}

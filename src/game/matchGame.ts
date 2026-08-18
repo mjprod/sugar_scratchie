@@ -46,7 +46,12 @@ type CatalogRow = {
 };
 
 function encodeLottiePath(file: string, updatedAt = 0): string {
-  const encoded = encodeURIComponent(file);
+  // Encode each path segment so nested group folders stay as /lotties/group/file.
+  const encoded = file
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
   const base = `/lotties/${encoded}`;
   if (updatedAt > 0) return `${base}?v=${Math.floor(updatedAt)}`;
   return base;
