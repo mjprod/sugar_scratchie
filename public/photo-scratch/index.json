@@ -3,1019 +3,1051 @@
     {
       "id": "asian_2_slot_02",
       "label": "warm beach \u2013 2",
-      "model_id": "asia",
       "background": "/cards/asian_2/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/asian_2/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/asian_2/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/asian_2/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/asian_2/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asian_2_slot_03",
       "label": "warm beach \u2013 3",
-      "model_id": "asia",
       "background": "/cards/asian_2/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/asian_2/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/asian_2/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/asian_2/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/asian_2/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "glaucamp_1_slot_02",
       "label": "Firegirl \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/glaucamp_1/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/glaucamp_1/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/glaucamp_1/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/glaucamp_1/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/glaucamp_1/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "glaucamp_1_slot_03",
       "label": "Firegirl \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/glaucamp_1/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/glaucamp_1/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/glaucamp_1/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/glaucamp_1/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/glaucamp_1/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "glaucamp_1_slot_06",
       "label": "Firegirl \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/glaucamp_1/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/glaucamp_1/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/glaucamp_1/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/glaucamp_1/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/glaucamp_1/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "glaucamp_1_slot_01",
       "label": "Firegirl \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/glaucamp_1/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/glaucamp_1/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/glaucamp_1/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/glaucamp_1/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/glaucamp_1/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_02",
       "label": "Firegirl \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_03",
       "label": "Firegirl \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_04",
       "label": "Firegirl \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_01",
       "label": "Firegirl \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asian_2_slot_01",
       "label": "warm beach \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/asian_2/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/asian_2/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/asian_2/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/asian_2/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/asian_2/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_3_slot_05",
       "label": "Teacher \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_3_slot_06",
       "label": "Teacher \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_3_slot_07",
       "label": "Teacher \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_3_slot_08",
       "label": "Teacher \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_3_slot_09",
       "label": "Teacher \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_3_slot_10",
       "label": "Teacher \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/juliana_3/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/juliana_3/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/juliana_3/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/juliana_3/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/juliana_3/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "teacher",
+      "intro": "/themes/teacher/intro.mp4"
     },
     {
       "id": "juliana_2_slot_01",
       "label": "Nurse \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_02",
       "label": "Nurse \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_03",
       "label": "Nurse \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_04",
       "label": "Nurse \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_05",
       "label": "Nurse \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_06",
       "label": "Nurse \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_07",
       "label": "Nurse \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_08",
       "label": "Nurse \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_09",
       "label": "Nurse \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_2_slot_10",
       "label": "Nurse \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/juliana_2/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/juliana_2/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/juliana_2/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/juliana_2/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/juliana_2/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_01",
       "label": "Teacher \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_02",
       "label": "Teacher \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_03",
       "label": "Teacher \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_04",
       "label": "Teacher \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_05",
       "label": "Teacher \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_06",
       "label": "Teacher \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_07",
       "label": "Teacher \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_08",
       "label": "Teacher \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_09",
       "label": "Teacher \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_teacher_slot_10",
       "label": "Teacher \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_teacher/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/julianaval_teacher/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/julianaval_teacher/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/julianaval_teacher/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_01",
       "label": "Nurse \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_02",
       "label": "Nurse \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_03",
       "label": "Nurse \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_06",
       "label": "Nurse \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_09",
       "label": "Nurse \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_10",
       "label": "Nurse \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_01",
       "label": "Nurse \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_02",
       "label": "Nurse \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_03",
       "label": "Nurse \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_04",
       "label": "Nurse \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_05",
       "label": "Nurse \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_06",
       "label": "Nurse \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_07",
       "label": "Nurse \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_08",
       "label": "Nurse \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_09",
       "label": "Nurse \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym_slot_10",
       "label": "Nurse \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/asia_gym/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/asia_gym/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/asia_gym/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/asia_gym/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_05",
       "label": "Firegirl \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_06",
       "label": "Firegirl \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_07",
       "label": "Firegirl \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_08",
       "label": "Firegirl \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_09",
       "label": "Firegirl \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_firegirl_slot_10",
       "label": "Firegirl \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_firegirl/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/julianaval_firegirl/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/julianaval_firegirl/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/julianaval_firegirl/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_01",
       "label": "Gym \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_02",
       "label": "Gym \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_03",
       "label": "Gym \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_04",
       "label": "Gym \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_05",
       "label": "Gym \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_06",
       "label": "Gym \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_07",
       "label": "Gym \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_08",
       "label": "Gym \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_09",
       "label": "Gym \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_gym_slot_10",
       "label": "Gym \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_gym/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/julianaval_gym/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/julianaval_gym/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/julianaval_gym/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/julianaval_gym/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_01",
       "label": "Gym \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_02",
       "label": "Gym \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_03",
       "label": "Gym \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_04",
       "label": "Gym \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_05",
       "label": "Gym \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_06",
       "label": "Gym \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_07",
       "label": "Gym \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_08",
       "label": "Gym \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_09",
       "label": "Gym \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "asia_gym2_slot_10",
       "label": "Gym \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/asia_gym2/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/asia_gym2/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/asia_gym2/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/asia_gym2/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/asia_gym2/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_04",
       "label": "Nurse \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_05",
       "label": "Nurse \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_07",
       "label": "Nurse \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "ju_gym_slot_08",
       "label": "Nurse \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/ju_gym/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/ju_gym/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/ju_gym/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/ju_gym/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/ju_gym/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_01",
       "label": "Police \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_06",
       "label": "Police \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_07",
       "label": "Police \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_08",
       "label": "Police \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_09",
       "label": "Police \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_10",
       "label": "Police \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "julianaval_cop_slot_01",
       "label": "Police \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_02",
       "label": "Police \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_03",
       "label": "Police \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_04",
       "label": "Police \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_05",
       "label": "Police \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_06",
       "label": "Police \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_07",
       "label": "Police \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_08",
       "label": "Police \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_09",
       "label": "Police \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "julianaval_cop_slot_10",
       "label": "Police \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/julianaval_cop/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/julianaval_cop/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/julianaval_cop/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/julianaval_cop/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/julianaval_cop/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval",
+      "theme_id": "police",
+      "intro": "/themes/police/intro.mp4"
     },
     {
       "id": "juliana_1_slot_02",
       "label": "Police \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_03",
       "label": "Police \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_04",
       "label": "Police \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "juliana_1_slot_05",
       "label": "Police \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/juliana_1/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/juliana_1/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/juliana_1/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/juliana_1/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/juliana_1/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_01",
       "label": "Police \u2013 1",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_01_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_01/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_01/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_01/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_01/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_02",
       "label": "Police \u2013 2",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_02_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_02/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_02/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_02/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_02/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_03",
       "label": "Police \u2013 3",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_03_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_03/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_03/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_03/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_03/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_04",
       "label": "Police \u2013 4",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_04_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_04/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_04/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_04/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_04/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_05",
       "label": "Police \u2013 5",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_05_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_05/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_05/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_05/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_05/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_06",
       "label": "Police \u2013 6",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_06_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_06/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_06/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_06/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_06/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_07",
       "label": "Police \u2013 7",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_07_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_07/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_07/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_07/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_07/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_08",
       "label": "Police \u2013 8",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_08_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_08/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_08/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_08/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_08/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_09",
       "label": "Police \u2013 9",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_09_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_09/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_09/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_09/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_09/mesh.json",
+      "model_id": "julianaval"
     },
     {
       "id": "thai_1_slot_10",
       "label": "Police \u2013 10",
-      "model_id": "julianaval",
       "background": "/cards/thai_1/photo-scratch/pending/slot_10_background.jpg",
       "bikini": "/cards/thai_1/photo-scratch/slot_10/bikini.png",
       "clothes": "/cards/thai_1/photo-scratch/slot_10/clothes.png",
-      "mesh": "/cards/thai_1/photo-scratch/slot_10/mesh.json"
+      "mesh": "/cards/thai_1/photo-scratch/slot_10/mesh.json",
+      "model_id": "julianaval"
     }
   ]
 }

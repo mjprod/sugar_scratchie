@@ -28,12 +28,12 @@ from backend.cards import (
     copy_video,
     find_card_trailer,
     mesh_names,
-    prune_published_photo_scratch,
     public_url,
     relative,
     resolve_source,
     safe_card_id,
 )
+from backend.photo_scratch_store import prune_published_photo_scratch
 from backend.db.models import Creator, MotionCard, Theme
 
 
@@ -466,7 +466,7 @@ def delete_card(
     work_dir = root / ".tmp" / "video-flow" / card_id
     found = row is not None or card_dir.exists() or mesh_path.exists() or work_dir.exists()
     if not found:
-        removed = prune_published_photo_scratch(root, card_id)
+        removed = prune_published_photo_scratch(db, root, card_id)
         if not removed:
             raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
         write_cards_index(db, root, cards_dir, mesh_dir)
@@ -482,7 +482,7 @@ def delete_card(
         mesh_path.unlink()
     if work_dir.exists():
         shutil.rmtree(work_dir)
-    prune_published_photo_scratch(root, card_id)
+    prune_published_photo_scratch(db, root, card_id)
     write_cards_index(db, root, cards_dir, mesh_dir)
 
 

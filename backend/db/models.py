@@ -218,6 +218,32 @@ class MotionCard(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class PhotoScratchCard(Base):
+    """Published photo-scratch game entries (metadata + media URLs; files stay on disk)."""
+
+    __tablename__ = "photo_scratch_cards"
+    __table_args__ = (
+        CheckConstraint("slot_id ~ '^slot_[0-9]{2}$'", name="photo_scratch_cards_slot_chk"),
+        UniqueConstraint("card_id", "slot_id", name="photo_scratch_cards_card_slot_uq"),
+        Index("photo_scratch_cards_card_idx", "card_id"),
+        Index("photo_scratch_cards_sort_idx", "sort_order"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    card_id: Mapped[str] = mapped_column(Text, ForeignKey("cards.id", ondelete="CASCADE"), nullable=False)
+    slot_id: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str | None] = mapped_column(Text, ForeignKey("models.id", ondelete="SET NULL"), nullable=True)
+    theme_id: Mapped[str | None] = mapped_column(Text, ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
+    background: Mapped[str] = mapped_column(Text, nullable=False)
+    bikini: Mapped[str] = mapped_column(Text, nullable=False)
+    clothes: Mapped[str] = mapped_column(Text, nullable=False)
+    mesh: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class SymbolGroup(Base):
     """Named pack of 12 match-game symbols; one row is the global default."""
 

@@ -114,6 +114,7 @@ def seed() -> None:
 
         from backend.cards_store import ensure_cards_bootstrapped, list_cards
         from backend.models_store import ensure_models_bootstrapped, list_models
+        from backend.photo_scratch_store import ensure_photo_scratch_bootstrapped
         from backend.symbols_store import ensure_symbols_bootstrapped
         from backend.themes_store import ensure_themes_bootstrapped
 
@@ -121,6 +122,7 @@ def seed() -> None:
         ensure_models_bootstrapped(session, PUBLIC / "models")
         ensure_cards_bootstrapped(session, ROOT, PUBLIC / "cards", PUBLIC / "mesh")
         ensure_symbols_bootstrapped(session, PUBLIC / "lotties")
+        ensure_photo_scratch_bootstrapped(session, ROOT)
         catalog_models = list_models(session, PUBLIC / "models")
         catalog_cards = list_cards(session, ROOT, PUBLIC / "cards", PUBLIC / "mesh")
 

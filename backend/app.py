@@ -100,6 +100,7 @@ from backend.themes_store import (
     update_theme,
     upload_theme_intro,
 )
+from backend.photo_scratch_store import ensure_photo_scratch_bootstrapped
 from backend.symbols_store import (
     CreateSymbolGroupRequest,
     RewriteSymbolJsonRequest,
@@ -484,6 +485,7 @@ def ensure_indexes() -> None:
         ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
         write_cards_index(session, ROOT, CARDS_DIR, MESH_DIR)
         ensure_symbols_bootstrapped(session, LOTTIES_DIR)
+        ensure_photo_scratch_bootstrapped(session, ROOT)
         session.commit()
     except Exception:
         session.rollback()
