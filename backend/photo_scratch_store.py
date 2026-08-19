@@ -270,7 +270,8 @@ def prune_published_photo_scratch(db: Session, root: Path, card_id: str) -> int:
             select(PhotoScratchCard).where(
                 or_(
                     PhotoScratchCard.card_id == card_id,
-                    PhotoScratchCard.id.like(f"{prefix}%"),
+                    # Literal prefix: SQL LIKE would treat `_` in card ids as a wildcard.
+                    PhotoScratchCard.id.startswith(prefix, autoescape=True),
                 )
             )
         ).all()
