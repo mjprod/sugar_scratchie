@@ -149,25 +149,24 @@ def card_photos_dir(cards_dir: Path, card_id: str) -> Path:
 def prune_published_photo_scratch(root: Path, card_id: str) -> int:
     """Remove published photo-scratch game entries for a motion card.
 
-    Entries are keyed `{card_id}_slot_XX` in public/photo-scratch/index.json.
-    Returns how many entries were removed.
+    Thin standalone wrapper around the Postgres catalog. Prefer the store when
+    a session is already open.
     """
-    index_path = root / "public" / "photo-scratch" / "index.json"
-    if not index_path.exists():
-        return 0
+    import backend.db.engine as db_engine
+    from backend.photo_scratch_store import prune_published_photo_scratch as prune_db
+
+    db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
     try:
-        data = json.loads(index_path.read_text())
+        removed = prune_db(session, root, card_id)
+        session.commit()
+        return removed
     except Exception:
-        return 0
-    if not isinstance(data, dict) or not isinstance(data.get("cards"), list):
-        return 0
-    prefix = f"{card_id}_"
-    existing = [entry for entry in data["cards"] if isinstance(entry, dict)]
-    kept = [entry for entry in existing if not str(entry.get("id", "")).startswith(prefix)]
-    removed = len(existing) - len(kept)
-    if removed:
-        index_path.write_text(json.dumps({"cards": kept}, indent=2) + "\n")
-    return removed
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def compress_card(
@@ -1401,12 +1400,12 @@ def publish_photo_scratch_game(
     slot_id: str | None = None,
     themes_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Publish fully-done photo-scratch slot(s) into public/photo-scratch/index.json.
+    """Publish fully-done photo-scratch slot(s) into the Postgres catalog.
 
     Pass `slot_id` to publish one finished card; omit it to publish every done slot.
-    Intro clips are resolved from the card's catalog theme (not per motion card).
+    Intro clips are resolved from the card's catalog theme when writing the static mirror.
     """
-    del mesh_dir
+    del mesh_dir, themes_dir
     if card_id == ORIGINAL_ID:
         raise HTTPException(status_code=400, detail="Cannot publish the original card as a photo game")
     card_dir = cards_dir / card_id
@@ -1442,60 +1441,40 @@ def publish_photo_scratch_game(
     theme_id = None
     import backend.db.engine as db_engine
     from backend.cards_store import card_model_theme_ids
+    from backend.db.models import MotionCard
+    from backend.photo_scratch_store import upsert_published, write_photo_scratch_index
 
     db_engine.get_engine()
     assert db_engine.SessionLocal is not None
     session = db_engine.SessionLocal()
     try:
+        if session.get(MotionCard, card_id) is None:
+            raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
         model_id, theme_id = card_model_theme_ids(session, card_id)
+        new_entries = []
+        for slot in done:
+            bikini_url = photo_scratch_slot_cutout_url(card_id, slot.id, "bikini")
+            clothes_url = photo_scratch_slot_cutout_url(card_id, slot.id, "clothes")
+            new_entries.append(
+                {
+                    "id": f"{card_id}_{slot.id}",
+                    "label": slot.label,
+                    **({"model_id": model_id} if model_id else {}),
+                    **({"theme_id": theme_id} if theme_id else {}),
+                    "background": slot.background,
+                    "bikini": bikini_url,
+                    "clothes": clothes_url,
+                    "mesh": slot.mesh or photo_scratch_slot_mesh_url(card_id, slot.id),
+                }
+            )
+        upsert_published(session, card_id, new_entries, slot_id=slot_id)
+        write_photo_scratch_index(session, root)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
-    intro_url: str | None = None
-    if theme_id and themes_dir is not None:
-        from backend.themes_store import find_theme_intro
-
-        intro_url = find_theme_intro(themes_dir, theme_id)
-    prefix = f"{card_id}_"
-    new_entries = []
-    for slot in done:
-        # Game needs RGBA cutouts; index still stores original composites.
-        bikini_url = photo_scratch_slot_cutout_url(card_id, slot.id, "bikini")
-        clothes_url = photo_scratch_slot_cutout_url(card_id, slot.id, "clothes")
-        new_entries.append(
-            {
-                "id": f"{card_id}_{slot.id}",
-                "label": slot.label,
-                **({"model_id": model_id} if model_id else {}),
-                **({"theme_id": theme_id} if theme_id else {}),
-                "background": slot.background,
-                "bikini": bikini_url,
-                "clothes": clothes_url,
-                "mesh": slot.mesh or photo_scratch_slot_mesh_url(card_id, slot.id),
-                **({"intro": intro_url} if intro_url else {}),
-            }
-        )
-
-    game_dir = root / "public" / "photo-scratch"
-    game_dir.mkdir(parents=True, exist_ok=True)
-    index_path = game_dir / "index.json"
-    existing: list[dict] = []
-    if index_path.exists():
-        try:
-            data = json.loads(index_path.read_text())
-            if isinstance(data, dict) and isinstance(data.get("cards"), list):
-                existing = [entry for entry in data["cards"] if isinstance(entry, dict)]
-        except Exception:
-            existing = []
-
-    if slot_id:
-        # Replace only this slot entry; keep other published slots for the card.
-        entry_id = f"{card_id}_{slot_id}"
-        kept = [entry for entry in existing if str(entry.get("id", "")) != entry_id]
-        payload = {"cards": [*kept, *new_entries]}
-    else:
-        kept = [entry for entry in existing if not str(entry.get("id", "")).startswith(prefix)]
-        payload = {"cards": [*kept, *new_entries]}
-    index_path.write_text(json.dumps(payload, indent=2) + "\n")
     return {
         "published": len(new_entries),
         "card_id": card_id,
