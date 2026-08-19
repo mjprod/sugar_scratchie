@@ -100,7 +100,7 @@ from backend.themes_store import (
     update_theme,
     upload_theme_intro,
 )
-from backend.photo_scratch_store import ensure_photo_scratch_bootstrapped
+from backend.photo_scratch_store import ensure_photo_scratch_bootstrapped, list_photo_scratch_cards
 from backend.symbols_store import (
     CreateSymbolGroupRequest,
     RewriteSymbolJsonRequest,
@@ -713,6 +713,12 @@ def remove_card_trailer(
 ) -> dict:
     card = delete_card_trailer(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
     return card.dict()
+
+
+@app.get("/api/photo-scratch")
+def get_published_photo_scratch(db: Annotated[Session, Depends(get_session)]) -> dict:
+    cards = list_photo_scratch_cards(db, ROOT)
+    return {"cards": [card.dict() for card in cards]}
 
 
 # ── Photo-scratch slot endpoints ──────────────────────────────────────────────

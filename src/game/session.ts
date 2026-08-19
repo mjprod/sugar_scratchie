@@ -1,3 +1,4 @@
+import { fetchCatalogMotionCards, fetchCatalogPhotoCards } from "../shared/catalog";
 import { api } from "../shared/api";
 import type { VideoFlowProject } from "../videoFlow/projects";
 import { normalizeTheme } from "../videoFlow/schema";
@@ -12,6 +13,7 @@ export type MotionCard = {
   mesh: string;
   chromaKey: boolean;
   model_id?: string;
+  theme_id?: string;
   sort_order?: number;
 };
 
@@ -42,31 +44,6 @@ export function buildDealtRound(
   if (cards.length === 0) return null;
   return { cards };
 }
-
-type CardsIndexResponse = {
-  cards?: Array<{
-    id: string;
-    label: string;
-    bottom: string;
-    foreground: string;
-    mesh: string;
-    chroma_key?: boolean;
-    model_id?: string;
-    sort_order?: number;
-  }>;
-};
-
-type PhotoScratchIndexResponse = {
-  cards?: Array<{
-    id: string;
-    label: string;
-    model_id?: string;
-    background: string;
-    bikini: string;
-    clothes: string;
-    mesh: string;
-  }>;
-};
 
 const LABEL_THEME_HINTS: Array<{ theme: string; pattern: RegExp }> = [
   { theme: "Police", pattern: /\b(police|cop)\b/i },
@@ -102,59 +79,18 @@ export function themeFromPhotoLabel(label: string): string {
   return normalizeTheme(raw || "warm beach");
 }
 
-function parseMotionCards(data: CardsIndexResponse): MotionCard[] {
-  if (!Array.isArray(data.cards)) return [];
-  const cards: MotionCard[] = [];
-  for (const entry of data.cards) {
-    if (
-      typeof entry.id !== "string" ||
-      typeof entry.label !== "string" ||
-      typeof entry.bottom !== "string" ||
-      typeof entry.foreground !== "string" ||
-      typeof entry.mesh !== "string"
-    ) {
-      continue;
-    }
-    if (entry.id === "original") continue;
-    cards.push({
-      id: entry.id,
-      label: entry.label,
-      bottom: entry.bottom,
-      foreground: entry.foreground,
-      mesh: entry.mesh,
-      chromaKey: entry.chroma_key === true,
-      model_id: entry.model_id,
-      sort_order: typeof entry.sort_order === "number" ? entry.sort_order : 0,
-    });
+function themeForMotionCard(
+  card: MotionCard,
+  themeMap: Map<string, string>,
+): string {
+  if (card.theme_id) {
+    return inferThemeFromLabel(card.theme_id) ?? normalizeTheme(card.theme_id);
   }
-  return cards;
-}
-
-function parsePhotoCards(data: PhotoScratchIndexResponse): PhotoCard[] {
-  if (!Array.isArray(data.cards)) return [];
-  const cards: PhotoCard[] = [];
-  for (const entry of data.cards) {
-    if (
-      typeof entry.id !== "string" ||
-      typeof entry.label !== "string" ||
-      typeof entry.background !== "string" ||
-      typeof entry.bikini !== "string" ||
-      typeof entry.clothes !== "string" ||
-      typeof entry.mesh !== "string"
-    ) {
-      continue;
-    }
-    cards.push({
-      id: entry.id,
-      label: entry.label,
-      model_id: entry.model_id,
-      background: entry.background,
-      bikini: entry.bikini,
-      clothes: entry.clothes,
-      mesh: entry.mesh,
-    });
-  }
-  return cards;
+  return (
+    themeMap.get(card.id) ??
+    inferThemeFromLabel(card.label) ??
+    normalizeTheme(card.label)
+  );
 }
 
 async function loadThemeMap(): Promise<Map<string, string>> {
@@ -166,7 +102,7 @@ async function loadThemeMap(): Promise<Map<string, string>> {
       if (theme) map.set(flow.card_id, normalizeTheme(theme));
     }
   } catch {
-    // Offline / no API — fall back to label inference.
+    // Offline / no API — fall back to catalog theme_id or label inference.
   }
   return map;
 }
@@ -175,30 +111,29 @@ export async function loadGameCatalog(): Promise<{
   motion: ThemedMotionCard[];
   photos: PhotoCard[];
 }> {
-  const [cardsRes, photosRes, themeMap] = await Promise.all([
-    fetch("/cards/index.json", { cache: "no-store" }).then((r) =>
-      r.ok ? (r.json() as Promise<CardsIndexResponse>) : { cards: [] },
-    ),
-    fetch("/photo-scratch/index.json", { cache: "no-store" }).then((r) =>
-      r.ok ? (r.json() as Promise<PhotoScratchIndexResponse>) : { cards: [] },
-    ),
+  const [motionCards, photos, themeMap] = await Promise.all([
+    fetchCatalogMotionCards(),
+    fetchCatalogPhotoCards(),
     loadThemeMap(),
   ]);
 
-  const motion = parseMotionCards(cardsRes)
-    .map((card) => {
-      const theme =
-        themeMap.get(card.id) ??
-        inferThemeFromLabel(card.label) ??
-        normalizeTheme(card.label);
-      return { ...card, theme };
-    })
+  const motion = motionCards
+    .filter((card) => card.id !== "original")
+    .map((card) => ({
+      id: card.id,
+      label: card.label,
+      bottom: card.bottom,
+      foreground: card.foreground,
+      mesh: card.mesh,
+      chromaKey: card.chromaKey,
+      model_id: card.model_id,
+      theme_id: card.theme_id,
+      sort_order: card.sort_order,
+      theme: themeForMotionCard(card, themeMap),
+    }))
     .filter((card) => Boolean(card.theme.trim()));
 
-  return {
-    motion,
-    photos: parsePhotoCards(photosRes),
-  };
+  return { motion, photos };
 }
 
 /** Pick up to `count` motion cards, each with a distinct theme. */

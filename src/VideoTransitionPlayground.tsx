@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { loadVideoSrc, releaseMediaElement } from "./shared/media";
+import { fetchCatalogMotionCards } from "./shared/catalog";
 import type {
   ChannelKey,
   ChannelKeyframe,
@@ -55,7 +56,6 @@ import {
   getTemplate,
 } from "./videoTransition/presets";
 
-const CARDS_INDEX_SRC = "/cards/index.json";
 const KEYFRAME_EPSILON = 0.01;
 /** Motion FX while the strip is sliding (blur + scale pulse). */
 const DEFAULT_BLUR_PEAK = 12.5;
@@ -74,14 +74,6 @@ type TransitionCard = {
   id: string;
   label: string;
   bottom: string;
-};
-
-type CardsIndexResponse = {
-  cards?: Array<{
-    id?: unknown;
-    label?: unknown;
-    bottom?: unknown;
-  }>;
 };
 
 const STRIP_CHANNEL_KEYS: StripChannelKey[] = [
@@ -607,23 +599,10 @@ function sanitizeDurationMs(value: number, fallback = DEFAULT_DURATION_MS): numb
 
 async function loadTransitionCards(): Promise<TransitionCard[]> {
   try {
-    const response = await fetch(CARDS_INDEX_SRC, { cache: "no-store" });
-    if (!response.ok) return [];
-    const data = (await response.json()) as CardsIndexResponse;
-    if (!Array.isArray(data.cards)) return [];
-    const cards: TransitionCard[] = [];
-    for (const entry of data.cards) {
-      if (
-        typeof entry.id !== "string" ||
-        typeof entry.label !== "string" ||
-        typeof entry.bottom !== "string" ||
-        !entry.bottom
-      ) {
-        continue;
-      }
-      cards.push({ id: entry.id, label: entry.label, bottom: entry.bottom });
-    }
-    return cards;
+    const cards = await fetchCatalogMotionCards();
+    return cards
+      .filter((entry) => Boolean(entry.bottom))
+      .map((entry) => ({ id: entry.id, label: entry.label, bottom: entry.bottom }));
   } catch {
     return [];
   }
@@ -1477,7 +1456,7 @@ export function VideoTransitionPlayground() {
       setCardBId("");
       setStatus(
         nextCards.length === 0
-          ? "No cards found in /cards/index.json"
+          ? "No cards found via /api/cards"
           : "Need at least two cards with bottom videos",
       );
       return;

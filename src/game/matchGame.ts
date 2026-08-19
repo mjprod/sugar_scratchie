@@ -1,3 +1,4 @@
+import { api } from "../shared/api";
 import { SYMBOL_POINT_COUNT } from "../meshGeometry";
 
 export const TOP_SYMBOL_COUNT = 6;
@@ -101,11 +102,19 @@ export function applySymbolCatalog(rows: CatalogRow[]): boolean {
 
 let loadPromise: Promise<boolean> | null = null;
 
-/** Fetch `/lotties/index.json` (or API) and update SYMBOL_TYPES. */
+/** Fetch `/api/symbols` (fallback: `/lotties/index.json`) and update SYMBOL_TYPES. */
 export async function loadSymbolTypes(): Promise<boolean> {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     try {
+      try {
+        const data = await api<{ symbols?: CatalogRow[] }>("/api/symbols");
+        if (applySymbolCatalog(Array.isArray(data.symbols) ? data.symbols : [])) {
+          return true;
+        }
+      } catch {
+        // fall through to static mirror
+      }
       try {
         const response = await fetch("/lotties/index.json", { cache: "no-store" });
         if (response.ok) {
@@ -115,16 +124,9 @@ export async function loadSymbolTypes(): Promise<boolean> {
           }
         }
       } catch {
-        // fall through to API
-      }
-      try {
-        const response = await fetch("/api/symbols", { cache: "no-store" });
-        if (!response.ok) return false;
-        const data = (await response.json()) as { symbols?: CatalogRow[] };
-        return applySymbolCatalog(Array.isArray(data.symbols) ? data.symbols : []);
-      } catch {
         return false;
       }
+      return false;
     } finally {
       loadPromise = null;
     }
