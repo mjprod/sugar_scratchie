@@ -165,19 +165,11 @@ def _group_to_info(row: SymbolGroup) -> SymbolGroupInfo:
 
 
 def _write_index_mirror(lotties_dir: Path, symbols: list[SymbolInfo]) -> None:
-    lotties_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "symbols": [
-            {
-                "id": symbol.id,
-                "file": symbol.file,
-                "label": symbol.label,
-                "updated_at": symbol.updated_at,
-            }
-            for symbol in symbols
-        ]
-    }
-    _index_path(lotties_dir).write_text(json.dumps(payload, indent=2) + "\n")
+    """No-op: symbols catalog is Postgres; clients read `/api/symbols`.
+
+    Stale `public/lotties/index.json` may still exist as a read-only fallback.
+    """
+    del lotties_dir, symbols
 
 
 def _group_count(db: Session) -> int:
@@ -211,17 +203,14 @@ def resolve_group_id(db: Session, group_id: str | None) -> str:
 
 
 def write_symbols_index(db: Session, lotties_dir: Path) -> list[SymbolInfo]:
-    """Write static mirror from the default group's symbols (game prefers /lotties/index.json)."""
+    """Return default-group symbols (static JSON mirror is no longer updated)."""
     default_id = get_default_group(db).id
-    symbols = list_symbols(db, lotties_dir, group_id=default_id, write_mirror=False)
-    _write_index_mirror(lotties_dir, symbols)
-    return symbols
+    return list_symbols(db, lotties_dir, group_id=default_id, write_mirror=False)
 
 
 def _maybe_write_mirror(db: Session, lotties_dir: Path, group_id: str) -> None:
-    default = get_default_group(db)
-    if default.id == group_id:
-        write_symbols_index(db, lotties_dir)
+    """No-op: symbols catalog mirror is no longer written."""
+    del db, lotties_dir, group_id
 
 
 def _read_legacy_index(lotties_dir: Path) -> dict[str, SymbolInfo]:

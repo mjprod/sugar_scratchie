@@ -267,31 +267,12 @@ def write_cards_index(
     cards_dir: Path,
     mesh_dir: Path,
 ) -> None:
-    cards = list_cards(db, root, cards_dir, mesh_dir)
-    payload = {
-        "cards": [
-            {
-                "id": card.id,
-                "label": card.label,
-                "bottom": public_url(card.background),
-                "foreground": public_url(card.foreground),
-                "mesh": card.mesh,
-                "chroma_key": card.id == ORIGINAL_ID,
-                "sort_order": card.sort_order,
-                **({"model_id": card.model_id} if card.model_id else {}),
-                **({"theme_id": card.theme_id} if card.theme_id else {}),
-                **({"trailer": card.trailer} if card.trailer else {}),
-                **(
-                    {"photos": [{"id": photo.id, "src": photo.src} for photo in card.photos]}
-                    if card.photos
-                    else {}
-                ),
-            }
-            for card in cards
-        ]
-    }
-    cards_dir.mkdir(parents=True, exist_ok=True)
-    (cards_dir / "index.json").write_text(json.dumps(payload, indent=2) + "\n")
+    """No-op: cards catalog is Postgres; clients read `/api/cards`.
+
+    Kept so call sites stay stable. Stale `public/cards/index.json` may still
+    exist as a read-only fallback when the API is down.
+    """
+    del db, root, cards_dir, mesh_dir
 
 
 def create_card(

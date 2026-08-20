@@ -41,8 +41,6 @@ from backend.cards_store import (
     update_card,
     upload_card_photo,
     upload_card_trailer,
-    write_cards_index,
-    write_cards_index_standalone,
 )
 from backend.cards import (
     CardInfo,
@@ -483,7 +481,6 @@ def ensure_indexes() -> None:
         ensure_themes_bootstrapped(session, THEMES_DIR)
         ensure_models_bootstrapped(session, MODELS_DIR)
         ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
-        write_cards_index(session, ROOT, CARDS_DIR, MESH_DIR)
         ensure_symbols_bootstrapped(session, LOTTIES_DIR)
         ensure_photo_scratch_bootstrapped(session, ROOT)
         session.commit()
@@ -1330,7 +1327,6 @@ def compress_card_videos(card_id: str, request: CompressCardRequest) -> dict:
             write_webm=write_webm,
             compress_preset=compress_preset,
         )
-        write_cards_index_standalone(ROOT, CARDS_DIR, MESH_DIR)
 
     job = enqueue(
         "compress-card",
