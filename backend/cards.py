@@ -1442,7 +1442,7 @@ def publish_photo_scratch_game(
     import backend.db.engine as db_engine
     from backend.cards_store import card_model_theme_ids
     from backend.db.models import MotionCard
-    from backend.photo_scratch_store import upsert_published, write_photo_scratch_index
+    from backend.photo_scratch_store import upsert_published
 
     db_engine.get_engine()
     assert db_engine.SessionLocal is not None
@@ -1468,7 +1468,6 @@ def publish_photo_scratch_game(
                 }
             )
         upsert_published(session, card_id, new_entries, slot_id=slot_id)
-        write_photo_scratch_index(session, root)
         session.commit()
     except Exception:
         session.rollback()

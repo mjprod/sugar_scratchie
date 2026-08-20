@@ -95,24 +95,6 @@ def _row_to_info(row: PhotoScratchCard, themes_dir: Path) -> PhotoScratchCardInf
     )
 
 
-def _info_to_mirror(info: PhotoScratchCardInfo) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "id": info.id,
-        "label": info.label,
-        "background": info.background,
-        "bikini": info.bikini,
-        "clothes": info.clothes,
-        "mesh": info.mesh,
-    }
-    if info.model_id:
-        payload["model_id"] = info.model_id
-    if info.theme_id:
-        payload["theme_id"] = info.theme_id
-    if info.intro:
-        payload["intro"] = info.intro
-    return payload
-
-
 def list_photo_scratch_cards(db: Session, root: Path) -> list[PhotoScratchCardInfo]:
     themes_dir = _themes_dir(root)
     rows = db.scalars(
@@ -122,11 +104,12 @@ def list_photo_scratch_cards(db: Session, root: Path) -> list[PhotoScratchCardIn
 
 
 def write_photo_scratch_index(db: Session, root: Path) -> None:
-    cards = list_photo_scratch_cards(db, root)
-    payload = {"cards": [_info_to_mirror(card) for card in cards]}
-    path = _index_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    """No-op: published photo-scratch catalog is Postgres; clients read `/api/photo-scratch`.
+
+    Kept so call sites stay stable. Stale `public/photo-scratch/index.json` may
+    still exist as a read-only fallback when the API is down.
+    """
+    del db, root
 
 
 def _import_legacy_index(db: Session, root: Path) -> int:
@@ -263,7 +246,7 @@ def upsert_published(
 
 
 def prune_published_photo_scratch(db: Session, root: Path, card_id: str) -> int:
-    """Remove published game entries for a motion card and rewrite the static mirror."""
+    """Remove published game entries for a motion card."""
     prefix = f"{card_id}_"
     rows = list(
         db.scalars(

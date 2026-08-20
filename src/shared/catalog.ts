@@ -47,19 +47,47 @@ type ApiMotionCard = {
 type CardsPayload = { cards?: ApiMotionCard[] };
 type PhotoPayload = { cards?: CatalogPhotoCard[] };
 
-/** Convert a workspace path (`public/cards/...`) to a site URL (`/cards/...`). */
+/** Media prefixes served same-origin (or via the Vite media proxy in frontend-new). */
+const PROXIED_MEDIA_PREFIXES = [
+  "/api/",
+  "/cards/",
+  "/models/",
+  "/photo-scratch/",
+  "/mesh/",
+  "/themes/",
+  "/lotties/",
+] as const;
+
+function isProxiedMediaPath(pathname: string): boolean {
+  return PROXIED_MEDIA_PREFIXES.some(
+    (prefix) => pathname === prefix.slice(0, -1) || pathname.startsWith(prefix),
+  );
+}
+
+/**
+ * Convert a workspace path (`public/cards/...`) to a site URL (`/cards/...`).
+ * Absolute http(s) URLs under media prefixes become same-origin paths so
+ * canvas/WebGL video textures stay CORS-safe.
+ */
 export function toPublicMediaUrl(path: string): string {
   const trimmed = path.trim();
   if (!trimmed) return "";
-  if (
-    trimmed.startsWith("http://") ||
-    trimmed.startsWith("https://") ||
-    trimmed.startsWith("blob:") ||
-    trimmed.startsWith("data:") ||
-    trimmed.startsWith("/")
-  ) {
-    return trimmed;
+  if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) return trimmed;
+
+  if (/^(?:https?:)?\/\//i.test(trimmed)) {
+    try {
+      const absolute = new URL(trimmed, "https://placeholder.local");
+      const pathWithSearch = `${absolute.pathname}${absolute.search}${absolute.hash}`;
+      if (isProxiedMediaPath(absolute.pathname)) return pathWithSearch;
+      if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("//")) return trimmed;
+      return pathWithSearch;
+    } catch {
+      return trimmed;
+    }
   }
+
+  if (trimmed.startsWith("/")) return trimmed;
+
   const withoutPublic = trimmed.startsWith("public/") ? trimmed.slice("public/".length) : trimmed;
   const parts = withoutPublic.split("/").filter(Boolean);
   return `/${parts.map(encodeURIComponent).join("/")}`;
@@ -76,7 +104,7 @@ function parsePhotos(value: unknown): CatalogPhoto[] | undefined {
     if (!entry || typeof entry !== "object") continue;
     const id = optionalString((entry as { id?: unknown }).id);
     const src = optionalString((entry as { src?: unknown }).src);
-    if (id && src) photos.push({ id, src });
+    if (id && src) photos.push({ id, src: toPublicMediaUrl(src) });
   }
   return photos.length > 0 ? photos : undefined;
 }
@@ -126,16 +154,17 @@ function parsePhotoPayload(data: PhotoPayload): CatalogPhotoCard[] {
     ) {
       continue;
     }
+    const introRaw = optionalString(entry.intro);
     cards.push({
       id: entry.id,
       label: entry.label,
-      background: entry.background,
-      bikini: entry.bikini,
-      clothes: entry.clothes,
-      mesh: entry.mesh,
+      background: toPublicMediaUrl(entry.background),
+      bikini: toPublicMediaUrl(entry.bikini),
+      clothes: toPublicMediaUrl(entry.clothes),
+      mesh: toPublicMediaUrl(entry.mesh),
       model_id: optionalString(entry.model_id),
       theme_id: optionalString(entry.theme_id),
-      intro: optionalString(entry.intro),
+      intro: introRaw ? toPublicMediaUrl(introRaw) : undefined,
     });
   }
   return cards;
