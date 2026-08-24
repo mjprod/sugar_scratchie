@@ -68,7 +68,7 @@ const MIN_VISIBLE_ALPHA = 0.02;
 // rarely bites; if someone cranked fade/count it thins the trail before the
 // 2D drawImage loop eats the frame budget.
 const MAX_PARTICLES = 250;
-const SPAWN_DISTANCE_SQ = 4;
+const SPAWN_DISTANCE_SQ = 1;
 
 /** Live cursor-FX cost counters for the debug HUD / settings panel. */
 export type FairyDustPerfStats = {

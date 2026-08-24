@@ -592,6 +592,30 @@ export class GarmentGLRenderer {
     return this.scratchReadPixel[0] / 255;
   }
 
+  /**
+   * Foreground (keyed fabric) alpha at a reference-frame canvas point.
+   * Returns -1 when the keyed FBO is not ready yet.
+   */
+  foregroundAlphaAt(worldX: number, worldY: number): number {
+    if (this.disposed || !this.fgEverReady) return -1;
+    const gl = this.gl;
+    const x = Math.min(
+      this.bufferWidth - 1,
+      Math.max(0, Math.floor((worldX / this.width) * this.bufferWidth)),
+    );
+    const y = Math.min(
+      this.bufferHeight - 1,
+      Math.max(
+        0,
+        Math.floor((1 - worldY / this.height) * this.bufferHeight),
+      ),
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.scratchReadPixel);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.scratchReadPixel[3] / 255;
+  }
+
   private bindQuad(prog: WebGLProgram) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
