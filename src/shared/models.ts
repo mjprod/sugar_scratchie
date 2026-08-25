@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, operatorFetch } from "./api";
 import {
   DEFAULT_BACKGROUND_MOTION_PROMPT,
   DEFAULT_DRESS_PROMPT,
@@ -163,7 +163,7 @@ export async function reorderModelCards(modelId: string, cardIds: string[]): Pro
 export async function uploadModelAvatar(modelId: string, file: File): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/avatar`, {
+  const response = await operatorFetch(`/api/models/${encodeURIComponent(modelId)}/avatar`, {
     method: "POST",
     body: form,
   });
@@ -181,7 +181,7 @@ export async function uploadModelThemeAvatar(
 ): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(
+  const response = await operatorFetch(
     `/api/models/${encodeURIComponent(modelId)}/themes/${encodeURIComponent(themeId)}/avatar`,
     {
       method: "POST",
@@ -212,7 +212,7 @@ export async function uploadCardTrailer(cardId: string, file: File): Promise<{
 }> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/trailer`, {
+  const response = await operatorFetch(`/api/cards/${encodeURIComponent(cardId)}/trailer`, {
     method: "POST",
     body: form,
   });
@@ -236,7 +236,7 @@ export async function deleteCardTrailer(cardId: string): Promise<{
 export async function uploadModelFlagSvg(modelId: string, file: File): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/flag`, {
+  const response = await operatorFetch(`/api/models/${encodeURIComponent(modelId)}/flag`, {
     method: "POST",
     body: form,
   });
@@ -260,7 +260,7 @@ export async function uploadModelVideo(
 ): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(
+  const response = await operatorFetch(
     `/api/models/${encodeURIComponent(modelId)}/${kind}`,
     {
       method: "POST",
@@ -289,7 +289,7 @@ export async function uploadModelSwipe(modelId: string, file: File): Promise<Mod
 export async function uploadCardPhoto(cardId: string, file: File): Promise<PhotoInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/photos`, {
+  const response = await operatorFetch(`/api/cards/${encodeURIComponent(cardId)}/photos`, {
     method: "POST",
     body: form,
   });
@@ -487,7 +487,7 @@ export async function uploadPhotoScratchLayer(
   const form = new FormData();
   form.append("file", file);
   const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
-  const response = await fetch(
+  const response = await operatorFetch(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/${layer}${params}`,
     { method: "POST", body: form },
   );

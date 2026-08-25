@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
@@ -22,7 +22,12 @@ function writeMeshIndex() {
   writeFileSync(meshIndexFile, JSON.stringify({ files: getMeshJsonFiles() }, null, 2));
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const dashboardToken =
+    env.VITE_DASHBOARD_TOKEN || env.DASHBOARD_TOKEN || "dev-dashboard";
+
+  return {
   plugins: [
     react(),
     basicSsl(),
@@ -44,7 +49,18 @@ export default defineConfig({
     port: 5080,
     https: true,
     proxy: {
-      "/api": "http://127.0.0.1:8090",
+      "/api": {
+        target: "http://127.0.0.1:8090",
+        configure(proxy) {
+          const token =
+            process.env.VITE_DASHBOARD_TOKEN ||
+            process.env.DASHBOARD_TOKEN ||
+            dashboardToken;
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.setHeader("X-Dashboard-Token", token);
+          });
+        },
+      },
     },
   },
   preview: {
@@ -52,4 +68,5 @@ export default defineConfig({
     port: 5080,
     https: true,
   },
+  };
 });

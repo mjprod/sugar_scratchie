@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from typing import Annotated, Literal
 
@@ -177,6 +178,11 @@ def session(db: Annotated[Session, Depends(get_session)], user: Annotated[User |
     return {"authenticated": True, "user": public_user(user)}
 
 
+def _stub_oauth_allowed() -> bool:
+    raw = os.environ.get("ALLOW_STUB_OAUTH", "").strip()
+    return raw in ("1", "true", "True", "yes")
+
+
 @router.post("/oauth/{provider}")
 def oauth(
     provider: AuthProvider,
@@ -185,6 +191,11 @@ def oauth(
     response: Response,
     db: Annotated[Session, Depends(get_session)],
 ):
+    if not _stub_oauth_allowed():
+        raise HTTPException(
+            status_code=403,
+            detail="OAuth is not configured. Use email login, or set ALLOW_STUB_OAUTH=1 for local stubs.",
+        )
     if provider == "email":
         raise HTTPException(status_code=400, detail="Use /register for email.")
     email = _normalize_email(body.email)

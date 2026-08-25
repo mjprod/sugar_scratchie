@@ -34,8 +34,10 @@ Then open the local Vite URL shown in the terminal.
 
 ## Dashboard
 
-The operator dashboard is available at `/dashboard` and uses a local FastAPI
-backend to run the mesh and Grok edit scripts.
+The operator dashboard is at `/dashboard`. Catalog mutations and `/api/jobs/*`
+require header `X-Dashboard-Token` matching `DASHBOARD_TOKEN` (default
+`dev-dashboard`). Root Vite injects that header on `/api` in local proxy; set
+`VITE_DASHBOARD_TOKEN` for production builds.
 
 ```bash
 .venv/bin/pip install -r backend/requirements.txt

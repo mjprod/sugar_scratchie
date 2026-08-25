@@ -272,7 +272,6 @@ export class GarmentGLRenderer {
   /** Drawing-buffer / FBO size in device pixels (= logical × DPR). */
   private bufferWidth: number;
   private bufferHeight: number;
-  private pixelRatio: number;
   private scratchTexSize: number;
 
   private blit: WebGLProgram;
@@ -402,7 +401,6 @@ export class GarmentGLRenderer {
       1,
       Math.min(MAX_PIXEL_RATIO, options?.pixelRatio ?? 1),
     );
-    this.pixelRatio = dpr;
     this.bufferWidth = Math.max(1, Math.round(width * dpr));
     this.bufferHeight = Math.max(1, Math.round(height * dpr));
     // UV-space scratch map — bump with DPR so punched holes stay crisp.
