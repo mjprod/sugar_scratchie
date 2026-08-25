@@ -3,6 +3,7 @@
 // Compositing pipeline (per frame):
 //   1. bottom video  -> screen, aspect-cover (fills canvas, crops overflow)
 //   2. foreground video -> offscreen FBO, chroma-keyed in the fragment shader
+//      (copied to a pre-punch FBO for cursor-on-fabric alpha queries)
 //   3. tracked mesh triangles -> punch holes in that FBO wherever the UV-space
 //      scratch texture is marked (multiplies dst alpha by 1 - scratch)
 //   4. composite the FBO over the bottom video
@@ -347,6 +348,9 @@ export class GarmentGLRenderer {
   private scratchReadPixel = new Uint8Array(4);
   private fgColorTex: WebGLTexture;
   private fgFbo: WebGLFramebuffer;
+  /** Keyed foreground before mesh punch — used by `foregroundAlphaAt`. */
+  private fgKeyedColorTex: WebGLTexture;
+  private fgKeyedFbo: WebGLFramebuffer;
   // Once a video has been drawn at least once we keep drawing its last good
   // frame even if it momentarily stalls (common on mobile during a loop wrap, or
   // when a second video element gets suspended). This stops the foreground from
@@ -468,6 +472,17 @@ export class GarmentGLRenderer {
     this.fgFbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fgColorTex, 0);
+
+    this.fgKeyedColorTex = makeTexture(gl, this.bufferWidth, this.bufferHeight);
+    this.fgKeyedFbo = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgKeyedFbo);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER,
+      gl.COLOR_ATTACHMENT0,
+      gl.TEXTURE_2D,
+      this.fgKeyedColorTex,
+      0,
+    );
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -592,6 +607,50 @@ export class GarmentGLRenderer {
     return this.scratchReadPixel[0] / 255;
   }
 
+  /**
+   * Keyed fabric alpha at a reference-frame canvas point (before scratch holes).
+   * Returns -1 when the keyed FBO is not ready yet.
+   */
+  foregroundAlphaAt(worldX: number, worldY: number): number {
+    if (this.disposed || !this.fgEverReady) return -1;
+    const gl = this.gl;
+    const x = Math.min(
+      this.bufferWidth - 1,
+      Math.max(0, Math.floor((worldX / this.width) * this.bufferWidth)),
+    );
+    const y = Math.min(
+      this.bufferHeight - 1,
+      Math.max(
+        0,
+        Math.floor((1 - worldY / this.height) * this.bufferHeight),
+      ),
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgKeyedFbo);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.scratchReadPixel);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.scratchReadPixel[3] / 255;
+  }
+
+  /** Copy the just-drawn keyed FG into `fgKeyedFbo` before holes are punched. */
+  private snapshotKeyedForeground() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fgFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fgKeyedFbo);
+    gl.blitFramebuffer(
+      0,
+      0,
+      this.bufferWidth,
+      this.bufferHeight,
+      0,
+      0,
+      this.bufferWidth,
+      this.bufferHeight,
+      gl.COLOR_BUFFER_BIT,
+      gl.NEAREST,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fgFbo);
+  }
+
   private bindQuad(prog: WebGLProgram) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
@@ -701,11 +760,13 @@ export class GarmentGLRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     if (this.scratchFbo) gl.deleteFramebuffer(this.scratchFbo);
     if (this.fgFbo) gl.deleteFramebuffer(this.fgFbo);
+    if (this.fgKeyedFbo) gl.deleteFramebuffer(this.fgKeyedFbo);
     gl.deleteTexture(this.bottomTex);
     gl.deleteTexture(this.midTex);
     gl.deleteTexture(this.fgTex);
     gl.deleteTexture(this.scratchTex);
     gl.deleteTexture(this.fgColorTex);
+    gl.deleteTexture(this.fgKeyedColorTex);
     gl.deleteBuffer(this.quadBuf);
     gl.deleteBuffer(this.meshPosBuf);
     gl.deleteBuffer(this.meshUvBuf);
@@ -929,6 +990,7 @@ export class GarmentGLRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     this.drawSource(this.blit, this.fgTex, frontImage!, frontChroma);
+    this.snapshotKeyedForeground();
 
     if (sample) {
       this.drawMeshPunch(sample);
@@ -1013,6 +1075,7 @@ export class GarmentGLRenderer {
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       this.drawSource(this.blit, this.fgTex, frontImage!, frontChroma);
+      this.snapshotKeyedForeground();
 
       if (sample) {
         this.drawMeshPunch(sample);
@@ -1138,6 +1201,7 @@ export class GarmentGLRenderer {
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       this.drawVideo(this.blit, this.fgTex, foregroundVideo!, foregroundChroma);
+      this.snapshotKeyedForeground();
 
       // 3. punch holes where scratched, within the tracked mesh
       if (sample) {

@@ -812,7 +812,7 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v6";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v7";
 const LEGACY_CURSOR_FX_STORAGE_KEYS = [
   "sugar-scratchie:cursor-fx",
   "sugar-scratchie:cursor-fx-v1",
@@ -820,6 +820,7 @@ const LEGACY_CURSOR_FX_STORAGE_KEYS = [
   "sugar-scratchie:cursor-fx-v3",
   "sugar-scratchie:cursor-fx-v4",
   "sugar-scratchie:cursor-fx-v5",
+  "sugar-scratchie:cursor-fx-v6",
 ];
 
 type CursorFxSettings = {
@@ -833,18 +834,19 @@ type CursorFxSettings = {
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
   fairyDust: true,
   particleSize: 64,
-  particleCount: 2,
+  particleCount: 5,
   gravity: 0.1,
-  // 0.98 looks lush but ~9× concurrent vs 0.91; 0.94 keeps a denser trail
-  // (~1.1s life) without sitting on the 400-particle cap during hard scratches.
-  fadeSpeed: 0.94,
+  // Slightly longer life so a scratch leaves a denser coin trail.
+  fadeSpeed: 0.96,
 };
 
 const CURSOR_FX_INITIAL_VELOCITY = { min: 0.5, max: 1.5 };
+/** Skip diamond-coin spawn on keyed-out / empty pixels. */
+const CURSOR_FX_MESH_ALPHA_MIN = 0.12;
 
 const CURSOR_FX_LOTTIE_PRESETS: { url: string; name: string }[] = [
-  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
-  { url: "/cursor-fx/Shining Effect.lottie", name: "Shining Effect.lottie" },
+  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
+  { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
   { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
   { url: "/cursor-fx/Diamond Coin.lottie", name: "Diamond Coin.lottie" },
 ];
@@ -1342,6 +1344,8 @@ export function ScratchPrototype() {
   // videos compete with Lottie for the main thread. Flips twice per stroke, not
   // per move, so it does not add render churn to the drag itself.
   const [isScratching, setIsScratching] = useState(false);
+  /** True only while the active stroke maps onto the deforming mesh. */
+  const [cursorOnMesh, setCursorOnMesh] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const [gameResult, setGameResult] = useState<GameResult | null>(null);
   const [gameResultLeaving, setGameResultLeaving] = useState(false);
@@ -2815,8 +2819,10 @@ export function ScratchPrototype() {
     !introCover &&
     (!useBodySymbols ||
       (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete));
-  // Also require an active scratch stroke so idle cursor movement is quiet.
-  const cursorFxSpawnActive = cursorFxPlayWindow && isScratching;
+  // Also require an active stroke that actually hit the mesh — coins stay
+  // glued to fabric, not the empty canvas around it.
+  const cursorFxSpawnActive =
+    cursorFxPlayWindow && isScratching && cursorOnMesh;
 
   // Drop a persisted/stale auto-scratch enable while the hunt is still locked.
   useEffect(() => {
@@ -3431,6 +3437,13 @@ export function ScratchPrototype() {
     }
 
     if (applied) lastScratchWorldRef.current = point;
+
+    const uvAtPointer = trackedWorldToUv(trackedSample, point);
+    const fabricAlpha =
+      glRendererRef.current?.foregroundAlphaAt(point.x, point.y) ?? -1;
+    const onFabric = fabricAlpha < 0 || fabricAlpha >= CURSOR_FX_MESH_ALPHA_MIN;
+    const onMesh = applied && uvAtPointer !== null && onFabric;
+    setCursorOnMesh((prev) => (prev === onMesh ? prev : onMesh));
   }
 
   function setVideoTime(time: number) {
@@ -4144,12 +4157,14 @@ export function ScratchPrototype() {
             onPointerUp={() => {
               drawingRef.current = false;
               setIsScratching(false);
+              setCursorOnMesh(false);
               lastScratchWorldRef.current = null;
               clearScratchZoom();
             }}
             onPointerLeave={() => {
               drawingRef.current = false;
               setIsScratching(false);
+              setCursorOnMesh(false);
               lastScratchWorldRef.current = null;
               hoverPointRef.current = null;
               clearScratchZoom();
@@ -4157,6 +4172,7 @@ export function ScratchPrototype() {
             onPointerCancel={() => {
               drawingRef.current = false;
               setIsScratching(false);
+              setCursorOnMesh(false);
               lastScratchWorldRef.current = null;
               hoverPointRef.current = null;
               clearScratchZoom();
