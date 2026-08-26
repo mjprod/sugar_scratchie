@@ -19,6 +19,7 @@
     "stack:stop": "bash scripts/manage.sh stop",
     "stack:status": "bash scripts/manage.sh status",
     "manage": "bash scripts/manage.sh",
+    "sync:player-scratch": "bash scripts/sync-player-scratch-shared.sh",
     "generate:mesh": "PYTORCH_ENABLE_MPS_FALLBACK=1 .venv/bin/python scripts/generate-mesh-tracking.py",
     "adjust:photo-match": ".venv/bin/python scripts/adjust_photo_match.py",
     "video-flow": ".venv/bin/python scripts/video-flow.py",
