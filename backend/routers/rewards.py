@@ -112,12 +112,20 @@ def redeem(body: RedeemBody, db: Annotated[Session, Depends(get_session)], user:
         )
         db.add(purchase)
         db.flush()
-        db.add(PackInstance(user_id=user.id, pack_id=pack.id, pack_purchase_id=purchase.id, status="unopened"))
+        inst = PackInstance(
+            user_id=user.id,
+            pack_id=pack.id,
+            pack_purchase_id=purchase.id,
+            status="unopened",
+        )
+        db.add(inst)
+        db.flush()
         reward = {
             "type": "free_pack",
             "packId": pack.id,
             "creatorHandle": pack.name,
             "sceneName": pack.pack_title,
+            "instanceId": str(inst.id),
         }
 
     row.redemption_count += 1
