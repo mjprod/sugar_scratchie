@@ -119,11 +119,16 @@ const iconProps = {
   strokeWidth: 2.25,
 };
 
+const DASHBOARD_TOKEN =
+  (import.meta.env.VITE_DASHBOARD_TOKEN as string | undefined)?.trim() ||
+  "dev-dashboard";
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      "X-Dashboard-Token": DASHBOARD_TOKEN,
       ...init?.headers,
     },
   });
@@ -141,6 +146,7 @@ async function uploadFile(file: File): Promise<UploadedFileInfo> {
     headers: {
       "Content-Type": file.type || "application/octet-stream",
       "X-File-Name": encodeURIComponent(file.name),
+      "X-Dashboard-Token": DASHBOARD_TOKEN,
     },
   });
   if (!response.ok) {

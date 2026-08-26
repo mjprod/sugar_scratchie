@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_session, ping_db
+from backend.auth.operator import OperatorAuthMiddleware
 from backend.routers import auth as auth_router
 from backend.routers import collection as collection_router
 from backend.routers import inbox as inbox_router
@@ -452,6 +453,7 @@ def cors_origins() -> list[str]:
 
 
 app = FastAPI(title="Sugar Scratchie Dashboard API")
+app.add_middleware(OperatorAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(),

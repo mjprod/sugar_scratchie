@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, operatorFetch } from "./api";
 
 export type SymbolGroupInfo = {
   id: string;
@@ -91,7 +91,7 @@ export async function uploadSymbolLottie(
 ): Promise<SymbolInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(withGroup(`/api/symbols/${encodeURIComponent(symbolId)}/lottie`, groupId), {
+  const response = await operatorFetch(withGroup(`/api/symbols/${encodeURIComponent(symbolId)}/lottie`, groupId), {
     method: "POST",
     body: form,
   });

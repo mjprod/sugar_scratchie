@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, operatorFetch } from "./api";
 
 export type ThemeCardColors = {
   cardOverlayColorStart?: string | null;
@@ -58,7 +58,7 @@ export async function reorderThemes(themeIds: string[]): Promise<ThemeInfo[]> {
 export async function uploadThemeIntro(themeId: string, file: File): Promise<ThemeInfo> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`/api/themes/${encodeURIComponent(themeId)}/intro`, {
+  const response = await operatorFetch(`/api/themes/${encodeURIComponent(themeId)}/intro`, {
     method: "POST",
     body: form,
   });
