@@ -20,7 +20,14 @@ def database_url() -> str:
 def get_engine() -> Engine:
     global _engine, SessionLocal
     if _engine is None:
-        _engine = create_engine(database_url(), pool_pre_ping=True)
+        pool_size = int(os.environ.get("DB_POOL_SIZE", "10"))
+        max_overflow = int(os.environ.get("DB_POOL_MAX_OVERFLOW", "20"))
+        _engine = create_engine(
+            database_url(),
+            pool_pre_ping=True,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+        )
         SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
     return _engine
 
