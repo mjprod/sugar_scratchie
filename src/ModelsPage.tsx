@@ -1031,7 +1031,6 @@ export function ModelsPage() {
           setError(caughtPoster instanceof Error ? caughtPoster.message : String(caughtPoster));
         }
       }
-    }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

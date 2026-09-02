@@ -115,6 +115,7 @@ function captureVideoElementFirstFrame(
     } catch (caught) {
       settle(undefined, caught instanceof Error ? caught : new Error("Video load failed"));
     }
+  });
 }
 
 /** JPEG data URL of the first decoded frame — for upload previews before the clip plays. */
