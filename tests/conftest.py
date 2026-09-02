@@ -25,8 +25,13 @@ os.environ.setdefault("DASHBOARD_TOKEN", "test-dashboard-token")
 
 
 def _ensure_test_database() -> None:
-    admin_url = TEST_DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
-    db_name = TEST_DATABASE_URL.rsplit("/", 1)[1]
+    from sqlalchemy.engine.url import make_url
+
+    url = make_url(TEST_DATABASE_URL)
+    db_name = url.database
+    if not db_name:
+        raise RuntimeError("DATABASE_URL must include a database name")
+    admin_url = url.set(database="postgres")
     engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     with engine.connect() as conn:
         exists = conn.execute(
