@@ -31,6 +31,8 @@ export type ModelGlobalMedia = {
   packFaceVideoUrl2?: string | null;
   /** Home swipe motion video. */
   swipeVideoUrl?: string | null;
+  /** Still photo for swipe card / discovery poster, e.g. "/models/julianaval/swipe-poster.jpg". */
+  swipePosterUrl?: string | null;
   /** Product label for foil pack 1 (replaces "Pack Nº …" when set). */
   cardPackName?: string | null;
   /** Product label for foil pack 2. */
@@ -284,6 +286,26 @@ export async function uploadModelPackFace2(modelId: string, file: File): Promise
 
 export async function uploadModelSwipe(modelId: string, file: File): Promise<ModelInfo> {
   return uploadModelVideo(modelId, "swipe", file);
+}
+
+export async function uploadModelSwipePoster(
+  modelId: string,
+  file: File,
+): Promise<ModelInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await operatorFetch(
+    `/api/models/${encodeURIComponent(modelId)}/swipe-poster`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<ModelInfo>;
 }
 
 export async function uploadCardPhoto(cardId: string, file: File): Promise<PhotoInfo> {
