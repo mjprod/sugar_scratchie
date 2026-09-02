@@ -44,8 +44,7 @@ def _ensure_test_database() -> None:
 
 
 def _run_migrations() -> None:
-    alembic = ROOT / ".venv" / "bin" / "alembic"
-    cmd = [str(alembic), "-c", "backend/alembic.ini", "upgrade", "head"]
+    cmd = [sys.executable, "-m", "alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
     subprocess.run(cmd, cwd=ROOT, env=os.environ.copy(), check=True)
 
 
