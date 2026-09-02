@@ -63,6 +63,7 @@ import {
   uploadModelFlagSvg,
   uploadModelThemeAvatar,
   uploadModelVideo,
+  uploadModelSwipePoster,
   type ModelInfo,
   type ModelVideoKind,
   type PhotoInfo,
@@ -75,7 +76,12 @@ import {
   slugifyProjectId,
   type VideoFlowProject,
 } from "./videoFlow/projects";
+import { captureVideoFirstFrame, captureVideoSrcFirstFrame, dataUrlToFile } from "./shared/media";
 import { previewSource } from "./videoFlow/ui";
+
+function modelVideoPosterKey(modelId: string, kind: ModelVideoKind) {
+  return `${modelId}:${kind}`;
+}
 
 type CardInfo = {
   id: string;
@@ -552,6 +558,7 @@ export function ModelsPage() {
   const introInputRef = useRef<HTMLInputElement>(null);
   const flagInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const swipePosterInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
   const [themeAvatarTarget, setThemeAvatarTarget] = useState<{
     modelId: string;
@@ -564,6 +571,9 @@ export function ModelsPage() {
     modelId: string;
     kind: ModelVideoKind;
   } | null>(null);
+  const [swipePosterTargetId, setSwipePosterTargetId] = useState("");
+  /** First-frame JPEG previews keyed by `modelVideoPosterKey`. */
+  const [videoPosters, setVideoPosters] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const sync = () => setSelectedModelId(readSelectedModelId());
@@ -1002,8 +1012,38 @@ export function ModelsPage() {
   async function handleVideoUpload(modelId: string, kind: ModelVideoKind, file: File) {
     setBusy(true);
     setError("");
+    const posterKey = modelVideoPosterKey(modelId, kind);
     try {
+      const poster =
+        kind === "swipe" ? await captureVideoFirstFrame(file).catch(() => null) : null;
+      if (poster) {
+        setVideoPosters((prev) => ({ ...prev, [posterKey]: poster }));
+      }
+
       await uploadModelVideo(modelId, kind, file);
+      await refresh();
+
+      if (kind === "swipe" && poster) {
+        try {
+          await uploadModelSwipePoster(modelId, dataUrlToFile(poster, "swipe-poster.jpg"));
+          await refresh();
+        } catch (caughtPoster) {
+          setError(caughtPoster instanceof Error ? caughtPoster.message : String(caughtPoster));
+        }
+      }
+    }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSwipePosterUpload(modelId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelSwipePoster(modelId, file);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1128,6 +1168,7 @@ export function ModelsPage() {
               }
               suggestedTags={allModelTags}
               themeCatalog={themeCatalog}
+              videoPosters={videoPosters}
               onAssignCard={(cardId, modelId) => void handleAssignCard(cardId, modelId)}
               onAvatarClick={() => {
                 setAvatarTargetId(selectedModel.id);
@@ -1156,6 +1197,10 @@ export function ModelsPage() {
               onVideoClick={(kind) => {
                 setVideoTarget({ modelId: selectedModel.id, kind });
                 videoInputRef.current?.click();
+              }}
+              onSwipePosterClick={() => {
+                setSwipePosterTargetId(selectedModel.id);
+                swipePosterInputRef.current?.click();
               }}
               onSavePackNames={(cardPackName, cardPackName2) =>
                 void handleSavePackNames(selectedModel.id, cardPackName, cardPackName2)
@@ -1534,6 +1579,19 @@ export function ModelsPage() {
           }
         }}
       />
+      <input
+        ref={swipePosterInputRef}
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && swipePosterTargetId) {
+            void handleSwipePosterUpload(swipePosterTargetId, file);
+          }
+        }}
+      />
     </main>
   );
 }
@@ -1681,6 +1739,29 @@ function ModelAvatar({ model, size }: { model: ModelInfo; size: number }) {
   );
 }
 
+const MODEL_MEDIA_THUMB = {
+  width: 72,
+  height: 128,
+  borderRadius: 8,
+  marginBottom: 8,
+} as const;
+
+const MODEL_MEDIA_CARD_STYLE = {
+  border: "1px solid var(--gray-a6)",
+  borderRadius: 12,
+  padding: 12,
+  background: "var(--gray-a2)",
+  height: "100%",
+  display: "flex",
+  flexDirection: "column",
+} as const;
+
+function mediaPathBasename(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  return trimmed.split("/").pop()?.split("?")[0] ?? trimmed;
+}
+
 function ModelVideoSlot({
   busy,
   label,
@@ -1699,15 +1780,9 @@ function ModelVideoSlot({
   onPackNameChange?: (value: string) => void;
 }) {
   const src = url?.trim() || "";
+
   return (
-    <Box
-      style={{
-        border: "1px solid var(--gray-a6)",
-        borderRadius: 12,
-        padding: 12,
-        background: "var(--gray-a2)",
-      }}
-    >
+    <Box style={MODEL_MEDIA_CARD_STYLE}>
       <Text as="div" mb="2" size="1" weight="medium">
         {label}
       </Text>
@@ -1721,25 +1796,19 @@ function ModelVideoSlot({
           preload="auto"
           src={src}
           style={{
-            width: 72,
-            height: 128,
+            ...MODEL_MEDIA_THUMB,
             objectFit: "cover",
-            borderRadius: 8,
             background: "#111",
             display: "block",
-            marginBottom: 8,
           }}
         />
       ) : (
         <Box
           style={{
-            width: 72,
-            height: 128,
-            borderRadius: 8,
+            ...MODEL_MEDIA_THUMB,
             background: "var(--gray-a3)",
             display: "grid",
             placeItems: "center",
-            marginBottom: 8,
           }}
         >
           <Text color="gray" size="1">
@@ -1762,10 +1831,259 @@ function ModelVideoSlot({
           />
         </label>
       ) : null}
-      <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
+      <Button disabled={busy} size="1" variant="soft" onClick={onUpload} style={{ marginTop: "auto" }}>
         <Upload {...iconProps} />
         {src ? "Replace" : "Upload"}
       </Button>
+    </Box>
+  );
+}
+
+function SwipeMotionVideoSlot({
+  busy,
+  url,
+  savedPosterUrl,
+  uploadPosterUrl,
+  pathHint,
+  posterPathHint,
+  onUpload,
+  onPosterUpload,
+}: {
+  busy: boolean;
+  url?: string | null;
+  savedPosterUrl?: string | null;
+  uploadPosterUrl?: string;
+  pathHint: string;
+  posterPathHint: string;
+  onUpload: () => void;
+  onPosterUpload: () => void;
+}) {
+  const label = "Swipe motion video";
+  const src = url?.trim() || "";
+  const savedPoster = savedPosterUrl?.trim() || "";
+  const uploadPoster = uploadPosterUrl?.trim() || "";
+  const [srcPoster, setSrcPoster] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [dialogPlaying, setDialogPlaying] = useState(false);
+  const dialogVideoRef = useRef<HTMLVideoElement>(null);
+
+  function handlePreviewOpenChange(open: boolean) {
+    setPreviewOpen(open);
+    if (!open) setDialogPlaying(false);
+  }
+
+  useEffect(() => {
+    setSrcPoster("");
+    if (!src || savedPoster || uploadPoster) return;
+
+    let cancelled = false;
+    void captureVideoSrcFirstFrame(src)
+      .then((frame) => {
+        if (!cancelled) setSrcPoster(frame);
+      })
+      .catch(() => {
+        // Keep the idle placeholder when capture fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src, savedPoster, uploadPoster]);
+
+  useEffect(() => {
+    if (!previewOpen || !dialogPlaying || !src) return;
+    const video = dialogVideoRef.current;
+    if (!video) return;
+    try {
+      video.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    void video.play().catch(() => undefined);
+  }, [previewOpen, dialogPlaying, src]);
+
+  const previewFrame = savedPoster || uploadPoster || srcPoster;
+  const thumbShellStyle = {
+    position: "relative" as const,
+    ...MODEL_MEDIA_THUMB,
+    overflow: "hidden" as const,
+    background: "var(--gray-a3)",
+  };
+
+  return (
+    <Box style={MODEL_MEDIA_CARD_STYLE}>
+      <Text as="div" mb="2" size="1" weight="medium">
+        {label}
+      </Text>
+      {previewFrame ? (
+        <button
+          type="button"
+          aria-label="Enlarge swipe photo"
+          title="Click photo to enlarge · play video inside preview"
+          onClick={() => handlePreviewOpenChange(true)}
+          style={{
+            ...thumbShellStyle,
+            display: "block",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+          }}
+        >
+          <img
+            alt="Swipe motion photo"
+            src={previewFrame}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+          <Box
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              right: 6,
+              bottom: 6,
+              width: 22,
+              height: 22,
+              borderRadius: 999,
+              background: "oklch(1 0 0 / 0.92)",
+              display: "grid",
+              placeItems: "center",
+              boxShadow: "0 2px 8px oklch(0 0 0 / 0.22)",
+            }}
+          >
+            <Search {...iconProps} style={{ width: 12, height: 12 }} />
+          </Box>
+        </button>
+      ) : src ? (
+        <Box style={thumbShellStyle}>
+          <Flex align="center" justify="center" height="100%">
+            <LoaderCircle
+              {...iconProps}
+              style={{ animation: "spin 1s linear infinite", opacity: 0.45 }}
+            />
+          </Flex>
+        </Box>
+      ) : (
+        <Box
+          style={{
+            ...thumbShellStyle,
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          <Text color="gray" size="1">
+            —
+          </Text>
+        </Box>
+      )}
+      <Text as="div" color="gray" mb="2" size="1" style={{ wordBreak: "break-all" }}>
+        {src || `Saves to public/${pathHint}`}
+      </Text>
+      <Box mb="2" style={{ minHeight: 52 }}>
+        <Text as="div" mb="1" size="1" weight="medium">
+          Swipe photo
+        </Text>
+        <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all", lineHeight: 1.35 }}>
+          {savedPoster
+            ? mediaPathBasename(savedPoster)
+            : `Saves to public/${posterPathHint}`}
+        </Text>
+      </Box>
+      <Flex direction="column" gap="2" style={{ marginTop: "auto" }}>
+        <Button disabled={busy} size="1" variant="soft" onClick={onPosterUpload}>
+          <Images {...iconProps} />
+          {savedPoster ? "Replace photo" : "Upload photo"}
+        </Button>
+        <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
+          <Upload {...iconProps} />
+          {src ? "Replace video" : "Upload video"}
+        </Button>
+      </Flex>
+
+      {previewFrame ? (
+        <Dialog.Root open={previewOpen} onOpenChange={handlePreviewOpenChange}>
+          <Dialog.Content style={{ maxWidth: 420, padding: 0, overflow: "hidden" }}>
+            <Box p="4" pb="3">
+              <Dialog.Title mb="1">{label}</Dialog.Title>
+              <Dialog.Description size="1" color="gray">
+                {dialogPlaying && src ? src : savedPoster || "Swipe photo preview"}
+              </Dialog.Description>
+            </Box>
+            {dialogPlaying && src ? (
+              <video
+                ref={dialogVideoRef}
+                key={src}
+                controls
+                autoPlay
+                loop
+                muted
+                playsInline
+                preload="auto"
+                src={src}
+                style={{
+                  width: "100%",
+                  display: "block",
+                  aspectRatio: "9 / 16",
+                  objectFit: "cover",
+                  background: "#111",
+                }}
+              />
+            ) : (
+              <img
+                alt="Swipe motion enlarged photo"
+                src={previewFrame}
+                style={{
+                  width: "100%",
+                  display: "block",
+                  aspectRatio: "9 / 16",
+                  objectFit: "cover",
+                  background: "#111",
+                }}
+              />
+            )}
+            <Flex justify="between" align="center" gap="2" p="3" pt="2" wrap="wrap">
+              <Flex gap="2" wrap="wrap">
+                {dialogPlaying ? (
+                  <Button
+                    size="2"
+                    variant="soft"
+                    onClick={() => {
+                      const video = dialogVideoRef.current;
+                      try {
+                        video?.pause();
+                        if (video) video.currentTime = 0;
+                      } catch {
+                        // ignore
+                      }
+                      setDialogPlaying(false);
+                    }}
+                  >
+                    Show photo
+                  </Button>
+                ) : (
+                  <Button
+                    size="2"
+                    variant="solid"
+                    disabled={!src}
+                    onClick={() => setDialogPlaying(true)}
+                  >
+                    <Play {...iconProps} />
+                    Play video
+                  </Button>
+                )}
+              </Flex>
+              <Dialog.Close>
+                <Button size="2" variant="soft">
+                  Close
+                </Button>
+              </Dialog.Close>
+            </Flex>
+          </Dialog.Content>
+        </Dialog.Root>
+      ) : null}
     </Box>
   );
 }
@@ -1792,6 +2110,7 @@ function ModelDetail({
   preferredThemeOrder,
   suggestedTags,
   themeCatalog,
+  videoPosters,
   onAssignCard,
   onAvatarClick,
   onThemeAvatarClick,
@@ -1823,6 +2142,7 @@ function ModelDetail({
   onRename,
   onStartRename,
   onVideoClick,
+  onSwipePosterClick,
   onSavePackNames,
   onSaveTags,
 }: {
@@ -1847,6 +2167,7 @@ function ModelDetail({
   preferredThemeOrder: string[];
   suggestedTags: string[];
   themeCatalog: ThemeInfo[];
+  videoPosters: Record<string, string>;
   onAssignCard: (cardId: string, modelId: string) => void;
   onAvatarClick: () => void;
   onThemeAvatarClick: (themeId: string) => void;
@@ -1878,6 +2199,7 @@ function ModelDetail({
   onRename: () => void;
   onStartRename: () => void;
   onVideoClick: (kind: ModelVideoKind) => void;
+  onSwipePosterClick: () => void;
   onSavePackNames: (cardPackName: string, cardPackName2: string) => void;
   onSaveTags: (tags: string[]) => void;
 }) {
@@ -2217,7 +2539,7 @@ function ModelDetail({
             <CodeInline>/api/models</CodeInline>. Card pack names replace “Pack Nº …” under the
             foil packs in the product app.
           </Text>
-          <Grid columns={{ initial: "1", sm: "3" }} gap="3">
+          <Grid columns={{ initial: "1", sm: "3" }} gap="3" style={{ alignItems: "stretch" }}>
             <ModelVideoSlot
               busy={busy}
               label="Foil 3D pack video"
@@ -2236,11 +2558,14 @@ function ModelDetail({
               onPackNameChange={setPackName2Draft}
               onUpload={() => onVideoClick("pack-face-2")}
             />
-            <ModelVideoSlot
+            <SwipeMotionVideoSlot
               busy={busy}
-              label="Swipe motion video"
               pathHint={`models/${model.id}/swipe.*`}
+              posterPathHint={`models/${model.id}/swipe-poster.*`}
               url={model.swipeVideoUrl}
+              savedPosterUrl={model.swipePosterUrl}
+              uploadPosterUrl={videoPosters[modelVideoPosterKey(model.id, "swipe")]}
+              onPosterUpload={onSwipePosterClick}
               onUpload={() => onVideoClick("swipe")}
             />
           </Grid>
