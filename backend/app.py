@@ -587,7 +587,16 @@ def job_stats() -> dict:
         return {"total": len(jobs), "by_status": by_status}
 
 
+_MIGRATION_CACHE_TTL_S = 30.0
+_migration_cache: tuple[float, dict] | None = None
+
+
 def migration_at_head() -> dict:
+    global _migration_cache
+    now_ts = time.time()
+    if _migration_cache is not None and (now_ts - _migration_cache[0]) < _MIGRATION_CACHE_TTL_S:
+        return _migration_cache[1]
+
     try:
         from alembic.config import Config
         from alembic.runtime.migration import MigrationContext
@@ -600,9 +609,12 @@ def migration_at_head() -> dict:
             ctx = MigrationContext.configure(conn)
             current = ctx.get_current_heads()
         ok = len(head) == 1 and set(current) == set(head)
-        return {"ok": ok, "current": current, "head": head}
+        result = {"ok": ok, "current": current, "head": head}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        result = {"ok": False, "error": str(exc)}
+
+    _migration_cache = (now_ts, result)
+    return result
 
 
 def read_mesh_info(path: Path) -> MeshInfo:
