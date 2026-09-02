@@ -1889,7 +1889,11 @@ function SwipeMotionVideoSlot({
     if (!previewOpen || !dialogPlaying || !src) return;
     const video = dialogVideoRef.current;
     if (!video) return;
-    video.currentTime = 0;
+    try {
+      video.currentTime = 0;
+    } catch {
+      // ignore
+    }
     void video.play().catch(() => undefined);
   }, [previewOpen, dialogPlaying, src]);
 
