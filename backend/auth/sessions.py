@@ -29,9 +29,24 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _client_ip(request: Request) -> str | None:
+    if request.client is None:
+        return None
+    host = request.client.host
+    if not host:
+        return None
+    try:
+        import ipaddress
+
+        ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return host
+
+
 def issue_session(db: Session, user: User, request: Request) -> str:
     token = secrets.token_urlsafe(32)
-    ip = request.client.host if request.client else None
+    ip = _client_ip(request)
     db.add(
         AuthSession(
             user_id=user.id,
