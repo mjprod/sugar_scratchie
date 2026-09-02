@@ -16,10 +16,32 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-TEST_DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg://sugar:sugar@127.0.0.1:5433/sugar_test",
+DEFAULT_TEST_DATABASE_URL = (
+    "postgresql+psycopg://sugar:sugar@127.0.0.1:5433/sugar_test"
 )
+
+
+def _resolve_test_database_url() -> str:
+    """Pick an isolated test DB; never reuse the app DATABASE_URL."""
+    explicit = os.environ.get("TEST_DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+    return DEFAULT_TEST_DATABASE_URL
+
+
+def _assert_test_database(url_str: str) -> None:
+    from sqlalchemy.engine.url import make_url
+
+    db_name = make_url(url_str).database or ""
+    if not db_name.endswith("_test"):
+        raise RuntimeError(
+            f"Refusing to run pytest against database {db_name!r}. "
+            "Use a *_test database via TEST_DATABASE_URL."
+        )
+
+
+TEST_DATABASE_URL = _resolve_test_database_url()
+_assert_test_database(TEST_DATABASE_URL)
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ.setdefault("DASHBOARD_TOKEN", "test-dashboard-token")
 
