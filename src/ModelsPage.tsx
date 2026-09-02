@@ -1019,14 +1019,19 @@ export function ModelsPage() {
       if (poster) {
         setVideoPosters((prev) => ({ ...prev, [posterKey]: poster }));
       }
+
       await uploadModelVideo(modelId, kind, file);
-      if (kind === "swipe" && poster) {
-        await uploadModelSwipePoster(
-          modelId,
-          dataUrlToFile(poster, "swipe-poster.jpg"),
-        );
-      }
       await refresh();
+
+      if (kind === "swipe" && poster) {
+        try {
+          await uploadModelSwipePoster(modelId, dataUrlToFile(poster, "swipe-poster.jpg"));
+          await refresh();
+        } catch (caughtPoster) {
+          setError(caughtPoster instanceof Error ? caughtPoster.message : String(caughtPoster));
+        }
+      }
+    }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
