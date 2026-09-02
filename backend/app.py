@@ -455,9 +455,10 @@ def cors_origins() -> list[str]:
     ]
 
 
-configure_logging()
-logger = __import__("logging").getLogger("sugar.jobs")
+import logging
 
+configure_logging()
+logger = logging.getLogger("sugar.jobs")
 app = FastAPI(title="Sugar Scratchie Dashboard API")
 app.add_middleware(OperatorAuthMiddleware)
 app.add_middleware(
