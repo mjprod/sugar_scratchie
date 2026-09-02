@@ -82,23 +82,39 @@ function captureVideoElementFirstFrame(
       return;
     }
 
-    const onReady = () => {
-      const frame = videoElementFirstFrameJpeg(video);
-      if (frame) resolve(frame);
-      else reject(new Error("Video has no dimensions"));
-    };
+    function cleanup() {
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("error", onError);
+    }
 
-    video.addEventListener("loadeddata", onReady, { once: true });
-    video.addEventListener("error", () => reject(new Error("Video decode failed")), {
-      once: true,
-    });
+    let settled = false;
+    function settle(result?: string, error?: Error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else if (result) resolve(result);
+      else reject(new Error("Video has no dimensions"));
+    }
+
+    function onReady() {
+      const frame = videoElementFirstFrameJpeg(video);
+      if (frame) settle(frame);
+      else settle(undefined, new Error("Video has no dimensions"));
+    }
+
+    function onError() {
+      settle(undefined, new Error("Video decode failed"));
+    }
+
+    video.addEventListener("loadeddata", onReady);
+    video.addEventListener("error", onError);
 
     try {
       video.load();
     } catch (caught) {
-      reject(caught instanceof Error ? caught : new Error("Video load failed"));
+      settle(undefined, caught instanceof Error ? caught : new Error("Video load failed"));
     }
-  });
 }
 
 /** JPEG data URL of the first decoded frame — for upload previews before the clip plays. */
