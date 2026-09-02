@@ -50,18 +50,23 @@ def apply_delta(
     # Use column-based ON CONFLICT so this works even if the unique was
     # created under Postgres's default name (…_idempotency_key_key) instead
     # of wallet_tx_idempotency_key_uq — constraint-name targeting breaks signup.
-    stmt = pg_insert(WalletTransaction).values(
-        user_id=user_id,
-        currency=currency,
-        delta=delta,
-        balance_after=next_balance,
-        reason=reason,
-        ref_type=ref_type,
-        ref_id=ref_id,
-        idempotency_key=idempotency_key,
-    ).on_conflict_do_nothing(index_elements=["idempotency_key"])
-    result = session.execute(stmt)
-    if result.rowcount == 0:
+    stmt = (
+        pg_insert(WalletTransaction)
+        .values(
+            user_id=user_id,
+            currency=currency,
+            delta=delta,
+            balance_after=next_balance,
+            reason=reason,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            idempotency_key=idempotency_key,
+        )
+        .on_conflict_do_nothing(index_elements=["idempotency_key"])
+        .returning(WalletTransaction.id)
+    )
+    inserted_id = session.execute(stmt).scalar_one_or_none()
+    if inserted_id is None:
         # duplicate idempotency key — already applied, return current wallet
         return wallet
 

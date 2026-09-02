@@ -20,8 +20,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.db.engine import get_session, ping_db
+from backend.db.engine import get_engine, get_session, ping_db
 from backend.auth.operator import OperatorAuthMiddleware
+from backend.logging_config import configure_logging
+from backend.middleware.request_timing import RequestTimingMiddleware
 from backend.routers import auth as auth_router
 from backend.routers import collection as collection_router
 from backend.routers import inbox as inbox_router
@@ -453,6 +455,9 @@ def cors_origins() -> list[str]:
     ]
 
 
+configure_logging()
+logger = __import__("logging").getLogger("sugar.jobs")
+
 app = FastAPI(title="Sugar Scratchie Dashboard API")
 app.add_middleware(OperatorAuthMiddleware)
 app.add_middleware(
@@ -462,6 +467,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestTimingMiddleware)
 app.include_router(auth_router.router)
 app.include_router(me_router.router)
 app.include_router(wallet_router.router)
@@ -538,6 +544,7 @@ def cancel_stale_video_flow_jobs(card_id: str) -> None:
 
 
 def run_job(job: Job) -> None:
+    logger.info("job %s (%s) started", job.id, job.kind)
     with jobs_lock:
         job.status = "running"
         job.started_at = now()
@@ -551,6 +558,7 @@ def run_job(job: Job) -> None:
             if job.status != "cancelled":
                 job.status = "succeeded"
             job.ended_at = now()
+        logger.info("job %s (%s) finished with status=%s", job.id, job.kind, job.status)
     except Exception as exc:  # pragma: no cover - last-resort job reporting
         writer.flush()
         with jobs_lock:
@@ -558,15 +566,43 @@ def run_job(job: Job) -> None:
             job.logs.append(f"Job runner error: {exc}")
             job.return_code = 1
             job.ended_at = now()
+        logger.exception("job %s (%s) failed", job.id, job.kind)
 
 
 def enqueue(kind: str, command: list[str], action: Callable[[], None]) -> Job:
     job = Job(id=uuid.uuid4().hex[:12], kind=kind, command=command, action=action)
     with jobs_lock:
         jobs[job.id] = job
+    logger.info("job %s (%s) queued", job.id, kind)
     thread = threading.Thread(target=run_job, args=(job,), daemon=True)
     thread.start()
     return job
+
+
+def job_stats() -> dict:
+    with jobs_lock:
+        by_status: dict[str, int] = {}
+        for job in jobs.values():
+            by_status[job.status] = by_status.get(job.status, 0) + 1
+        return {"total": len(jobs), "by_status": by_status}
+
+
+def migration_at_head() -> dict:
+    try:
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        cfg = Config(str(ROOT / "backend" / "alembic.ini"))
+        script = ScriptDirectory.from_config(cfg)
+        head = script.get_heads()
+        with get_engine().connect() as conn:
+            ctx = MigrationContext.configure(conn)
+            current = ctx.get_current_heads()
+        ok = len(head) == 1 and set(current) == set(head)
+        return {"ok": ok, "current": current, "head": head}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def read_mesh_info(path: Path) -> MeshInfo:
@@ -601,6 +637,19 @@ def read_mesh_info(path: Path) -> MeshInfo:
     )
 
 
+@app.get("/api/health/live")
+def health_live() -> dict:
+    return {"ok": True, "live": True}
+
+
+@app.get("/api/health/ready")
+def health_ready() -> dict:
+    db = ping_db()
+    migrations = migration_at_head()
+    ok = db.get("ok") is True and migrations.get("ok") is True
+    return {"ok": ok, "db": db, "migrations": migrations}
+
+
 @app.get("/api/health")
 def health() -> dict:
     env_files = {
@@ -608,11 +657,14 @@ def health() -> dict:
         "backend/.env": (ROOT / "backend" / ".env").exists(),
     }
     db = ping_db()
+    migrations = migration_at_head()
     return {
-        "ok": True,
+        "ok": db.get("ok") is True,
         "root": str(ROOT),
         "env_files": env_files,
         "db": db,
+        "migrations": migrations,
+        "jobs": job_stats(),
         "xai_key_loaded": bool(os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY")),
         "wavespeed_key_loaded": bool(os.environ.get("WAVESPEED_API_KEY")),
         "ffmpeg_available": shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,

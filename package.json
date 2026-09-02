@@ -11,7 +11,9 @@
     "adjust:photo-match": ".venv/bin/python scripts/adjust_photo_match.py",
     "video-flow": ".venv/bin/python scripts/video-flow.py",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:api": ".venv/bin/pytest tests/ -q",
+    "test": "npm run build && npm run test:api"
   },
   "dependencies": {
     "@lottiefiles/dotlottie-react": "^0.19.8",
