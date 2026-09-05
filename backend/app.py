@@ -39,11 +39,13 @@ from backend.cards_store import (
     delete_card,
     delete_card_photo,
     delete_card_trailer,
+    delete_card_trailer_poster,
     list_cards,
     reorder_model_cards,
     update_card,
     upload_card_photo,
     upload_card_trailer,
+    upload_card_trailer_poster,
 )
 from backend.cards import (
     CardInfo,
@@ -85,6 +87,7 @@ from backend.models_store import (
     update_model,
     upload_model_avatar,
     upload_model_flag_svg,
+    upload_model_poster,
     upload_model_swipe_poster,
     upload_model_theme_avatar,
     upload_model_video,
@@ -780,6 +783,25 @@ def remove_card_trailer(
     return card.dict()
 
 
+@app.post("/api/cards/{card_id}/trailer-poster")
+async def post_card_trailer_poster(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    card = await upload_card_trailer_poster(db, ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+    return card.dict()
+
+
+@app.delete("/api/cards/{card_id}/trailer-poster")
+def remove_card_trailer_poster(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    card = delete_card_trailer_poster(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
+    return card.dict()
+
+
 @app.get("/api/photo-scratch")
 def get_published_photo_scratch(db: Annotated[Session, Depends(get_session)]) -> dict:
     cards = list_photo_scratch_cards(db, ROOT)
@@ -1187,6 +1209,26 @@ async def post_model_swipe_poster(
     file: UploadFile = File(...),
 ) -> dict:
     model = await upload_model_swipe_poster(db, MODELS_DIR, model_id, file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/pack-face-poster")
+async def post_model_pack_face_poster(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_poster(db, MODELS_DIR, model_id, "pack-face-poster", file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/pack-face-2-poster")
+async def post_model_pack_face_2_poster(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_poster(db, MODELS_DIR, model_id, "pack-face-2-poster", file)
     return model.dict()
 
 

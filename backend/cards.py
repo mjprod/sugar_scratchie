@@ -45,6 +45,8 @@ class CardInfo(BaseModel):
     theme_id: str | None = None
     # Collection trailer preview clip (separate from game background/foreground).
     trailer: str | None = None
+    # Still first-frame poster for the trailer (Safari-friendly collection face).
+    trailerPoster: str | None = None
 
 
 class CreateCardRequest(BaseModel):
@@ -71,6 +73,7 @@ class ReorderCardsRequest(BaseModel):
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 TRAILER_EXTENSIONS = {".mp4", ".webm"}
+TRAILER_POSTER_STEM = "trailer-poster"
 
 
 def relative(root: Path, path: Path) -> str:
@@ -102,6 +105,29 @@ def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
         if candidate.is_file():
             return public_url(f"cards/{card_id}/trailer{ext}")
     return None
+
+
+def find_card_trailer_poster(card_dir: Path, card_id: str) -> str | None:
+    for ext in PHOTO_EXTENSIONS:
+        candidate = card_dir / f"{TRAILER_POSTER_STEM}{ext}"
+        if candidate.is_file():
+            url = public_url(f"cards/{card_id}/{TRAILER_POSTER_STEM}{ext}")
+            try:
+                version = int(candidate.stat().st_mtime)
+            except OSError:
+                version = 0
+            return f"{url}?v={version}"
+    return None
+
+
+def remove_card_trailer_poster_files(card_dir: Path) -> bool:
+    removed = False
+    for ext in PHOTO_EXTENSIONS:
+        path = card_dir / f"{TRAILER_POSTER_STEM}{ext}"
+        if path.is_file():
+            path.unlink()
+            removed = True
+    return removed
 
 
 def mesh_names(mesh_dir: Path) -> set[str]:
