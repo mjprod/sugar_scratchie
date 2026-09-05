@@ -29,6 +29,10 @@ export type ModelGlobalMedia = {
   packFaceVideoUrl?: string | null;
   /** Foil 3D pack video 2. */
   packFaceVideoUrl2?: string | null;
+  /** Still first-frame poster for foil pack 1. */
+  packFacePosterUrl?: string | null;
+  /** Still first-frame poster for foil pack 2. */
+  packFacePosterUrl2?: string | null;
   /** Home swipe motion video. */
   swipeVideoUrl?: string | null;
   /** Still photo for swipe card / discovery poster, e.g. "/models/julianaval/swipe-poster.jpg". */
@@ -50,6 +54,26 @@ export type ModelInfo = {
   ModelGlobalMedia;
 
 export type ModelVideoKind = "pack-face" | "pack-face-2" | "swipe";
+
+export type ModelPosterKind = "pack-face-poster" | "pack-face-2-poster" | "swipe-poster";
+
+export const MODEL_VIDEO_POSTER_KIND: Record<ModelVideoKind, ModelPosterKind> = {
+  "pack-face": "pack-face-poster",
+  "pack-face-2": "pack-face-2-poster",
+  swipe: "swipe-poster",
+};
+
+export function modelPosterUrl(
+  model: Pick<
+    ModelGlobalMedia,
+    "packFacePosterUrl" | "packFacePosterUrl2" | "swipePosterUrl"
+  >,
+  kind: ModelVideoKind,
+): string | null | undefined {
+  if (kind === "pack-face") return model.packFacePosterUrl;
+  if (kind === "pack-face-2") return model.packFacePosterUrl2;
+  return model.swipePosterUrl;
+}
 
 export type UpdateModelPayload = {
   label?: string;
@@ -210,6 +234,7 @@ export async function deleteModelThemeAvatar(
 export async function uploadCardTrailer(cardId: string, file: File): Promise<{
   id: string;
   trailer?: string | null;
+  trailerPoster?: string | null;
   theme_id?: string | null;
 }> {
   const form = new FormData();
@@ -222,14 +247,45 @@ export async function uploadCardTrailer(cardId: string, file: File): Promise<{
     const text = await response.text();
     throw new Error(text || response.statusText);
   }
-  return response.json() as Promise<{ id: string; trailer?: string | null; theme_id?: string | null }>;
+  return response.json() as Promise<{
+    id: string;
+    trailer?: string | null;
+    trailerPoster?: string | null;
+    theme_id?: string | null;
+  }>;
+}
+
+export async function uploadCardTrailerPoster(cardId: string, file: File): Promise<{
+  id: string;
+  trailer?: string | null;
+  trailerPoster?: string | null;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await operatorFetch(
+    `/api/cards/${encodeURIComponent(cardId)}/trailer-poster`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<{
+    id: string;
+    trailer?: string | null;
+    trailerPoster?: string | null;
+  }>;
 }
 
 export async function deleteCardTrailer(cardId: string): Promise<{
   id: string;
   trailer?: string | null;
+  trailerPoster?: string | null;
 }> {
-  return api<{ id: string; trailer?: string | null }>(
+  return api<{ id: string; trailer?: string | null; trailerPoster?: string | null }>(
     `/api/cards/${encodeURIComponent(cardId)}/trailer`,
     { method: "DELETE" },
   );
@@ -292,10 +348,18 @@ export async function uploadModelSwipePoster(
   modelId: string,
   file: File,
 ): Promise<ModelInfo> {
+  return uploadModelPoster(modelId, "swipe-poster", file);
+}
+
+export async function uploadModelPoster(
+  modelId: string,
+  kind: ModelPosterKind,
+  file: File,
+): Promise<ModelInfo> {
   const form = new FormData();
   form.append("file", file);
   const response = await operatorFetch(
-    `/api/models/${encodeURIComponent(modelId)}/swipe-poster`,
+    `/api/models/${encodeURIComponent(modelId)}/${kind}`,
     {
       method: "POST",
       body: form,

@@ -29,6 +29,13 @@ MODEL_VIDEO_STEMS: dict[str, str] = {
     "swipe": "swipeVideoUrl",
 }
 
+# Still images paired with foil/swipe videos (product posters / admin thumbs).
+MODEL_POSTER_STEMS: dict[str, str] = {
+    "pack-face-poster": "packFacePosterUrl",
+    "pack-face-2-poster": "packFacePosterUrl2",
+    "swipe-poster": "swipePosterUrl",
+}
+
 # Still image paired with swipe motion video (discovery/admin poster).
 SWIPE_POSTER_STEM = "swipe-poster"
 
@@ -77,6 +84,8 @@ class ModelInfo(BaseModel):
     cardPackName2: str | None = None
     packFaceVideoUrl: str | None = None
     packFaceVideoUrl2: str | None = None
+    packFacePosterUrl: str | None = None
+    packFacePosterUrl2: str | None = None
     swipeVideoUrl: str | None = None
     swipePosterUrl: str | None = None
     # theme_id → public URL for model×theme collection avatar.
@@ -229,11 +238,11 @@ def find_model_video(model_dir: Path, stem: str) -> str | None:
     return None
 
 
-def find_swipe_poster(model_dir: Path) -> str | None:
+def find_model_poster(model_dir: Path, stem: str) -> str | None:
     for ext in AVATAR_EXTENSIONS:
-        candidate = model_dir / f"{SWIPE_POSTER_STEM}{ext}"
+        candidate = model_dir / f"{stem}{ext}"
         if candidate.is_file():
-            url = public_url(f"models/{model_dir.name}/{SWIPE_POSTER_STEM}{ext}")
+            url = public_url(f"models/{model_dir.name}/{stem}{ext}")
             try:
                 version = int(candidate.stat().st_mtime)
             except OSError:
@@ -242,10 +251,21 @@ def find_swipe_poster(model_dir: Path) -> str | None:
     return None
 
 
+def find_swipe_poster(model_dir: Path) -> str | None:
+    return find_model_poster(model_dir, SWIPE_POSTER_STEM)
+
+
 def find_model_videos(model_dir: Path) -> dict[str, str | None]:
     return {
         field: find_model_video(model_dir, stem)
         for stem, field in MODEL_VIDEO_STEMS.items()
+    }
+
+
+def find_model_posters(model_dir: Path) -> dict[str, str | None]:
+    return {
+        field: find_model_poster(model_dir, stem)
+        for stem, field in MODEL_POSTER_STEMS.items()
     }
 
 
@@ -266,6 +286,7 @@ def _parse_legacy_created_at(value: Any) -> datetime:
 def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
     model_dir = models_dir / row.id
     videos = find_model_videos(model_dir) if model_dir.is_dir() else {}
+    posters = find_model_posters(model_dir) if model_dir.is_dir() else {}
     return ModelInfo(
         id=row.id,
         label=row.label,
@@ -284,8 +305,10 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         cardPackName2=row.card_pack_name_2,
         packFaceVideoUrl=videos.get("packFaceVideoUrl"),
         packFaceVideoUrl2=videos.get("packFaceVideoUrl2"),
+        packFacePosterUrl=posters.get("packFacePosterUrl"),
+        packFacePosterUrl2=posters.get("packFacePosterUrl2"),
         swipeVideoUrl=videos.get("swipeVideoUrl"),
-        swipePosterUrl=find_swipe_poster(model_dir) if model_dir.is_dir() else None,
+        swipePosterUrl=posters.get("swipePosterUrl"),
         theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
         tags=_normalize_tags(row.tags),
     )
@@ -582,28 +605,40 @@ async def upload_model_video(
     return _row_to_info(row, models_dir)
 
 
-async def upload_model_swipe_poster(
+async def upload_model_poster(
     db: Session,
     models_dir: Path,
     model_id: str,
+    stem: str,
     upload: UploadFile,
 ) -> ModelInfo:
+    if stem not in MODEL_POSTER_STEMS:
+        raise HTTPException(status_code=400, detail=f"Unknown model poster kind: {stem}")
     row = _require_creator(db, model_id)
     model_dir = models_dir / row.id
     model_dir.mkdir(parents=True, exist_ok=True)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in AVATAR_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Swipe poster must be JPG, PNG, or WebP")
+        raise HTTPException(status_code=400, detail="Poster must be JPG, PNG, or WebP")
     data = await upload.read()
     if not data:
-        raise HTTPException(status_code=400, detail="Uploaded swipe poster is empty")
+        raise HTTPException(status_code=400, detail="Uploaded poster is empty")
     for old_ext in AVATAR_EXTENSIONS:
-        old = model_dir / f"{SWIPE_POSTER_STEM}{old_ext}"
+        old = model_dir / f"{stem}{old_ext}"
         if old.exists():
             old.unlink()
-    (model_dir / f"{SWIPE_POSTER_STEM}{ext}").write_bytes(data)
+    (model_dir / f"{stem}{ext}").write_bytes(data)
     return _row_to_info(row, models_dir)
+
+
+async def upload_model_swipe_poster(
+    db: Session,
+    models_dir: Path,
+    model_id: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    return await upload_model_poster(db, models_dir, model_id, SWIPE_POSTER_STEM, upload)
 
 
 async def upload_model_theme_avatar(
