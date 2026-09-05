@@ -1960,8 +1960,8 @@ function ModelVideoSlot({
       {previewFrame ? (
         <button
           type="button"
-          aria-label={`Enlarge ${label} photo`}
-          title="Click photo to enlarge · play video inside preview"
+          aria-label={`Enlarge ${label} preview`}
+          title="Click preview to enlarge · play video inside preview"
           onClick={() => handlePreviewOpenChange(true)}
           style={{
             ...thumbShellStyle,
