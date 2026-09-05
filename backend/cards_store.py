@@ -601,9 +601,9 @@ def delete_card_trailer(
         if path.is_file():
             path.unlink()
             removed = True
-    remove_card_trailer_poster_files(card_dir)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Trailer not found for card: {card_id}")
+    remove_card_trailer_poster_files(card_dir)
     write_cards_index(db, root, cards_dir, mesh_dir)
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 
