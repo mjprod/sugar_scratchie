@@ -3873,9 +3873,7 @@ function MotionCardRow({
                 <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all" }}>
                   {trailerVideoName ? `video ${trailerVideoName}` : "video —"}
                   {" · "}
-                  {trailerPosterName
-                    ? `pic ${trailerPosterName}`
-                    : `pic trailer-poster.webp`}
+                  {trailerPosterName ? `pic ${trailerPosterName}` : "pic —"}
                 </Text>
               </div>
             </div>
