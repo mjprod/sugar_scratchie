@@ -3332,6 +3332,8 @@ function EnlargeableMediaThumb({
 
   useEffect(() => {
     setSrcPoster("");
+    // Avoid eager video downloads/decodes for list rows; only capture when the dialog is opened.
+    if (!previewOpen) return;
     if (!video || poster) return;
     let cancelled = false;
     void captureVideoSrcFirstFrame(video)
@@ -3342,7 +3344,7 @@ function EnlargeableMediaThumb({
     return () => {
       cancelled = true;
     };
-  }, [video, poster]);
+  }, [previewOpen, video, poster]);
 
   useEffect(() => {
     if (!previewOpen || !dialogPlaying || !video) return;
