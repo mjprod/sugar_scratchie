@@ -55,7 +55,36 @@ export async function playThemeIntro(
   return { muted: video.muted, playing: true };
 }
 
-function videoElementFirstFrameWebp(video: HTMLVideoElement): string | null {
+const POSTER_QUALITY = 0.85;
+
+const MIME_TO_EXT: Record<string, string> = {
+  "image/webp": ".webp",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+};
+
+/** Safari cannot encode WebP via canvas — `toDataURL('image/webp')` silently returns PNG. */
+function canvasEncodesMime(type: string): boolean {
+  try {
+    const probe = document.createElement("canvas");
+    probe.width = 1;
+    probe.height = 1;
+    return probe.toDataURL(type, POSTER_QUALITY).startsWith(`data:${type}`);
+  } catch {
+    return false;
+  }
+}
+
+let cachedPosterMime: "image/webp" | "image/jpeg" | null = null;
+
+/** Prefer WebP when the browser can actually encode it; otherwise JPEG. */
+function preferredPosterMime(): "image/webp" | "image/jpeg" {
+  if (cachedPosterMime) return cachedPosterMime;
+  cachedPosterMime = canvasEncodesMime("image/webp") ? "image/webp" : "image/jpeg";
+  return cachedPosterMime;
+}
+
+function videoElementFirstFrame(video: HTMLVideoElement): string | null {
   const w = video.videoWidth;
   const h = video.videoHeight;
   if (!w || !h || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
@@ -66,7 +95,11 @@ function videoElementFirstFrameWebp(video: HTMLVideoElement): string | null {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0, w, h);
-    return canvas.toDataURL("image/webp", 0.85);
+    const mime = preferredPosterMime();
+    const dataUrl = canvas.toDataURL(mime, POSTER_QUALITY);
+    // Guard against silent format fallback (e.g. unsupported type → PNG).
+    if (dataUrl.startsWith(`data:${mime}`)) return dataUrl;
+    return canvas.toDataURL("image/jpeg", POSTER_QUALITY);
   } catch {
     return null;
   }
@@ -76,7 +109,7 @@ function captureVideoElementFirstFrame(
   video: HTMLVideoElement,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const existing = videoElementFirstFrameWebp(video);
+    const existing = videoElementFirstFrame(video);
     if (existing) {
       resolve(existing);
       return;
@@ -98,7 +131,7 @@ function captureVideoElementFirstFrame(
     }
 
     function onReady() {
-      const frame = videoElementFirstFrameWebp(video);
+      const frame = videoElementFirstFrame(video);
       if (frame) settle(frame);
       else settle(undefined, new Error("Video has no dimensions"));
     }
@@ -118,7 +151,7 @@ function captureVideoElementFirstFrame(
   });
 }
 
-/** WebP data URL of the first decoded frame — for upload previews before the clip plays. */
+/** Poster data URL of the first decoded frame — for upload previews before the clip plays. */
 export function captureVideoFirstFrame(file: File): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   const video = document.createElement("video");
@@ -139,7 +172,7 @@ export function captureVideoFirstFrame(file: File): Promise<string> {
   });
 }
 
-/** WebP data URL of the first decoded frame from a served clip URL. */
+/** Poster data URL of the first decoded frame from a served clip URL. */
 export function captureVideoSrcFirstFrame(src: string): Promise<string> {
   const video = document.createElement("video");
   video.muted = true;
@@ -157,14 +190,20 @@ export function captureVideoSrcFirstFrame(src: string): Promise<string> {
   });
 }
 
-/** Turn a canvas/data-URL image into a File for operator upload endpoints. */
+/**
+ * Turn a canvas/data-URL image into a File for operator upload endpoints.
+ * Filename extension is rewritten to match the real MIME — Safari may emit
+ * PNG/JPEG bytes even when callers pass a `.webp` name.
+ */
 export function dataUrlToFile(dataUrl: string, filename: string): File {
   const [header, base64 = ""] = dataUrl.split(",");
-  const mime = header?.match(/data:(.*?);/)?.[1] ?? "image/webp";
+  const mime = header?.match(/data:(.*?);/)?.[1] ?? "image/png";
   const bytes = atob(base64);
   const buffer = new Uint8Array(bytes.length);
   for (let i = 0; i < bytes.length; i++) buffer[i] = bytes.charCodeAt(i);
-  return new File([buffer], filename, { type: mime });
+  const ext = MIME_TO_EXT[mime] ?? ".png";
+  const stem = filename.replace(/\.[^.]+$/, "") || filename;
+  return new File([buffer], `${stem}${ext}`, { type: mime });
 }
 
 export function releaseMediaElement(el: HTMLMediaElement | null | undefined) {

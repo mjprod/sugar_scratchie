@@ -581,7 +581,7 @@ export function ModelsPage() {
     modelId: string;
     kind: ModelVideoKind;
   } | null>(null);
-  /** First-frame WebP previews keyed by `modelVideoPosterKey`. */
+  /** First-frame poster previews keyed by `modelVideoPosterKey`. */
   const [videoPosters, setVideoPosters] = useState<Record<string, string>>({});
 
   useEffect(() => {
