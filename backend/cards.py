@@ -139,7 +139,7 @@ def find_card_motion_poster(card_dir: Path, card_id: str) -> str | None:
         if candidate.is_file():
             url = public_url(f"cards/{card_id}/{MOTION_POSTER_STEM}{ext}")
             try:
-                version = int(candidate.stat().st_mtime)
+                version = candidate.stat().st_mtime_ns // 1_000_000
             except OSError:
                 version = 0
             return f"{url}?v={version}"
