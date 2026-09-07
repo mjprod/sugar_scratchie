@@ -60,6 +60,7 @@ import {
   updateModel,
   uploadCardTrailer,
   uploadCardTrailerPoster,
+  uploadCardMotionPoster,
   uploadModelAvatar,
   uploadModelFlagSvg,
   uploadModelThemeAvatar,
@@ -566,6 +567,7 @@ export function ModelsPage() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const modelPosterInputRef = useRef<HTMLInputElement>(null);
   const trailerPosterInputRef = useRef<HTMLInputElement>(null);
+  const motionPosterInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
   const [themeAvatarTarget, setThemeAvatarTarget] = useState<{
     modelId: string;
@@ -573,6 +575,7 @@ export function ModelsPage() {
   } | null>(null);
   const [trailerTargetId, setTrailerTargetId] = useState("");
   const [trailerPosterTargetId, setTrailerPosterTargetId] = useState("");
+  const [motionPosterTargetId, setMotionPosterTargetId] = useState("");
   const [introTargetId, setIntroTargetId] = useState("");
   const [flagTargetId, setFlagTargetId] = useState("");
   const [videoTarget, setVideoTarget] = useState<{
@@ -1006,6 +1009,36 @@ export function ModelsPage() {
     }
   }
 
+  async function handleMotionPosterUpload(cardId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadCardMotionPoster(cardId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerateMotionPoster(cardId: string, motionUrl: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const poster = await captureVideoSrcFirstFrame(motionUrl);
+      await uploadCardMotionPoster(
+        cardId,
+        dataUrlToFile(poster, "motion-poster.webp"),
+      );
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleIntroUpload(themeId: string, file: File) {
     setBusy(true);
     setError("");
@@ -1273,6 +1306,13 @@ export function ModelsPage() {
               }}
               onGenerateTrailerPoster={(cardId, trailerUrl) =>
                 void handleGenerateTrailerPoster(cardId, trailerUrl)
+              }
+              onMotionPosterClick={(cardId) => {
+                setMotionPosterTargetId(cardId);
+                motionPosterInputRef.current?.click();
+              }}
+              onGenerateMotionPoster={(cardId, motionUrl) =>
+                void handleGenerateMotionPoster(cardId, motionUrl)
               }
               onIntroClick={(themeId) => {
                 setIntroTargetId(themeId);
@@ -1653,6 +1693,19 @@ export function ModelsPage() {
           event.currentTarget.value = "";
           if (file && trailerPosterTargetId) {
             void handleTrailerPosterUpload(trailerPosterTargetId, file);
+          }
+        }}
+      />
+      <input
+        ref={motionPosterInputRef}
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && motionPosterTargetId) {
+            void handleMotionPosterUpload(motionPosterTargetId, file);
           }
         }}
       />
@@ -2434,6 +2487,8 @@ function ModelDetail({
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
+  onMotionPosterClick,
+  onGenerateMotionPoster,
   onIntroClick,
   onCancelCreateCard,
   onCancelRename,
@@ -2495,6 +2550,8 @@ function ModelDetail({
   onTrailerClick: (cardId: string) => void;
   onTrailerPosterClick: (cardId: string) => void;
   onGenerateTrailerPoster: (cardId: string, trailerUrl: string) => void;
+  onMotionPosterClick: (cardId: string) => void;
+  onGenerateMotionPoster: (cardId: string, motionUrl: string) => void;
   onIntroClick: (themeId: string) => void;
   onCancelCreateCard: () => void;
   onCancelRename: () => void;
@@ -3871,9 +3928,7 @@ function MotionCardRow({
                 <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all" }}>
                   {trailerVideoName ? `video ${trailerVideoName}` : "video —"}
                   {" · "}
-                  {trailerPosterName
-                    ? `pic ${trailerPosterName}`
-                    : `pic trailer-poster.webp`}
+                  {trailerPosterName ? `pic ${trailerPosterName}` : "pic —"}
                 </Text>
               </div>
             </div>
