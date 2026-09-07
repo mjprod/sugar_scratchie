@@ -581,7 +581,7 @@ export function ModelsPage() {
     modelId: string;
     kind: ModelVideoKind;
   } | null>(null);
-  /** First-frame JPEG previews keyed by `modelVideoPosterKey`. */
+  /** First-frame WebP previews keyed by `modelVideoPosterKey`. */
   const [videoPosters, setVideoPosters] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -960,7 +960,7 @@ export function ModelsPage() {
         try {
           await uploadCardTrailerPoster(
             cardId,
-            dataUrlToFile(poster, "trailer-poster.jpg"),
+            dataUrlToFile(poster, "trailer-poster.webp"),
           );
           await refresh();
         } catch (caughtPoster) {
@@ -994,7 +994,7 @@ export function ModelsPage() {
       const poster = await captureVideoSrcFirstFrame(trailerUrl);
       await uploadCardTrailerPoster(
         cardId,
-        dataUrlToFile(poster, "trailer-poster.jpg"),
+        dataUrlToFile(poster, "trailer-poster.webp"),
       );
       await refresh();
     } catch (caught) {
@@ -1079,7 +1079,7 @@ export function ModelsPage() {
           await uploadModelPoster(
             modelId,
             posterKind,
-            dataUrlToFile(poster, `${posterKind}.jpg`),
+            dataUrlToFile(poster, `${posterKind}.webp`),
           );
           await refresh();
         } catch (caughtPoster) {
@@ -1125,7 +1125,7 @@ export function ModelsPage() {
       await uploadModelPoster(
         modelId,
         posterKind,
-        dataUrlToFile(poster, `${posterKind}.jpg`),
+        dataUrlToFile(poster, `${posterKind}.webp`),
       );
       await refresh();
     } catch (caught) {
