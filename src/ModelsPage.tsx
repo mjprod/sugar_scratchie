@@ -60,6 +60,7 @@ import {
   updateModel,
   uploadCardTrailer,
   uploadCardTrailerPoster,
+  uploadCardMotionPoster,
   uploadModelAvatar,
   uploadModelFlagSvg,
   uploadModelThemeAvatar,
@@ -113,6 +114,8 @@ type CardInfo = {
   trailer?: string | null;
   /** First-frame poster for the trailer. */
   trailerPoster?: string | null;
+  /** First-frame poster for the motion clip (foreground/background). */
+  motionPoster?: string | null;
 };
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
@@ -564,6 +567,7 @@ export function ModelsPage() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const modelPosterInputRef = useRef<HTMLInputElement>(null);
   const trailerPosterInputRef = useRef<HTMLInputElement>(null);
+  const motionPosterInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
   const [themeAvatarTarget, setThemeAvatarTarget] = useState<{
     modelId: string;
@@ -571,6 +575,7 @@ export function ModelsPage() {
   } | null>(null);
   const [trailerTargetId, setTrailerTargetId] = useState("");
   const [trailerPosterTargetId, setTrailerPosterTargetId] = useState("");
+  const [motionPosterTargetId, setMotionPosterTargetId] = useState("");
   const [introTargetId, setIntroTargetId] = useState("");
   const [flagTargetId, setFlagTargetId] = useState("");
   const [videoTarget, setVideoTarget] = useState<{
@@ -1004,6 +1009,36 @@ export function ModelsPage() {
     }
   }
 
+  async function handleMotionPosterUpload(cardId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadCardMotionPoster(cardId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerateMotionPoster(cardId: string, motionUrl: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const poster = await captureVideoSrcFirstFrame(motionUrl);
+      await uploadCardMotionPoster(
+        cardId,
+        dataUrlToFile(poster, "motion-poster.webp"),
+      );
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleIntroUpload(themeId: string, file: File) {
     setBusy(true);
     setError("");
@@ -1271,6 +1306,13 @@ export function ModelsPage() {
               }}
               onGenerateTrailerPoster={(cardId, trailerUrl) =>
                 void handleGenerateTrailerPoster(cardId, trailerUrl)
+              }
+              onMotionPosterClick={(cardId) => {
+                setMotionPosterTargetId(cardId);
+                motionPosterInputRef.current?.click();
+              }}
+              onGenerateMotionPoster={(cardId, motionUrl) =>
+                void handleGenerateMotionPoster(cardId, motionUrl)
               }
               onIntroClick={(themeId) => {
                 setIntroTargetId(themeId);
@@ -1651,6 +1693,19 @@ export function ModelsPage() {
           event.currentTarget.value = "";
           if (file && trailerPosterTargetId) {
             void handleTrailerPosterUpload(trailerPosterTargetId, file);
+          }
+        }}
+      />
+      <input
+        ref={motionPosterInputRef}
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && motionPosterTargetId) {
+            void handleMotionPosterUpload(motionPosterTargetId, file);
           }
         }}
       />
@@ -2432,6 +2487,8 @@ function ModelDetail({
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
+  onMotionPosterClick,
+  onGenerateMotionPoster,
   onIntroClick,
   onCancelCreateCard,
   onCancelRename,
@@ -2493,6 +2550,8 @@ function ModelDetail({
   onTrailerClick: (cardId: string) => void;
   onTrailerPosterClick: (cardId: string) => void;
   onGenerateTrailerPoster: (cardId: string, trailerUrl: string) => void;
+  onMotionPosterClick: (cardId: string) => void;
+  onGenerateMotionPoster: (cardId: string, motionUrl: string) => void;
   onIntroClick: (themeId: string) => void;
   onCancelCreateCard: () => void;
   onCancelRename: () => void;
@@ -2867,7 +2926,7 @@ function ModelDetail({
               busy={busy}
               label="Foil 3D pack video"
               pathHint={`models/${model.id}/pack-face.*`}
-              posterPathHint={`models/${model.id}/pack-face-poster.*`}
+              posterPathHint={`models/${model.id}/pack-face-poster.webp`}
               photoLabel="Pack poster"
               url={model.packFaceVideoUrl}
               savedPosterUrl={model.packFacePosterUrl}
@@ -2886,7 +2945,7 @@ function ModelDetail({
               busy={busy}
               label="Foil 3D pack video 2"
               pathHint={`models/${model.id}/pack-face-2.*`}
-              posterPathHint={`models/${model.id}/pack-face-2-poster.*`}
+              posterPathHint={`models/${model.id}/pack-face-2-poster.webp`}
               photoLabel="Pack poster"
               url={model.packFaceVideoUrl2}
               savedPosterUrl={model.packFacePosterUrl2}
@@ -2904,7 +2963,7 @@ function ModelDetail({
             <SwipeMotionVideoSlot
               busy={busy}
               pathHint={`models/${model.id}/swipe.*`}
-              posterPathHint={`models/${model.id}/swipe-poster.*`}
+              posterPathHint={`models/${model.id}/swipe-poster.webp`}
               url={model.swipeVideoUrl}
               savedPosterUrl={model.swipePosterUrl}
               uploadPosterUrl={videoPosters[modelVideoPosterKey(model.id, "swipe")]}
@@ -3031,6 +3090,11 @@ function ModelDetail({
                         onGenerateTrailerPoster={() => {
                           const trailer = card.trailer?.trim();
                           if (trailer) onGenerateTrailerPoster(card.id, previewSource(trailer));
+                        }}
+                        onMotionPosterClick={() => onMotionPosterClick(card.id)}
+                        onGenerateMotionPoster={() => {
+                          const motion = motionCardVideoSrc(card);
+                          if (motion) onGenerateMotionPoster(card.id, motion);
                         }}
                       />
                     );
@@ -3306,27 +3370,206 @@ function ActionSlot({ children }: { children?: ReactNode }) {
   return <span className="models-card-action-slot">{children}</span>;
 }
 
+/** Enlargeable still/video thumb — same Search badge + dialog as Global media. */
+function EnlargeableMediaThumb({
+  label,
+  posterUrl,
+  videoUrl,
+}: {
+  label: string;
+  posterUrl?: string;
+  videoUrl?: string;
+}) {
+  const poster = posterUrl?.trim() || "";
+  const video = videoUrl?.trim() || "";
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [dialogPlaying, setDialogPlaying] = useState(false);
+  const dialogVideoRef = useRef<HTMLVideoElement>(null);
+  const [srcPoster, setSrcPoster] = useState("");
+
+  function handlePreviewOpenChange(open: boolean) {
+    setPreviewOpen(open);
+    if (!open) setDialogPlaying(false);
+  }
+
+  // Reset only when the media identity changes — not when the dialog opens/closes.
+  useEffect(() => {
+    setSrcPoster("");
+  }, [video, poster]);
+
+  useEffect(() => {
+    // Avoid eager video downloads/decodes for list rows; only capture when the dialog is opened.
+    // Keep a captured frame across close/reopen so the enlarge dialog is never blank.
+    if (!previewOpen || !video || poster || srcPoster) return;
+    let cancelled = false;
+    void captureVideoSrcFirstFrame(video)
+      .then((frame) => {
+        if (!cancelled) setSrcPoster(frame);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [previewOpen, video, poster, srcPoster]);
+
+  useEffect(() => {
+    if (!previewOpen || !dialogPlaying || !video) return;
+    const el = dialogVideoRef.current;
+    if (!el) return;
+    try {
+      el.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    void el.play().catch(() => undefined);
+  }, [previewOpen, dialogPlaying, video]);
+
+  const previewFrame = poster || srcPoster;
+  if (!previewFrame && !video) {
+    return <div aria-hidden className="models-card-thumb models-card-thumb--empty" />;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Enlarge ${label} preview`}
+        title="Click preview to enlarge · play video inside preview"
+        className="models-card-thumb models-card-thumb--button models-card-thumb--enlarge"
+        onClick={() => handlePreviewOpenChange(true)}
+      >
+        {previewFrame ? (
+          <img
+            alt={`${label} poster`}
+            className="models-card-thumb-media"
+            src={previewFrame}
+            style={{ objectFit: "cover", display: "block", width: "100%", height: "100%" }}
+          />
+        ) : (
+          <video
+            aria-hidden
+            className="models-card-thumb-media"
+            muted
+            playsInline
+            preload="metadata"
+            src={video}
+            onLoadedData={(event) => {
+              const el = event.currentTarget;
+              if (el.readyState >= 2 && el.currentTime < 0.05) {
+                try {
+                  el.currentTime = Math.min(0.15, (el.duration || 1) * 0.08);
+                } catch {
+                  /* ignore */
+                }
+              }
+            }}
+          />
+        )}
+        <span className="models-card-thumb-enlarge" aria-hidden="true">
+          <Search {...iconProps} style={{ width: 10, height: 10 }} />
+        </span>
+      </button>
+
+      <Dialog.Root open={previewOpen} onOpenChange={handlePreviewOpenChange}>
+        <Dialog.Content style={{ maxWidth: 420, padding: 0, overflow: "hidden" }}>
+          <Box p="4" pb="3">
+            <Dialog.Title mb="1">{label}</Dialog.Title>
+            <Dialog.Description size="1" color="gray">
+              {dialogPlaying && video ? video : poster || `${label} preview`}
+            </Dialog.Description>
+          </Box>
+          {dialogPlaying && video ? (
+            <video
+              ref={dialogVideoRef}
+              key={video}
+              controls
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              src={video}
+              style={{
+                width: "100%",
+                display: "block",
+                aspectRatio: "9 / 16",
+                objectFit: "cover",
+                background: "#111",
+              }}
+            />
+          ) : previewFrame ? (
+            <img
+              alt={`${label} enlarged photo`}
+              src={previewFrame}
+              style={{
+                width: "100%",
+                display: "block",
+                aspectRatio: "9 / 16",
+                objectFit: "cover",
+                background: "#111",
+              }}
+            />
+          ) : null}
+          <Flex justify="between" align="center" gap="2" p="3" pt="2" wrap="wrap">
+            <Flex gap="2" wrap="wrap">
+              {dialogPlaying ? (
+                <Button
+                  size="2"
+                  variant="soft"
+                  onClick={() => {
+                    const el = dialogVideoRef.current;
+                    try {
+                      el?.pause();
+                      if (el) el.currentTime = 0;
+                    } catch {
+                      // ignore
+                    }
+                    setDialogPlaying(false);
+                  }}
+                >
+                  Show photo
+                </Button>
+              ) : (
+                <Button
+                  size="2"
+                  variant="solid"
+                  disabled={!video}
+                  onClick={() => setDialogPlaying(true)}
+                >
+                  <Play {...iconProps} />
+                  Play video
+                </Button>
+              )}
+            </Flex>
+            <Dialog.Close>
+              <Button size="2" variant="soft">
+                Close
+              </Button>
+            </Dialog.Close>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
+    </>
+  );
+}
+
 function MotionCardThumb({ card }: { card: CardInfo }) {
-  return <CardVideoThumb label={card.label} src={motionCardVideoSrc(card)} />;
+  return (
+    <EnlargeableMediaThumb
+      label={card.label}
+      posterUrl={card.motionPoster ? previewSource(card.motionPoster) : ""}
+      videoUrl={motionCardVideoSrc(card)}
+    />
+  );
 }
 
 function TrailerThumb({ card }: { card: CardInfo }) {
-  const poster = card.trailerPoster?.trim() || "";
   const raw = card.trailer?.trim() || "";
-  if (poster) {
-    return (
-      <img
-        alt={`${card.label} trailer poster`}
-        className="models-card-thumb"
-        src={previewSource(poster)}
-        style={{ objectFit: "cover", display: "block" }}
-      />
-    );
-  }
   return (
-    <CardVideoThumb
+    <EnlargeableMediaThumb
       label={`${card.label} trailer`}
-      src={raw ? previewSource(raw) : ""}
+      posterUrl={card.trailerPoster ? previewSource(card.trailerPoster) : ""}
+      videoUrl={raw ? previewSource(raw) : ""}
     />
   );
 }
@@ -3539,6 +3782,8 @@ function MotionCardRow({
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
+  onMotionPosterClick,
+  onGenerateMotionPoster,
 }: {
   busy: boolean;
   card: CardInfo;
@@ -3554,6 +3799,8 @@ function MotionCardRow({
   onTrailerClick: () => void;
   onTrailerPosterClick: () => void;
   onGenerateTrailerPoster: () => void;
+  onMotionPosterClick: () => void;
+  onGenerateMotionPoster: () => void;
 }) {
   const hasPicture =
     (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
@@ -3561,6 +3808,15 @@ function MotionCardRow({
   const isDraft = Boolean(card.draft);
   const hasTrailer = Boolean(card.trailer?.trim());
   const hasTrailerPoster = Boolean(card.trailerPoster?.trim());
+  const hasMotionVideo = Boolean(motionCardVideoSrc(card));
+  const hasMotionPoster = Boolean(card.motionPoster?.trim());
+  const motionVideoName =
+    mediaPathBasename(card.foreground || "") ||
+    mediaPathBasename(card.background || "") ||
+    "";
+  const motionPosterName = mediaPathBasename(card.motionPoster || "");
+  const trailerVideoName = mediaPathBasename(card.trailer || "");
+  const trailerPosterName = mediaPathBasename(card.trailerPoster || "");
 
   return (
     <div className="models-card-list-row">
@@ -3587,11 +3843,40 @@ function MotionCardRow({
               ) : null}
             </Flex>
             <CodeInline>{card.id}</CodeInline>
+            {!isDraft ? (
+              <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all", marginTop: 2 }}>
+                {motionVideoName ? `video ${motionVideoName}` : "video —"}
+                {" · "}
+                {motionPosterName
+                  ? `pic ${motionPosterName}`
+                  : hasMotionVideo
+                    ? "pic motion-poster.webp"
+                    : "pic —"}
+              </Text>
+            ) : null}
           </div>
         </div>
 
         <div className="models-card-list-actions">
-          <Flex align="center" gap="1" justify="end">
+          <Flex align="center" gap="1" justify="end" wrap="wrap">
+            {!isDraft && hasMotionVideo ? (
+              <>
+                <Button disabled={busy} size="1" variant="soft" onClick={onMotionPosterClick}>
+                  <Images {...iconProps} />
+                  {hasMotionPoster ? "Replace photo" : "Upload photo"}
+                </Button>
+                {!hasMotionPoster ? (
+                  <Button
+                    disabled={busy}
+                    size="1"
+                    variant="soft"
+                    onClick={onGenerateMotionPoster}
+                  >
+                    Generate poster
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
             {isDraft ? (
               <>
                 <ActionSlot />
@@ -3679,8 +3964,10 @@ function MotionCardRow({
                 <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
                   Trailer
                 </Text>
-                <Text as="div" color="gray" size="1">
-                  Ready for collection preview
+                <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all" }}>
+                  {trailerVideoName ? `video ${trailerVideoName}` : "video —"}
+                  {" · "}
+                  {trailerPosterName ? `pic ${trailerPosterName}` : "pic —"}
                 </Text>
               </div>
             </div>

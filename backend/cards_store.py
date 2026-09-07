@@ -17,6 +17,7 @@ from backend.cards import (
     ORIGINAL_FOREGROUND,
     ORIGINAL_ID,
     ORIGINAL_MESH,
+    MOTION_POSTER_STEM,
     PHOTO_EXTENSIONS,
     TRAILER_EXTENSIONS,
     TRAILER_POSTER_STEM,
@@ -27,11 +28,13 @@ from backend.cards import (
     card_paths,
     card_photos_dir,
     copy_video,
+    find_card_motion_poster,
     find_card_trailer,
     find_card_trailer_poster,
     mesh_names,
     public_url,
     relative,
+    remove_card_motion_poster_files,
     remove_card_trailer_poster_files,
     resolve_source,
     safe_card_id,
@@ -122,6 +125,7 @@ def _row_to_info(
         theme_id=row.theme_id,
         trailer=find_card_trailer(card_dir, row.id),
         trailerPoster=find_card_trailer_poster(card_dir, row.id),
+        motionPoster=find_card_motion_poster(card_dir, row.id),
     )
 
 
@@ -584,6 +588,32 @@ async def upload_card_trailer_poster(
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 
 
+async def upload_card_motion_poster(
+    db: Session,
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+    upload: UploadFile,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot upload a motion poster for the original card")
+    get_card(db, root, cards_dir, mesh_dir, card_id)
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in PHOTO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Motion poster must be JPG, PNG, or WebP")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded motion poster is empty")
+    card_dir = cards_dir / card_id
+    card_dir.mkdir(parents=True, exist_ok=True)
+    remove_card_motion_poster_files(card_dir)
+    (card_dir / f"{MOTION_POSTER_STEM}{ext}").write_bytes(data)
+    write_cards_index(db, root, cards_dir, mesh_dir)
+    return get_card(db, root, cards_dir, mesh_dir, card_id)
+
+
 def delete_card_trailer(
     db: Session,
     root: Path,
@@ -621,6 +651,23 @@ def delete_card_trailer_poster(
     card_dir = cards_dir / card_id
     if not remove_card_trailer_poster_files(card_dir):
         raise HTTPException(status_code=404, detail=f"Trailer poster not found for card: {card_id}")
+    write_cards_index(db, root, cards_dir, mesh_dir)
+    return get_card(db, root, cards_dir, mesh_dir, card_id)
+
+
+def delete_card_motion_poster(
+    db: Session,
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    card_id: str,
+) -> CardInfo:
+    if card_id == ORIGINAL_ID:
+        raise HTTPException(status_code=400, detail="Cannot delete a motion poster for the original card")
+    get_card(db, root, cards_dir, mesh_dir, card_id)
+    card_dir = cards_dir / card_id
+    if not remove_card_motion_poster_files(card_dir):
+        raise HTTPException(status_code=404, detail=f"Motion poster not found for card: {card_id}")
     write_cards_index(db, root, cards_dir, mesh_dir)
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 

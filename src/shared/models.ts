@@ -259,6 +259,7 @@ export async function uploadCardTrailerPoster(cardId: string, file: File): Promi
   id: string;
   trailer?: string | null;
   trailerPoster?: string | null;
+  motionPoster?: string | null;
 }> {
   const form = new FormData();
   form.append("file", file);
@@ -277,6 +278,34 @@ export async function uploadCardTrailerPoster(cardId: string, file: File): Promi
     id: string;
     trailer?: string | null;
     trailerPoster?: string | null;
+    motionPoster?: string | null;
+  }>;
+}
+
+export async function uploadCardMotionPoster(cardId: string, file: File): Promise<{
+  id: string;
+  trailer?: string | null;
+  trailerPoster?: string | null;
+  motionPoster?: string | null;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await operatorFetch(
+    `/api/cards/${encodeURIComponent(cardId)}/motion-poster`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<{
+    id: string;
+    trailer?: string | null;
+    trailerPoster?: string | null;
+    motionPoster?: string | null;
   }>;
 }
 
