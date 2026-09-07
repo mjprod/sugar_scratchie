@@ -3392,11 +3392,15 @@ function EnlargeableMediaThumb({
     if (!open) setDialogPlaying(false);
   }
 
+  // Reset only when the media identity changes — not when the dialog opens/closes.
   useEffect(() => {
     setSrcPoster("");
+  }, [video, poster]);
+
+  useEffect(() => {
     // Avoid eager video downloads/decodes for list rows; only capture when the dialog is opened.
-    if (!previewOpen) return;
-    if (!video || poster) return;
+    // Keep a captured frame across close/reopen so the enlarge dialog is never blank.
+    if (!previewOpen || !video || poster || srcPoster) return;
     let cancelled = false;
     void captureVideoSrcFirstFrame(video)
       .then((frame) => {
@@ -3406,7 +3410,7 @@ function EnlargeableMediaThumb({
     return () => {
       cancelled = true;
     };
-  }, [previewOpen, video, poster]);
+  }, [previewOpen, video, poster, srcPoster]);
 
   useEffect(() => {
     if (!previewOpen || !dialogPlaying || !video) return;
