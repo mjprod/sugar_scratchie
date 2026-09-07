@@ -35,7 +35,7 @@ export type ModelGlobalMedia = {
   packFacePosterUrl2?: string | null;
   /** Home swipe motion video. */
   swipeVideoUrl?: string | null;
-  /** Still photo for swipe card / discovery poster, e.g. "/models/julianaval/swipe-poster.jpg". */
+  /** Still photo for swipe card / discovery poster, e.g. "/models/julianaval/swipe-poster.webp". */
   swipePosterUrl?: string | null;
   /** Product label for foil pack 1 (replaces "Pack Nº …" when set). */
   cardPackName?: string | null;
