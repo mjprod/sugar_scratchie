@@ -3091,6 +3091,11 @@ function ModelDetail({
                           const trailer = card.trailer?.trim();
                           if (trailer) onGenerateTrailerPoster(card.id, previewSource(trailer));
                         }}
+                        onMotionPosterClick={() => onMotionPosterClick(card.id)}
+                        onGenerateMotionPoster={() => {
+                          const motion = motionCardVideoSrc(card);
+                          if (motion) onGenerateMotionPoster(card.id, motion);
+                        }}
                       />
                     );
                   })}
@@ -3773,6 +3778,8 @@ function MotionCardRow({
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
+  onMotionPosterClick,
+  onGenerateMotionPoster,
 }: {
   busy: boolean;
   card: CardInfo;
@@ -3788,6 +3795,8 @@ function MotionCardRow({
   onTrailerClick: () => void;
   onTrailerPosterClick: () => void;
   onGenerateTrailerPoster: () => void;
+  onMotionPosterClick: () => void;
+  onGenerateMotionPoster: () => void;
 }) {
   const hasPicture =
     (card.photo_scratch_draft ?? 0) > 0 || (card.photo_scratch_done ?? 0) > 0;
@@ -3795,6 +3804,8 @@ function MotionCardRow({
   const isDraft = Boolean(card.draft);
   const hasTrailer = Boolean(card.trailer?.trim());
   const hasTrailerPoster = Boolean(card.trailerPoster?.trim());
+  const hasMotionVideo = Boolean(motionCardVideoSrc(card));
+  const hasMotionPoster = Boolean(card.motionPoster?.trim());
   const motionVideoName =
     mediaPathBasename(card.foreground || "") ||
     mediaPathBasename(card.background || "") ||
@@ -3832,14 +3843,36 @@ function MotionCardRow({
               <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all", marginTop: 2 }}>
                 {motionVideoName ? `video ${motionVideoName}` : "video —"}
                 {" · "}
-                {motionPosterName ? `pic ${motionPosterName}` : "pic —"}
+                {motionPosterName
+                  ? `pic ${motionPosterName}`
+                  : hasMotionVideo
+                    ? "pic motion-poster.webp"
+                    : "pic —"}
               </Text>
             ) : null}
           </div>
         </div>
 
         <div className="models-card-list-actions">
-          <Flex align="center" gap="1" justify="end">
+          <Flex align="center" gap="1" justify="end" wrap="wrap">
+            {!isDraft && hasMotionVideo ? (
+              <>
+                <Button disabled={busy} size="1" variant="soft" onClick={onMotionPosterClick}>
+                  <Images {...iconProps} />
+                  {hasMotionPoster ? "Replace photo" : "Upload photo"}
+                </Button>
+                {!hasMotionPoster ? (
+                  <Button
+                    disabled={busy}
+                    size="1"
+                    variant="soft"
+                    onClick={onGenerateMotionPoster}
+                  >
+                    Generate poster
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
             {isDraft ? (
               <>
                 <ActionSlot />
