@@ -37,12 +37,14 @@ from backend.cards_store import (
     ensure_cards_bootstrapped,
     create_card,
     delete_card,
+    delete_card_motion_poster,
     delete_card_photo,
     delete_card_trailer,
     delete_card_trailer_poster,
     list_cards,
     reorder_model_cards,
     update_card,
+    upload_card_motion_poster,
     upload_card_photo,
     upload_card_trailer,
     upload_card_trailer_poster,
@@ -799,6 +801,25 @@ def remove_card_trailer_poster(
     db: Annotated[Session, Depends(get_session)],
 ) -> dict:
     card = delete_card_trailer_poster(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
+    return card.dict()
+
+
+@app.post("/api/cards/{card_id}/motion-poster")
+async def post_card_motion_poster(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    card = await upload_card_motion_poster(db, ROOT, CARDS_DIR, MESH_DIR, card_id, file)
+    return card.dict()
+
+
+@app.delete("/api/cards/{card_id}/motion-poster")
+def remove_card_motion_poster(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    card = delete_card_motion_poster(db, ROOT, CARDS_DIR, MESH_DIR, card_id)
     return card.dict()
 
 

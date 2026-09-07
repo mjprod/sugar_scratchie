@@ -113,6 +113,8 @@ type CardInfo = {
   trailer?: string | null;
   /** First-frame poster for the trailer. */
   trailerPoster?: string | null;
+  /** First-frame poster for the motion clip (foreground/background). */
+  motionPoster?: string | null;
 };
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
@@ -2867,7 +2869,7 @@ function ModelDetail({
               busy={busy}
               label="Foil 3D pack video"
               pathHint={`models/${model.id}/pack-face.*`}
-              posterPathHint={`models/${model.id}/pack-face-poster.*`}
+              posterPathHint={`models/${model.id}/pack-face-poster.webp`}
               photoLabel="Pack poster"
               url={model.packFaceVideoUrl}
               savedPosterUrl={model.packFacePosterUrl}
@@ -2886,7 +2888,7 @@ function ModelDetail({
               busy={busy}
               label="Foil 3D pack video 2"
               pathHint={`models/${model.id}/pack-face-2.*`}
-              posterPathHint={`models/${model.id}/pack-face-2-poster.*`}
+              posterPathHint={`models/${model.id}/pack-face-2-poster.webp`}
               photoLabel="Pack poster"
               url={model.packFaceVideoUrl2}
               savedPosterUrl={model.packFacePosterUrl2}
@@ -2904,7 +2906,7 @@ function ModelDetail({
             <SwipeMotionVideoSlot
               busy={busy}
               pathHint={`models/${model.id}/swipe.*`}
-              posterPathHint={`models/${model.id}/swipe-poster.*`}
+              posterPathHint={`models/${model.id}/swipe-poster.webp`}
               url={model.swipeVideoUrl}
               savedPosterUrl={model.swipePosterUrl}
               uploadPosterUrl={videoPosters[modelVideoPosterKey(model.id, "swipe")]}
@@ -3306,27 +3308,200 @@ function ActionSlot({ children }: { children?: ReactNode }) {
   return <span className="models-card-action-slot">{children}</span>;
 }
 
+/** Enlargeable still/video thumb — same Search badge + dialog as Global media. */
+function EnlargeableMediaThumb({
+  label,
+  posterUrl,
+  videoUrl,
+}: {
+  label: string;
+  posterUrl?: string;
+  videoUrl?: string;
+}) {
+  const poster = posterUrl?.trim() || "";
+  const video = videoUrl?.trim() || "";
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [dialogPlaying, setDialogPlaying] = useState(false);
+  const dialogVideoRef = useRef<HTMLVideoElement>(null);
+  const [srcPoster, setSrcPoster] = useState("");
+
+  function handlePreviewOpenChange(open: boolean) {
+    setPreviewOpen(open);
+    if (!open) setDialogPlaying(false);
+  }
+
+  useEffect(() => {
+    setSrcPoster("");
+    if (!video || poster) return;
+    let cancelled = false;
+    void captureVideoSrcFirstFrame(video)
+      .then((frame) => {
+        if (!cancelled) setSrcPoster(frame);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [video, poster]);
+
+  useEffect(() => {
+    if (!previewOpen || !dialogPlaying || !video) return;
+    const el = dialogVideoRef.current;
+    if (!el) return;
+    try {
+      el.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    void el.play().catch(() => undefined);
+  }, [previewOpen, dialogPlaying, video]);
+
+  const previewFrame = poster || srcPoster;
+  if (!previewFrame && !video) {
+    return <div aria-hidden className="models-card-thumb models-card-thumb--empty" />;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Enlarge ${label} preview`}
+        title="Click preview to enlarge · play video inside preview"
+        className="models-card-thumb models-card-thumb--button models-card-thumb--enlarge"
+        onClick={() => handlePreviewOpenChange(true)}
+      >
+        {previewFrame ? (
+          <img
+            alt={`${label} poster`}
+            className="models-card-thumb-media"
+            src={previewFrame}
+            style={{ objectFit: "cover", display: "block", width: "100%", height: "100%" }}
+          />
+        ) : (
+          <video
+            aria-hidden
+            className="models-card-thumb-media"
+            muted
+            playsInline
+            preload="metadata"
+            src={video}
+            onLoadedData={(event) => {
+              const el = event.currentTarget;
+              if (el.readyState >= 2 && el.currentTime < 0.05) {
+                try {
+                  el.currentTime = Math.min(0.15, (el.duration || 1) * 0.08);
+                } catch {
+                  /* ignore */
+                }
+              }
+            }}
+          />
+        )}
+        <span className="models-card-thumb-enlarge" aria-hidden="true">
+          <Search {...iconProps} style={{ width: 10, height: 10 }} />
+        </span>
+      </button>
+
+      <Dialog.Root open={previewOpen} onOpenChange={handlePreviewOpenChange}>
+        <Dialog.Content style={{ maxWidth: 420, padding: 0, overflow: "hidden" }}>
+          <Box p="4" pb="3">
+            <Dialog.Title mb="1">{label}</Dialog.Title>
+            <Dialog.Description size="1" color="gray">
+              {dialogPlaying && video ? video : poster || `${label} preview`}
+            </Dialog.Description>
+          </Box>
+          {dialogPlaying && video ? (
+            <video
+              ref={dialogVideoRef}
+              key={video}
+              controls
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              src={video}
+              style={{
+                width: "100%",
+                display: "block",
+                aspectRatio: "9 / 16",
+                objectFit: "cover",
+                background: "#111",
+              }}
+            />
+          ) : previewFrame ? (
+            <img
+              alt={`${label} enlarged photo`}
+              src={previewFrame}
+              style={{
+                width: "100%",
+                display: "block",
+                aspectRatio: "9 / 16",
+                objectFit: "cover",
+                background: "#111",
+              }}
+            />
+          ) : null}
+          <Flex justify="between" align="center" gap="2" p="3" pt="2" wrap="wrap">
+            <Flex gap="2" wrap="wrap">
+              {dialogPlaying ? (
+                <Button
+                  size="2"
+                  variant="soft"
+                  onClick={() => {
+                    const el = dialogVideoRef.current;
+                    try {
+                      el?.pause();
+                      if (el) el.currentTime = 0;
+                    } catch {
+                      // ignore
+                    }
+                    setDialogPlaying(false);
+                  }}
+                >
+                  Show photo
+                </Button>
+              ) : (
+                <Button
+                  size="2"
+                  variant="solid"
+                  disabled={!video}
+                  onClick={() => setDialogPlaying(true)}
+                >
+                  <Play {...iconProps} />
+                  Play video
+                </Button>
+              )}
+            </Flex>
+            <Dialog.Close>
+              <Button size="2" variant="soft">
+                Close
+              </Button>
+            </Dialog.Close>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
+    </>
+  );
+}
+
 function MotionCardThumb({ card }: { card: CardInfo }) {
-  return <CardVideoThumb label={card.label} src={motionCardVideoSrc(card)} />;
+  return (
+    <EnlargeableMediaThumb
+      label={card.label}
+      posterUrl={card.motionPoster ? previewSource(card.motionPoster) : ""}
+      videoUrl={motionCardVideoSrc(card)}
+    />
+  );
 }
 
 function TrailerThumb({ card }: { card: CardInfo }) {
-  const poster = card.trailerPoster?.trim() || "";
   const raw = card.trailer?.trim() || "";
-  if (poster) {
-    return (
-      <img
-        alt={`${card.label} trailer poster`}
-        className="models-card-thumb"
-        src={previewSource(poster)}
-        style={{ objectFit: "cover", display: "block" }}
-      />
-    );
-  }
   return (
-    <CardVideoThumb
+    <EnlargeableMediaThumb
       label={`${card.label} trailer`}
-      src={raw ? previewSource(raw) : ""}
+      posterUrl={card.trailerPoster ? previewSource(card.trailerPoster) : ""}
+      videoUrl={raw ? previewSource(raw) : ""}
     />
   );
 }
@@ -3561,6 +3736,13 @@ function MotionCardRow({
   const isDraft = Boolean(card.draft);
   const hasTrailer = Boolean(card.trailer?.trim());
   const hasTrailerPoster = Boolean(card.trailerPoster?.trim());
+  const motionVideoName =
+    mediaPathBasename(card.foreground || "") ||
+    mediaPathBasename(card.background || "") ||
+    "";
+  const motionPosterName = mediaPathBasename(card.motionPoster || "");
+  const trailerVideoName = mediaPathBasename(card.trailer || "");
+  const trailerPosterName = mediaPathBasename(card.trailerPoster || "");
 
   return (
     <div className="models-card-list-row">
@@ -3587,6 +3769,13 @@ function MotionCardRow({
               ) : null}
             </Flex>
             <CodeInline>{card.id}</CodeInline>
+            {!isDraft ? (
+              <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all", marginTop: 2 }}>
+                {motionVideoName ? `video ${motionVideoName}` : "video —"}
+                {" · "}
+                {motionPosterName ? `pic ${motionPosterName}` : "pic —"}
+              </Text>
+            ) : null}
           </div>
         </div>
 
@@ -3679,8 +3868,12 @@ function MotionCardRow({
                 <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
                   Trailer
                 </Text>
-                <Text as="div" color="gray" size="1">
-                  Ready for collection preview
+                <Text as="div" color="gray" size="1" style={{ wordBreak: "break-all" }}>
+                  {trailerVideoName ? `video ${trailerVideoName}` : "video —"}
+                  {" · "}
+                  {trailerPosterName
+                    ? `pic ${trailerPosterName}`
+                    : `pic trailer-poster.webp`}
                 </Text>
               </div>
             </div>

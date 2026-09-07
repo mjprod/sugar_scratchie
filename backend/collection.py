@@ -210,6 +210,7 @@ def build_collection_catalog(
                     background = _normalize_media_url(card.background)
                     trailer = _normalize_media_url(card.trailer)
                     trailer_poster = _normalize_media_url(card.trailerPoster)
+                    motion_poster = _normalize_media_url(card.motionPoster)
                     motion = foreground or background
                     group_cards.append(
                         {
@@ -217,6 +218,7 @@ def build_collection_catalog(
                             "label": card.label,
                             "trailerUrl": trailer or None,
                             "trailerPosterUrl": trailer_poster or None,
+                            "motionPosterUrl": motion_poster or None,
                             # Collection face: uploaded trailer when present, else motion clip.
                             "videoUrl": trailer or motion,
                             "photoScratchDone": max(
