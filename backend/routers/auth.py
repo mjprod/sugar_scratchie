@@ -279,6 +279,7 @@ def forgot_password(body: EmailRequest, db: Annotated[Session, Depends(get_sessi
                 expires_at=utcnow() + timedelta(hours=2),
             )
         )
+        db.flush()
         send_reset_email(to=email, token=token)
     return {"ok": True}
 
