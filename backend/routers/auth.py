@@ -24,6 +24,7 @@ from backend.auth.sessions import (
 from backend.db.engine import get_session
 from backend.db.models import EmailToken, User, utcnow
 from backend.db.wallet import grant_welcome
+from backend.mail import send_reset_email, send_verify_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -143,7 +144,8 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
             expires_at=utcnow() + timedelta(days=2),
         )
     )
-    print(f"[auth] verify email token for {email}: {token}")
+    db.flush()
+    send_verify_email(to=email, token=token)
     return _issue(response, db, user, request)
 
 
@@ -233,7 +235,8 @@ def request_verify(
             expires_at=utcnow() + timedelta(days=2),
         )
     )
-    print(f"[auth] verify email token for {user.email}: {token}")
+    db.flush()
+    send_verify_email(to=user.email, token=token)
     return {"ok": True}
 
 
@@ -276,7 +279,8 @@ def forgot_password(body: EmailRequest, db: Annotated[Session, Depends(get_sessi
                 expires_at=utcnow() + timedelta(hours=2),
             )
         )
-        print(f"[auth] reset password token for {email}: {token}")
+        db.flush()
+        send_reset_email(to=email, token=token)
     return {"ok": True}
 
 
