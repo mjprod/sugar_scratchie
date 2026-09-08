@@ -27,7 +27,10 @@ class ConsoleMailer:
     """Local/dev mailer: log the message instead of delivering."""
 
     def send(self, *, to: str, subject: str, html: str, text: str) -> None:
-        logger.info("[mail] to=%s subject=%s\n%s", to, subject, text)
+        import re
+
+        redacted = re.sub(r"(token=)[^&\s]+", r"\1<redacted>", text)
+        logger.info("[mail] to=%s subject=%s\n%s", to, subject, redacted)
 
 
 class RecordingMailer:

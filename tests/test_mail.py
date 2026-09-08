@@ -57,8 +57,7 @@ def test_console_mailer_is_default_without_resend_key(monkeypatch):
     assert isinstance(get_mailer(), ConsoleMailer)
 
 
-def test_verify_email_content_builds_link(monkeypatch):
-    monkeypatch.setenv("APP_PUBLIC_URL", "https://app.example")
+def test_verify_email_content_builds_link():
     content = verify_email_content(app_url="https://app.example", token="abc123")
     assert content.subject == "Verify your Sugar Scratchie email"
     assert "https://app.example/verify-email?token=abc123" in content.text
