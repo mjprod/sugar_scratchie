@@ -144,6 +144,7 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
             expires_at=utcnow() + timedelta(days=2),
         )
     )
+    db.flush()
     send_verify_email(to=email, token=token)
     return _issue(response, db, user, request)
 
@@ -234,6 +235,7 @@ def request_verify(
             expires_at=utcnow() + timedelta(days=2),
         )
     )
+    db.flush()
     send_verify_email(to=user.email, token=token)
     return {"ok": True}
 
