@@ -18,6 +18,7 @@ from backend.auth.sessions import (
     issue_session,
     new_email_token,
     new_referral_code,
+    new_verify_code,
     optional_user,
     set_session_cookie,
 )
@@ -29,6 +30,8 @@ from backend.mail import send_reset_email, send_verify_email
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 AuthProvider = Literal["google", "apple", "email"]
+
+VERIFY_CODE_TTL = timedelta(minutes=15)
 
 
 class RegisterRequest(BaseModel):
@@ -54,7 +57,10 @@ class EmailRequest(BaseModel):
 
 
 class ConfirmTokenRequest(BaseModel):
-    token: str
+    """Accepts `code` (preferred) or legacy `token`."""
+
+    code: str | None = None
+    token: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -69,6 +75,11 @@ class ChangePasswordRequest(BaseModel):
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _normalize_verify_secret(value: str) -> str:
+    """Strip spaces/dashes so pasted codes like '123 456' still match."""
+    return "".join(ch for ch in value.strip() if ch.isalnum())
 
 
 def public_user(user: User) -> dict:
@@ -121,6 +132,36 @@ def _issue(response: Response, db: Session, user: User, request: Request) -> dic
     return {"ok": True, "user": public_user(user)}
 
 
+def _invalidate_unused_verify_tokens(db: Session, user_id) -> None:
+    now = utcnow()
+    rows = (
+        db.query(EmailToken)
+        .filter(
+            EmailToken.user_id == user_id,
+            EmailToken.kind == "verify_email",
+            EmailToken.consumed_at.is_(None),
+        )
+        .all()
+    )
+    for row in rows:
+        row.consumed_at = now
+
+
+def _issue_verify_code(db: Session, user: User) -> str:
+    _invalidate_unused_verify_tokens(db, user.id)
+    code = new_verify_code()
+    db.add(
+        EmailToken(
+            user_id=user.id,
+            kind="verify_email",
+            token_hash=hash_token(code),
+            expires_at=utcnow() + VERIFY_CODE_TTL,
+        )
+    )
+    db.flush()
+    return code
+
+
 @router.post("/register")
 def register(body: RegisterRequest, request: Request, response: Response, db: Annotated[Session, Depends(get_session)]):
     email = _normalize_email(body.email)
@@ -135,17 +176,8 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
         username=body.username,
         display_name=body.display_name,
     )
-    token = new_email_token()
-    db.add(
-        EmailToken(
-            user_id=user.id,
-            kind="verify_email",
-            token_hash=hash_token(token),
-            expires_at=utcnow() + timedelta(days=2),
-        )
-    )
-    db.flush()
-    send_verify_email(to=email, token=token)
+    code = _issue_verify_code(db, user)
+    send_verify_email(to=email, code=code)
     return _issue(response, db, user, request)
 
 
@@ -220,47 +252,46 @@ def oauth(
     return _issue(response, db, user, request)
 
 
+def _send_verify_for_user(db: Session, user: User) -> dict:
+    code = _issue_verify_code(db, user)
+    send_verify_email(to=user.email, code=code)
+    return {"ok": True}
+
+
 @router.post("/verify-email/request")
 def request_verify(
     body: EmailRequest,
     db: Annotated[Session, Depends(get_session)],
     user: Annotated[User, Depends(current_user)],
 ):
-    token = new_email_token()
-    db.add(
-        EmailToken(
-            user_id=user.id,
-            kind="verify_email",
-            token_hash=hash_token(token),
-            expires_at=utcnow() + timedelta(days=2),
-        )
-    )
-    db.flush()
-    send_verify_email(to=user.email, token=token)
-    return {"ok": True}
+    return _send_verify_for_user(db, user)
+
+
+@router.post("/verify-email/send")
+def send_verify(
+    db: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+):
+    """Alias of /verify-email/request — used by the player verify sheet."""
+    return _send_verify_for_user(db, user)
 
 
 @router.post("/verify-email/confirm")
 def confirm_verify(body: ConfirmTokenRequest, db: Annotated[Session, Depends(get_session)]):
+    secret = _normalize_verify_secret(body.code or body.token or "")
+    if not secret:
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
     row = (
         db.query(EmailToken)
-        .filter(EmailToken.token_hash == hash_token(body.token), EmailToken.kind == "verify_email")
+        .filter(EmailToken.token_hash == hash_token(secret), EmailToken.kind == "verify_email")
         .one_or_none()
     )
     if row is None or row.consumed_at is not None or row.expires_at < utcnow():
-        # Prototype: any logged-in confirm without token is also accepted via empty token + session.
-        raise HTTPException(status_code=400, detail="Invalid or expired token.")
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
     user = db.get(User, row.user_id)
     if user is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token.")
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
     row.consumed_at = utcnow()
-    user.email_verified_at = utcnow()
-    return {"ok": True, "user": public_user(user)}
-
-
-@router.post("/verify-email/mark")
-def mark_verified(user: Annotated[User, Depends(current_user)]):
-    """Prototype shortcut used by the existing verify modal."""
     user.email_verified_at = utcnow()
     return {"ok": True, "user": public_user(user)}
 
