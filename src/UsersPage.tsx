@@ -74,7 +74,7 @@ export function UsersPage() {
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editUsername, setEditUsername] = useState("");
   const detailRef = useRef<HTMLDivElement | null>(null);
-  const selectedIdRef = useRef<string | null>(selectedId);
+  const detailSeqRef = useRef(0);
   const editDisplayNameRef = useRef(editDisplayName);
   const editUsernameRef = useRef(editUsername);
   const pendingWalletAdjustRef = useRef<{
@@ -82,7 +82,6 @@ export function UsersPage() {
     idempotencyKey: string;
   } | null>(null);
 
-  selectedIdRef.current = selectedId;
   editDisplayNameRef.current = editDisplayName;
   editUsernameRef.current = editUsername;
 
@@ -118,6 +117,7 @@ export function UsersPage() {
   }, [offset, query, statusFilter]);
 
   const refreshDetail = useCallback(async (userId: string) => {
+    const seq = ++detailSeqRef.current;
     setDetailLoading(true);
     // Snapshot profile fields so a late response does not clobber an in-progress edit.
     const displaySnapshot = editDisplayNameRef.current;
@@ -125,7 +125,7 @@ export function UsersPage() {
     try {
       const data = await fetchUser(userId);
       // Drop stale responses after Close or a newer selection.
-      if (selectedIdRef.current !== userId) return;
+      if (seq !== detailSeqRef.current) return;
       setSelected(data.user);
       setTransactions(data.transactions);
       if (
@@ -136,9 +136,7 @@ export function UsersPage() {
         setEditUsername(data.user.username ?? "");
       }
     } finally {
-      if (selectedIdRef.current === userId) {
-        setDetailLoading(false);
-      }
+      if (seq === detailSeqRef.current) setDetailLoading(false);
     }
   }, []);
 
@@ -148,6 +146,7 @@ export function UsersPage() {
 
   useEffect(() => {
     if (!selectedId) {
+      detailSeqRef.current++;
       setSelected(null);
       setTransactions([]);
       setEditDisplayName("");
