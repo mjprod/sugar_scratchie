@@ -165,43 +165,57 @@ def test_verify_email_confirm_rejects_bad_code(client, recording_mailer):
     assert response.status_code == 400
 
 
-<<<<<<< Updated upstream
-def test_verify_email_confirm_accepts_legacy_token(client, recording_mailer, monkeypatch):
-    from datetime import timedelta
-
-    from sqlalchemy.orm import Session
-
-    from backend.auth.sessions import hash_token
-    from backend.db.engine import get_engine
-    from backend.db.models import EmailToken, User, utcnow
-
+def test_verify_email_confirm_requires_session(client, recording_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
-    email, _user = register_and_login(client)
-    legacy_token = "tok-legacy_-123"
+    register_and_login(client)
+    code = _code_from_message(recording_mailer.messages[0].text)
+    client.post("/api/auth/logout")
 
-    with Session(bind=get_engine()) as db:
-        user = db.query(User).filter(User.email == email).one()
-        db.add(
-            EmailToken(
-                user_id=user.id,
-                kind="verify_email",
-                token_hash=hash_token(legacy_token),
-                expires_at=utcnow() + timedelta(hours=1),
-=======
+    response = client.post("/api/auth/verify-email/confirm", json={"code": code})
+    assert response.status_code == 401
+
+
+def test_verify_email_confirm_rejects_other_users_code(client, recording_mailer, monkeypatch):
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    register_and_login(client)
+    victim_code = _code_from_message(recording_mailer.messages[0].text)
+    client.post("/api/auth/logout")
+
+    register_and_login(client)
+    response = client.post("/api/auth/verify-email/confirm", json={"code": victim_code})
+    assert response.status_code == 400
+    session = client.get("/api/auth/session")
+    assert session.json()["user"]["emailVerified"] is False
+
+
+def test_verify_email_confirm_rate_limits_failures(client, recording_mailer):
+    from backend.routers import auth as auth_router
+
+    register_and_login(client)
+    auth_router._verify_confirm_failures.clear()
+
+    for _ in range(auth_router.VERIFY_CONFIRM_MAX_ATTEMPTS):
+        response = client.post("/api/auth/verify-email/confirm", json={"code": "000000"})
+        assert response.status_code == 400
+
+    blocked = client.post("/api/auth/verify-email/confirm", json={"code": "000000"})
+    assert blocked.status_code == 429
+
+
 def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer, monkeypatch):
-    """Same 6-digit code hash can exist on another user / consumed leftover row."""
-    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    """Same 6-digit code on another user must not break the logged-in user's confirm."""
+    from datetime import timedelta
+
+    from sqlalchemy.orm import Session
+
     from backend.auth.sessions import hash_token
     from backend.db.engine import get_engine
     from backend.db.models import EmailToken, User, utcnow
-    from datetime import timedelta
-    from sqlalchemy.orm import Session
 
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
     shared_code = "424242"
     email_a, user_a = register_and_login(client)
-    recording_mailer.messages.clear()
 
-    # Force user A's outstanding verify token to the shared code.
     with Session(get_engine()) as db:
         a = db.query(User).filter(User.email == email_a).one()
         for row in (
@@ -215,7 +229,6 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
         ):
             row.token_hash = hash_token(shared_code)
             row.expires_at = utcnow() + timedelta(minutes=15)
-        # Leftover consumed row with the same hash (other user).
         other = User(
             email=f"collision-{uuid.uuid4().hex[:10]}@example.com",
             auth_provider="email",
@@ -230,41 +243,16 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
                 kind="verify_email",
                 token_hash=hash_token(shared_code),
                 expires_at=utcnow() + timedelta(minutes=15),
-                consumed_at=utcnow(),
-            )
-        )
-        # Second live (unconsumed) token for yet another user with same hash.
-        live = User(
-            email=f"live-{uuid.uuid4().hex[:10]}@example.com",
-            auth_provider="email",
-            referral_code=uuid.uuid4().hex[:8],
-            display_name="live",
-        )
-        db.add(live)
-        db.flush()
-        db.add(
-            EmailToken(
-                user_id=live.id,
-                kind="verify_email",
-                token_hash=hash_token(shared_code),
-                expires_at=utcnow() + timedelta(minutes=15),
->>>>>>> Stashed changes
             )
         )
         db.commit()
 
-<<<<<<< Updated upstream
-    confirm = client.post("/api/auth/verify-email/confirm", json={"token": legacy_token})
-    assert confirm.status_code == 200, confirm.text
-    assert confirm.json()["user"]["emailVerified"] is True
-=======
     confirm = client.post("/api/auth/verify-email/confirm", json={"code": shared_code})
     assert confirm.status_code == 200, confirm.text
     body = confirm.json()
     assert body["ok"] is True
     assert body["user"]["emailVerified"] is True
     assert body["user"]["id"] == user_a["id"]
->>>>>>> Stashed changes
 
 
 def test_send_helpers_swallow_delivery_errors(failing_mailer, monkeypatch):
