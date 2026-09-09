@@ -331,13 +331,6 @@ def confirm_verify(
     Legacy tokens are opaque URL-safe secrets and must not be normalized.
     """
     _enforce_verify_confirm_rate_limit(user.id)
-<<<<<<< HEAD
-    # Prefer digit-normalized `code`; fall back to opaque legacy `token` as-is.
-    if body.code is not None and body.code.strip() != "":
-        secret = _normalize_verify_secret(body.code)
-    else:
-        secret = (body.token or "").strip()
-=======
     # `code` is a short numeric secret — normalize to digits only.
     # `token` is a legacy opaque URL-safe secret that may contain '-'/'_'; do not normalize.
     if body.code:
@@ -346,13 +339,12 @@ def confirm_verify(
         secret = body.token
     else:
         secret = ""
->>>>>>> 2439dc98c4f6010e9d3dbf32af4ac7fc3abe04b7
     if not secret:
         _record_verify_confirm_failure(user.id)
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
     now = utcnow()
     # token_hash is not unique (6-digit codes collide; consumed leftovers retain
-    # the hash). Scope to this session user and never use one_or_none().
+    # the hash). Scope to this session user; use first() so duplicates never 500.
     row = (
         db.query(EmailToken)
         .filter(
