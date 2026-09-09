@@ -318,6 +318,8 @@ def test_delete_user_permanently_removes_owned_rows_and_clears_refs(
 
         referred_user_id = referred_user.id
         other_owner_id = other_owner.id
+        opening_id = opening.id
+        opening_card_id = opening_card.id
 
     response = client.delete(f"/api/users/{user['id']}", headers=dashboard_headers)
 
@@ -328,8 +330,9 @@ def test_delete_user_permanently_removes_owned_rows_and_clears_refs(
     assert db_session.query(WalletTransaction).filter(WalletTransaction.user_id == user_id).count() == 0
     assert db_session.query(PackPurchase).filter(PackPurchase.user_id == user_id).count() == 0
     assert db_session.query(PackInstance).filter(PackInstance.user_id == user_id).count() == 0
-    assert db_session.query(PackOpening).count() == 0
-    assert db_session.query(PackOpeningCard).count() == 0
+    # Scope to this user's rows — other tests may leave pack openings in the shared DB.
+    assert db_session.get(PackOpening, opening_id) is None
+    assert db_session.get(PackOpeningCard, opening_card_id) is None
     assert db_session.query(UserCard).filter(UserCard.user_id == user_id).count() == 0
     assert db_session.query(ScratchSession).filter(ScratchSession.user_id == user_id).count() == 0
     assert db_session.query(StorePurchase).filter(StorePurchase.user_id == user_id).count() == 0
