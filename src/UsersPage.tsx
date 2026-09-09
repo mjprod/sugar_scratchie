@@ -74,10 +74,17 @@ export function UsersPage() {
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editUsername, setEditUsername] = useState("");
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  const editDisplayNameRef = useRef(editDisplayName);
+  const editUsernameRef = useRef(editUsername);
   const pendingWalletAdjustRef = useRef<{
     requestSignature: string;
     idempotencyKey: string;
   } | null>(null);
+
+  selectedIdRef.current = selectedId;
+  editDisplayNameRef.current = editDisplayName;
+  editUsernameRef.current = editUsername;
 
   function selectUser(user: AdminUser) {
     // Same row again: selectedId won't change, so refreshDetail won't re-run.
@@ -112,14 +119,26 @@ export function UsersPage() {
 
   const refreshDetail = useCallback(async (userId: string) => {
     setDetailLoading(true);
+    // Snapshot profile fields so a late response does not clobber an in-progress edit.
+    const displaySnapshot = editDisplayNameRef.current;
+    const usernameSnapshot = editUsernameRef.current;
     try {
       const data = await fetchUser(userId);
+      // Drop stale responses after Close or a newer selection.
+      if (selectedIdRef.current !== userId) return;
       setSelected(data.user);
-      setEditDisplayName(data.user.displayName ?? "");
-      setEditUsername(data.user.username ?? "");
       setTransactions(data.transactions);
+      if (
+        editDisplayNameRef.current === displaySnapshot &&
+        editUsernameRef.current === usernameSnapshot
+      ) {
+        setEditDisplayName(data.user.displayName ?? "");
+        setEditUsername(data.user.username ?? "");
+      }
     } finally {
-      setDetailLoading(false);
+      if (selectedIdRef.current === userId) {
+        setDetailLoading(false);
+      }
     }
   }, []);
 
@@ -133,6 +152,7 @@ export function UsersPage() {
       setTransactions([]);
       setEditDisplayName("");
       setEditUsername("");
+      setDetailLoading(false);
       return;
     }
     refreshDetail(selectedId).catch((caught) =>
