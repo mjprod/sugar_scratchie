@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -51,17 +52,24 @@ def _token_from_message(text: str) -> str:
     raise AssertionError(f"no link found in mail text:\n{text}")
 
 
+def _code_from_message(text: str) -> str:
+    match = re.search(r"verification code is:\s*(\d{6})", text, flags=re.IGNORECASE)
+    assert match, f"no verification code found in mail text:\n{text}"
+    return match.group(1)
+
+
 def test_console_mailer_is_default_without_resend_key(monkeypatch):
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     set_mailer_for_tests(None)
     assert isinstance(get_mailer(), ConsoleMailer)
 
 
-def test_verify_email_content_builds_link():
-    content = verify_email_content(app_url="https://app.example", token="abc123")
+def test_verify_email_content_includes_code():
+    content = verify_email_content(code="123456")
     assert content.subject == "Verify your Sugar Scratchie email"
-    assert "https://app.example/verify-email?token=abc123" in content.text
-    assert 'href="https://app.example/verify-email?token=abc123"' in content.html
+    assert "123456" in content.text
+    assert "123456" in content.html
+    assert "15 minutes" in content.text
 
 
 def test_reset_password_content_builds_link():
@@ -72,24 +80,24 @@ def test_reset_password_content_builds_link():
 
 def test_send_verify_email_uses_mailer(recording_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
-    send_verify_email(to="player@example.com", token="tok-verify")
+    send_verify_email(to="player@example.com", code="654321")
     assert len(recording_mailer.messages) == 1
     message = recording_mailer.messages[0]
     assert message.to == "player@example.com"
-    assert "tok-verify" in message.text
+    assert "654321" in message.text
     assert "Verify your Sugar Scratchie email" == message.subject
 
 
-def test_register_sends_verify_email(client, recording_mailer, monkeypatch):
+def test_register_sends_verify_code(client, recording_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
     email, _user = register_and_login(client)
     assert len(recording_mailer.messages) == 1
     message = recording_mailer.messages[0]
     assert message.to == email
     assert "verify" in message.text.lower()
-    token = _token_from_message(message.text)
+    code = _code_from_message(message.text)
 
-    confirm = client.post("/api/auth/verify-email/confirm", json={"token": token})
+    confirm = client.post("/api/auth/verify-email/confirm", json={"code": code})
     assert confirm.status_code == 200, confirm.text
     assert confirm.json()["user"]["emailVerified"] is True
 
@@ -132,11 +140,145 @@ def test_verify_email_request_sends_mail(client, recording_mailer, monkeypatch):
     assert response.status_code == 200, response.text
     assert len(recording_mailer.messages) == 1
     assert recording_mailer.messages[0].to == email
+    assert _code_from_message(recording_mailer.messages[0].text)
+
+
+def test_verify_email_send_alias_sends_mail(client, recording_mailer, monkeypatch):
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    email, _user = register_and_login(client)
+    recording_mailer.messages.clear()
+
+    response = client.post("/api/auth/verify-email/send")
+    assert response.status_code == 200, response.text
+    assert len(recording_mailer.messages) == 1
+    assert recording_mailer.messages[0].to == email
+    code = _code_from_message(recording_mailer.messages[0].text)
+
+    confirm = client.post("/api/auth/verify-email/confirm", json={"code": code})
+    assert confirm.status_code == 200, confirm.text
+    assert confirm.json()["user"]["emailVerified"] is True
+
+
+def test_verify_email_confirm_rejects_bad_code(client, recording_mailer):
+    register_and_login(client)
+    response = client.post("/api/auth/verify-email/confirm", json={"code": "000000"})
+    assert response.status_code == 400
+
+
+def test_verify_email_confirm_requires_session(client, recording_mailer, monkeypatch):
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    register_and_login(client)
+    code = _code_from_message(recording_mailer.messages[0].text)
+    client.post("/api/auth/logout")
+
+    response = client.post("/api/auth/verify-email/confirm", json={"code": code})
+    assert response.status_code == 401
+
+
+def test_verify_email_confirm_rejects_other_users_code(client, recording_mailer, monkeypatch):
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    register_and_login(client)
+    victim_code = _code_from_message(recording_mailer.messages[0].text)
+    client.post("/api/auth/logout")
+
+    register_and_login(client)
+    response = client.post("/api/auth/verify-email/confirm", json={"code": victim_code})
+    assert response.status_code == 400
+    session = client.get("/api/auth/session")
+    assert session.json()["user"]["emailVerified"] is False
+
+
+def test_verify_email_confirm_rate_limits_failures(client, recording_mailer):
+    from backend.routers import auth as auth_router
+
+    register_and_login(client)
+    auth_router._verify_confirm_failures.clear()
+
+    for _ in range(auth_router.VERIFY_CONFIRM_MAX_ATTEMPTS):
+        response = client.post("/api/auth/verify-email/confirm", json={"code": "000000"})
+        assert response.status_code == 400
+
+    blocked = client.post("/api/auth/verify-email/confirm", json={"code": "000000"})
+    assert blocked.status_code == 429
+
+
+def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer, monkeypatch):
+    """Duplicate token_hash rows must not raise MultipleResultsFound on confirm."""
+    from datetime import timedelta
+
+    from sqlalchemy.orm import Session
+
+    from backend.auth.sessions import hash_token
+    from backend.db.engine import get_engine
+    from backend.db.models import EmailToken, User, utcnow
+
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    shared_code = "424242"
+    email_a, user_a = register_and_login(client)
+    code_hash = hash_token(shared_code)
+
+    with Session(get_engine()) as db:
+        a = db.query(User).filter(User.email == email_a).one()
+        for row in (
+            db.query(EmailToken)
+            .filter(
+                EmailToken.user_id == a.id,
+                EmailToken.kind == "verify_email",
+                EmailToken.consumed_at.is_(None),
+            )
+            .all()
+        ):
+            row.token_hash = code_hash
+            row.expires_at = utcnow() + timedelta(minutes=15)
+        # Second live row for the same user with the same hash (resend race /
+        # leftover) — one_or_none() would raise MultipleResultsFound.
+        db.add(
+            EmailToken(
+                user_id=a.id,
+                kind="verify_email",
+                token_hash=code_hash,
+                expires_at=utcnow() + timedelta(minutes=15),
+            )
+        )
+        # Consumed leftover + another user's live token, same hash.
+        other = User(
+            email=f"collision-{uuid.uuid4().hex[:10]}@example.com",
+            auth_provider="email",
+            referral_code=uuid.uuid4().hex[:8],
+            display_name="collision",
+        )
+        db.add(other)
+        db.flush()
+        db.add(
+            EmailToken(
+                user_id=other.id,
+                kind="verify_email",
+                token_hash=code_hash,
+                expires_at=utcnow() + timedelta(minutes=15),
+                consumed_at=utcnow(),
+            )
+        )
+        db.add(
+            EmailToken(
+                user_id=other.id,
+                kind="verify_email",
+                token_hash=code_hash,
+                expires_at=utcnow() + timedelta(minutes=15),
+            )
+        )
+        db.commit()
+
+    confirm = client.post("/api/auth/verify-email/confirm", json={"code": shared_code})
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["ok"] is True
+    assert body["user"]["emailVerified"] is True
+    assert body["user"]["id"] == user_a["id"]
 
 
 def test_send_helpers_swallow_delivery_errors(failing_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
-    send_verify_email(to="player@example.com", token="tok-verify")
+    send_verify_email(to="player@example.com", code="111111")
     send_reset_email(to="player@example.com", token="tok-reset")
 
 

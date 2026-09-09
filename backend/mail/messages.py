@@ -16,17 +16,21 @@ def _link(base_url: str, path: str, token: str) -> str:
     return f"{base_url.rstrip('/')}{path}?{query}"
 
 
-def verify_email_content(*, app_url: str, token: str) -> EmailContent:
-    link = _link(app_url, "/verify-email", token)
+def verify_email_content(*, code: str) -> EmailContent:
     subject = "Verify your Sugar Scratchie email"
     text = (
         "Welcome to Sugar Scratchie.\n\n"
-        f"Verify your email by opening this link:\n{link}\n\n"
+        f"Your verification code is: {code}\n\n"
+        "Enter this code in the app to verify your email. "
+        "It expires in 15 minutes.\n\n"
         "If you did not create an account, you can ignore this message."
     )
     html = (
         "<p>Welcome to Sugar Scratchie.</p>"
-        f'<p><a href="{link}">Verify your email</a></p>'
+        f"<p>Your verification code is:</p>"
+        f'<p style="font-size:28px;font-weight:700;letter-spacing:0.12em">{code}</p>'
+        "<p>Enter this code in the app to verify your email. "
+        "It expires in 15 minutes.</p>"
         "<p>If you did not create an account, you can ignore this message.</p>"
     )
     return EmailContent(subject=subject, html=html, text=text)

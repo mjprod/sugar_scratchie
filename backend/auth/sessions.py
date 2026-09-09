@@ -124,4 +124,10 @@ def new_referral_code() -> str:
 
 
 def new_email_token() -> str:
+    """Opaque URL-safe token (password-reset links)."""
     return secrets.token_urlsafe(24)
+
+
+def new_verify_code() -> str:
+    """Six-digit one-time code for email verification (enter-in-app)."""
+    return f"{secrets.randbelow(1_000_000):06d}"

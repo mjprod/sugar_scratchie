@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
+from collections import defaultdict
 from datetime import timedelta
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -18,6 +21,7 @@ from backend.auth.sessions import (
     issue_session,
     new_email_token,
     new_referral_code,
+    new_verify_code,
     optional_user,
     set_session_cookie,
 )
@@ -29,6 +33,13 @@ from backend.mail import send_reset_email, send_verify_email
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 AuthProvider = Literal["google", "apple", "email"]
+
+VERIFY_CODE_TTL = timedelta(minutes=15)
+VERIFY_CONFIRM_MAX_ATTEMPTS = 5
+VERIFY_CONFIRM_WINDOW_S = 15 * 60
+
+# user_id → monotonic timestamps of recent failed confirm attempts
+_verify_confirm_failures: dict[str, list[float]] = defaultdict(list)
 
 
 class RegisterRequest(BaseModel):
@@ -54,7 +65,10 @@ class EmailRequest(BaseModel):
 
 
 class ConfirmTokenRequest(BaseModel):
-    token: str
+    """Accepts `code` (preferred) or legacy `token`."""
+
+    code: str | None = None
+    token: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -69,6 +83,11 @@ class ChangePasswordRequest(BaseModel):
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _normalize_verify_secret(value: str) -> str:
+    """Keep only digits so pasted codes like '123 456' or '123-456' still match."""
+    return "".join(ch for ch in value.strip() if ch.isdigit())
 
 
 def public_user(user: User) -> dict:
@@ -121,6 +140,69 @@ def _issue(response: Response, db: Session, user: User, request: Request) -> dic
     return {"ok": True, "user": public_user(user)}
 
 
+def _invalidate_unused_verify_tokens(db: Session, user_id) -> None:
+    now = utcnow()
+    rows = (
+        db.query(EmailToken)
+        .filter(
+            EmailToken.user_id == user_id,
+            EmailToken.kind == "verify_email",
+            EmailToken.consumed_at.is_(None),
+        )
+        .all()
+    )
+    for row in rows:
+        row.consumed_at = now
+
+
+def _issue_verify_code(db: Session, user: User) -> str:
+    _invalidate_unused_verify_tokens(db, user.id)
+    code = new_verify_code()
+    db.add(
+        EmailToken(
+            user_id=user.id,
+            kind="verify_email",
+            token_hash=hash_token(code),
+            expires_at=utcnow() + VERIFY_CODE_TTL,
+        )
+    )
+    db.flush()
+    return code
+
+
+def _verify_confirm_key(user_id: UUID) -> str:
+    return str(user_id)
+
+
+def _prune_verify_failures(key: str, now: float) -> list[float]:
+    window_start = now - VERIFY_CONFIRM_WINDOW_S
+    kept = [t for t in _verify_confirm_failures[key] if t >= window_start]
+    if kept:
+        _verify_confirm_failures[key] = kept
+    else:
+        _verify_confirm_failures.pop(key, None)
+    return kept
+
+
+def _enforce_verify_confirm_rate_limit(user_id: UUID) -> None:
+    key = _verify_confirm_key(user_id)
+    recent = _prune_verify_failures(key, time.monotonic())
+    if len(recent) >= VERIFY_CONFIRM_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+
+def _record_verify_confirm_failure(user_id: UUID) -> None:
+    key = _verify_confirm_key(user_id)
+    now = time.monotonic()
+    recent = _prune_verify_failures(key, now)
+    recent.append(now)
+    _verify_confirm_failures[key] = recent
+
+
+def _clear_verify_confirm_failures(user_id: UUID) -> None:
+    _verify_confirm_failures.pop(_verify_confirm_key(user_id), None)
+
+
 @router.post("/register")
 def register(body: RegisterRequest, request: Request, response: Response, db: Annotated[Session, Depends(get_session)]):
     email = _normalize_email(body.email)
@@ -135,17 +217,8 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
         username=body.username,
         display_name=body.display_name,
     )
-    token = new_email_token()
-    db.add(
-        EmailToken(
-            user_id=user.id,
-            kind="verify_email",
-            token_hash=hash_token(token),
-            expires_at=utcnow() + timedelta(days=2),
-        )
-    )
-    db.flush()
-    send_verify_email(to=email, token=token)
+    code = _issue_verify_code(db, user)
+    send_verify_email(to=email, code=code)
     return _issue(response, db, user, request)
 
 
@@ -220,48 +293,76 @@ def oauth(
     return _issue(response, db, user, request)
 
 
+def _send_verify_for_user(db: Session, user: User) -> dict:
+    code = _issue_verify_code(db, user)
+    send_verify_email(to=user.email, code=code)
+    return {"ok": True}
+
+
 @router.post("/verify-email/request")
 def request_verify(
     body: EmailRequest,
     db: Annotated[Session, Depends(get_session)],
     user: Annotated[User, Depends(current_user)],
 ):
-    token = new_email_token()
-    db.add(
-        EmailToken(
-            user_id=user.id,
-            kind="verify_email",
-            token_hash=hash_token(token),
-            expires_at=utcnow() + timedelta(days=2),
-        )
-    )
-    db.flush()
-    send_verify_email(to=user.email, token=token)
-    return {"ok": True}
+    return _send_verify_for_user(db, user)
+
+
+@router.post("/verify-email/send")
+def send_verify(
+    db: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+):
+    """Alias of /verify-email/request — used by the player verify sheet."""
+    return _send_verify_for_user(db, user)
 
 
 @router.post("/verify-email/confirm")
-def confirm_verify(body: ConfirmTokenRequest, db: Annotated[Session, Depends(get_session)]):
+def confirm_verify(
+    body: ConfirmTokenRequest,
+    db: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+):
+    """Confirm email with a six-digit code or legacy token. Requires the account's session.
+
+    Codes are scoped to the logged-in user so an unauthenticated client cannot
+    brute-force the million-code space across accounts (and cannot learn another
+    user's profile on a lucky hit). Failed attempts are rate-limited per user.
+    Legacy tokens are opaque URL-safe secrets and must not be normalized.
+    """
+    _enforce_verify_confirm_rate_limit(user.id)
+    # `code` is a short numeric secret — normalize to digits only.
+    # `token` is a legacy opaque URL-safe secret that may contain '-'/'_'; do not normalize.
+    if body.code:
+        secret = _normalize_verify_secret(body.code)
+    elif body.token:
+        secret = body.token
+    else:
+        secret = ""
+    if not secret:
+        _record_verify_confirm_failure(user.id)
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+    now = utcnow()
+    # token_hash is not unique (6-digit codes collide; consumed leftovers retain
+    # the hash). Scope to this session user; use first() so duplicates never 500.
     row = (
         db.query(EmailToken)
-        .filter(EmailToken.token_hash == hash_token(body.token), EmailToken.kind == "verify_email")
-        .one_or_none()
+        .filter(
+            EmailToken.token_hash == hash_token(secret),
+            EmailToken.kind == "verify_email",
+            EmailToken.user_id == user.id,
+            EmailToken.consumed_at.is_(None),
+            EmailToken.expires_at >= now,
+        )
+        .order_by(EmailToken.created_at.desc())
+        .first()
     )
-    if row is None or row.consumed_at is not None or row.expires_at < utcnow():
-        # Prototype: any logged-in confirm without token is also accepted via empty token + session.
-        raise HTTPException(status_code=400, detail="Invalid or expired token.")
-    user = db.get(User, row.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token.")
-    row.consumed_at = utcnow()
-    user.email_verified_at = utcnow()
-    return {"ok": True, "user": public_user(user)}
-
-
-@router.post("/verify-email/mark")
-def mark_verified(user: Annotated[User, Depends(current_user)]):
-    """Prototype shortcut used by the existing verify modal."""
-    user.email_verified_at = utcnow()
+    if row is None:
+        _record_verify_confirm_failure(user.id)
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+    row.consumed_at = now
+    user.email_verified_at = now
+    _clear_verify_confirm_failures(user.id)
     return {"ok": True, "user": public_user(user)}
 
 

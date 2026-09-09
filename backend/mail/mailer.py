@@ -30,6 +30,12 @@ class ConsoleMailer:
         import re
 
         redacted = re.sub(r"(token=)[^&\s]+", r"\1<redacted>", text)
+        redacted = re.sub(
+            r"(verification code is:\s*)(\d{6})",
+            r"\1<redacted>",
+            redacted,
+            flags=re.IGNORECASE,
+        )
         logger.info("[mail] to=%s subject=%s\n%s", to, subject, redacted)
 
 

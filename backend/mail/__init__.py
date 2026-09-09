@@ -30,8 +30,8 @@ __all__ = [
 ]
 
 
-def send_verify_email(*, to: str, token: str, mailer: Mailer | None = None) -> None:
-    content = verify_email_content(app_url=app_public_url(), token=token)
+def send_verify_email(*, to: str, code: str, mailer: Mailer | None = None) -> None:
+    content = verify_email_content(code=code)
     try:
         (mailer or get_mailer()).send(
             to=to,
