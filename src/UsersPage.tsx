@@ -106,15 +106,17 @@ export function UsersPage() {
     );
   }, [refreshDetail, selectedId]);
 
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(action: () => Promise<void>): Promise<boolean> {
     setBusy(true);
     setError("");
     try {
       await action();
       await refreshList();
       if (selectedId) await refreshDetail(selectedId);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -187,16 +189,20 @@ export function UsersPage() {
         ? pendingWalletAdjustRef.current.idempotencyKey
         : crypto.randomUUID();
     pendingWalletAdjustRef.current = { requestSignature, idempotencyKey };
-    await runAction(async () => {
+    const ok = await runAction(async () => {
       await adjustUserWallet(selected.id, {
         currency,
         delta: amount,
         note: trimmedNote || undefined,
         idempotency_key: idempotencyKey,
       });
+    });
+    // Only drop the pending key after refresh succeeds. If refresh fails, the UI
+    // still shows the old balance; retry must reuse the same idempotency key.
+    if (ok) {
       pendingWalletAdjustRef.current = null;
       setNote("");
-    });
+    }
   }
 
   const pageStart = total === 0 ? 0 : offset + 1;
