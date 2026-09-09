@@ -24,7 +24,7 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   adjustUserWallet,
   deleteUserPermanently,
@@ -69,6 +69,10 @@ export function UsersPage() {
   const [currency, setCurrency] = useState<WalletCurrency>("diamonds");
   const [delta, setDelta] = useState("10");
   const [note, setNote] = useState("");
+  const pendingWalletAdjustRef = useRef<{
+    requestSignature: string;
+    idempotencyKey: string;
+  } | null>(null);
 
   const refreshList = useCallback(async () => {
     const data = await fetchUsers({
@@ -171,12 +175,26 @@ export function UsersPage() {
       setError("Wallet delta must be a non-zero integer.");
       return;
     }
+    const trimmedNote = note.trim();
+    const requestSignature = JSON.stringify({
+      userId: selected.id,
+      currency,
+      delta: amount,
+      note: trimmedNote,
+    });
+    const idempotencyKey =
+      pendingWalletAdjustRef.current?.requestSignature === requestSignature
+        ? pendingWalletAdjustRef.current.idempotencyKey
+        : crypto.randomUUID();
+    pendingWalletAdjustRef.current = { requestSignature, idempotencyKey };
     await runAction(async () => {
       await adjustUserWallet(selected.id, {
         currency,
         delta: amount,
-        note: note.trim() || undefined,
+        note: trimmedNote || undefined,
+        idempotency_key: idempotencyKey,
       });
+      pendingWalletAdjustRef.current = null;
       setNote("");
     });
   }

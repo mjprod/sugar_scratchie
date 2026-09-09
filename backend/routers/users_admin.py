@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -83,7 +82,7 @@ class WalletAdjustRequest(BaseModel):
     currency: Currency
     delta: int = Field(..., ne=0)
     note: str | None = Field(default=None, max_length=200)
-    idempotency_key: str | None = Field(default=None, max_length=120)
+    idempotency_key: str = Field(..., max_length=120)
 
 
 @router.get("")
@@ -220,7 +219,6 @@ def adjust_wallet(
     if user is None:
         raise HTTPException(status_code=404, detail="user-not-found")
 
-    idem = body.idempotency_key or f"admin-adjust:{user_id}:{body.currency}:{uuid.uuid4()}"
     try:
         wallet = apply_delta(
             db,
@@ -228,7 +226,7 @@ def adjust_wallet(
             currency=body.currency,
             delta=body.delta,
             reason="admin_adjust",
-            idempotency_key=idem,
+            idempotency_key=body.idempotency_key,
             ref_type="admin_note",
             ref_id=(body.note or "")[:120] or None,
         )
@@ -239,7 +237,7 @@ def adjust_wallet(
 
     return {
         "wallet": _wallet_public(wallet),
-        "idempotencyKey": idem,
+        "idempotencyKey": body.idempotency_key,
     }
 
 
