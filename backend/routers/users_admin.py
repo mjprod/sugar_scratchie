@@ -183,10 +183,19 @@ def patch_user(
                 .filter(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
                 .update({"revoked_at": utcnow()}, synchronize_session=False)
             )
-    if body.display_name is not None:
-        user.display_name = body.display_name.strip() or None
-    if body.username is not None:
-        next_username = body.username.strip() or None
+    set_fields = body.model_fields_set
+    if body.status is not None:
+        user.status = body.status
+        if body.status in ("banned", "deleted"):
+            (
+                db.query(AuthSession)
+                .filter(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+                .update({"revoked_at": utcnow()}, synchronize_session=False)
+            )
+    if "display_name" in set_fields:
+        user.display_name = (body.display_name or "").strip() or None
+    if "username" in set_fields:
+        next_username = (body.username or "").strip() or None
         if next_username:
             clash = (
                 db.query(User)
@@ -196,7 +205,6 @@ def patch_user(
             if clash is not None:
                 raise HTTPException(status_code=409, detail="username-taken")
         user.username = next_username
-
     user.updated_at = utcnow()
     db.flush()
     return {"user": _admin_user(user)}
