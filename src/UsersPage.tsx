@@ -80,6 +80,14 @@ export function UsersPage() {
   } | null>(null);
 
   function selectUser(user: AdminUser) {
+    // Same row again: selectedId won't change, so refreshDetail won't re-run.
+    // Don't wipe selected/transactions with incomplete list-row data.
+    if (selectedId === user.id) {
+      requestAnimationFrame(() => {
+        detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
     setSelectedId(user.id);
     // Show list-row data immediately so the panel is visible before detail fetch.
     setSelected(user);
