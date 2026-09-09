@@ -64,16 +64,32 @@ export function UsersPage() {
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<AdminUser | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [currency, setCurrency] = useState<WalletCurrency>("diamonds");
   const [delta, setDelta] = useState("10");
   const [note, setNote] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editUsername, setEditUsername] = useState("");
+  const detailRef = useRef<HTMLDivElement | null>(null);
   const pendingWalletAdjustRef = useRef<{
     requestSignature: string;
     idempotencyKey: string;
   } | null>(null);
+
+  function selectUser(user: AdminUser) {
+    setSelectedId(user.id);
+    // Show list-row data immediately so the panel is visible before detail fetch.
+    setSelected(user);
+    setEditDisplayName(user.displayName ?? "");
+    setEditUsername(user.username ?? "");
+    setTransactions([]);
+    requestAnimationFrame(() => {
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   const refreshList = useCallback(async () => {
     const data = await fetchUsers({
@@ -87,9 +103,16 @@ export function UsersPage() {
   }, [offset, query, statusFilter]);
 
   const refreshDetail = useCallback(async (userId: string) => {
-    const data = await fetchUser(userId);
-    setSelected(data.user);
-    setTransactions(data.transactions);
+    setDetailLoading(true);
+    try {
+      const data = await fetchUser(userId);
+      setSelected(data.user);
+      setEditDisplayName(data.user.displayName ?? "");
+      setEditUsername(data.user.username ?? "");
+      setTransactions(data.transactions);
+    } finally {
+      setDetailLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -100,6 +123,8 @@ export function UsersPage() {
     if (!selectedId) {
       setSelected(null);
       setTransactions([]);
+      setEditDisplayName("");
+      setEditUsername("");
       return;
     }
     refreshDetail(selectedId).catch((caught) =>
@@ -121,6 +146,16 @@ export function UsersPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleProfileSave() {
+    if (!selected) return;
+    await runAction(async () => {
+      await patchUser(selected.id, {
+        display_name: editDisplayName.trim() || null,
+        username: editUsername.trim() || null,
+      });
+    });
   }
 
   async function handleStatus(next: UserStatus) {
@@ -163,6 +198,8 @@ export function UsersPage() {
       setSelectedId(null);
       setSelected(null);
       setTransactions([]);
+      setEditDisplayName("");
+      setEditUsername("");
       await refreshList();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -277,6 +314,240 @@ export function UsersPage() {
             </Callout.Root>
           ) : null}
 
+          {selected ? (
+            <Card ref={detailRef}>
+              <Flex align="center" justify="between" gap="3" wrap="wrap" mb="4">
+                <Box>
+                  <Heading as="h2" size="4">
+                    {selected.displayName || selected.username || selected.email}
+                  </Heading>
+                  <Text color="gray" size="2">
+                    {selected.email} · id {selected.id}
+                    {detailLoading ? " · loading…" : ""}
+                  </Text>
+                </Box>
+                <Flex align="center" gap="2" wrap="wrap">
+                  <Badge color={statusColor(selected.status)} size="2" variant="soft">
+                    {selected.status}
+                  </Badge>
+                  <Button
+                    color="gray"
+                    variant="soft"
+                    size="1"
+                    onClick={() => {
+                      setSelectedId(null);
+                      setSelected(null);
+                      setTransactions([]);
+                      setEditDisplayName("");
+                      setEditUsername("");
+                    }}
+                  >
+                    Close
+                  </Button>
+                </Flex>
+              </Flex>
+
+              <Grid columns={{ initial: "1", sm: "2", md: "4" }} gap="3" mb="4">
+                <Box>
+                  <Text as="div" size="1" color="gray">
+                    Provider
+                  </Text>
+                  <Text size="2">{selected.provider}</Text>
+                </Box>
+                <Box>
+                  <Text as="div" size="1" color="gray">
+                    Created
+                  </Text>
+                  <Text size="2">{formatWhen(selected.createdAt)}</Text>
+                </Box>
+                <Box>
+                  <Text as="div" size="1" color="gray">
+                    Last seen
+                  </Text>
+                  <Text size="2">{formatWhen(selected.lastSeenAt)}</Text>
+                </Box>
+                <Box>
+                  <Text as="div" size="1" color="gray">
+                    Active sessions
+                  </Text>
+                  <Text size="2">{selected.activeSessions ?? "—"}</Text>
+                </Box>
+              </Grid>
+
+              <Heading as="h3" size="3" mb="2">
+                Profile
+              </Heading>
+              <Grid columns={{ initial: "1", sm: "3" }} gap="2" mb="3" align="end">
+                <label>
+                  <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                    Display name
+                  </Text>
+                  <TextField.Root
+                    disabled={busy}
+                    value={editDisplayName}
+                    onChange={(event) => setEditDisplayName(event.currentTarget.value)}
+                  />
+                </label>
+                <label>
+                  <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                    Username
+                  </Text>
+                  <TextField.Root
+                    disabled={busy}
+                    value={editUsername}
+                    onChange={(event) => setEditUsername(event.currentTarget.value)}
+                  />
+                </label>
+                <Button disabled={busy} onClick={() => handleProfileSave()}>
+                  Save profile
+                </Button>
+              </Grid>
+
+              <Flex gap="2" wrap="wrap" mb="4">
+                {selected.status !== "active" ? (
+                  <Button
+                    disabled={busy}
+                    variant="soft"
+                    color="green"
+                    onClick={() => handleStatus("active")}
+                  >
+                    <ShieldCheck {...iconProps} />
+                    Reactivate
+                  </Button>
+                ) : null}
+                {selected.status !== "banned" ? (
+                  <Button
+                    disabled={busy}
+                    variant="soft"
+                    color="red"
+                    onClick={() => handleStatus("banned")}
+                  >
+                    <Ban {...iconProps} />
+                    Ban
+                  </Button>
+                ) : null}
+                {selected.status !== "deleted" ? (
+                  <Button
+                    disabled={busy}
+                    variant="soft"
+                    color="gray"
+                    onClick={() => handleStatus("deleted")}
+                  >
+                    Soft delete
+                  </Button>
+                ) : null}
+                <Button
+                  disabled={busy}
+                  variant="soft"
+                  color="gray"
+                  onClick={() => handleRevokeSessions()}
+                >
+                  Revoke sessions
+                </Button>
+                <Button
+                  disabled={busy}
+                  color="red"
+                  onClick={() => handlePermanentDelete()}
+                >
+                  <Trash2 {...iconProps} />
+                  Delete permanently
+                </Button>
+              </Flex>
+
+              <Flex align="center" gap="2" mb="2">
+                <Wallet {...iconProps} />
+                <Heading as="h3" size="3">
+                  Wallet adjust
+                </Heading>
+              </Flex>
+              <Text as="p" size="2" color="gray" mb="3">
+                Current balance: {selected.wallet.diamonds} diamonds · {selected.wallet.coins}{" "}
+                coins
+              </Text>
+              <Grid columns={{ initial: "1", sm: "4" }} gap="2" mb="3" align="end">
+                <label>
+                  <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                    Currency
+                  </Text>
+                  <Select.Root
+                    value={currency}
+                    onValueChange={(value) => setCurrency(value as WalletCurrency)}
+                  >
+                    <Select.Trigger />
+                    <Select.Content>
+                      <Select.Item value="diamonds">Diamonds</Select.Item>
+                      <Select.Item value="coins">Coins</Select.Item>
+                    </Select.Content>
+                  </Select.Root>
+                </label>
+                <label>
+                  <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                    Delta
+                  </Text>
+                  <TextField.Root
+                    disabled={busy}
+                    type="number"
+                    value={delta}
+                    onChange={(event) => setDelta(event.currentTarget.value)}
+                  />
+                </label>
+                <label style={{ gridColumn: "span 2" }}>
+                  <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                    Note (optional)
+                  </Text>
+                  <TextField.Root
+                    disabled={busy}
+                    placeholder="support credit"
+                    value={note}
+                    onChange={(event) => setNote(event.currentTarget.value)}
+                  />
+                </label>
+              </Grid>
+              <Button disabled={busy} mb="4" onClick={() => handleWalletAdjust()}>
+                Apply adjustment
+              </Button>
+
+              <Heading as="h3" size="3" mb="2">
+                Recent transactions
+              </Heading>
+              {transactions.length === 0 ? (
+                <Text color="gray" size="2">
+                  {detailLoading ? "Loading…" : "No wallet transactions yet."}
+                </Text>
+              ) : (
+                <Box style={{ overflowX: "auto", maxHeight: 240 }}>
+                  <Table.Root size="1" variant="surface">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.ColumnHeaderCell>When</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Currency</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Delta</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Balance</Table.ColumnHeaderCell>
+                        <Table.ColumnHeaderCell>Reason</Table.ColumnHeaderCell>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {transactions.map((tx) => (
+                        <Table.Row key={tx.id}>
+                          <Table.Cell>{formatWhen(tx.createdAt)}</Table.Cell>
+                          <Table.Cell>{tx.currency}</Table.Cell>
+                          <Table.Cell>
+                            {tx.delta > 0 ? `+${tx.delta}` : tx.delta}
+                          </Table.Cell>
+                          <Table.Cell>{tx.balanceAfter}</Table.Cell>
+                          <Table.Cell>
+                            {tx.reason}
+                            {tx.refId ? ` · ${tx.refId}` : ""}
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table.Root>
+                </Box>
+              )}
+            </Card>
+          ) : null}
+
           <Card>
             <Flex align="center" gap="2" mb="3">
               <Users {...iconProps} />
@@ -339,7 +610,7 @@ export function UsersPage() {
               </Flex>
             </Grid>
 
-            <Box style={{ overflowX: "auto" }}>
+            <Box style={{ overflow: "auto", maxHeight: 360 }}>
               <Table.Root size="2" variant="surface">
                 <Table.Header>
                   <Table.Row>
@@ -368,14 +639,23 @@ export function UsersPage() {
                           background:
                             selectedId === user.id ? "var(--accent-a3)" : undefined,
                         }}
-                        onClick={() => setSelectedId(user.id)}
+                        onClick={() => selectUser(user)}
                       >
                         <Table.Cell>
                           <Button
                             type="button"
                             variant="ghost"
-                            style={{ display: "block", width: "100%", height: "auto", padding: 0, textAlign: "left" }}
-                            onClick={() => setSelectedId(user.id)}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              height: "auto",
+                              padding: 0,
+                              textAlign: "left",
+                            }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectUser(user);
+                            }}
                           >
                             <Flex direction="column" gap="1" align="start">
                               <Text size="2" weight="medium">
@@ -432,198 +712,6 @@ export function UsersPage() {
               </Button>
             </Flex>
           </Card>
-
-          {selected ? (
-            <Card>
-              <Flex align="center" justify="between" gap="3" wrap="wrap" mb="3">
-                <Box>
-                  <Heading as="h2" size="4">
-                    {selected.displayName || selected.username || selected.email}
-                  </Heading>
-                  <Text color="gray" size="2">
-                    {selected.email} · id {selected.id}
-                  </Text>
-                </Box>
-                <Badge color={statusColor(selected.status)} size="2" variant="soft">
-                  {selected.status}
-                </Badge>
-              </Flex>
-
-              <Grid columns={{ initial: "1", sm: "2", md: "4" }} gap="3" mb="4">
-                <Box>
-                  <Text as="div" size="1" color="gray">
-                    Provider
-                  </Text>
-                  <Text size="2">{selected.provider}</Text>
-                </Box>
-                <Box>
-                  <Text as="div" size="1" color="gray">
-                    Username
-                  </Text>
-                  <Text size="2">{selected.username || "—"}</Text>
-                </Box>
-                <Box>
-                  <Text as="div" size="1" color="gray">
-                    Created
-                  </Text>
-                  <Text size="2">{formatWhen(selected.createdAt)}</Text>
-                </Box>
-                <Box>
-                  <Text as="div" size="1" color="gray">
-                    Active sessions
-                  </Text>
-                  <Text size="2">{selected.activeSessions ?? "—"}</Text>
-                </Box>
-              </Grid>
-
-              <Flex gap="2" wrap="wrap" mb="4">
-                {selected.status !== "active" ? (
-                  <Button
-                    disabled={busy}
-                    variant="soft"
-                    color="green"
-                    onClick={() => handleStatus("active")}
-                  >
-                    <ShieldCheck {...iconProps} />
-                    Reactivate
-                  </Button>
-                ) : null}
-                {selected.status !== "banned" ? (
-                  <Button
-                    disabled={busy}
-                    variant="soft"
-                    color="red"
-                    onClick={() => handleStatus("banned")}
-                  >
-                    <Ban {...iconProps} />
-                    Ban
-                  </Button>
-                ) : null}
-                {selected.status !== "deleted" ? (
-                  <Button
-                    disabled={busy}
-                    variant="soft"
-                    color="gray"
-                    onClick={() => handleStatus("deleted")}
-                  >
-                    Soft delete
-                  </Button>
-                ) : null}
-                <Button
-                  disabled={busy}
-                  variant="soft"
-                  color="gray"
-                  onClick={() => handleRevokeSessions()}
-                >
-                  Revoke sessions
-                </Button>
-                <Button
-                  disabled={busy}
-                  color="red"
-                  onClick={() => handlePermanentDelete()}
-                >
-                  <Trash2 {...iconProps} />
-                  Delete permanently
-                </Button>
-              </Flex>
-
-              <Card variant="surface">
-                <Flex align="center" gap="2" mb="3">
-                  <Wallet {...iconProps} />
-                  <Heading as="h3" size="3">
-                    Wallet adjust
-                  </Heading>
-                </Flex>
-                <Text as="p" size="2" color="gray" mb="3">
-                  Current balance: {selected.wallet.diamonds} diamonds · {selected.wallet.coins}{" "}
-                  coins
-                </Text>
-                <Grid columns={{ initial: "1", sm: "4" }} gap="2" mb="3">
-                  <label>
-                    <Text as="div" mb="1" size="1" weight="medium" color="gray">
-                      Currency
-                    </Text>
-                    <Select.Root
-                      value={currency}
-                      onValueChange={(value) => setCurrency(value as WalletCurrency)}
-                    >
-                      <Select.Trigger />
-                      <Select.Content>
-                        <Select.Item value="diamonds">Diamonds</Select.Item>
-                        <Select.Item value="coins">Coins</Select.Item>
-                      </Select.Content>
-                    </Select.Root>
-                  </label>
-                  <label>
-                    <Text as="div" mb="1" size="1" weight="medium" color="gray">
-                      Delta
-                    </Text>
-                    <TextField.Root
-                      disabled={busy}
-                      type="number"
-                      value={delta}
-                      onChange={(event) => setDelta(event.currentTarget.value)}
-                    />
-                  </label>
-                  <label style={{ gridColumn: "span 2" }}>
-                    <Text as="div" mb="1" size="1" weight="medium" color="gray">
-                      Note (optional)
-                    </Text>
-                    <TextField.Root
-                      disabled={busy}
-                      placeholder="support credit"
-                      value={note}
-                      onChange={(event) => setNote(event.currentTarget.value)}
-                    />
-                  </label>
-                </Grid>
-                <Button disabled={busy} onClick={() => handleWalletAdjust()}>
-                  Apply adjustment
-                </Button>
-              </Card>
-
-              <Box mt="4">
-                <Heading as="h3" size="3" mb="2">
-                  Recent transactions
-                </Heading>
-                {transactions.length === 0 ? (
-                  <Text color="gray" size="2">
-                    No wallet transactions yet.
-                  </Text>
-                ) : (
-                  <Box style={{ overflowX: "auto" }}>
-                    <Table.Root size="1" variant="surface">
-                      <Table.Header>
-                        <Table.Row>
-                          <Table.ColumnHeaderCell>When</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Currency</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Delta</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Balance</Table.ColumnHeaderCell>
-                          <Table.ColumnHeaderCell>Reason</Table.ColumnHeaderCell>
-                        </Table.Row>
-                      </Table.Header>
-                      <Table.Body>
-                        {transactions.map((tx) => (
-                          <Table.Row key={tx.id}>
-                            <Table.Cell>{formatWhen(tx.createdAt)}</Table.Cell>
-                            <Table.Cell>{tx.currency}</Table.Cell>
-                            <Table.Cell>
-                              {tx.delta > 0 ? `+${tx.delta}` : tx.delta}
-                            </Table.Cell>
-                            <Table.Cell>{tx.balanceAfter}</Table.Cell>
-                            <Table.Cell>
-                              {tx.reason}
-                              {tx.refId ? ` · ${tx.refId}` : ""}
-                            </Table.Cell>
-                          </Table.Row>
-                        ))}
-                      </Table.Body>
-                    </Table.Root>
-                  </Box>
-                )}
-              </Box>
-            </Card>
-          ) : null}
         </Flex>
       </Container>
     </main>
