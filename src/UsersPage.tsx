@@ -135,6 +135,10 @@ export function UsersPage() {
         setEditDisplayName(data.user.displayName ?? "");
         setEditUsername(data.user.username ?? "");
       }
+    } catch (caught) {
+      // Same seq gate for rejections — don't surface a banner for an abandoned fetch.
+      if (seq !== detailSeqRef.current) return;
+      throw caught;
     } finally {
       if (seq === detailSeqRef.current) setDetailLoading(false);
     }
