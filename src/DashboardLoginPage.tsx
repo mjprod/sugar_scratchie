@@ -15,11 +15,20 @@ import { fetchOperatorSession, operatorLogin, operatorLogout } from "./shared/ap
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 
+/** Same-origin operator routes OperatorGate may stash in `?next=` (incl. short aliases). */
+const OPERATOR_NEXT_ROOTS = ["/dashboard", "/symbols", "/picture-flow", "/video-flow"] as const;
+
 function nextPath(): string {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get("next") || "/dashboard";
+  // Block protocol-relative / absolute open redirects; keep path+query for aliases.
   if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
-  if (!raw.startsWith("/dashboard")) return "/dashboard";
+  const pathOnly = (raw.split("?")[0] ?? raw).replace(/\/+$/, "") || "/";
+  if (pathOnly === "/dashboard/login") return "/dashboard";
+  const allowed = OPERATOR_NEXT_ROOTS.some(
+    (root) => pathOnly === root || pathOnly.startsWith(`${root}/`),
+  );
+  if (!allowed) return "/dashboard";
   return raw;
 }
 
