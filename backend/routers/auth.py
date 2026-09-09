@@ -330,11 +330,17 @@ def confirm_verify(
     user's profile on a lucky hit). Failed attempts are rate-limited per user.
     """
     _enforce_verify_confirm_rate_limit(user.id)
-    secret = _normalize_verify_secret(body.code or body.token or "")
+    # Prefer digit-normalized `code`; fall back to opaque legacy `token` as-is.
+    if body.code is not None and body.code.strip() != "":
+        secret = _normalize_verify_secret(body.code)
+    else:
+        secret = (body.token or "").strip()
     if not secret:
         _record_verify_confirm_failure(user.id)
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
     now = utcnow()
+    # token_hash is not unique (6-digit codes collide; consumed leftovers retain
+    # the hash). Scope to this session user and never use one_or_none().
     row = (
         db.query(EmailToken)
         .filter(
@@ -344,7 +350,8 @@ def confirm_verify(
             EmailToken.consumed_at.is_(None),
             EmailToken.expires_at >= now,
         )
-        .one_or_none()
+        .order_by(EmailToken.created_at.desc())
+        .first()
     )
     if row is None:
         _record_verify_confirm_failure(user.id)
