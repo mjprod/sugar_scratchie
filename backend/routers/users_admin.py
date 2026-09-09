@@ -174,14 +174,6 @@ def patch_user(
     if user is None:
         raise HTTPException(status_code=404, detail="user-not-found")
 
-    if body.status is not None:
-        user.status = body.status
-        if body.status in ("banned", "deleted"):
-            (
-                db.query(AuthSession)
-                .filter(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
-                .update({"revoked_at": utcnow()}, synchronize_session=False)
-            )
     set_fields = body.model_fields_set
     if body.status is not None:
         user.status = body.status
