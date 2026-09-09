@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
+from collections import defaultdict
 from datetime import timedelta
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -32,6 +35,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 AuthProvider = Literal["google", "apple", "email"]
 
 VERIFY_CODE_TTL = timedelta(minutes=15)
+VERIFY_CONFIRM_MAX_ATTEMPTS = 5
+VERIFY_CONFIRM_WINDOW_S = 15 * 60
+
+# user_id → monotonic timestamps of recent failed confirm attempts
+_verify_confirm_failures: dict[str, list[float]] = defaultdict(list)
 
 
 class RegisterRequest(BaseModel):
@@ -162,6 +170,39 @@ def _issue_verify_code(db: Session, user: User) -> str:
     return code
 
 
+def _verify_confirm_key(user_id: UUID) -> str:
+    return str(user_id)
+
+
+def _prune_verify_failures(key: str, now: float) -> list[float]:
+    window_start = now - VERIFY_CONFIRM_WINDOW_S
+    kept = [t for t in _verify_confirm_failures[key] if t >= window_start]
+    if kept:
+        _verify_confirm_failures[key] = kept
+    else:
+        _verify_confirm_failures.pop(key, None)
+    return kept
+
+
+def _enforce_verify_confirm_rate_limit(user_id: UUID) -> None:
+    key = _verify_confirm_key(user_id)
+    recent = _prune_verify_failures(key, time.monotonic())
+    if len(recent) >= VERIFY_CONFIRM_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+
+def _record_verify_confirm_failure(user_id: UUID) -> None:
+    key = _verify_confirm_key(user_id)
+    now = time.monotonic()
+    recent = _prune_verify_failures(key, now)
+    recent.append(now)
+    _verify_confirm_failures[key] = recent
+
+
+def _clear_verify_confirm_failures(user_id: UUID) -> None:
+    _verify_confirm_failures.pop(_verify_confirm_key(user_id), None)
+
+
 @router.post("/register")
 def register(body: RegisterRequest, request: Request, response: Response, db: Annotated[Session, Depends(get_session)]):
     email = _normalize_email(body.email)
@@ -280,48 +321,45 @@ def send_verify(
 def confirm_verify(
     body: ConfirmTokenRequest,
     db: Annotated[Session, Depends(get_session)],
-    caller: Annotated[User | None, Depends(optional_user)] = None,
+    user: Annotated[User, Depends(current_user)],
 ):
+    """Confirm email with a six-digit code or legacy token. Requires the account's session.
+
+    Codes are scoped to the logged-in user so an unauthenticated client cannot
+    brute-force the million-code space across accounts (and cannot learn another
+    user's profile on a lucky hit). Failed attempts are rate-limited per user.
+    Legacy tokens are opaque URL-safe secrets and must not be normalized.
+    """
+    _enforce_verify_confirm_rate_limit(user.id)
+    # `code` is a short numeric secret — normalize to digits only.
+    # `token` is a legacy opaque URL-safe secret that may contain '-'/'_'; do not normalize.
     if body.code:
-        # `code` is a short numeric secret — require an authenticated session so the
-        # lookup can be scoped to the calling user, preventing cross-user hash collisions.
-        if caller is None:
-            raise HTTPException(status_code=401, detail="session-expired")
         secret = _normalize_verify_secret(body.code)
-        if not secret:
-            raise HTTPException(status_code=400, detail="Invalid or expired code.")
-        row = (
-            db.query(EmailToken)
-            .filter(
-                EmailToken.user_id == caller.id,
-                EmailToken.token_hash == hash_token(secret),
-                EmailToken.kind == "verify_email",
-                EmailToken.consumed_at.is_(None),
-            )
-            .one_or_none()
-        )
     elif body.token:
-        # Legacy `token` is an opaque URL-safe secret — do not normalize it (it may
-        # contain '-'/'_') and scope only by hash + kind.
-        raw = body.token
-        row = (
-            db.query(EmailToken)
-            .filter(
-                EmailToken.token_hash == hash_token(raw),
-                EmailToken.kind == "verify_email",
-                EmailToken.consumed_at.is_(None),
-            )
-            .one_or_none()
-        )
+        secret = body.token
     else:
+        secret = ""
+    if not secret:
+        _record_verify_confirm_failure(user.id)
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
-    if row is None or row.expires_at < utcnow():
+    now = utcnow()
+    row = (
+        db.query(EmailToken)
+        .filter(
+            EmailToken.token_hash == hash_token(secret),
+            EmailToken.kind == "verify_email",
+            EmailToken.user_id == user.id,
+            EmailToken.consumed_at.is_(None),
+            EmailToken.expires_at >= now,
+        )
+        .one_or_none()
+    )
+    if row is None:
+        _record_verify_confirm_failure(user.id)
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
-    user = db.get(User, row.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired code.")
-    row.consumed_at = utcnow()
-    user.email_verified_at = utcnow()
+    row.consumed_at = now
+    user.email_verified_at = now
+    _clear_verify_confirm_failures(user.id)
     return {"ok": True, "user": public_user(user)}
 
 
