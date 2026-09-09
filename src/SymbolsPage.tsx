@@ -320,6 +320,9 @@ export function SymbolsPage() {
                 Refresh
               </Button>
               <Button asChild variant="soft">
+                <a href="/dashboard/users">Users</a>
+              </Button>
+              <Button asChild variant="soft">
                 <a href="/dashboard/models">Models</a>
               </Button>
               <Button asChild variant="soft">

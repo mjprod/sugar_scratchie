@@ -41,6 +41,9 @@ def needs_operator(scope: Scope) -> bool:
         return False
     if path.startswith("/api/jobs"):
         return True
+    # Player PII — require operator token for every method, including GET.
+    if path == "/api/users" or path.startswith("/api/users/"):
+        return True
     if method in ("GET", "HEAD"):
         return False
     return True

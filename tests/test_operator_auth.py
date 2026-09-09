@@ -25,6 +25,9 @@ def _scope(method: str, path: str) -> dict:
         ("DELETE", "/api/cards/foo", True),
         ("GET", "/api/jobs", True),
         ("POST", "/api/jobs/generate-mesh", True),
+        ("GET", "/api/users", True),
+        ("GET", "/api/users/abc", True),
+        ("PATCH", "/api/users/abc", True),
         ("OPTIONS", "/api/cards", False),
     ],
 )

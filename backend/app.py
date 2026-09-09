@@ -31,6 +31,7 @@ from backend.routers import me as me_router
 from backend.routers import packs as packs_router
 from backend.routers import rewards as rewards_router
 from backend.routers import store as store_router
+from backend.routers import users_admin as users_admin_router
 from backend.routers import wallet as wallet_router
 
 from backend.cards_store import (
@@ -482,6 +483,7 @@ app.include_router(packs_router.router)
 app.include_router(collection_router.router)
 app.include_router(rewards_router.router)
 app.include_router(inbox_router.router)
+app.include_router(users_admin_router.router)
 
 
 @app.on_event("startup")
