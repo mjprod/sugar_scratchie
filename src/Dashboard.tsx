@@ -12,6 +12,7 @@ import {
   Square,
   Trash2,
   UserRound,
+  Users,
   Video,
   WandSparkles,
   Workflow,
@@ -1102,6 +1103,12 @@ export function Dashboard() {
                 >
                   <LoaderCircle {...iconProps} />
                   Refresh
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/dashboard/users">
+                    <Users {...iconProps} />
+                    Users
+                  </a>
                 </Button>
                 <Button asChild variant="soft">
                   <a href="/dashboard/models">
