@@ -21,8 +21,8 @@ function withDashboardHeaders(init?: RequestInit): Headers {
 
 export async function operatorFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(path, {
-    credentials: "include",
     ...init,
+    credentials: "include",
     headers: dashboardAuthHeaders(init?.headers),
   });
 }
@@ -33,8 +33,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
   const response = await fetch(path, {
-    credentials: "include",
     ...init,
+    credentials: "include",
     headers,
   });
   if (!response.ok) {
