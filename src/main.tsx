@@ -47,11 +47,11 @@ function normalizePath(pathname: string): string {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
-function withOperatorGate<P>(Page: React.ComponentType<P>): React.ComponentType<P> {
-  function GatedPage(props: P) {
+function withOperatorGate(Page: React.ComponentType): React.ComponentType {
+  function GatedPage() {
     return (
       <OperatorGate>
-        <Page {...props} />
+        <Page />
       </OperatorGate>
     );
   }
