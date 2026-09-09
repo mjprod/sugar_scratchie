@@ -74,6 +74,7 @@ export function UsersPage() {
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editUsername, setEditUsername] = useState("");
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const detailSeqRef = useRef(0);
   const pendingWalletAdjustRef = useRef<{
     requestSignature: string;
     idempotencyKey: string;
@@ -111,15 +112,17 @@ export function UsersPage() {
   }, [offset, query, statusFilter]);
 
   const refreshDetail = useCallback(async (userId: string) => {
+    const seq = ++detailSeqRef.current;
     setDetailLoading(true);
     try {
       const data = await fetchUser(userId);
+      if (seq !== detailSeqRef.current) return;
       setSelected(data.user);
       setEditDisplayName(data.user.displayName ?? "");
       setEditUsername(data.user.username ?? "");
       setTransactions(data.transactions);
     } finally {
-      setDetailLoading(false);
+      if (seq === detailSeqRef.current) setDetailLoading(false);
     }
   }, []);
 
@@ -129,6 +132,7 @@ export function UsersPage() {
 
   useEffect(() => {
     if (!selectedId) {
+      detailSeqRef.current++;
       setSelected(null);
       setTransactions([]);
       setEditDisplayName("");
