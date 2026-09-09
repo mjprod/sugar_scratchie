@@ -37,6 +37,7 @@ import {
   type WalletCurrency,
   type WalletTransaction,
 } from "./shared/users";
+import { operatorLogout } from "./shared/api";
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 const PAGE_SIZE = 50;
@@ -246,6 +247,17 @@ export function UsersPage() {
                   <ExternalLink {...iconProps} />
                   Dashboard
                 </a>
+              </Button>
+              <Button
+                color="gray"
+                variant="outline"
+                onClick={() => {
+                  void operatorLogout().finally(() => {
+                    window.location.assign("/dashboard/login");
+                  });
+                }}
+              >
+                Sign out
               </Button>
               <Button asChild>
                 <a href="/">

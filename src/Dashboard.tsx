@@ -16,6 +16,7 @@ import {
   Video,
   WandSparkles,
   Workflow,
+  LogOut,
 } from "lucide-react";
 import {
   Badge,
@@ -40,6 +41,7 @@ import {
 } from "@radix-ui/themes";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { api, operatorLogout, uploadFile, type UploadedFileInfo } from "./shared/api";
 import { MaskEditor } from "./videoFlow/MaskEditor";
 
 type CardInfo = {
@@ -81,11 +83,6 @@ type AssetsResponse = {
   meshes: MeshInfo[];
 };
 
-type UploadedFileInfo = {
-  path: string;
-  size_bytes: number;
-};
-
 type HealthResponse = {
   ok: boolean;
   root: string;
@@ -119,43 +116,6 @@ const iconProps = {
   size: 16,
   strokeWidth: 2.25,
 };
-
-const DASHBOARD_TOKEN =
-  (import.meta.env.VITE_DASHBOARD_TOKEN as string | undefined)?.trim() ||
-  "dev-dashboard";
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Dashboard-Token": DASHBOARD_TOKEN,
-      ...init?.headers,
-    },
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
-  }
-  return response.json() as Promise<T>;
-}
-
-async function uploadFile(file: File): Promise<UploadedFileInfo> {
-  const response = await fetch("/api/files/upload", {
-    method: "POST",
-    body: file,
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-      "X-File-Name": encodeURIComponent(file.name),
-      "X-Dashboard-Token": DASHBOARD_TOKEN,
-    },
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
-  }
-  return response.json() as Promise<UploadedFileInfo>;
-}
 
 function formatBytes(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
@@ -1139,6 +1099,18 @@ export function Dashboard() {
                     <ExternalLink {...iconProps} />
                     Open prototype
                   </a>
+                </Button>
+                <Button
+                  color="gray"
+                  variant="outline"
+                  onClick={() => {
+                    void operatorLogout().finally(() => {
+                      window.location.assign("/dashboard/login");
+                    });
+                  }}
+                >
+                  <LogOut {...iconProps} />
+                  Sign out
                 </Button>
               </Flex>
             </Flex>

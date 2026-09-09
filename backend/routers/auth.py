@@ -11,6 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from backend.auth.operator import (
+    clear_operator_cookie,
+    operator_secret_ok,
+    provided_operator_secret,
+    set_operator_cookie,
+)
 from backend.auth.passwords import hash_password, verify_password
 from backend.auth.sessions import (
     COOKIE_NAME,
@@ -40,6 +46,11 @@ VERIFY_CONFIRM_WINDOW_S = 15 * 60
 
 # user_id → monotonic timestamps of recent failed confirm attempts
 _verify_confirm_failures: dict[str, list[float]] = defaultdict(list)
+
+OPERATOR_LOGIN_MAX_ATTEMPTS = 8
+OPERATOR_LOGIN_WINDOW_S = 15 * 60
+# client key → monotonic timestamps of recent failed operator logins
+_operator_login_failures: dict[str, list[float]] = defaultdict(list)
 
 
 class RegisterRequest(BaseModel):
@@ -79,6 +90,10 @@ class ResetPasswordRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=200)
+
+
+class OperatorLoginRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=500)
 
 
 def _normalize_email(email: str) -> str:
@@ -411,4 +426,49 @@ def change_password(
     if not user.password_hash or not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="incorrect_current")
     user.password_hash = hash_password(body.new_password)
+    return {"ok": True}
+
+
+def _operator_login_key(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _prune_operator_failures(key: str, now: float) -> list[float]:
+    window_start = now - OPERATOR_LOGIN_WINDOW_S
+    kept = [t for t in _operator_login_failures[key] if t >= window_start]
+    _operator_login_failures[key] = kept
+    return kept
+
+
+@router.get("/operator/session")
+def operator_session(request: Request) -> dict:
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    if not operator_secret_ok(provided_operator_secret(headers)):
+        raise HTTPException(status_code=401, detail="operator-unauthorized")
+    return {"ok": True}
+
+
+@router.post("/operator/login")
+def operator_login(body: OperatorLoginRequest, request: Request, response: Response) -> dict:
+    key = _operator_login_key(request)
+    now = time.monotonic()
+    failures = _prune_operator_failures(key, now)
+    if len(failures) >= OPERATOR_LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="too_many_attempts")
+
+    token = body.token.strip()
+    if not operator_secret_ok(token):
+        _operator_login_failures[key].append(now)
+        raise HTTPException(status_code=401, detail="invalid_token")
+
+    _operator_login_failures.pop(key, None)
+    set_operator_cookie(response, token)
+    return {"ok": True}
+
+
+@router.post("/operator/logout")
+def operator_logout(response: Response) -> dict:
+    clear_operator_cookie(response)
     return {"ok": True}
