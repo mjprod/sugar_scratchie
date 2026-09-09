@@ -203,7 +203,7 @@ def test_verify_email_confirm_rate_limits_failures(client, recording_mailer):
 
 
 def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer, monkeypatch):
-    """Same 6-digit code on another user must not break the logged-in user's confirm."""
+    """Duplicate token_hash rows must not raise MultipleResultsFound on confirm."""
     from datetime import timedelta
 
     from sqlalchemy.orm import Session
@@ -215,6 +215,7 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
     shared_code = "424242"
     email_a, user_a = register_and_login(client)
+    code_hash = hash_token(shared_code)
 
     with Session(get_engine()) as db:
         a = db.query(User).filter(User.email == email_a).one()
@@ -227,8 +228,19 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
             )
             .all()
         ):
-            row.token_hash = hash_token(shared_code)
+            row.token_hash = code_hash
             row.expires_at = utcnow() + timedelta(minutes=15)
+        # Second live row for the same user with the same hash (resend race /
+        # leftover) — one_or_none() would raise MultipleResultsFound.
+        db.add(
+            EmailToken(
+                user_id=a.id,
+                kind="verify_email",
+                token_hash=code_hash,
+                expires_at=utcnow() + timedelta(minutes=15),
+            )
+        )
+        # Consumed leftover + another user's live token, same hash.
         other = User(
             email=f"collision-{uuid.uuid4().hex[:10]}@example.com",
             auth_provider="email",
@@ -241,7 +253,16 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
             EmailToken(
                 user_id=other.id,
                 kind="verify_email",
-                token_hash=hash_token(shared_code),
+                token_hash=code_hash,
+                expires_at=utcnow() + timedelta(minutes=15),
+                consumed_at=utcnow(),
+            )
+        )
+        db.add(
+            EmailToken(
+                user_id=other.id,
+                kind="verify_email",
+                token_hash=code_hash,
                 expires_at=utcnow() + timedelta(minutes=15),
             )
         )

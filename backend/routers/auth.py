@@ -323,18 +323,30 @@ def confirm_verify(
     db: Annotated[Session, Depends(get_session)],
     user: Annotated[User, Depends(current_user)],
 ):
-    """Confirm email with a six-digit code. Requires the account's session.
+    """Confirm email with a six-digit code or legacy token. Requires the account's session.
 
     Codes are scoped to the logged-in user so an unauthenticated client cannot
     brute-force the million-code space across accounts (and cannot learn another
     user's profile on a lucky hit). Failed attempts are rate-limited per user.
+    Legacy tokens are opaque URL-safe secrets and must not be normalized.
     """
     _enforce_verify_confirm_rate_limit(user.id)
+<<<<<<< HEAD
     # Prefer digit-normalized `code`; fall back to opaque legacy `token` as-is.
     if body.code is not None and body.code.strip() != "":
         secret = _normalize_verify_secret(body.code)
     else:
         secret = (body.token or "").strip()
+=======
+    # `code` is a short numeric secret — normalize to digits only.
+    # `token` is a legacy opaque URL-safe secret that may contain '-'/'_'; do not normalize.
+    if body.code:
+        secret = _normalize_verify_secret(body.code)
+    elif body.token:
+        secret = body.token
+    else:
+        secret = ""
+>>>>>>> 2439dc98c4f6010e9d3dbf32af4ac7fc3abe04b7
     if not secret:
         _record_verify_confirm_failure(user.id)
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
