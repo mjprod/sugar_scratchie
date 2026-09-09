@@ -3,8 +3,10 @@ import { createRoot } from "react-dom/client";
 import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
 import { Dashboard } from "./Dashboard";
+import { DashboardLoginPage } from "./DashboardLoginPage";
 import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
+import { OperatorGate } from "./OperatorGate";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
 import { ThemesPage } from "./ThemesPage";
@@ -45,17 +47,40 @@ function normalizePath(pathname: string): string {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
+function withOperatorGate(Page: React.ComponentType): React.ComponentType {
+  function GatedPage() {
+    return (
+      <OperatorGate>
+        <Page />
+      </OperatorGate>
+    );
+  }
+  GatedPage.displayName = `OperatorGate(${Page.displayName || Page.name || "Page"})`;
+  return GatedPage;
+}
+
+const GatedDashboard = withOperatorGate(Dashboard);
+const GatedModelsPage = withOperatorGate(ModelsPage);
+const GatedThemesPage = withOperatorGate(ThemesPage);
+const GatedUsersPage = withOperatorGate(UsersPage);
+const GatedSymbolsPage = withOperatorGate(SymbolsPage);
+const GatedPictureFlowPage = withOperatorGate(PictureFlowPage);
+const GatedVideoFlowDesignerPage = withOperatorGate(VideoFlowDesignerPage);
+const GatedVideoFlowRunPage = withOperatorGate(VideoFlowRunPage);
+const GatedVideoFlowHubPage = withOperatorGate(VideoFlowHubPage);
+
 function pickApp(pathname: string) {
   const path = normalizePath(pathname);
-  if (path === "/dashboard/video-flow/designer") return VideoFlowDesignerPage;
-  if (path === "/dashboard/video-flow/run") return VideoFlowRunPage;
-  if (path === "/dashboard/picture-flow" || path === "/picture-flow") return PictureFlowPage;
-  if (path === "/dashboard/models") return ModelsPage;
-  if (path === "/dashboard/themes") return ThemesPage;
-  if (path === "/dashboard/users") return UsersPage;
-  if (path === "/symbols" || path === "/dashboard/symbols") return SymbolsPage;
-  if (path === "/dashboard/video-flow" || path === "/video-flow") return VideoFlowHubPage;
-  if (path === "/dashboard") return Dashboard;
+  if (path === "/dashboard/login") return DashboardLoginPage;
+  if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
+  if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
+  if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
+  if (path === "/dashboard/models") return GatedModelsPage;
+  if (path === "/dashboard/themes") return GatedThemesPage;
+  if (path === "/dashboard/users") return GatedUsersPage;
+  if (path === "/symbols" || path === "/dashboard/symbols") return GatedSymbolsPage;
+  if (path === "/dashboard/video-flow" || path === "/video-flow") return GatedVideoFlowHubPage;
+  if (path === "/dashboard") return GatedDashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;
