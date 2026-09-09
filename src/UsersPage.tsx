@@ -523,7 +523,7 @@ export function UsersPage() {
                   {detailLoading ? "Loading…" : "No wallet transactions yet."}
                 </Text>
               ) : (
-                <Box style={{ overflowX: "auto", maxHeight: 240 }}>
+                <Box style={{ overflow: "auto", maxHeight: 240 }}>
                   <Table.Root size="1" variant="surface">
                     <Table.Header>
                       <Table.Row>
