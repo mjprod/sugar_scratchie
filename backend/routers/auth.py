@@ -277,16 +277,45 @@ def send_verify(
 
 
 @router.post("/verify-email/confirm")
-def confirm_verify(body: ConfirmTokenRequest, db: Annotated[Session, Depends(get_session)]):
-    secret = _normalize_verify_secret(body.code or body.token or "")
-    if not secret:
+def confirm_verify(
+    body: ConfirmTokenRequest,
+    db: Annotated[Session, Depends(get_session)],
+    caller: Annotated[User | None, Depends(optional_user)] = None,
+):
+    if body.code:
+        # `code` is a short numeric secret — require an authenticated session so the
+        # lookup can be scoped to the calling user, preventing cross-user hash collisions.
+        if caller is None:
+            raise HTTPException(status_code=401, detail="session-expired")
+        secret = _normalize_verify_secret(body.code)
+        if not secret:
+            raise HTTPException(status_code=400, detail="Invalid or expired code.")
+        row = (
+            db.query(EmailToken)
+            .filter(
+                EmailToken.user_id == caller.id,
+                EmailToken.token_hash == hash_token(secret),
+                EmailToken.kind == "verify_email",
+                EmailToken.consumed_at.is_(None),
+            )
+            .one_or_none()
+        )
+    elif body.token:
+        # Legacy `token` is an opaque URL-safe secret — do not normalize it (it may
+        # contain '-'/'_') and scope only by hash + kind.
+        raw = body.token
+        row = (
+            db.query(EmailToken)
+            .filter(
+                EmailToken.token_hash == hash_token(raw),
+                EmailToken.kind == "verify_email",
+                EmailToken.consumed_at.is_(None),
+            )
+            .one_or_none()
+        )
+    else:
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
-    row = (
-        db.query(EmailToken)
-        .filter(EmailToken.token_hash == hash_token(secret), EmailToken.kind == "verify_email")
-        .one_or_none()
-    )
-    if row is None or row.consumed_at is not None or row.expires_at < utcnow():
+    if row is None or row.expires_at < utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
     user = db.get(User, row.user_id)
     if user is None:
