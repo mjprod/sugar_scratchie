@@ -252,7 +252,7 @@ export function UsersPage() {
                 color="gray"
                 variant="outline"
                 onClick={() => {
-                  void operatorLogout().then(() => {
+                  void operatorLogout().finally(() => {
                     window.location.assign("/dashboard/login");
                   });
                 }}
