@@ -83,7 +83,7 @@ export async function patchUser(
 
 export async function adjustUserWallet(
   userId: string,
-  payload: { currency: WalletCurrency; delta: number; note?: string },
+  payload: { currency: WalletCurrency; delta: number; note?: string; idempotency_key?: string },
 ): Promise<{ wallet: AdminUserWallet; idempotencyKey: string }> {
   return api(`/api/users/${encodeURIComponent(userId)}/wallet/adjust`, {
     method: "POST",
