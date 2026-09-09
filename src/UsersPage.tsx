@@ -335,15 +335,22 @@ export function UsersPage() {
                         onClick={() => setSelectedId(user.id)}
                       >
                         <Table.Cell>
-                          <Flex direction="column" gap="1">
-                            <Text size="2" weight="medium">
-                              {user.email}
-                            </Text>
-                            <Text size="1" color="gray">
-                              {user.provider}
-                              {user.emailVerified ? " · verified" : " · unverified"}
-                            </Text>
-                          </Flex>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            style={{ display: "block", width: "100%", height: "auto", padding: 0, textAlign: "left" }}
+                            onClick={() => setSelectedId(user.id)}
+                          >
+                            <Flex direction="column" gap="1" align="start">
+                              <Text size="2" weight="medium">
+                                {user.email}
+                              </Text>
+                              <Text size="1" color="gray">
+                                {user.provider}
+                                {user.emailVerified ? " · verified" : " · unverified"}
+                              </Text>
+                            </Flex>
+                          </Button>
                         </Table.Cell>
                         <Table.Cell>
                           <Text size="2">
