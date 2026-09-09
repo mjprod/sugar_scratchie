@@ -78,8 +78,8 @@ def _normalize_email(email: str) -> str:
 
 
 def _normalize_verify_secret(value: str) -> str:
-    """Strip spaces/dashes so pasted codes like '123 456' still match."""
-    return "".join(ch for ch in value.strip() if ch.isalnum())
+    """Keep only digits so pasted codes like '123 456' or '123-456' still match."""
+    return "".join(ch for ch in value.strip() if ch.isdigit())
 
 
 def public_user(user: User) -> dict:
