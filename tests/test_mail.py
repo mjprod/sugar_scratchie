@@ -165,6 +165,36 @@ def test_verify_email_confirm_rejects_bad_code(client, recording_mailer):
     assert response.status_code == 400
 
 
+def test_verify_email_confirm_accepts_legacy_token(client, recording_mailer, monkeypatch):
+    from datetime import timedelta
+
+    from sqlalchemy.orm import Session
+
+    from backend.auth.sessions import hash_token
+    from backend.db.engine import get_engine
+    from backend.db.models import EmailToken, User, utcnow
+
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    email, _user = register_and_login(client)
+    legacy_token = "tok-legacy_-123"
+
+    with Session(bind=get_engine()) as db:
+        user = db.query(User).filter(User.email == email).one()
+        db.add(
+            EmailToken(
+                user_id=user.id,
+                kind="verify_email",
+                token_hash=hash_token(legacy_token),
+                expires_at=utcnow() + timedelta(hours=1),
+            )
+        )
+        db.commit()
+
+    confirm = client.post("/api/auth/verify-email/confirm", json={"token": legacy_token})
+    assert confirm.status_code == 200, confirm.text
+    assert confirm.json()["user"]["emailVerified"] is True
+
+
 def test_send_helpers_swallow_delivery_errors(failing_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
     send_verify_email(to="player@example.com", code="111111")
