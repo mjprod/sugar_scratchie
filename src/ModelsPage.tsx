@@ -66,6 +66,7 @@ import {
   uploadModelThemeAvatar,
   uploadModelVideo,
   uploadModelPoster,
+  uploadModelCover,
   MODEL_VIDEO_POSTER_KIND,
   type ModelInfo,
   type ModelVideoKind,
@@ -566,6 +567,7 @@ export function ModelsPage() {
   const flagInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const modelPosterInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const trailerPosterInputRef = useRef<HTMLInputElement>(null);
   const motionPosterInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
@@ -586,6 +588,7 @@ export function ModelsPage() {
     modelId: string;
     kind: ModelVideoKind;
   } | null>(null);
+  const [coverTargetId, setCoverTargetId] = useState("");
   /** First-frame poster previews keyed by `modelVideoPosterKey`. */
   const [videoPosters, setVideoPosters] = useState<Record<string, string>>({});
 
@@ -1145,6 +1148,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleCoverUpload(modelId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelCover(modelId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleGenerateModelPoster(
     modelId: string,
     kind: ModelVideoKind,
@@ -1343,6 +1359,10 @@ export function ModelsPage() {
               onSwipePosterClick={() => {
                 setPosterTarget({ modelId: selectedModel.id, kind: "swipe" });
                 modelPosterInputRef.current?.click();
+              }}
+              onCoverClick={() => {
+                setCoverTargetId(selectedModel.id);
+                coverInputRef.current?.click();
               }}
               onSavePackNames={(cardPackName, cardPackName2) =>
                 void handleSavePackNames(selectedModel.id, cardPackName, cardPackName2)
@@ -1760,6 +1780,17 @@ export function ModelsPage() {
           }
         }}
       />
+      <input
+        ref={coverInputRef}
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && coverTargetId) void handleCoverUpload(coverTargetId, file);
+        }}
+      />
     </main>
   );
 }
@@ -1914,6 +1945,15 @@ const MODEL_MEDIA_THUMB = {
   marginBottom: 8,
 } as const;
 
+/** Facebook desktop cover recommendation (820×312); mobile safe center is 640×360. */
+const MODEL_COVER_THUMB = {
+  width: "100%",
+  maxWidth: 410,
+  aspectRatio: "820 / 312",
+  borderRadius: 8,
+  marginBottom: 8,
+} as const;
+
 const MODEL_MEDIA_CARD_STYLE = {
   border: "1px solid var(--gray-a6)",
   borderRadius: 12,
@@ -1928,6 +1968,120 @@ function mediaPathBasename(path: string) {
   const trimmed = path.trim();
   if (!trimmed) return "";
   return trimmed.split("/").pop()?.split("?")[0] ?? trimmed;
+}
+
+function ModelCoverSlot({
+  busy,
+  pathHint,
+  url,
+  onUpload,
+}: {
+  busy: boolean;
+  pathHint: string;
+  url?: string | null;
+  onUpload: () => void;
+}) {
+  const src = url?.trim() || "";
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const thumbShellStyle = {
+    position: "relative" as const,
+    ...MODEL_COVER_THUMB,
+    overflow: "hidden" as const,
+    background: "var(--gray-a3)",
+  };
+
+  return (
+    <Box style={{ ...MODEL_MEDIA_CARD_STYLE, height: "auto" }}>
+      <Text as="div" mb="1" size="1" weight="medium">
+        Cover image
+      </Text>
+      <Text as="div" color="gray" mb="2" size="1">
+        Recommended 820 × 312 (Facebook desktop). Smartphone-safe center crop is 640 × 360.
+      </Text>
+      {src ? (
+        <button
+          type="button"
+          aria-label="Enlarge cover image preview"
+          title="Click preview to enlarge"
+          onClick={() => setPreviewOpen(true)}
+          style={{
+            ...thumbShellStyle,
+            display: "block",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+          }}
+        >
+          <img
+            alt="Model cover"
+            src={src}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        </button>
+      ) : (
+        <Box
+          style={{
+            ...thumbShellStyle,
+            display: "grid",
+            placeItems: "center",
+            color: "var(--gray-a9)",
+            fontSize: 12,
+          }}
+        >
+          No cover yet
+        </Box>
+      )}
+      <Text as="div" color="gray" mb="2" size="1">
+        <CodeInline>{pathHint}</CodeInline>
+        {src ? ` · ${mediaPathBasename(src)}` : null}
+      </Text>
+      <Flex gap="2" wrap="wrap">
+        <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
+          <Upload {...iconProps} />
+          {src ? "Replace cover" : "Upload cover"}
+        </Button>
+      </Flex>
+      {src ? (
+        <Dialog.Root open={previewOpen} onOpenChange={setPreviewOpen}>
+          <Dialog.Content style={{ maxWidth: 860 }}>
+            <Dialog.Title>Cover image</Dialog.Title>
+            <Box
+              my="3"
+              style={{
+                aspectRatio: "820 / 312",
+                overflow: "hidden",
+                borderRadius: 8,
+                background: "var(--gray-a3)",
+              }}
+            >
+              <img
+                alt="Model cover"
+                src={src}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </Box>
+            <Flex justify="end">
+              <Dialog.Close>
+                <Button size="2" variant="soft">
+                  Close
+                </Button>
+              </Dialog.Close>
+            </Flex>
+          </Dialog.Content>
+        </Dialog.Root>
+      ) : null}
+    </Box>
+  );
 }
 
 function ModelVideoSlot({
@@ -2522,6 +2676,7 @@ function ModelDetail({
   onPosterClick,
   onGeneratePoster,
   onSwipePosterClick,
+  onCoverClick,
   onSavePackNames,
   onSaveTags,
 }: {
@@ -2585,6 +2740,7 @@ function ModelDetail({
   onPosterClick: (kind: ModelVideoKind) => void;
   onGeneratePoster: (kind: ModelVideoKind, videoUrl: string) => void;
   onSwipePosterClick: () => void;
+  onCoverClick: () => void;
   onSavePackNames: (cardPackName: string, cardPackName2: string) => void;
   onSaveTags: (tags: string[]) => void;
 }) {
@@ -2924,6 +3080,14 @@ function ModelDetail({
             <CodeInline>/api/models</CodeInline>. Card pack names replace “Pack Nº …” under the
             foil packs in the product app.
           </Text>
+          <Box mb="3">
+            <ModelCoverSlot
+              busy={busy}
+              pathHint={`models/${model.id}/cover.webp`}
+              url={model.coverUrl}
+              onUpload={onCoverClick}
+            />
+          </Box>
           <Grid columns={{ initial: "1", sm: "3" }} gap="3" style={{ alignItems: "stretch" }}>
             <ModelVideoSlot
               busy={busy}

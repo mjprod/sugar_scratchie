@@ -29,11 +29,12 @@ MODEL_VIDEO_STEMS: dict[str, str] = {
     "swipe": "swipeVideoUrl",
 }
 
-# Still images paired with foil/swipe videos (product posters / admin thumbs).
+# Still images: video-paired posters + standalone model cover.
 MODEL_POSTER_STEMS: dict[str, str] = {
     "pack-face-poster": "packFacePosterUrl",
     "pack-face-2-poster": "packFacePosterUrl2",
     "swipe-poster": "swipePosterUrl",
+    "cover": "coverUrl",
 }
 
 # Still image paired with swipe motion video (discovery/admin poster).
@@ -88,6 +89,8 @@ class ModelInfo(BaseModel):
     packFacePosterUrl2: str | None = None
     swipeVideoUrl: str | None = None
     swipePosterUrl: str | None = None
+    # Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp".
+    coverUrl: str | None = None
     # theme_id → public URL for model×theme collection avatar.
     theme_avatars: dict[str, str] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
@@ -309,6 +312,7 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         packFacePosterUrl2=posters.get("packFacePosterUrl2"),
         swipeVideoUrl=videos.get("swipeVideoUrl"),
         swipePosterUrl=posters.get("swipePosterUrl"),
+        coverUrl=posters.get("coverUrl"),
         theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
         tags=_normalize_tags(row.tags),
     )
