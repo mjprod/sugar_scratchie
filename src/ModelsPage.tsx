@@ -3083,7 +3083,7 @@ function ModelDetail({
           <Box mb="3">
             <ModelCoverSlot
               busy={busy}
-              pathHint={`models/${model.id}/cover.webp`}
+              pathHint={`models/${model.id}/cover.*`}
               url={model.coverUrl}
               onUpload={onCoverClick}
             />
