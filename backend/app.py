@@ -1255,6 +1255,16 @@ async def post_model_pack_face_2_poster(
     return model.dict()
 
 
+@app.post("/api/models/{model_id}/cover")
+async def post_model_cover(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_poster(db, MODELS_DIR, model_id, "cover", file)
+    return model.dict()
+
+
 @app.post("/api/models/{model_id}/themes/{theme_id}/avatar")
 async def post_model_theme_avatar(
     model_id: str,
