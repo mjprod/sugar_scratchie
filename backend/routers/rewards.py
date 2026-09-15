@@ -15,10 +15,19 @@ from backend.db.wallet import apply_delta, ensure_wallet
 router = APIRouter(prefix="/api/rewards", tags=["rewards"])
 
 DAILY_DIAMONDS = 10
+SCRATCH_COIN_MIN = 80
+SCRATCH_COIN_MAX = 100
 
 
 class RedeemBody(BaseModel):
     code: str = Field(min_length=1, max_length=64)
+
+
+class ScratchCoinsBody(BaseModel):
+    amount: int
+    handId: str = Field(min_length=1, max_length=128)
+    milestone: int = Field(ge=1, le=10)
+    cardId: str | None = Field(default=None, max_length=128)
 
 
 def _next_midnight() -> datetime:
@@ -65,6 +74,39 @@ def claim_daily(db: Annotated[Session, Depends(get_session)], user: Annotated[Us
     )
     wallet = ensure_wallet(db, user.id)
     return {"ok": True, "diamonds": DAILY_DIAMONDS, "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins}}
+
+
+@router.post("/scratch/coins")
+def claim_scratch_coins(
+    body: ScratchCoinsBody,
+    db: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+):
+    if body.amount < SCRATCH_COIN_MIN or body.amount > SCRATCH_COIN_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount must be between {SCRATCH_COIN_MIN} and {SCRATCH_COIN_MAX}",
+        )
+    hand_id = body.handId.strip()
+    if not hand_id:
+        raise HTTPException(status_code=400, detail="handId is required")
+
+    apply_delta(
+        db,
+        user_id=user.id,
+        currency="coins",
+        delta=body.amount,
+        reason="scratch_reward",
+        idempotency_key=f"scratch-coins:{user.id}:{hand_id}:{body.milestone}",
+        ref_type="scratch_card",
+        ref_id=body.cardId,
+    )
+    wallet = ensure_wallet(db, user.id)
+    return {
+        "ok": True,
+        "coins": body.amount,
+        "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
+    }
 
 
 @router.post("/redeem")
