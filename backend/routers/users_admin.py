@@ -21,6 +21,7 @@ from backend.db.models import (
     PackOpeningCard,
     PackPurchase,
     RedeemRedemption,
+    ScratchCoinHand,
     ScratchSession,
     Session as AuthSession,
     StorePurchase,
@@ -302,6 +303,9 @@ def delete_user_permanently(user_id: UUID, db: Annotated[Session, Depends(get_se
             synchronize_session=False
         )
     db.query(ScratchSession).filter(ScratchSession.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.query(ScratchCoinHand).filter(ScratchCoinHand.user_id == user.id).delete(
         synchronize_session=False
     )
     db.query(UserCard).filter(UserCard.user_id == user.id).delete(synchronize_session=False)
