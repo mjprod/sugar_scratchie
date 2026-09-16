@@ -21,6 +21,7 @@ from backend.db.models import (
     PackPurchase,
     RedeemCode,
     RedeemRedemption,
+    ScratchCoinHand,
     ScratchSession,
     Session as AuthSession,
     StorePurchase,
@@ -270,6 +271,13 @@ def test_delete_user_permanently_removes_owned_rows_and_clears_refs(
         )
         session.add(GameSession(user_id=user_id, model_id="creator-1", phase="motion"))
         session.add(
+            ScratchCoinHand(
+                user_id=user_id,
+                card_id="delete-coverage-card",
+                claimed_milestones=[1],
+            )
+        )
+        session.add(
             DailyRewardClaim(
                 user_id=user_id,
                 claim_date=utcnow().date(),
@@ -335,6 +343,7 @@ def test_delete_user_permanently_removes_owned_rows_and_clears_refs(
     assert db_session.get(PackOpeningCard, opening_card_id) is None
     assert db_session.query(UserCard).filter(UserCard.user_id == user_id).count() == 0
     assert db_session.query(ScratchSession).filter(ScratchSession.user_id == user_id).count() == 0
+    assert db_session.query(ScratchCoinHand).filter(ScratchCoinHand.user_id == user_id).count() == 0
     assert db_session.query(StorePurchase).filter(StorePurchase.user_id == user_id).count() == 0
     assert db_session.query(GameSession).filter(GameSession.user_id == user_id).count() == 0
     assert db_session.query(DailyRewardClaim).filter(DailyRewardClaim.user_id == user_id).count() == 0

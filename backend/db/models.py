@@ -441,6 +441,22 @@ class ScratchSession(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class ScratchCoinHand(Base):
+    """Server-issued scratch hand. Coin claims must reference a hand owned by the user."""
+
+    __tablename__ = "scratch_coin_hands"
+    __table_args__ = (
+        Index("scratch_coin_hands_user_created_idx", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    card_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Milestone indexes already credited (1–10). JSON list of ints.
+    claimed_milestones: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class GameSession(Base):
     __tablename__ = "game_sessions"
     __table_args__ = (
