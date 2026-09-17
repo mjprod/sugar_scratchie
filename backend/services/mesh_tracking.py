@@ -31,8 +31,10 @@ def _missing_mesh_packages() -> list[str]:
     for import_name, pip_name in _MESH_IMPORTS:
         try:
             __import__(import_name)
-        except ImportError:
+        except ModuleNotFoundError:
             missing.append(pip_name)
+        except ImportError as exc:
+            missing.append(f"{pip_name} (import error: {exc})")
     return missing
 
 
