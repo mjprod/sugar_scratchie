@@ -80,7 +80,12 @@ docker_available() {
 
 need_venv() {
   if [[ ! -x "$PYTHON" ]]; then
+<<<<<<< Updated upstream
     red "Missing .venv. Run: python3 -m venv .venv && ./scripts/manage.sh setup"
+=======
+    red "Missing .venv. From a clean checkout:"
+    red "  python3 -m venv .venv && ./scripts/manage.sh setup"
+>>>>>>> Stashed changes
     exit 1
   fi
 }
@@ -109,7 +114,10 @@ ensure_db() {
 }
 
 cmd_setup() {
-  need_venv
+  if [[ ! -x "$PYTHON" ]]; then
+    cyan "Creating .venv…"
+    python3 -m venv "$ROOT/.venv"
+  fi
   # Video-flow mesh step imports generate-mesh-tracking.py in-process, so the
   # API venv needs torch + BootsTAPIR deps (dm-tree, einshape, …).
   cyan "Installing backend + mesh-tracking Python deps…"

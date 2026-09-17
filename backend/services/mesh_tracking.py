@@ -27,11 +27,24 @@ _MESH_IMPORTS: tuple[tuple[str, str], ...] = (
 
 
 def _missing_mesh_packages() -> list[str]:
+    """Return pip names for missing packages without importing them.
+
+    torch / transformers snapshot HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE, and
+    PYTORCH_ENABLE_MPS_FALLBACK at import time, so a pre-flight __import__
+    would lock in the process env before generate_mesh can apply job overrides.
+    """
     missing: list[str] = []
     for import_name, pip_name in _MESH_IMPORTS:
         try:
+<<<<<<< Updated upstream
             __import__(import_name)
         except ModuleNotFoundError:
+=======
+            found = importlib.util.find_spec(import_name) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            found = False
+        if not found:
+>>>>>>> Stashed changes
             missing.append(pip_name)
         except ImportError as exc:
             missing.append(f"{pip_name} (import error: {exc})")
@@ -61,6 +74,9 @@ def default_mesh_device() -> str:
     if explicit:
         return explicit
     try:
+        # First torch import in the API process — enable MPS fallback before
+        # import so later in-process mesh jobs inherit the CLI default.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         import torch
 
         if torch.backends.mps.is_available():
@@ -75,13 +91,15 @@ def default_mesh_device() -> str:
 def generate_mesh(env: dict[str, str]) -> None:
     """Run the existing mesh tracker in-process under backend job control."""
 
-    require_mesh_deps()
     previous_env = os.environ.copy()
     previous_path = list(sys.path)
+    # Apply job env (HF offline, MPS fallback, DEVICE, …) before any import
+    # that would snapshot those variables — including the mesh script itself.
     os.environ.update(env)
-    print(f"Mesh tracking device: {env.get('DEVICE', 'mps')}", flush=True)
-    print(f"Mesh tracking interpreter: {sys.executable}", flush=True)
     try:
+        require_mesh_deps()
+        print(f"Mesh tracking device: {env.get('DEVICE', 'mps')}", flush=True)
+        print(f"Mesh tracking interpreter: {sys.executable}", flush=True)
         spec = importlib.util.spec_from_file_location("backend_mesh_tracking_impl", SCRIPT)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Could not load mesh tracking implementation: {SCRIPT}")
