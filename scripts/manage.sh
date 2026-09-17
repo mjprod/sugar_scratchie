@@ -80,12 +80,8 @@ docker_available() {
 
 need_venv() {
   if [[ ! -x "$PYTHON" ]]; then
-<<<<<<< Updated upstream
-    red "Missing .venv. Run: python3 -m venv .venv && ./scripts/manage.sh setup"
-=======
     red "Missing .venv. From a clean checkout:"
     red "  python3 -m venv .venv && ./scripts/manage.sh setup"
->>>>>>> Stashed changes
     exit 1
   fi
 }
