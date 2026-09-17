@@ -38,9 +38,11 @@ try:
 except ModuleNotFoundError as exc:
     missing = getattr(exc, "name", None) or str(exc)
     hint = "dm-tree" if missing == "tree" else missing
+    exe = sys.executable
     raise ModuleNotFoundError(
         f"BootsTAPIR dependency missing ({missing} — install package {hint!r}). "
-        "Install with: .venv/bin/python -m pip install -r backend/requirements-ml.txt"
+        f"Install with: {exe} -m pip install -r backend/requirements-ml.txt "
+        f"(or {exe} -m pip install -r scripts/requirements-tracking.txt)"
     ) from exc
 
 CHECKPOINT = Path(
