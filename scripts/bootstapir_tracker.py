@@ -33,7 +33,17 @@ import torch.nn.functional as F
 _VENDOR = Path(__file__).parent / "vendor"
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
-from tapnet_torch import tapir_model  # noqa: E402
+try:
+    from tapnet_torch import tapir_model  # noqa: E402
+except ModuleNotFoundError as exc:
+    missing = getattr(exc, "name", None) or str(exc)
+    hint = "dm-tree" if missing == "tree" else missing
+    exe = sys.executable
+    raise ModuleNotFoundError(
+        f"BootsTAPIR dependency missing ({missing} — install package {hint!r}). "
+        f"Install with: {exe} -m pip install -r backend/requirements-ml.txt "
+        f"(or {exe} -m pip install -r scripts/requirements-tracking.txt)"
+    ) from exc
 
 CHECKPOINT = Path(
     os.environ.get(

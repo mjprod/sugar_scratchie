@@ -9,6 +9,52 @@ from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "generate-mesh-tracking.py"
+ML_REQUIREMENTS = ROOT / "backend" / "requirements-ml.txt"
+
+# (import_name, pip_hint) — checked before loading the mesh script so staging
+# fails once with an install command instead of one ModuleNotFoundError at a time.
+_MESH_IMPORTS: tuple[tuple[str, str], ...] = (
+    ("torch", "torch"),
+    ("torchvision", "torchvision"),
+    ("numpy", "numpy"),
+    ("PIL", "Pillow"),
+    ("scipy", "scipy"),
+    ("transformers", "transformers"),
+    ("einops", "einops"),
+    ("einshape", "einshape"),
+    ("tree", "dm-tree"),  # DeepMind package; do not pip install "tree"
+)
+
+
+def _missing_mesh_packages() -> list[str]:
+    """Return pip names for missing packages without importing them.
+
+    torch / transformers snapshot HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE, and
+    PYTORCH_ENABLE_MPS_FALLBACK at import time, so a pre-flight __import__
+    would lock in the process env before generate_mesh can apply job overrides.
+    """
+    missing: list[str] = []
+    for import_name, pip_name in _MESH_IMPORTS:
+        try:
+            found = importlib.util.find_spec(import_name) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            found = False
+        if not found:
+            missing.append(pip_name)
+    return missing
+
+
+def require_mesh_deps() -> None:
+    """Fail fast if the API interpreter is missing mesh-tracking packages."""
+    missing = _missing_mesh_packages()
+    if not missing:
+        return
+    exe = sys.executable
+    raise RuntimeError(
+        "Mesh tracking runs in-process inside the API, so ML packages must be "
+        f"installed in this interpreter ({exe}). Missing: {', '.join(missing)}. "
+        f"Install with: {exe} -m pip install -r {ML_REQUIREMENTS}"
+    )
 
 
 def default_mesh_device() -> str:
@@ -21,6 +67,9 @@ def default_mesh_device() -> str:
     if explicit:
         return explicit
     try:
+        # First torch import in the API process — enable MPS fallback before
+        # import so later in-process mesh jobs inherit the CLI default.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         import torch
 
         if torch.backends.mps.is_available():
@@ -37,9 +86,13 @@ def generate_mesh(env: dict[str, str]) -> None:
 
     previous_env = os.environ.copy()
     previous_path = list(sys.path)
+    # Apply job env (HF offline, MPS fallback, DEVICE, …) before any import
+    # that would snapshot those variables — including the mesh script itself.
     os.environ.update(env)
-    print(f"Mesh tracking device: {env.get('DEVICE', 'mps')}", flush=True)
     try:
+        require_mesh_deps()
+        print(f"Mesh tracking device: {env.get('DEVICE', 'mps')}", flush=True)
+        print(f"Mesh tracking interpreter: {sys.executable}", flush=True)
         spec = importlib.util.spec_from_file_location("backend_mesh_tracking_impl", SCRIPT)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Could not load mesh tracking implementation: {SCRIPT}")
