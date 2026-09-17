@@ -12,7 +12,11 @@ and BootsTAPIR — or **blend** them. This doc covers both.
 ## Setup (once)
 
 ```bash
+# CLI mesh generation only:
 .venv/bin/pip install -r scripts/requirements-tracking.txt
+
+# Or API / video-flow (same .venv as uvicorn — tracking runs in-process):
+.venv/bin/pip install -r backend/requirements-ml.txt
 ```
 
 Needs `ffmpeg`/`ffprobe` on `PATH`. Runs on Apple-Silicon Torch **MPS**.
@@ -20,7 +24,8 @@ Needs `ffmpeg`/`ffprobe` on `PATH`. Runs on Apple-Silicon Torch **MPS**.
 - **CoTracker3** weights are fetched at runtime via `torch.hub`.
 - **BootsTAPIR** uses the vendored torch port in `scripts/vendor/tapnet_torch`;
   its checkpoint downloads once to `~/.cache/tapnet/bootstapir_checkpoint_v2.pt`.
-
+  BootsTAPIR needs `dm-tree` (`import tree`) and `einshape` — both are in the
+  requirements file above.
 ## The two trackers
 
 | Tracker    | `TRACKER=`            | Strengths                                            | Weaknesses                               |

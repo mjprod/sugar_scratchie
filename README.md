@@ -40,10 +40,13 @@ require header `X-Dashboard-Token` matching `DASHBOARD_TOKEN` (default
 `VITE_DASHBOARD_TOKEN` for production builds.
 
 ```bash
-.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/pip install -r backend/requirements-ml.txt  # API + in-process mesh (torch, dm-tree, …)
 npm run dev:api
 npm run dev
 ```
+
+Or: `./scripts/manage.sh setup`. API-only installs can use `backend/requirements.txt`;
+video-flow mesh needs the `-ml` set because tracking runs inside the uvicorn process.
 
 Open `http://localhost:5080/dashboard`. The dashboard can scan cards/meshes,
 start mesh-generation jobs, start Grok dress-edit jobs, cancel running jobs, and

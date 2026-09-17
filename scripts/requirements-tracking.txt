@@ -1,5 +1,8 @@
 # Dense point-tracking mesh generator (scripts/generate-mesh-tracking.py).
-# Installs into the .venv (Python 3.11) torch env; runs on Apple-Silicon MPS.
+# Installs into the .venv (Python 3.11+) torch env; runs on Apple-Silicon MPS.
+# Prefer the combined install used by the API video-flow path:
+#   .venv/bin/pip install -r backend/requirements-ml.txt
+# Or tracking-only:
 #   PYTORCH_ENABLE_MPS_FALLBACK=1 .venv/bin/pip install -r scripts/requirements-tracking.txt
 #
 # CoTracker3 itself is fetched at runtime via torch.hub
@@ -9,6 +12,7 @@
 # BootsTAPIR (TRACKER=bootstapir|blend) runs the DeepMind torch port vendored
 # under scripts/vendor/tapnet_torch. Its checkpoint is fetched once at runtime to
 # ~/.cache/tapnet/bootstapir_checkpoint_v2.pt. The port needs dm-tree + einshape.
+# Note: `import tree` comes from the dm-tree package — not `pip install tree`.
 torch>=2.12.0
 torchvision
 numpy>=2.0.0

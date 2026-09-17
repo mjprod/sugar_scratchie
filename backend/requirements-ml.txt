@@ -1,0 +1,9 @@
+# Full stack for the API when video-flow / mesh tracking runs in-process.
+# Mesh generation loads scripts/generate-mesh-tracking.py via importlib inside
+# the uvicorn process, so torch and BootsTAPIR deps must live in the same .venv.
+#
+#   .venv/bin/pip install -r backend/requirements-ml.txt
+#
+# CI and API-only installs should keep using backend/requirements.txt alone.
+-r requirements.txt
+-r ../scripts/requirements-tracking.txt
