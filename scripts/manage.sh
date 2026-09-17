@@ -80,7 +80,7 @@ docker_available() {
 
 need_venv() {
   if [[ ! -x "$PYTHON" ]]; then
-    red "Missing .venv. Create it, then: ./scripts/manage.sh setup"
+    red "Missing .venv. Run: python3 -m venv .venv && ./scripts/manage.sh setup"
     exit 1
   fi
 }
