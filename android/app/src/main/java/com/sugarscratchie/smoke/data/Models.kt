@@ -53,6 +53,7 @@ data class CardInfo(
     @SerialName("has_mesh") val hasMesh: Boolean = false,
     @SerialName("model_id") val modelId: String? = null,
     @SerialName("theme_id") val themeId: String? = null,
+    val trailer: String? = null,
 )
 
 @Serializable

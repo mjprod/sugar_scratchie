@@ -34,7 +34,7 @@ class SugarApi(
         OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
             .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -97,6 +97,29 @@ class SugarApi(
     suspend fun wallet(): WalletResponse = get("/api/me/wallet")
 
     suspend fun cards(): CardsResponse = get("/api/cards")
+
+    suspend fun fetchBytes(url: String): ByteArray =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(url).get().build()
+            devMediaClient().newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw ApiException(response.code, "HTTP ${response.code}")
+                }
+                response.body?.bytes() ?: ByteArray(0)
+            }
+        }
+
+    suspend fun fetchText(url: String): String =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(url).get().build()
+            devMediaClient().newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw ApiException(response.code, "HTTP ${response.code}")
+                }
+                raw
+            }
+        }
 
     suspend fun startScratchHand(cardId: String): ScratchHandResponse =
         postJson("/api/rewards/scratch/hands", ScratchHandRequest(cardId = cardId))

@@ -4,16 +4,21 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sugarscratchie.smoke.data.ApiException
+import com.airbnb.lottie.LottieComposition
 import com.sugarscratchie.smoke.data.CardInfo
+import com.sugarscratchie.smoke.data.GarmentMesh
 import com.sugarscratchie.smoke.data.SessionCookieJar
 import com.sugarscratchie.smoke.data.SugarApi
+import com.sugarscratchie.smoke.data.SymbolLotties
 import com.sugarscratchie.smoke.data.UserPublic
 import com.sugarscratchie.smoke.data.WalletResponse
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface SmokeScreen {
     data object Boot : SmokeScreen
@@ -32,8 +37,15 @@ data class SmokeUiState(
     val error: String? = null,
     val wallet: WalletResponse? = null,
     val card: CardInfo? = null,
+    val hand: List<CardInfo> = emptyList(),
+    val handIndex: Int = 0,
+    val handComplete: Boolean = false,
     val backgroundUrl: String? = null,
     val foregroundUrl: String? = null,
+    val introUrl: String? = null,
+    val mesh: GarmentMesh? = null,
+    val chromaKey: Boolean = true,
+    val symbolCompositions: List<LottieComposition> = emptyList(),
     val handId: String? = null,
     val handsRemainingToday: Int? = null,
     val lastClaimMessage: String? = null,
@@ -210,17 +222,100 @@ class SmokeViewModel(
         }
     }
 
+    fun nextCard() {
+        val state = _state.value
+        if (state.handComplete) return
+        val next = state.handIndex + 1
+        if (next >= state.hand.size) {
+            _state.update { it.copy(handComplete = true, handId = null) }
+            return
+        }
+        viewModelScope.launch {
+            presentCard(next, state.hand)
+        }
+    }
+
     private suspend fun loadCardAndWallet() {
         val wallet = api.wallet()
-        val cards = api.cards().cards
-        val card = api.pickPlayableCard(cards)
+        val cards =
+            api.cards().cards.filter { card ->
+                card.id != "original" &&
+                    card.mesh != "tracked-mesh.json" &&
+                    card.foreground.isNotBlank() &&
+                    card.background.isNotBlank() &&
+                    card.mesh.isNotBlank()
+            }
+        val hand = dealMotionHand(cards, HAND_SIZE)
+        val symbols =
+            try {
+                SymbolLotties.load(api)
+            } catch (_: Exception) {
+                emptyList()
+            }
         _state.update {
             it.copy(
                 wallet = wallet,
-                card = card,
-                backgroundUrl = card?.let { c -> api.backgroundUrl(c) },
-                foregroundUrl = card?.let { c -> api.foregroundUrl(c) },
+                hand = hand,
+                handIndex = 0,
+                handComplete = hand.isEmpty(),
+                symbolCompositions = symbols,
             )
         }
+        if (hand.isNotEmpty()) presentCard(0, hand)
+    }
+
+    private suspend fun presentCard(index: Int, hand: List<CardInfo>) {
+        val card = hand.getOrNull(index) ?: return
+        val mesh =
+            try {
+                val raw = api.fetchText(api.mediaUrl("/mesh/${card.mesh}"))
+                withContext(Dispatchers.Default) { GarmentMesh.parse(raw) }
+            } catch (_: Exception) {
+                null
+            }
+        if (mesh == null || mesh.symbolCount < 6) {
+            val rest = hand.filterIndexed { i, _ -> i != index }
+            if (rest.isEmpty()) {
+                _state.update { it.copy(handComplete = true, loading = false) }
+            } else {
+                _state.update { it.copy(hand = rest) }
+                presentCard(index.coerceAtMost(rest.lastIndex), rest)
+            }
+            return
+        }
+        _state.update {
+            it.copy(
+                handIndex = index,
+                card = card,
+                backgroundUrl = api.backgroundUrl(card),
+                foregroundUrl = api.foregroundUrl(card),
+                introUrl = card.trailer?.takeIf { it.isNotBlank() }?.let { api.mediaUrl(it) },
+                mesh = mesh,
+                chromaKey = false,
+                handId = null,
+                lastClaimMessage = null,
+                handComplete = false,
+            )
+        }
+    }
+
+    private fun dealMotionHand(cards: List<CardInfo>, count: Int): List<CardInfo> {
+        val byTheme = cards.groupBy { card -> (card.themeId ?: card.label).trim().lowercase() }
+        val picked = mutableListOf<CardInfo>()
+        for (theme in byTheme.keys.shuffled()) {
+            if (picked.size >= count) break
+            val options = byTheme[theme].orEmpty()
+            if (options.isEmpty()) continue
+            picked += options.random()
+        }
+        if (picked.size < count) {
+            val used = picked.map { it.id }.toSet()
+            picked += cards.filter { it.id !in used }.shuffled().take(count - picked.size)
+        }
+        return picked
+    }
+
+    companion object {
+        private const val HAND_SIZE = 5
     }
 }
