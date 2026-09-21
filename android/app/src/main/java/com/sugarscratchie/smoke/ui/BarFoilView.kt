@@ -21,6 +21,7 @@ import com.sugarscratchie.smoke.BuildConfig
 import com.sugarscratchie.smoke.data.devMediaClient
 import okhttp3.Request
 import java.util.concurrent.Executors
+import kotlin.math.hypot
 import kotlin.math.max
 
 /**
@@ -40,6 +41,8 @@ class BarFoilView
         private var coatedWithTexture = false
         private var lastX = 0f
         private var lastY = 0f
+        private var lastTouchMs = 0L
+        private val haptics = ScratchHaptics(context)
         private val erase =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
@@ -110,6 +113,15 @@ class BarFoilView
             val canvas = coatCanvas ?: return false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    val fresh = coatAt(event.x, event.y)
+                    val speed =
+                        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                            0f
+                        } else {
+                            val dt = (event.eventTime - lastTouchMs).coerceAtLeast(1L)
+                            hypot(event.x - lastX, event.y - lastY) / dt * 1000f
+                        }
+                    haptics.pulse(speed, event.pressure, fresh)
                     erase.style = if (event.actionMasked == MotionEvent.ACTION_DOWN) Paint.Style.FILL else Paint.Style.STROKE
                     erase.strokeWidth = 72f
                     erase.strokeCap = Paint.Cap.ROUND
@@ -120,14 +132,23 @@ class BarFoilView
                     }
                     lastX = event.x
                     lastY = event.y
+                    lastTouchMs = event.eventTime
                     invalidate()
                     if (!cleared && clearedFraction() >= 0.55f) {
                         cleared = true
                         onCleared?.invoke()
                     }
                 }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> haptics.stop()
             }
             return true
+        }
+
+        private fun coatAt(x: Float, y: Float): Boolean {
+            val bitmap = coat ?: return false
+            val ix = x.toInt().coerceIn(0, bitmap.width - 1)
+            val iy = y.toInt().coerceIn(0, bitmap.height - 1)
+            return (bitmap.getPixel(ix, iy) ushr 24) >= 16
         }
 
         private fun clearedFraction(): Float {
@@ -176,6 +197,7 @@ class BarFoilView
         }
 
         override fun onDetachedFromWindow() {
+            haptics.stop()
             coat?.recycle()
             coat = null
             coatCanvas = null

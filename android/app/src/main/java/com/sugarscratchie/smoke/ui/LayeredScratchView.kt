@@ -28,6 +28,7 @@ import com.airbnb.lottie.LottieComposition
 import com.airbnb.lottie.LottieDrawable
 import com.sugarscratchie.smoke.data.GarmentMesh
 import com.sugarscratchie.smoke.data.devMediaClient
+import kotlin.math.hypot
 import kotlin.math.pow
 
 /**
@@ -133,6 +134,8 @@ class LayeredScratchView
 
         private var lastX = 0f
         private var lastY = 0f
+        private var lastTouchMs = 0L
+        private val haptics = ScratchHaptics(context)
         private var moveTicks = 0
         private var copying = false
         private var scratching = false
@@ -252,16 +255,22 @@ class LayeredScratchView
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     scratching = true
+                    haptics.pulse(0f, event.pressure, freshCoat(event.x, event.y))
                     lastX = event.x
                     lastY = event.y
+                    lastTouchMs = event.eventTime
                     canvas.drawCircle(event.x, event.y, 70f, eraseDot)
                     markIconsNear(event.x, event.y)
                     spawnCursorFx(event.x, event.y)
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val dt = (event.eventTime - lastTouchMs).coerceAtLeast(1L)
+                    val speed = hypot(event.x - lastX, event.y - lastY) / dt * 1000f
+                    haptics.pulse(speed, event.pressure, freshCoat(event.x, event.y))
                     canvas.drawLine(lastX, lastY, event.x, event.y, erase)
                     lastX = event.x
                     lastY = event.y
+                    lastTouchMs = event.eventTime
                     moveTicks += 1
                     if (moveTicks % 4 == 0) {
                         onScratched?.invoke(scratchedFraction())
@@ -271,6 +280,7 @@ class LayeredScratchView
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     scratching = false
+                    haptics.stop()
                     lastDustX = Float.NaN
                     lastDustY = Float.NaN
                 }
@@ -279,8 +289,18 @@ class LayeredScratchView
         }
 
         override fun onDetachedFromWindow() {
+            haptics.stop()
             release()
             super.onDetachedFromWindow()
+        }
+
+        /** Still-covered garment only. Cleared holes and keyed-out pixels stay silent. */
+        private fun freshCoat(x: Float, y: Float): Boolean {
+            if (!fingerOnFabric(x, y)) return false
+            val mask = scratchMask ?: return false
+            val ix = x.toInt().coerceIn(0, mask.width - 1)
+            val iy = y.toInt().coerceIn(0, mask.height - 1)
+            return (mask.getPixel(ix, iy) ushr 24) >= 16
         }
 
         private fun buildPlayer(url: String, textureView: TextureView): ExoPlayer {
