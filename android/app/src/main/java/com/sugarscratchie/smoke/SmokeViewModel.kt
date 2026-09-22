@@ -188,35 +188,41 @@ class SmokeViewModel(
             try {
                 val hand = api.startScratchHand(cardId)
                 _state.update { state ->
-                    // Drop stale starts: startAnotherHand may have moved on while this was in flight.
-                    // Do not clear loading — the hand transition owns that flag.
-                    if (state.card?.id != cardId) {
-                        state
-                    } else {
-                        state.copy(
-                            loading = false,
-                            handId = hand.handId,
-                            handsRemainingToday = hand.handsRemainingToday,
-                            lastClaimMessage = "Hand started (${hand.milestonesRemaining} milestones left)",
-                        )
+                    // Drop stale starts that raced with next-card / startAnotherHand.
+                    when {
+                        // Hand rollover cleared the card; transition owns loading.
+                        state.card == null -> state
+                        // Next card already on screen — unblock its auto-startHand.
+                        state.card?.id != cardId -> state.copy(loading = false)
+                        else ->
+                            state.copy(
+                                loading = false,
+                                handId = hand.handId,
+                                handsRemainingToday = hand.handsRemainingToday,
+                                lastClaimMessage = "Hand started (${hand.milestonesRemaining} milestones left)",
+                            )
                     }
                 }
             } catch (e: Exception) {
                 val message = e.message.orEmpty()
                 if (message.contains("scratch hand limit")) {
                     _state.update { state ->
-                        if (state.card?.id != cardId) {
-                            state
-                        } else {
-                            state.copy(loading = false, error = null, rewardHandDeclined = true)
+                        when {
+                            state.card == null -> state
+                            state.card?.id != cardId -> state.copy(loading = false)
+                            else -> state.copy(loading = false, error = null, rewardHandDeclined = true)
                         }
                     }
                 } else {
                     _state.update { state ->
-                        if (state.card?.id != cardId) {
-                            state
-                        } else {
-                            state.copy(loading = false, error = message.ifBlank { "Could not start hand" })
+                        when {
+                            state.card == null -> state
+                            state.card?.id != cardId -> state.copy(loading = false)
+                            else ->
+                                state.copy(
+                                    loading = false,
+                                    error = message.ifBlank { "Could not start hand" },
+                                )
                         }
                     }
                 }
@@ -361,32 +367,43 @@ class SmokeViewModel(
                 handComplete = false,
             )
         }
-        val cards =
-            api.cards().cards.filter { card ->
-                card.id != "original" &&
-                    card.mesh != "tracked-mesh.json" &&
-                    card.foreground.isNotBlank() &&
-                    card.background.isNotBlank() &&
-                    card.mesh.isNotBlank()
+        try {
+            val cards =
+                api.cards().cards.filter { card ->
+                    card.id != "original" &&
+                        card.mesh != "tracked-mesh.json" &&
+                        card.foreground.isNotBlank() &&
+                        card.background.isNotBlank() &&
+                        card.mesh.isNotBlank()
+                }
+            val hand = dealMotionHand(cards, HAND_SIZE)
+            preparedIndex = -1
+            preparedMesh = null
+            preparingIndex = -1
+            _state.update {
+                it.copy(
+                    hand = hand,
+                    handIndex = 0,
+                    handComplete = hand.isEmpty(),
+                    handId = null,
+                    lastClaimMessage = null,
+                )
             }
-        val hand = dealMotionHand(cards, HAND_SIZE)
-        preparedIndex = -1
-        preparedMesh = null
-        preparingIndex = -1
-        _state.update {
-            it.copy(
-                hand = hand,
-                handIndex = 0,
-                handComplete = hand.isEmpty(),
-                handId = null,
-                lastClaimMessage = null,
-            )
-        }
-        if (hand.isNotEmpty()) {
-            presentCard(0, hand)
-            _state.update { it.copy(loading = false) }
-        } else {
-            _state.update { it.copy(loading = false, handComplete = true) }
+            if (hand.isNotEmpty()) {
+                presentCard(0, hand)
+                _state.update { it.copy(loading = false) }
+            } else {
+                _state.update { it.copy(loading = false, handComplete = true) }
+            }
+        } catch (e: Exception) {
+            // Card already cleared above — unblock UI and surface the failure.
+            _state.update {
+                it.copy(
+                    loading = false,
+                    handComplete = true,
+                    error = e.message ?: "Could not deal next hand",
+                )
+            }
         }
     }
 
