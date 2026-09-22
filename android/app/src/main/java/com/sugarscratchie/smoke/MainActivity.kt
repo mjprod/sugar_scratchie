@@ -64,6 +64,7 @@ private fun SmokeApp(vm: SmokeViewModel = viewModel()) {
                 backgroundUrl = state.backgroundUrl,
                 foregroundUrl = state.foregroundUrl,
                 introUrl = state.introUrl,
+                nextForegroundUrl = state.nextForegroundUrl,
                 mesh = state.mesh,
                 chromaKey = state.chromaKey,
                 symbolCompositions = state.symbolCompositions,
@@ -77,6 +78,7 @@ private fun SmokeApp(vm: SmokeViewModel = viewModel()) {
                 onStartHand = vm::startHand,
                 onClaimMilestone = vm::claimMilestone,
                 onNextCard = vm::nextCard,
+                onPrepareNext = vm::prepareNext,
                 onLogout = vm::logout,
             )
         }

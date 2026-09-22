@@ -95,7 +95,7 @@ fun LoginScreen(
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            "API ${com.sugarscratchie.smoke.BuildConfig.API_BASE_URL}",
+            "API ${com.sugarscratchie.smoke.data.DevEndpoints.apiBaseUrl}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

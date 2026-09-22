@@ -5,6 +5,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val lanHost = providers.exec {
+    commandLine("ipconfig", "getifaddr", "en0")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { output ->
+    val ip = output.trim()
+    if (ip.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))) ip else "127.0.0.1"
+}.get()
+
 android {
     namespace = "com.sugarscratchie.smoke"
     compileSdk = 35
@@ -16,10 +24,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // Emulator → host loopback. See android/README.md for physical devices.
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8090\"")
-        // Vite media is HTTPS (plugin-basic-ssl). See DevMediaClient.
-        buildConfigField("String", "MEDIA_BASE_URL", "\"https://10.0.2.2:5080\"")
+        // Phone builds talk to this Mac over Wi-Fi. Emulator still uses 10.0.2.2.
+        buildConfigField("String", "LAN_HOST", "\"$lanHost\"")
     }
 
     buildFeatures {

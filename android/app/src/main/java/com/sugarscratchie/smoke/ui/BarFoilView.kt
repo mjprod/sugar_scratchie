@@ -17,7 +17,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
-import com.sugarscratchie.smoke.BuildConfig
+import com.sugarscratchie.smoke.data.DevEndpoints
 import com.sugarscratchie.smoke.data.devMediaClient
 import okhttp3.Request
 import java.util.concurrent.Executors
@@ -179,7 +179,7 @@ class BarFoilView
             textureLoading = true
             loader.execute {
                 try {
-                    val url = BuildConfig.MEDIA_BASE_URL.trimEnd('/') + "/scratch/scratchTexture.jpg"
+                    val url = DevEndpoints.mediaBaseUrl + "/scratch/scratchTexture.jpg"
                     val request = Request.Builder().url(url).get().build()
                     devMediaClient().newCall(request).execute().use { response ->
                         val bytes = response.body?.bytes()

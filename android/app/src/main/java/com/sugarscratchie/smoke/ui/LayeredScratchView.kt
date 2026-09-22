@@ -7,13 +7,11 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
-import android.graphics.SurfaceTexture
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
-import android.view.PixelCopy
-import android.view.TextureView
+import android.view.Surface
 import android.view.View
 import android.widget.FrameLayout
 import androidx.media3.common.MediaItem
@@ -47,9 +45,14 @@ class LayeredScratchView
     ) : FrameLayout(context, attrs) {
         var onScratched: ((Float) -> Unit)? = null
         var onIconFound: ((Int) -> Unit)? = null
+        var onSymbolsRevealed: ((Int) -> Unit)? = null
         var onError: ((String) -> Unit)? = null
         var mesh: GarmentMesh? = null
-        var chromaKey: Boolean = true
+        var chromaKey: Boolean = false
+            set(value) {
+                field = value
+                videoView?.chromaKey = value
+            }
         var scratchEnabled: Boolean = true
         private var sourceKey = ""
         private var symbolDrawables: List<LottieDrawable> = emptyList()
@@ -58,27 +61,20 @@ class LayeredScratchView
         private val mediaFactory =
             DefaultMediaSourceFactory(OkHttpDataSource.Factory(devMediaClient()))
 
-        private val backgroundView =
-            TextureView(context).also {
-                // Drawn from a snapshot, not this live surface, so it stays on the
-                // same frame as the garment layer.
-                it.alpha = 0f
-                addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-            }
-        private val foregroundView =
-            TextureView(context).also {
-                // Keep decoding off-screen; we composite keyed frames ourselves.
-                it.alpha = 0f
-                addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-            }
-        private val composite =
-            object : View(context) {
-                override fun onDraw(canvas: Canvas) {
-                    val frame = displayFrame ?: return
-                    canvas.drawBitmap(frame, 0f, 0f, null)
+        private var backgroundSurface: Surface? = null
+        private var foregroundSurface: Surface? = null
+        private var videoView: DualVideoGlView? = null
+        private val video =
+            DualVideoGlView(context).also { surface ->
+                videoView = surface
+                surface.chromaKey = chromaKey
+                surface.onSurfaces = { background, foreground ->
+                    backgroundSurface = background
+                    foregroundSurface = foreground
+                    backgroundPlayer?.setVideoSurface(background)
+                    foregroundPlayer?.setVideoSurface(foreground)
                 }
-            }.also {
-                addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+                addView(surface, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             }
 
         private val iconOverlay =
@@ -97,6 +93,8 @@ class LayeredScratchView
                 }
             }.also {
                 it.isClickable = false
+                it.setWillNotDraw(false)
+                it.elevation = 12f
                 addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             }
 
@@ -111,12 +109,9 @@ class LayeredScratchView
 
         private var scratchMask: Bitmap? = null
         private var scratchCanvas: Canvas? = null
-        private var displayFrame: Bitmap? = null
-        private var workFrame: Bitmap? = null
-        private var backgroundFrame: Bitmap? = null
         private var playbackStarted = false
-        private var driftSinceMs = 0L
-        private var lastSeekAtMs = 0L
+        private var lastBackgroundPosition = -1L
+        private var seekHoldUntilMs = 0L
 
         private val erase =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -131,13 +126,11 @@ class LayeredScratchView
                 style = Paint.Style.FILL
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
             }
-
         private var lastX = 0f
         private var lastY = 0f
         private var lastTouchMs = 0L
         private val haptics = ScratchHaptics(context)
         private var moveTicks = 0
-        private var copying = false
         private var scratching = false
         private var lastDustX = Float.NaN
         private var lastDustY = Float.NaN
@@ -158,8 +151,9 @@ class LayeredScratchView
             object : Runnable {
                 override fun run() {
                     stepCursorFx()
-                    captureAndComposite()
-                    if (dust.isNotEmpty()) iconOverlay.invalidate()
+                    syncPlayers()
+                    placeIcons()
+                    if (dust.isNotEmpty() || mesh != null) iconOverlay.invalidate()
                     mainHandler.postDelayed(this, 33L)
                 }
             }
@@ -197,12 +191,12 @@ class LayeredScratchView
             if (key == sourceKey && backgroundPlayer != null) return
             sourceKey = key
             playbackStarted = false
-            driftSinceMs = 0L
-            lastSeekAtMs = 0L
+            lastBackgroundPosition = -1L
+            seekHoldUntilMs = 0L
             resetRound()
             releasePlayers()
-            backgroundPlayer = buildPlayer(backgroundUrl, backgroundView)
-            foregroundPlayer = buildPlayer(foregroundUrl, foregroundView)
+            backgroundPlayer = buildPlayer(backgroundUrl, backgroundSurface)
+            foregroundPlayer = buildPlayer(foregroundUrl, foregroundSurface)
             mainHandler.removeCallbacks(compositeTick)
             mainHandler.post(compositeTick)
         }
@@ -214,7 +208,7 @@ class LayeredScratchView
             topClaimed.fill(false)
             dust.clear()
             iconOverlay.invalidate()
-            composite.invalidate()
+            video.invalidateMask()
         }
 
         fun release() {
@@ -222,31 +216,26 @@ class LayeredScratchView
             releasePlayers()
             symbolDrawables.forEach { it.cancelAnimation() }
             symbolDrawables = emptyList()
+            video.attachMask(null)
             scratchMask?.recycle()
             scratchMask = null
             scratchCanvas = null
-            displayFrame?.recycle()
-            displayFrame = null
-            workFrame?.recycle()
-            workFrame = null
-            backgroundFrame?.recycle()
-            backgroundFrame = null
         }
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             if (w <= 0 || h <= 0) return
-            scratchMask?.recycle()
-            displayFrame?.recycle()
-            workFrame?.recycle()
-            backgroundFrame?.recycle()
-            val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(mask)
-            canvas.drawColor(Color.WHITE)
-            scratchMask = mask
-            scratchCanvas = canvas
-            displayFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            workFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            backgroundFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val maskW = (w / 2).coerceAtLeast(1)
+            val maskH = (h / 2).coerceAtLeast(1)
+            video.lockMask {
+                scratchMask?.recycle()
+                val mask = Bitmap.createBitmap(maskW, maskH, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(mask)
+                canvas.drawColor(Color.WHITE)
+                scratchMask = mask
+                scratchCanvas = canvas
+            }
+            erase.strokeWidth = 140f * maskW / w
+            video.attachMask(scratchMask)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -255,19 +244,27 @@ class LayeredScratchView
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     scratching = true
-                    haptics.pulse(0f, event.pressure, freshCoat(event.x, event.y))
+                    val onCoat = freshCoat(event.x, event.y)
+                    haptics.pulse(0f, event.pressure, onCoat)
+                    spawnCursorFx(event.x, event.y, onCoat)
                     lastX = event.x
                     lastY = event.y
                     lastTouchMs = event.eventTime
-                    canvas.drawCircle(event.x, event.y, 70f, eraseDot)
+                    val (mx, my) = toMask(event.x, event.y)
+                    video.lockMask { canvas.drawCircle(mx, my, maskRadius(), eraseDot) }
                     markIconsNear(event.x, event.y)
-                    spawnCursorFx(event.x, event.y)
+                    video.invalidateMask()
+                    iconOverlay.invalidate()
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dt = (event.eventTime - lastTouchMs).coerceAtLeast(1L)
                     val speed = hypot(event.x - lastX, event.y - lastY) / dt * 1000f
-                    haptics.pulse(speed, event.pressure, freshCoat(event.x, event.y))
-                    canvas.drawLine(lastX, lastY, event.x, event.y, erase)
+                    val onCoat = freshCoat(event.x, event.y)
+                    haptics.pulse(speed, event.pressure, onCoat)
+                    spawnCursorFx(event.x, event.y, onCoat)
+                    val (mx, my) = toMask(event.x, event.y)
+                    val (lx, ly) = toMask(lastX, lastY)
+                    video.lockMask { canvas.drawLine(lx, ly, mx, my, erase) }
                     lastX = event.x
                     lastY = event.y
                     lastTouchMs = event.eventTime
@@ -276,7 +273,8 @@ class LayeredScratchView
                         onScratched?.invoke(scratchedFraction())
                     }
                     markIconsNear(event.x, event.y)
-                    spawnCursorFx(event.x, event.y)
+                    video.invalidateMask()
+                    iconOverlay.invalidate()
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     scratching = false
@@ -294,16 +292,29 @@ class LayeredScratchView
             super.onDetachedFromWindow()
         }
 
+        private fun toMask(x: Float, y: Float): Pair<Float, Float> {
+            val mask = scratchMask ?: return x to y
+            if (width < 1 || height < 1) return x to y
+            return (x * mask.width / width) to (y * mask.height / height)
+        }
+
+        private fun maskRadius(): Float {
+            val mask = scratchMask ?: return 70f
+            if (width < 1) return 70f
+            return 70f * mask.width / width
+        }
+
         /** Still-covered garment only. Cleared holes and keyed-out pixels stay silent. */
         private fun freshCoat(x: Float, y: Float): Boolean {
             if (!fingerOnFabric(x, y)) return false
             val mask = scratchMask ?: return false
-            val ix = x.toInt().coerceIn(0, mask.width - 1)
-            val iy = y.toInt().coerceIn(0, mask.height - 1)
+            val (mx, my) = toMask(x, y)
+            val ix = mx.toInt().coerceIn(0, mask.width - 1)
+            val iy = my.toInt().coerceIn(0, mask.height - 1)
             return (mask.getPixel(ix, iy) ushr 24) >= 16
         }
 
-        private fun buildPlayer(url: String, textureView: TextureView): ExoPlayer {
+        private fun buildPlayer(url: String, surface: Surface?): ExoPlayer {
             val player =
                 ExoPlayer.Builder(context)
                     .setMediaSourceFactory(mediaFactory)
@@ -314,6 +325,7 @@ class LayeredScratchView
                         volume = 0f
                         setMediaItem(MediaItem.fromUri(url))
                         prepare()
+                        surface?.let { setVideoSurface(it) }
                         addListener(
                             object : Player.Listener {
                                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -322,35 +334,12 @@ class LayeredScratchView
                             },
                         )
                     }
-
-            fun bindSurface() {
-                val surface = textureView.surfaceTexture ?: return
-                player.setVideoTexture(surface)
-            }
-
-            if (textureView.isAvailable) {
-                bindSurface()
-            } else {
-                textureView.surfaceTextureListener =
-                    object : TextureView.SurfaceTextureListener {
-                        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-                            bindSurface()
-                        }
-
-                        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
-
-                        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-                            player.clearVideoSurface()
-                            return true
-                        }
-
-                        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
-                    }
-            }
             return player
         }
 
         private fun releasePlayers() {
+            backgroundPlayer?.clearVideoSurface()
+            foregroundPlayer?.clearVideoSurface()
             backgroundPlayer?.release()
             foregroundPlayer?.release()
             backgroundPlayer = null
@@ -392,8 +381,8 @@ class LayeredScratchView
             drawable.draw(canvas)
         }
 
-        private fun spawnCursorFx(x: Float, y: Float) {
-            if (!scratching || !fingerOnFabric(x, y)) return
+        private fun spawnCursorFx(x: Float, y: Float, onCoat: Boolean) {
+            if (!scratching || !onCoat) return
             if (!lastDustX.isNaN()) {
                 val dx = x - lastDustX
                 val dy = y - lastDustY
@@ -418,13 +407,14 @@ class LayeredScratchView
             }
         }
 
-        /** Coins stay on the garment. Keyed-out and already-scratched pixels spawn nothing. */
+        /** Still-covered garment only. Already-scratched holes stay silent. */
         private fun fingerOnFabric(x: Float, y: Float): Boolean {
-            val frame = displayFrame ?: return true
-            if (frame.width < 2 || frame.height < 2) return true
-            val ix = x.toInt().coerceIn(0, frame.width - 1)
-            val iy = y.toInt().coerceIn(0, frame.height - 1)
-            return (frame.getPixel(ix, iy) ushr 24) >= FABRIC_ALPHA_MIN
+            val mask = scratchMask ?: return true
+            if (mask.width < 2 || mask.height < 2) return true
+            val (mx, my) = toMask(x, y)
+            val ix = mx.toInt().coerceIn(0, mask.width - 1)
+            val iy = my.toInt().coerceIn(0, mask.height - 1)
+            return (mask.getPixel(ix, iy) ushr 24) >= 16
         }
 
         private fun stepCursorFx() {
@@ -464,12 +454,20 @@ class LayeredScratchView
 
         private fun markIconsNear(x: Float, y: Float) {
             val radius = 72f
+            var revealed = 0
+            var changed = false
             for (i in 0 until iconCount) {
-                if (iconRevealed[i] || iconX[i].isNaN()) continue
+                if (iconRevealed[i]) {
+                    revealed += 1
+                    continue
+                }
+                if (iconX[i].isNaN()) continue
                 val dx = iconX[i] - x
                 val dy = iconY[i] - y
                 if (dx * dx + dy * dy > radius * radius) continue
                 iconRevealed[i] = true
+                revealed += 1
+                changed = true
                 val type = i
                 if (type < TOP_SLOTS && !topClaimed[type]) {
                     topClaimed[type] = true
@@ -478,7 +476,10 @@ class LayeredScratchView
                     iconMiss[i] = true
                 }
             }
+            if (changed) onSymbolsRevealed?.invoke(revealed)
         }
+
+        fun snapshot(): Bitmap? = video.snapshot()
 
         private fun maybeStartTogether() {
             if (playbackStarted) return
@@ -487,13 +488,19 @@ class LayeredScratchView
             if (background.playbackState != Player.STATE_READY) return
             if (foreground.playbackState != Player.STATE_READY) return
             playbackStarted = true
+            background.setPlaybackSpeed(1f)
+            foreground.setPlaybackSpeed(1f)
             background.seekTo(0)
             foreground.seekTo(0)
             background.play()
             foreground.play()
         }
 
-        /** Keep the garment clip on the background clock. Seeks only, and rarely. */
+        /**
+         * The garment plays live. The hidden background is nudged onto that
+         * clock, and only a large gap or a loop is allowed to seek — seeking
+         * every frame freezes the decoder.
+         */
         private fun syncPlayers() {
             val background = backgroundPlayer ?: return
             val foreground = foregroundPlayer ?: return
@@ -501,119 +508,36 @@ class LayeredScratchView
                 maybeStartTogether()
                 return
             }
+            if (foreground.isPlaying && !background.isPlaying) background.play()
             val backgroundDuration = background.duration
             val foregroundDuration = foreground.duration
             if (backgroundDuration <= 0L || foregroundDuration <= 0L) return
-            val backgroundTime = background.currentPosition
+            val foregroundTime = foreground.currentPosition
+            val looped = lastBackgroundPosition >= 0L && foregroundTime + 200L < lastBackgroundPosition
+            lastBackgroundPosition = foregroundTime
             val target =
                 if (kotlin.math.abs(backgroundDuration - foregroundDuration) <= 250L) {
-                    backgroundTime.coerceIn(0L, foregroundDuration - 1L)
+                    foregroundTime.coerceIn(0L, (backgroundDuration - 1L).coerceAtLeast(0L))
                 } else {
-                    backgroundTime % foregroundDuration
+                    foregroundTime % backgroundDuration
                 }
-            val drift = target - foreground.currentPosition
+            val drift = target - background.currentPosition
             val now = android.os.SystemClock.uptimeMillis()
-            if (kotlin.math.abs(drift) > HARD_SEEK_DRIFT_MS) {
-                foreground.seekTo(target)
-                driftSinceMs = 0L
-                lastSeekAtMs = now
+            if (now < seekHoldUntilMs && !looped) return
+            if (looped || kotlin.math.abs(drift) > SNAP_DRIFT_MS) {
+                background.setPlaybackSpeed(1f)
+                background.seekTo(target)
+                seekHoldUntilMs = now + SEEK_HOLD_MS
                 return
             }
-            if (kotlin.math.abs(drift) > SOFT_SEEK_DRIFT_MS) {
-                if (driftSinceMs == 0L) {
-                    driftSinceMs = now
-                } else if (
-                    now - driftSinceMs >= SOFT_SEEK_CONFIRM_MS &&
-                    now - lastSeekAtMs >= SOFT_SEEK_COOLDOWN_MS
-                ) {
-                    foreground.seekTo(target)
-                    driftSinceMs = 0L
-                    lastSeekAtMs = now
+            val speed =
+                when {
+                    kotlin.math.abs(drift) <= 40L -> 1f
+                    drift > 0L -> 1.03f
+                    else -> 0.97f
                 }
-            } else {
-                driftSinceMs = 0L
-            }
-        }
-
-        private fun captureAndComposite() {
-            if (copying) return
-            syncPlayers()
-            val backgroundBitmap = backgroundFrame ?: return
-            val foregroundBitmap = workFrame ?: return
-            val mask = scratchMask ?: return
-            if (!foregroundView.isAvailable || !backgroundView.isAvailable) return
-            if (foregroundView.width == 0 || backgroundView.width == 0) return
-            if (foregroundBitmap.width != width || foregroundBitmap.height != height) return
-
-            copying = true
-            copySurface(backgroundView, backgroundBitmap) { backgroundOk ->
-                if (!backgroundOk) {
-                    copying = false
-                    return@copySurface
-                }
-                copySurface(foregroundView, foregroundBitmap) { foregroundOk ->
-                    copying = false
-                    if (!foregroundOk) return@copySurface
-                    applyChromaAndMask(foregroundBitmap, mask)
-                    val out = displayFrame ?: return@copySurface
-                    val canvas = Canvas(out)
-                    canvas.drawBitmap(backgroundBitmap, 0f, 0f, null)
-                    canvas.drawBitmap(foregroundBitmap, 0f, 0f, null)
-                    composite.invalidate()
-                    placeIcons()
-                    iconOverlay.invalidate()
-                }
-            }
-        }
-
-        private fun copySurface(view: TextureView, bitmap: Bitmap, done: (Boolean) -> Unit) {
-            val surfaceTexture = view.surfaceTexture
-            if (surfaceTexture == null) {
-                done(false)
-                return
-            }
-            val surface = android.view.Surface(surfaceTexture)
-            try {
-                PixelCopy.request(
-                    surface,
-                    bitmap,
-                    { result ->
-                        surface.release()
-                        done(result == PixelCopy.SUCCESS)
-                    },
-                    mainHandler,
-                )
-            } catch (e: Exception) {
-                surface.release()
-                copying = false
-                onError?.invoke(e.message ?: "Could not composite video")
-                done(false)
-            }
-        }
-
-        private fun applyChromaAndMask(frame: Bitmap, mask: Bitmap) {
-            val w = frame.width
-            val h = frame.height
-            val row = IntArray(w)
-            val maskRow = IntArray(w)
-            for (y in 0 until h) {
-                frame.getPixels(row, 0, w, 0, y, w, 1)
-                mask.getPixels(maskRow, 0, w, 0, y, w, 1)
-                for (x in 0 until w) {
-                    val c = row[x]
-                    val r = (c shr 16) and 0xFF
-                    val g = (c shr 8) and 0xFF
-                    val b = c and 0xFF
-                    val greenScreen = chromaKey && g > 70 && g > r + 30 && g > b + 30
-                    val scratched = (maskRow[x] ushr 24) < 16
-                    row[x] =
-                        if (greenScreen || scratched) {
-                            Color.TRANSPARENT
-                        } else {
-                            c or (0xFF shl 24)
-                        }
-                }
-                frame.setPixels(row, 0, w, 0, y, w, 1)
+            if (background.playbackParameters.speed != speed) {
+                background.setPlaybackSpeed(speed)
             }
         }
 
@@ -647,11 +571,8 @@ class LayeredScratchView
             const val DUST_FADE = 0.96f
             const val DUST_LIFE = 100f
             const val MAX_DUST = 250
-            const val FABRIC_ALPHA_MIN = 31
-            const val HARD_SEEK_DRIFT_MS = 450L
-            const val SOFT_SEEK_DRIFT_MS = 50L
-            const val SOFT_SEEK_CONFIRM_MS = 150L
-            const val SOFT_SEEK_COOLDOWN_MS = 2000L
+            const val SNAP_DRIFT_MS = 280L
+            const val SEEK_HOLD_MS = 400L
         }
     }
 
@@ -662,7 +583,3 @@ private class Dust(
     var vy: Float,
     var life: Float,
 )
-
-private fun ExoPlayer.setVideoTexture(surfaceTexture: SurfaceTexture) {
-    setVideoSurface(android.view.Surface(surfaceTexture))
-}

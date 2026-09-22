@@ -29,6 +29,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.view.TextureView
 import com.airbnb.lottie.LottieComposition
@@ -54,6 +55,7 @@ fun SessionScreen(
     backgroundUrl: String?,
     foregroundUrl: String?,
     introUrl: String?,
+    nextForegroundUrl: String?,
     mesh: GarmentMesh?,
     chromaKey: Boolean,
     symbolCompositions: List<LottieComposition>,
@@ -67,10 +69,10 @@ fun SessionScreen(
     onStartHand: () -> Unit,
     onClaimMilestone: () -> Unit,
     onNextCard: () -> Unit,
+    onPrepareNext: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var playbackError by remember(backgroundUrl, foregroundUrl) { mutableStateOf<String?>(null) }
-    var claimed by remember(handId) { mutableStateOf(false) }
     var foundMask by remember(card?.id) { mutableIntStateOf(0) }
     var phase by remember(card?.id, handComplete) {
         mutableStateOf(
@@ -86,6 +88,10 @@ fun SessionScreen(
         animationSpec = tween(durationMillis = 720),
         label = "topBar",
     )
+    val sounds = remember { GameSounds() }
+    DisposableEffect(sounds) {
+        onDispose { sounds.release() }
+    }
 
     LaunchedEffect(card?.id, handId, loading, phase) {
         if (card != null && handId == null && !loading && phase != RoundPhase.Intro && phase != RoundPhase.Done) {
@@ -93,9 +99,29 @@ fun SessionScreen(
         }
     }
 
-    LaunchedEffect(foundMask, card?.id, phase) {
-        if (phase == RoundPhase.Play && Integer.bitCount(foundMask) >= GAME_SYMBOLS.size) {
-            delay(900)
+    var scratchView by remember { mutableStateOf<LayeredScratchView?>(null) }
+    var filming by remember { mutableStateOf(false) }
+    var filmFrom by remember { mutableStateOf<Bitmap?>(null) }
+    var advanced by remember(card?.id) { mutableStateOf(false) }
+
+    LaunchedEffect(card?.id, handComplete) {
+        filming = false
+    }
+
+    LaunchedEffect(phase, card?.id) {
+        if (phase == RoundPhase.Play) onPrepareNext()
+    }
+
+    fun goNext() {
+        if (advanced || handComplete) return
+        advanced = true
+        val shot = scratchView?.snapshot()
+        val next = nextForegroundUrl
+        if (shot != null && !next.isNullOrBlank()) {
+            filmFrom = shot
+            filming = true
+        } else {
+            shot?.recycle()
             onNextCard()
         }
     }
@@ -108,18 +134,21 @@ fun SessionScreen(
                 mesh = mesh,
                 chromaKey = chromaKey,
                 symbolCompositions = symbolCompositions,
-                scratchEnabled = phase == RoundPhase.Play,
+                scratchEnabled = phase == RoundPhase.Play && !filming,
+                onView = { scratchView = it },
                 onError = { playbackError = it },
                 onIconFound = { index ->
                     val bit = 1 shl index
                     if (foundMask and bit == 0) {
                         foundMask = foundMask or bit
+                        sounds.playMatchFind()
                     }
-                    val found = Integer.bitCount(foundMask)
-                    if (!claimed && handId != null && found >= GAME_SYMBOLS.size) {
-                        claimed = true
-                        onClaimMilestone()
-                    }
+                },
+                onSymbolsRevealed = { count ->
+                    if (phase == RoundPhase.Play && count >= BODY_SYMBOL_COUNT) goNext()
+                },
+                onScratched = { fraction ->
+                    if (phase == RoundPhase.Play && fraction >= SCRATCH_ALL) goNext()
                 },
             )
         } else {
@@ -137,14 +166,7 @@ fun SessionScreen(
             )
         }
 
-        if (phase == RoundPhase.Done) {
-            Text(
-                "Hand complete",
-                color = Color.White,
-                fontSize = 22.sp,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        } else if (phase != RoundPhase.Intro) {
+        if (phase != RoundPhase.Intro && phase != RoundPhase.Done) {
             Text(
                 "${handIndex + 1} / $handSize",
                 color = Color(0xCCFFFFFF),
@@ -175,7 +197,7 @@ fun SessionScreen(
                         ),
             )
         }
-        val problem = playbackError ?: error
+        val problem = playbackError ?: error?.takeUnless { it.contains("scratch hand limit") }
         if (!problem.isNullOrBlank()) {
             Text(
                 problem,
@@ -192,6 +214,19 @@ fun SessionScreen(
         ) {
             Text("Log out", color = Color.White)
         }
+        val fromFrame = filmFrom
+        val nextFrameUrl = nextForegroundUrl
+        if (filming && fromFrame != null && !nextFrameUrl.isNullOrBlank()) {
+            AndroidView(
+                factory = { context ->
+                    FilmStripTransitionView(context).also { view ->
+                        view.onFinished = { onNextCard() }
+                        view.start(fromFrame, nextFrameUrl)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
@@ -203,8 +238,11 @@ private fun DualLayerScratch(
     chromaKey: Boolean,
     symbolCompositions: List<LottieComposition>,
     scratchEnabled: Boolean,
+    onView: (LayeredScratchView) -> Unit,
     onError: (String) -> Unit,
     onIconFound: (Int) -> Unit,
+    onSymbolsRevealed: (Int) -> Unit,
+    onScratched: (Float) -> Unit,
 ) {
     val viewRef = remember { arrayOfNulls<LayeredScratchView>(1) }
 
@@ -220,16 +258,22 @@ private fun DualLayerScratch(
                 viewRef[0] = view
                 view.onError = onError
                 view.onIconFound = onIconFound
+                view.onSymbolsRevealed = onSymbolsRevealed
+                view.onScratched = onScratched
                 view.mesh = mesh
                 view.chromaKey = chromaKey
                 view.setSymbolCompositions(symbolCompositions)
                 view.scratchEnabled = scratchEnabled
                 view.setSources(backgroundUrl, foregroundUrl)
+                onView(view)
             }
         },
         update = { view ->
+            onView(view)
             view.onError = onError
             view.onIconFound = onIconFound
+            view.onSymbolsRevealed = onSymbolsRevealed
+            view.onScratched = onScratched
             view.mesh = mesh
             view.chromaKey = chromaKey
             view.setSymbolCompositions(symbolCompositions)
@@ -239,6 +283,9 @@ private fun DualLayerScratch(
         modifier = Modifier.fillMaxSize(),
     )
 }
+
+private const val BODY_SYMBOL_COUNT = 12
+private const val SCRATCH_ALL = 0.98f
 
 @Composable
 private fun IntroClip(url: String, onFinished: () -> Unit) {

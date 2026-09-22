@@ -17,7 +17,7 @@ This does **not** port the UV mesh scratch canvas — that remains a follow-up.
 - Host services running from the repo root:
 
 ```bash
-npm run dev:api   # FastAPI on 127.0.0.1:8090
+npm run dev:api   # FastAPI on 0.0.0.0:8090
 npm run dev       # Vite media on :5080 (/cards, /mesh)
 ```
 
@@ -29,27 +29,16 @@ cd android
 # or open the android/ folder in Android Studio and Run
 ```
 
-Debug defaults (emulator):
+The app picks the host at runtime:
 
-| BuildConfig        | Value                   |
-| ------------------ | ----------------------- |
-| `API_BASE_URL`     | `http://10.0.2.2:8090`  |
-| `MEDIA_BASE_URL`   | `https://10.0.2.2:5080` |
+| Device | API | Media |
+| --- | --- | --- |
+| Emulator | `http://10.0.2.2:8090` | `https://10.0.2.2:5080` |
+| Phone | `http://<this Mac's LAN IP>:8090` | `https://<LAN IP>:5080` |
 
-Vite serves `/cards` and `/mesh` on **HTTPS** port 5080 (`@vitejs/plugin-basic-ssl`). The debug app trusts that local certificate only for media playback.
+The phone address is this machine's `en0` IP, read when the debug APK is built (`BuildConfig.LAN_HOST`). Phone and computer must be on the same Wi‑Fi. `npm run dev:api` listens on `0.0.0.0:8090`; Vite already listens on `0.0.0.0:5080`.
 
-## Physical device
-
-**Option A — adb reverse (keep defaults or point at 127.0.0.1):**
-
-```bash
-adb reverse tcp:8090 tcp:8090
-adb reverse tcp:5080 tcp:5080
-```
-
-Then set both base URLs to `http://127.0.0.1:8090` / `http://127.0.0.1:5080` in [`app/build.gradle.kts`](app/build.gradle.kts) `buildConfigField`s and rebuild.
-
-**Option B — LAN IP:** bind the API to all interfaces (`--host 0.0.0.0`) and set the base URLs to your machine’s LAN IP (phone and laptop on the same Wi‑Fi). Vite already listens on `0.0.0.0:5080`.
+Vite serves `/cards` and `/mesh` on **HTTPS** (`@vitejs/plugin-basic-ssl`). The debug app trusts that local certificate only for media playback. Rebuild the app if the computer's IP changes.
 
 ## Smoke flow in the app
 

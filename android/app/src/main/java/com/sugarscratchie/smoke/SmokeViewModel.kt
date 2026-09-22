@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -43,11 +44,13 @@ data class SmokeUiState(
     val backgroundUrl: String? = null,
     val foregroundUrl: String? = null,
     val introUrl: String? = null,
+    val nextForegroundUrl: String? = null,
     val mesh: GarmentMesh? = null,
     val chromaKey: Boolean = true,
     val symbolCompositions: List<LottieComposition> = emptyList(),
     val handId: String? = null,
     val handsRemainingToday: Int? = null,
+    val rewardHandDeclined: Boolean = false,
     val lastClaimMessage: String? = null,
 )
 
@@ -138,7 +141,9 @@ class SmokeViewModel(
     }
 
     fun startHand() {
-        val card = _state.value.card ?: return
+        val current = _state.value
+        if (current.rewardHandDeclined || current.handId != null || current.loading) return
+        val card = current.card ?: return
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null, lastClaimMessage = null) }
             try {
@@ -152,8 +157,13 @@ class SmokeViewModel(
                     )
                 }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(loading = false, error = e.message ?: "Could not start hand")
+                val message = e.message.orEmpty()
+                if (message.contains("scratch hand limit")) {
+                    _state.update { it.copy(loading = false, error = null, rewardHandDeclined = true) }
+                } else {
+                    _state.update {
+                        it.copy(loading = false, error = message.ifBlank { "Could not start hand" })
+                    }
                 }
             }
         }
@@ -222,16 +232,82 @@ class SmokeViewModel(
         }
     }
 
+    private var preparedIndex = -1
+    private var preparedMesh: GarmentMesh? = null
+    private var preparingIndex = -1
+    private var prepareJob: Job? = null
+
+    fun prepareNext() {
+        val state = _state.value
+        val next = state.handIndex + 1
+        if (next >= state.hand.size || preparedIndex == next || preparingIndex == next) return
+        val hand = state.hand
+        preparingIndex = next
+        prepareJob =
+            viewModelScope.launch {
+                val mesh = fetchMesh(hand[next])
+                if (mesh != null && mesh.symbolCount >= 6) {
+                    preparedIndex = next
+                    preparedMesh = mesh
+                }
+                if (preparingIndex == next) preparingIndex = -1
+            }
+    }
+
     fun nextCard() {
         val state = _state.value
         if (state.handComplete) return
         val next = state.handIndex + 1
         if (next >= state.hand.size) {
-            _state.update { it.copy(handComplete = true, handId = null) }
+            viewModelScope.launch { startAnotherHand() }
             return
         }
         viewModelScope.launch {
             presentCard(next, state.hand)
+        }
+    }
+
+    private suspend fun startAnotherHand() {
+        val cards =
+            api.cards().cards.filter { card ->
+                card.id != "original" &&
+                    card.mesh != "tracked-mesh.json" &&
+                    card.foreground.isNotBlank() &&
+                    card.background.isNotBlank() &&
+                    card.mesh.isNotBlank()
+            }
+        val hand = dealMotionHand(cards, HAND_SIZE)
+        preparedIndex = -1
+        preparedMesh = null
+        preparingIndex = -1
+        _state.update {
+            it.copy(
+                hand = hand,
+                handIndex = 0,
+                handComplete = false,
+                handId = null,
+                lastClaimMessage = null,
+            )
+        }
+        if (hand.isNotEmpty()) presentCard(0, hand)
+    }
+
+    private suspend fun loadMesh(card: CardInfo): GarmentMesh? {
+        val job = prepareJob
+        if (job != null && job.isActive && _state.value.hand.getOrNull(preparingIndex)?.id == card.id) {
+            job.join()
+        }
+        val ready = preparedMesh
+        if (ready != null && _state.value.hand.getOrNull(preparedIndex)?.id == card.id) return ready
+        return fetchMesh(card)
+    }
+
+    private suspend fun fetchMesh(card: CardInfo): GarmentMesh? {
+        return try {
+            val raw = api.fetchText(api.mediaUrl("/mesh/${card.mesh}"))
+            withContext(Dispatchers.Default) { GarmentMesh.parse(raw) }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -266,13 +342,7 @@ class SmokeViewModel(
 
     private suspend fun presentCard(index: Int, hand: List<CardInfo>) {
         val card = hand.getOrNull(index) ?: return
-        val mesh =
-            try {
-                val raw = api.fetchText(api.mediaUrl("/mesh/${card.mesh}"))
-                withContext(Dispatchers.Default) { GarmentMesh.parse(raw) }
-            } catch (_: Exception) {
-                null
-            }
+        val mesh = loadMesh(card)
         if (mesh == null || mesh.symbolCount < 6) {
             val rest = hand.filterIndexed { i, _ -> i != index }
             if (rest.isEmpty()) {
@@ -283,6 +353,7 @@ class SmokeViewModel(
             }
             return
         }
+        val nextCard = hand.getOrNull(index + 1)
         _state.update {
             it.copy(
                 handIndex = index,
@@ -290,6 +361,7 @@ class SmokeViewModel(
                 backgroundUrl = api.backgroundUrl(card),
                 foregroundUrl = api.foregroundUrl(card),
                 introUrl = card.trailer?.takeIf { it.isNotBlank() }?.let { api.mediaUrl(it) },
+                nextForegroundUrl = nextCard?.let { api.foregroundUrl(it) },
                 mesh = mesh,
                 chromaKey = false,
                 handId = null,

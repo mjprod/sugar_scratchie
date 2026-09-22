@@ -1,6 +1,5 @@
 package com.sugarscratchie.smoke.data
 
-import com.sugarscratchie.smoke.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -20,8 +19,8 @@ import java.util.concurrent.TimeUnit
 
 class SugarApi(
     private val cookieJar: SessionCookieJar,
-    private val apiBaseUrl: String = BuildConfig.API_BASE_URL.trimEnd('/'),
-    private val mediaBaseUrl: String = BuildConfig.MEDIA_BASE_URL.trimEnd('/'),
+    private val apiBaseUrl: String = DevEndpoints.apiBaseUrl,
+    private val mediaBaseUrl: String = DevEndpoints.mediaBaseUrl,
 ) {
     private val json =
         Json {
