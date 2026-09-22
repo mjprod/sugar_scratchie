@@ -61,6 +61,7 @@ fun SessionScreen(
     symbolCompositions: List<LottieComposition>,
     handIndex: Int,
     handSize: Int,
+    roundEpoch: Int,
     handComplete: Boolean,
     handId: String?,
     lastClaimMessage: String?,
@@ -111,9 +112,9 @@ fun SessionScreen(
     var scratchView by remember { mutableStateOf<LayeredScratchView?>(null) }
     var filming by remember { mutableStateOf(false) }
     var filmFrom by remember { mutableStateOf<Bitmap?>(null) }
-    // handIndex: when the same card is redealt first after a rollover, card?.id alone
-    // would keep advanced=true if the intermediate null card frame was skipped.
-    var advanced by remember(card?.id, handIndex) { mutableStateOf(false) }
+    // roundEpoch: card?.id / handIndex alone stay put when the same card is redealt
+    // first after a rollover (especially at handIndex 0), leaving advanced stuck.
+    var advanced by remember(roundEpoch) { mutableStateOf(false) }
     var claimed by remember(handId) { mutableStateOf(false) }
 
     LaunchedEffect(card?.id, handComplete) {

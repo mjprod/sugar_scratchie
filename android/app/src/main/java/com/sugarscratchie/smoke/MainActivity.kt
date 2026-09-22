@@ -73,6 +73,7 @@ private fun SmokeApp(vm: SmokeViewModel = viewModel()) {
                 symbolCompositions = state.symbolCompositions,
                 handIndex = state.handIndex,
                 handSize = state.hand.size,
+                roundEpoch = state.roundEpoch,
                 handComplete = state.handComplete,
                 handId = state.handId,
                 lastClaimMessage = state.lastClaimMessage,

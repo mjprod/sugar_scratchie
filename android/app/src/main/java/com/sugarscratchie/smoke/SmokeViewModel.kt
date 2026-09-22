@@ -44,6 +44,8 @@ data class SmokeUiState(
     val card: CardInfo? = null,
     val hand: List<CardInfo> = emptyList(),
     val handIndex: Int = 0,
+    /** Bumps on every presented card so SessionScreen can reset per-round UI (e.g. advanced). */
+    val roundEpoch: Int = 0,
     val handComplete: Boolean = false,
     val backgroundUrl: String? = null,
     val foregroundUrl: String? = null,
@@ -443,16 +445,16 @@ class SmokeViewModel(
             val rest = hand.filterIndexed { i, _ -> i != index }
             if (rest.isEmpty()) {
                 _state.update { it.copy(handComplete = true, loading = false) }
-            } else {
+            } else if (index < rest.size) {
                 _state.update { it.copy(hand = rest) }
                 // Keep the same index so the next remaining card slides into place.
                 // Do not clamp to lastIndex — that re-presents the card just finished
                 // when the skipped card was the last one (SessionScreen advanced stays true).
-                if (index < rest.size) {
-                    presentCard(index, rest)
-                } else {
-                    startAnotherHand()
-                }
+                presentCard(index, rest)
+            } else {
+                // Last card unplayable: roll the hand. startAnotherHand clears card+handId
+                // together so SessionScreen cannot auto-start against the finished round.
+                startAnotherHand()
             }
             return
         }
@@ -460,6 +462,7 @@ class SmokeViewModel(
         _state.update {
             it.copy(
                 handIndex = index,
+                roundEpoch = it.roundEpoch + 1,
                 card = card,
                 backgroundUrl = api.backgroundUrl(card),
                 foregroundUrl = api.foregroundUrl(card),
