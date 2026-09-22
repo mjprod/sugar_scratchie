@@ -387,7 +387,14 @@ class SmokeViewModel(
                 _state.update { it.copy(handComplete = true, loading = false) }
             } else {
                 _state.update { it.copy(hand = rest) }
-                presentCard(index.coerceAtMost(rest.lastIndex), rest)
+                // Keep the same index so the next remaining card slides into place.
+                // Do not clamp to lastIndex — that re-presents the card just finished
+                // when the skipped card was the last one (SessionScreen advanced stays true).
+                if (index < rest.size) {
+                    presentCard(index, rest)
+                } else {
+                    startAnotherHand()
+                }
             }
             return
         }
