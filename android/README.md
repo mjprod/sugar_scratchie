@@ -38,7 +38,9 @@ The app picks the host at runtime:
 
 The phone address is this machine's `en0` IP, read when the debug APK is built (`BuildConfig.LAN_HOST`). Phone and computer must be on the same Wi‑Fi. `npm run dev:api` listens on `0.0.0.0:8090`; Vite already listens on `0.0.0.0:5080`.
 
-Vite serves `/cards` and `/mesh` on **HTTPS** (`@vitejs/plugin-basic-ssl`). The debug app trusts that local certificate only for media playback. Rebuild the app if the computer's IP changes.
+## Server picker
+
+On the login screen, choose **Local** (emulator `10.0.2.2` / phone LAN IP) or **Remote (.env)** — the `VITE_API_PROXY` / `VITE_MEDIA_PROXY` values from [`frontend-new/.env`](../frontend-new/.env), baked into the APK at build time. Switching clears the session cookie.
 
 ## Smoke flow in the app
 

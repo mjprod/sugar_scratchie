@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.sugarscratchie.smoke.data.ApiException
 import com.airbnb.lottie.LottieComposition
 import com.sugarscratchie.smoke.data.CardInfo
+import com.sugarscratchie.smoke.data.DevEndpoints
 import com.sugarscratchie.smoke.data.GarmentMesh
+import com.sugarscratchie.smoke.data.ServerTarget
 import com.sugarscratchie.smoke.data.SessionCookieJar
 import com.sugarscratchie.smoke.data.SugarApi
 import com.sugarscratchie.smoke.data.SymbolLotties
@@ -34,6 +36,8 @@ data class SmokeUiState(
     val email: String = "",
     val password: String = "",
     val registerMode: Boolean = false,
+    val serverTarget: ServerTarget = ServerTarget.Local,
+    val apiBaseUrl: String = "",
     val loading: Boolean = false,
     val error: String? = null,
     val wallet: WalletResponse? = null,
@@ -60,12 +64,28 @@ class SmokeViewModel(
     private val cookieJar = SessionCookieJar(application)
     private val api = SugarApi(cookieJar)
 
-    private val _state = MutableStateFlow(SmokeUiState())
+    private val _state =
+        MutableStateFlow(
+            SmokeUiState(
+                serverTarget = run {
+                    DevEndpoints.init(application)
+                    DevEndpoints.target
+                },
+                apiBaseUrl = DevEndpoints.apiBaseUrl,
+            ),
+        )
     val state: StateFlow<SmokeUiState> = _state.asStateFlow()
 
     fun bootstrap() {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
+            _state.update {
+                it.copy(
+                    loading = true,
+                    error = null,
+                    serverTarget = DevEndpoints.target,
+                    apiBaseUrl = DevEndpoints.apiBaseUrl,
+                )
+            }
             try {
                 val session = api.session()
                 if (session.authenticated && session.user != null) {
@@ -93,6 +113,22 @@ class SmokeViewModel(
 
     fun onPasswordChange(value: String) {
         _state.update { it.copy(password = value, error = null) }
+    }
+
+    fun onServerTargetChange(target: ServerTarget) {
+        if (target == DevEndpoints.target) return
+        cookieJar.clear()
+        DevEndpoints.target = target
+        _state.update {
+            it.copy(
+                serverTarget = target,
+                apiBaseUrl = DevEndpoints.apiBaseUrl,
+                error = null,
+                handId = null,
+                wallet = null,
+                card = null,
+            )
+        }
     }
 
     fun toggleRegisterMode() {
@@ -209,6 +245,8 @@ class SmokeViewModel(
                 SmokeUiState(
                     screen = SmokeScreen.Login,
                     email = _state.value.email,
+                    serverTarget = DevEndpoints.target,
+                    apiBaseUrl = DevEndpoints.apiBaseUrl,
                 )
         }
     }

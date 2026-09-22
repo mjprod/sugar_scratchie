@@ -13,6 +13,21 @@ val lanHost = providers.exec {
     if (ip.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))) ip else "127.0.0.1"
 }.get()
 
+fun viteProxyFromEnv(key: String, fallback: String): String {
+    val envFile = rootProject.file("../frontend-new/.env")
+    if (!envFile.isFile) return fallback
+    val line =
+        envFile.readLines()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("$key=") && !it.startsWith("#") }
+            ?: return fallback
+    val value = line.substringAfter("=").trim().trim('"').trim('\'')
+    return value.ifBlank { fallback }
+}
+
+val remoteApiBase = viteProxyFromEnv("VITE_API_PROXY", "https://sugarbackend.mxjprod.work")
+val remoteMediaBase = viteProxyFromEnv("VITE_MEDIA_PROXY", "https://sugarbackend.mxjprod.work")
+
 android {
     namespace = "com.sugarscratchie.smoke"
     compileSdk = 35
@@ -26,6 +41,9 @@ android {
 
         // Phone builds talk to this Mac over Wi-Fi. Emulator still uses 10.0.2.2.
         buildConfigField("String", "LAN_HOST", "\"$lanHost\"")
+        // Matches frontend-new/.env VITE_API_PROXY / VITE_MEDIA_PROXY when present.
+        buildConfigField("String", "REMOTE_API_BASE_URL", "\"$remoteApiBase\"")
+        buildConfigField("String", "REMOTE_MEDIA_BASE_URL", "\"$remoteMediaBase\"")
     }
 
     buildFeatures {

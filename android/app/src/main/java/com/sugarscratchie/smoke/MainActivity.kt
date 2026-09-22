@@ -48,10 +48,13 @@ private fun SmokeApp(vm: SmokeViewModel = viewModel()) {
                 email = state.email,
                 password = state.password,
                 registerMode = state.registerMode,
+                serverTarget = state.serverTarget,
+                apiBaseUrl = state.apiBaseUrl,
                 loading = state.loading,
                 error = state.error,
                 onEmailChange = vm::onEmailChange,
                 onPasswordChange = vm::onPasswordChange,
+                onServerTargetChange = vm::onServerTargetChange,
                 onToggleMode = vm::toggleRegisterMode,
                 onSubmit = vm::submitAuth,
             )

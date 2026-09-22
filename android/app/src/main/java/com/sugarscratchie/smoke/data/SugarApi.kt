@@ -19,9 +19,11 @@ import java.util.concurrent.TimeUnit
 
 class SugarApi(
     private val cookieJar: SessionCookieJar,
-    private val apiBaseUrl: String = DevEndpoints.apiBaseUrl,
-    private val mediaBaseUrl: String = DevEndpoints.mediaBaseUrl,
 ) {
+    private val apiBaseUrl: String
+        get() = DevEndpoints.apiBaseUrl
+    private val mediaBaseUrl: String
+        get() = DevEndpoints.mediaBaseUrl
     private val json =
         Json {
             ignoreUnknownKeys = true
