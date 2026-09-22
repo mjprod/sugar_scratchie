@@ -180,25 +180,42 @@ class SmokeViewModel(
         val current = _state.value
         if (current.rewardHandDeclined || current.handId != null || current.loading) return
         val card = current.card ?: return
+        val cardId = card.id
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null, lastClaimMessage = null) }
             try {
-                val hand = api.startScratchHand(card.id)
-                _state.update {
-                    it.copy(
-                        loading = false,
-                        handId = hand.handId,
-                        handsRemainingToday = hand.handsRemainingToday,
-                        lastClaimMessage = "Hand started (${hand.milestonesRemaining} milestones left)",
-                    )
+                val hand = api.startScratchHand(cardId)
+                _state.update { state ->
+                    // Drop stale starts: startAnotherHand may have moved on while this was in flight.
+                    // Do not clear loading — the hand transition owns that flag.
+                    if (state.card?.id != cardId) {
+                        state
+                    } else {
+                        state.copy(
+                            loading = false,
+                            handId = hand.handId,
+                            handsRemainingToday = hand.handsRemainingToday,
+                            lastClaimMessage = "Hand started (${hand.milestonesRemaining} milestones left)",
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 val message = e.message.orEmpty()
                 if (message.contains("scratch hand limit")) {
-                    _state.update { it.copy(loading = false, error = null, rewardHandDeclined = true) }
+                    _state.update { state ->
+                        if (state.card?.id != cardId) {
+                            state
+                        } else {
+                            state.copy(loading = false, error = null, rewardHandDeclined = true)
+                        }
+                    }
                 } else {
-                    _state.update {
-                        it.copy(loading = false, error = message.ifBlank { "Could not start hand" })
+                    _state.update { state ->
+                        if (state.card?.id != cardId) {
+                            state
+                        } else {
+                            state.copy(loading = false, error = message.ifBlank { "Could not start hand" })
+                        }
                     }
                 }
             }
@@ -208,26 +225,45 @@ class SmokeViewModel(
     fun claimMilestone() {
         val card = _state.value.card ?: return
         val handId = _state.value.handId ?: return
+        val cardId = card.id
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {
-                val claim = api.claimScratchCoins(handId = handId, milestone = 1, cardId = card.id)
+                val claim = api.claimScratchCoins(handId = handId, milestone = 1, cardId = cardId)
                 val msg =
                     if (claim.alreadyClaimed) {
                         "Milestone 1 already claimed"
                     } else {
                         "Claimed +${claim.coins} coins"
                     }
-                _state.update {
-                    it.copy(
-                        loading = false,
-                        wallet = claim.wallet,
-                        lastClaimMessage = msg,
-                    )
+                _state.update { state ->
+                    // Auto-claim races with next-card / startAnotherHand. Always keep the wallet
+                    // update; only clear loading when it is safe for SessionScreen's auto-start.
+                    when {
+                        // Hand rollover cleared the finished card; transition owns loading.
+                        state.card == null -> state.copy(wallet = claim.wallet)
+                        // Next card already on screen — unblock its startHand.
+                        state.card?.id != cardId ->
+                            state.copy(loading = false, wallet = claim.wallet)
+                        // Same card but handId was cleared (gap before card swap) — do not
+                        // reopen startHand for the finished round.
+                        state.handId != handId -> state.copy(wallet = claim.wallet)
+                        else ->
+                            state.copy(
+                                loading = false,
+                                wallet = claim.wallet,
+                                lastClaimMessage = msg,
+                            )
+                    }
                 }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(loading = false, error = e.message ?: "Claim failed")
+                _state.update { state ->
+                    when {
+                        state.card == null -> state
+                        state.card?.id != cardId -> state.copy(loading = false)
+                        state.handId != handId -> state
+                        else -> state.copy(loading = false, error = e.message ?: "Claim failed")
+                    }
                 }
             }
         }
@@ -306,6 +342,23 @@ class SmokeViewModel(
     }
 
     private suspend fun startAnotherHand() {
+        // Drop the finished card *with* handId so SessionScreen cannot auto-start a hand
+        // against the previous card while the next mesh is still loading. Keep loading=true
+        // until presentCard lands so the in-flight auto-claim cannot reopen that window.
+        _state.update {
+            it.copy(
+                loading = true,
+                handId = null,
+                card = null,
+                backgroundUrl = null,
+                foregroundUrl = null,
+                introUrl = null,
+                nextForegroundUrl = null,
+                mesh = null,
+                lastClaimMessage = null,
+                handComplete = false,
+            )
+        }
         val cards =
             api.cards().cards.filter { card ->
                 card.id != "original" &&
@@ -322,12 +375,17 @@ class SmokeViewModel(
             it.copy(
                 hand = hand,
                 handIndex = 0,
-                handComplete = false,
+                handComplete = hand.isEmpty(),
                 handId = null,
                 lastClaimMessage = null,
             )
         }
-        if (hand.isNotEmpty()) presentCard(0, hand)
+        if (hand.isNotEmpty()) {
+            presentCard(0, hand)
+            _state.update { it.copy(loading = false) }
+        } else {
+            _state.update { it.copy(loading = false, handComplete = true) }
+        }
     }
 
     private suspend fun loadMesh(card: CardInfo): GarmentMesh? {

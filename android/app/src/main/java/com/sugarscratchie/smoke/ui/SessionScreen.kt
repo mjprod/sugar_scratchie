@@ -93,8 +93,17 @@ fun SessionScreen(
         onDispose { sounds.release() }
     }
 
-    LaunchedEffect(card?.id, handId, loading, phase) {
-        if (card != null && handId == null && !loading && phase != RoundPhase.Intro && phase != RoundPhase.Done) {
+    LaunchedEffect(card?.id, handId, loading, phase, foregroundUrl) {
+        // Require a presented card (urls set) so a hand-rollover that clears handId
+        // before swapping card cannot start a scratch hand on the finished round.
+        if (
+            card != null &&
+            !foregroundUrl.isNullOrBlank() &&
+            handId == null &&
+            !loading &&
+            phase != RoundPhase.Intro &&
+            phase != RoundPhase.Done
+        ) {
             onStartHand()
         }
     }
@@ -102,7 +111,9 @@ fun SessionScreen(
     var scratchView by remember { mutableStateOf<LayeredScratchView?>(null) }
     var filming by remember { mutableStateOf(false) }
     var filmFrom by remember { mutableStateOf<Bitmap?>(null) }
-    var advanced by remember(card?.id) { mutableStateOf(false) }
+    // handIndex: when the same card is redealt first after a rollover, card?.id alone
+    // would keep advanced=true if the intermediate null card frame was skipped.
+    var advanced by remember(card?.id, handIndex) { mutableStateOf(false) }
     var claimed by remember(handId) { mutableStateOf(false) }
 
     LaunchedEffect(card?.id, handComplete) {
