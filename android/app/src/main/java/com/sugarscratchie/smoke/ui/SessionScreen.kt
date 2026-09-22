@@ -103,6 +103,7 @@ fun SessionScreen(
     var filming by remember { mutableStateOf(false) }
     var filmFrom by remember { mutableStateOf<Bitmap?>(null) }
     var advanced by remember(card?.id) { mutableStateOf(false) }
+    var claimed by remember(handId) { mutableStateOf(false) }
 
     LaunchedEffect(card?.id, handComplete) {
         filming = false
@@ -114,6 +115,10 @@ fun SessionScreen(
 
     fun goNext() {
         if (advanced || handComplete) return
+        if (!claimed && handId != null) {
+            claimed = true
+            onClaimMilestone()
+        }
         advanced = true
         val shot = scratchView?.snapshot()
         val next = nextForegroundUrl
