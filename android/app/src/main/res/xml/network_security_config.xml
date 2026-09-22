@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Local FastAPI (8090) and Vite media (5080) use plain HTTP. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

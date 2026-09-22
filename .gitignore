@@ -46,6 +46,16 @@ public/cards/controlnet-output/
 # (scripts/copy-dotlottie-wasm.mjs) — don't commit the binary.
 public/wasm/
 
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.cxx/
+android/captures/
+*.apk
+*.aab
+*.keystore
+
 # Editor / OS
 .idea/
 .vscode/
