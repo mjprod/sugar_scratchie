@@ -37,6 +37,10 @@ export type ModelGlobalMedia = {
   swipeVideoUrl?: string | null;
   /** Still photo for swipe card / discovery poster, e.g. "/models/julianaval/swipe-poster.webp". */
   swipePosterUrl?: string | null;
+  /** Ultra card video trailer, e.g. "/models/julianaval/ultra-card-trailer.mp4". */
+  ultraCardTrailerUrl?: string | null;
+  /** Still first-frame poster for the ultra card trailer. */
+  ultraCardTrailerPosterUrl?: string | null;
   /** Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp". */
   coverUrl?: string | null;
   /** Product label for foil pack 1 (replaces "Pack Nº …" when set). */
@@ -55,29 +59,35 @@ export type ModelInfo = {
 } & ModelInfluencerProfile &
   ModelGlobalMedia;
 
-export type ModelVideoKind = "pack-face" | "pack-face-2" | "swipe";
+export type ModelVideoKind = "pack-face" | "pack-face-2" | "swipe" | "ultra-card-trailer";
 
 export type ModelPosterKind =
   | "pack-face-poster"
   | "pack-face-2-poster"
   | "swipe-poster"
+  | "ultra-card-trailer-poster"
   | "cover";
 
 export const MODEL_VIDEO_POSTER_KIND: Record<ModelVideoKind, ModelPosterKind> = {
   "pack-face": "pack-face-poster",
   "pack-face-2": "pack-face-2-poster",
   swipe: "swipe-poster",
+  "ultra-card-trailer": "ultra-card-trailer-poster",
 };
 
 export function modelPosterUrl(
   model: Pick<
     ModelGlobalMedia,
-    "packFacePosterUrl" | "packFacePosterUrl2" | "swipePosterUrl"
+    | "packFacePosterUrl"
+    | "packFacePosterUrl2"
+    | "swipePosterUrl"
+    | "ultraCardTrailerPosterUrl"
   >,
   kind: ModelVideoKind,
 ): string | null | undefined {
   if (kind === "pack-face") return model.packFacePosterUrl;
   if (kind === "pack-face-2") return model.packFacePosterUrl2;
+  if (kind === "ultra-card-trailer") return model.ultraCardTrailerPosterUrl;
   return model.swipePosterUrl;
 }
 

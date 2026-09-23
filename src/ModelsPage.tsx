@@ -3088,7 +3088,7 @@ function ModelDetail({
               onUpload={onCoverClick}
             />
           </Box>
-          <Grid columns={{ initial: "1", sm: "3" }} gap="3" style={{ alignItems: "stretch" }}>
+          <Grid columns={{ initial: "1", sm: "2", lg: "4" }} gap="3" style={{ alignItems: "stretch" }}>
             <ModelVideoSlot
               busy={busy}
               label="Foil 3D pack video"
@@ -3141,6 +3141,23 @@ function ModelDetail({
                   : undefined
               }
               onUpload={() => onVideoClick("swipe")}
+            />
+            <ModelVideoSlot
+              busy={busy}
+              label="Ultra card video trailer"
+              pathHint={`models/${model.id}/ultra-card-trailer.*`}
+              posterPathHint={`models/${model.id}/ultra-card-trailer-poster.webp`}
+              photoLabel="Trailer poster"
+              url={model.ultraCardTrailerUrl}
+              savedPosterUrl={model.ultraCardTrailerPosterUrl}
+              uploadPosterUrl={videoPosters[modelVideoPosterKey(model.id, "ultra-card-trailer")]}
+              onUpload={() => onVideoClick("ultra-card-trailer")}
+              onPosterUpload={() => onPosterClick("ultra-card-trailer")}
+              onGeneratePoster={
+                model.ultraCardTrailerUrl
+                  ? () => onGeneratePoster("ultra-card-trailer", model.ultraCardTrailerUrl!)
+                  : undefined
+              }
             />
           </Grid>
           <Flex align="center" gap="2" mt="2" wrap="wrap">
