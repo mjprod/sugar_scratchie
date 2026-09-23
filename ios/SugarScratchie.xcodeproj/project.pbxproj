@@ -1,0 +1,526 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		07AD9204FB6CA48152530EF8 /* BarFoilView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772C1EC813136DF4E75724B5 /* BarFoilView.swift */; };
+		23F8A777AE645DF1BA2E3157 /* DevMediaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2F4500615222D1A87AC12A /* DevMediaClient.swift */; };
+		46F97C21139503BEDD66EA9F /* DevEndpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35AC61D68CEF92AF3E184833 /* DevEndpoints.swift */; };
+		5111107CF3A5C6EC8563CF68 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5903763437E941A3C7580F5E /* Models.swift */; };
+		55E4F787D25D2967E1778CDA /* GameSounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BBC5F476E256641DE51BFB /* GameSounds.swift */; };
+		674077B0D0A0D68EEC9A5FD9 /* DualVideoShaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88E987785C68327BCE5FFBB9 /* DualVideoShaders.swift */; };
+		67922B0BBE20B4B182727A3E /* LayeredScratchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1CD35D8F072A83C7BBA5C2E /* LayeredScratchView.swift */; };
+		7518B1C4F67F94D708D3EDEA /* FilmStripTransitionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3120F5D0E55EC9323724944 /* FilmStripTransitionView.swift */; };
+		785A75802B17EFC176819058 /* SugarScratchieApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB46A33D3E462CD03358CBA9 /* SugarScratchieApp.swift */; };
+		80FA963ABE17FF82C0EB5752 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF33C7FE7FF3DD66D6B534E /* ContentView.swift */; };
+		817E0601C7226DD61D927D6A /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = DB005C3FB5790DD5249AB3C0 /* Lottie */; };
+		8BDC356C97189558ED1DC57D /* GameHud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35881EDE27A5D14FA77B2B20 /* GameHud.swift */; };
+		907D7580DA6A8A82832326AA /* SymbolLotties.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2EA2C83ACE6F75E90EFD5B8 /* SymbolLotties.swift */; };
+		910AC3F2B75D87890D3AC589 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6D58FFEE263CA9803FEB3080 /* Assets.xcassets */; };
+		AD970626B00E4CE59B808DD2 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72755A95126D7CC32040C26 /* SessionView.swift */; };
+		B4FE63ADA17A0B6AC4286E0C /* DevConfig.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 814ED8941668F16915B42B31 /* DevConfig.generated.swift */; };
+		BCB5025C3F8E088B0FAB1502 /* SessionCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7669F52FC8ECFBB02884CD64 /* SessionCookieStore.swift */; };
+		CDA06262160514840D8E4202 /* ScratchHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DAD1416FF4DA665CA238828 /* ScratchHaptics.swift */; };
+		D77E848D44D5F2CAFBCC3DC8 /* SugarAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B17A8A04A71BF07B64F44F7 /* SugarAPI.swift */; };
+		D9CCEDB1E10D0782AA07A058 /* GarmentMesh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EBAFBA4CD891DE3A57A2F4A /* GarmentMesh.swift */; };
+		DEFC4D32E6E8251C2E124450 /* DualVideoMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9234E66D709C148DBF8AD9 /* DualVideoMetalView.swift */; };
+		F3440C38B606BFD8872B3194 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815ADA8B765AE106C336C31A /* LoginView.swift */; };
+		F5C468E254DEF5188ECF3A03 /* SmokeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 881727CF39D676DCD872C0DF /* SmokeViewModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0EBAFBA4CD891DE3A57A2F4A /* GarmentMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarmentMesh.swift; sourceTree = "<group>"; };
+		19490D2A6F18CBAAF4345CCD /* SugarScratchie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SugarScratchie.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		35881EDE27A5D14FA77B2B20 /* GameHud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHud.swift; sourceTree = "<group>"; };
+		35AC61D68CEF92AF3E184833 /* DevEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevEndpoints.swift; sourceTree = "<group>"; };
+		3B17A8A04A71BF07B64F44F7 /* SugarAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugarAPI.swift; sourceTree = "<group>"; };
+		4CF33C7FE7FF3DD66D6B534E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		51BBC5F476E256641DE51BFB /* GameSounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameSounds.swift; sourceTree = "<group>"; };
+		5903763437E941A3C7580F5E /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		5F9234E66D709C148DBF8AD9 /* DualVideoMetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualVideoMetalView.swift; sourceTree = "<group>"; };
+		6D58FFEE263CA9803FEB3080 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		6E2F4500615222D1A87AC12A /* DevMediaClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevMediaClient.swift; sourceTree = "<group>"; };
+		7669F52FC8ECFBB02884CD64 /* SessionCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCookieStore.swift; sourceTree = "<group>"; };
+		772C1EC813136DF4E75724B5 /* BarFoilView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarFoilView.swift; sourceTree = "<group>"; };
+		7DAD1416FF4DA665CA238828 /* ScratchHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScratchHaptics.swift; sourceTree = "<group>"; };
+		814ED8941668F16915B42B31 /* DevConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevConfig.generated.swift; sourceTree = "<group>"; };
+		815ADA8B765AE106C336C31A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		881727CF39D676DCD872C0DF /* SmokeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeViewModel.swift; sourceTree = "<group>"; };
+		88E987785C68327BCE5FFBB9 /* DualVideoShaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualVideoShaders.swift; sourceTree = "<group>"; };
+		A355AE33494844F1CDF7F6EA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B72755A95126D7CC32040C26 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
+		C3120F5D0E55EC9323724944 /* FilmStripTransitionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmStripTransitionView.swift; sourceTree = "<group>"; };
+		CB46A33D3E462CD03358CBA9 /* SugarScratchieApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugarScratchieApp.swift; sourceTree = "<group>"; };
+		D2EA2C83ACE6F75E90EFD5B8 /* SymbolLotties.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolLotties.swift; sourceTree = "<group>"; };
+		F1CD35D8F072A83C7BBA5C2E /* LayeredScratchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayeredScratchView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		49750262D9A85BC19C009BDD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				817E0601C7226DD61D927D6A /* Lottie in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		07C8A5A740D681B8032380B5 /* SugarScratchie */ = {
+			isa = PBXGroup;
+			children = (
+				6D58FFEE263CA9803FEB3080 /* Assets.xcassets */,
+				A355AE33494844F1CDF7F6EA /* Info.plist */,
+				37A02C53B3436848AEC1BEDE /* App */,
+				63DB0974ED693F74481D2092 /* Audio */,
+				FD60A39FFBE3D212A2BB00B1 /* Data */,
+				5126C62FB0F7BCC3DCFCA2E2 /* Generated */,
+				1BD541135F6D74D24D3D2588 /* Haptics */,
+				75BB1BD598D41FE5D1155BDE /* Metal */,
+				632F2385E4996CBDDEE7348D /* UI */,
+				55C3B5859E6AEB23537FCAB1 /* ViewModel */,
+			);
+			path = SugarScratchie;
+			sourceTree = "<group>";
+		};
+		1BD541135F6D74D24D3D2588 /* Haptics */ = {
+			isa = PBXGroup;
+			children = (
+				7DAD1416FF4DA665CA238828 /* ScratchHaptics.swift */,
+			);
+			path = Haptics;
+			sourceTree = "<group>";
+		};
+		2C472066C550D439F81A52A0 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				19490D2A6F18CBAAF4345CCD /* SugarScratchie.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		37A02C53B3436848AEC1BEDE /* App */ = {
+			isa = PBXGroup;
+			children = (
+				4CF33C7FE7FF3DD66D6B534E /* ContentView.swift */,
+				CB46A33D3E462CD03358CBA9 /* SugarScratchieApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		5126C62FB0F7BCC3DCFCA2E2 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				814ED8941668F16915B42B31 /* DevConfig.generated.swift */,
+			);
+			path = Generated;
+			sourceTree = "<group>";
+		};
+		55C3B5859E6AEB23537FCAB1 /* ViewModel */ = {
+			isa = PBXGroup;
+			children = (
+				881727CF39D676DCD872C0DF /* SmokeViewModel.swift */,
+			);
+			path = ViewModel;
+			sourceTree = "<group>";
+		};
+		632F2385E4996CBDDEE7348D /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				772C1EC813136DF4E75724B5 /* BarFoilView.swift */,
+				C3120F5D0E55EC9323724944 /* FilmStripTransitionView.swift */,
+				35881EDE27A5D14FA77B2B20 /* GameHud.swift */,
+				F1CD35D8F072A83C7BBA5C2E /* LayeredScratchView.swift */,
+				815ADA8B765AE106C336C31A /* LoginView.swift */,
+				B72755A95126D7CC32040C26 /* SessionView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		63DB0974ED693F74481D2092 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				51BBC5F476E256641DE51BFB /* GameSounds.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		75BB1BD598D41FE5D1155BDE /* Metal */ = {
+			isa = PBXGroup;
+			children = (
+				5F9234E66D709C148DBF8AD9 /* DualVideoMetalView.swift */,
+				88E987785C68327BCE5FFBB9 /* DualVideoShaders.swift */,
+			);
+			path = Metal;
+			sourceTree = "<group>";
+		};
+		A7AA0D36D01320B512726D28 = {
+			isa = PBXGroup;
+			children = (
+				07C8A5A740D681B8032380B5 /* SugarScratchie */,
+				2C472066C550D439F81A52A0 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FD60A39FFBE3D212A2BB00B1 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				35AC61D68CEF92AF3E184833 /* DevEndpoints.swift */,
+				6E2F4500615222D1A87AC12A /* DevMediaClient.swift */,
+				0EBAFBA4CD891DE3A57A2F4A /* GarmentMesh.swift */,
+				5903763437E941A3C7580F5E /* Models.swift */,
+				7669F52FC8ECFBB02884CD64 /* SessionCookieStore.swift */,
+				3B17A8A04A71BF07B64F44F7 /* SugarAPI.swift */,
+				D2EA2C83ACE6F75E90EFD5B8 /* SymbolLotties.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9657E041FF02814F3061ADC6 /* SugarScratchie */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8CEF074757C0B03A383B36A3 /* Build configuration list for PBXNativeTarget "SugarScratchie" */;
+			buildPhases = (
+				4FDF762658F2FEF67C99B444 /* Resolve Dev Endpoints */,
+				6245AEAFA0A15E70B3824230 /* Sources */,
+				91B46BE939C8278AA0F135C5 /* Resources */,
+				49750262D9A85BC19C009BDD /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SugarScratchie;
+			packageProductDependencies = (
+				DB005C3FB5790DD5249AB3C0 /* Lottie */,
+			);
+			productName = SugarScratchie;
+			productReference = 19490D2A6F18CBAAF4345CCD /* SugarScratchie.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6AA1DB9A37708EAFFFF074F0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					9657E041FF02814F3061ADC6 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = CE3389BED01D5FECBF3D2871 /* Build configuration list for PBXProject "SugarScratchie" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A7AA0D36D01320B512726D28;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				26202894B9EBC9CD969613A9 /* XCRemoteSwiftPackageReference "lottie-ios" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9657E041FF02814F3061ADC6 /* SugarScratchie */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		91B46BE939C8278AA0F135C5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				910AC3F2B75D87890D3AC589 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		4FDF762658F2FEF67C99B444 /* Resolve Dev Endpoints */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Resolve Dev Endpoints";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nENV_FILE=\"${SRCROOT}/../frontend-new/.env\"\nLAN=\"$(ipconfig getifaddr en0 2>/dev/null || true)\"\nif [[ ! \"$LAN\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n  LAN=\"127.0.0.1\"\nfi\nAPI=\"https://sugarbackend.mxjprod.work\"\nMEDIA=\"https://sugarbackend.mxjprod.work\"\nif [[ -f \"$ENV_FILE\" ]]; then\n  while IFS= read -r line || [[ -n \"$line\" ]]; do\n    line=\"${line%%#*}\"\n    line=\"$(echo \"$line\" | xargs)\"\n    case \"$line\" in\n      VITE_API_PROXY=*) API=\"${line#VITE_API_PROXY=}\" ;;\n      VITE_MEDIA_PROXY=*) MEDIA=\"${line#VITE_MEDIA_PROXY=}\" ;;\n    esac\n  done < \"$ENV_FILE\"\nfi\nAPI=\"$(echo \"$API\" | tr -d '\"' | tr -d \"'\" | xargs)\"\nMEDIA=\"$(echo \"$MEDIA\" | tr -d '\"' | tr -d \"'\" | xargs)\"\nOUT=\"${SRCROOT}/SugarScratchie/Generated/DevConfig.generated.swift\"\nmkdir -p \"$(dirname \"$OUT\")\"\ncat > \"$OUT\" <<EOF\nenum DevConfigGenerated {\n  static let lanHost = \"${LAN}\"\n  static let remoteApiBaseURL = \"${API}\"\n  static let remoteMediaBaseURL = \"${MEDIA}\"\n}\nEOF\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6245AEAFA0A15E70B3824230 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				07AD9204FB6CA48152530EF8 /* BarFoilView.swift in Sources */,
+				80FA963ABE17FF82C0EB5752 /* ContentView.swift in Sources */,
+				B4FE63ADA17A0B6AC4286E0C /* DevConfig.generated.swift in Sources */,
+				46F97C21139503BEDD66EA9F /* DevEndpoints.swift in Sources */,
+				23F8A777AE645DF1BA2E3157 /* DevMediaClient.swift in Sources */,
+				DEFC4D32E6E8251C2E124450 /* DualVideoMetalView.swift in Sources */,
+				674077B0D0A0D68EEC9A5FD9 /* DualVideoShaders.swift in Sources */,
+				7518B1C4F67F94D708D3EDEA /* FilmStripTransitionView.swift in Sources */,
+				8BDC356C97189558ED1DC57D /* GameHud.swift in Sources */,
+				55E4F787D25D2967E1778CDA /* GameSounds.swift in Sources */,
+				D9CCEDB1E10D0782AA07A058 /* GarmentMesh.swift in Sources */,
+				67922B0BBE20B4B182727A3E /* LayeredScratchView.swift in Sources */,
+				F3440C38B606BFD8872B3194 /* LoginView.swift in Sources */,
+				5111107CF3A5C6EC8563CF68 /* Models.swift in Sources */,
+				CDA06262160514840D8E4202 /* ScratchHaptics.swift in Sources */,
+				BCB5025C3F8E088B0FAB1502 /* SessionCookieStore.swift in Sources */,
+				AD970626B00E4CE59B808DD2 /* SessionView.swift in Sources */,
+				F5C468E254DEF5188ECF3A03 /* SmokeViewModel.swift in Sources */,
+				D77E848D44D5F2CAFBCC3DC8 /* SugarAPI.swift in Sources */,
+				785A75802B17EFC176819058 /* SugarScratchieApp.swift in Sources */,
+				907D7580DA6A8A82832326AA /* SymbolLotties.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		11BFC309B7898B88075D076D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HCCGKS85AZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SugarScratchie/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_PREPROCESS = NO;
+				LAN_HOST = "$(LAN_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sugarscratchie.smoke;
+				PRODUCT_NAME = SugarScratchie;
+				REMOTE_API_BASE_URL = "$(REMOTE_API_BASE_URL)";
+				REMOTE_MEDIA_BASE_URL = "$(REMOTE_MEDIA_BASE_URL)";
+				SDKROOT = iphoneos;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1B1EB7AD4CDC0A333D2D26BD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HCCGKS85AZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SugarScratchie/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_PREPROCESS = NO;
+				LAN_HOST = "$(LAN_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sugarscratchie.smoke;
+				PRODUCT_NAME = SugarScratchie;
+				REMOTE_API_BASE_URL = "$(REMOTE_API_BASE_URL)";
+				REMOTE_MEDIA_BASE_URL = "$(REMOTE_MEDIA_BASE_URL)";
+				SDKROOT = iphoneos;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		84C670696EA13CC4F6B2FD9B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		9181DB8FF515D1FAE080C2EA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8CEF074757C0B03A383B36A3 /* Build configuration list for PBXNativeTarget "SugarScratchie" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1B1EB7AD4CDC0A333D2D26BD /* Debug */,
+				11BFC309B7898B88075D076D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CE3389BED01D5FECBF3D2871 /* Build configuration list for PBXProject "SugarScratchie" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				84C670696EA13CC4F6B2FD9B /* Debug */,
+				9181DB8FF515D1FAE080C2EA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		26202894B9EBC9CD969613A9 /* XCRemoteSwiftPackageReference "lottie-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/airbnb/lottie-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DB005C3FB5790DD5249AB3C0 /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 26202894B9EBC9CD969613A9 /* XCRemoteSwiftPackageReference "lottie-ios" */;
+			productName = Lottie;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 6AA1DB9A37708EAFFFF074F0 /* Project object */;
+}

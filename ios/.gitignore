@@ -1,0 +1,7 @@
+DerivedData/
+SourcePackages/
+.spm-cache/
+build.log
+bin/
+*.xcuserstate
+xcuserdata/
