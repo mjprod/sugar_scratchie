@@ -27,6 +27,7 @@ MODEL_VIDEO_STEMS: dict[str, str] = {
     "pack-face": "packFaceVideoUrl",
     "pack-face-2": "packFaceVideoUrl2",
     "swipe": "swipeVideoUrl",
+    "ultra-card-trailer": "ultraCardTrailerUrl",
 }
 
 # Still images: video-paired posters + standalone model cover.
@@ -34,6 +35,7 @@ MODEL_POSTER_STEMS: dict[str, str] = {
     "pack-face-poster": "packFacePosterUrl",
     "pack-face-2-poster": "packFacePosterUrl2",
     "swipe-poster": "swipePosterUrl",
+    "ultra-card-trailer-poster": "ultraCardTrailerPosterUrl",
     "cover": "coverUrl",
 }
 
@@ -89,6 +91,9 @@ class ModelInfo(BaseModel):
     packFacePosterUrl2: str | None = None
     swipeVideoUrl: str | None = None
     swipePosterUrl: str | None = None
+    # Ultra card video trailer, e.g. "/models/julianaval/ultra-card-trailer.mp4".
+    ultraCardTrailerUrl: str | None = None
+    ultraCardTrailerPosterUrl: str | None = None
     # Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp".
     coverUrl: str | None = None
     # theme_id → public URL for model×theme collection avatar.
@@ -312,6 +317,8 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         packFacePosterUrl2=posters.get("packFacePosterUrl2"),
         swipeVideoUrl=videos.get("swipeVideoUrl"),
         swipePosterUrl=posters.get("swipePosterUrl"),
+        ultraCardTrailerUrl=videos.get("ultraCardTrailerUrl"),
+        ultraCardTrailerPosterUrl=posters.get("ultraCardTrailerPosterUrl"),
         coverUrl=posters.get("coverUrl"),
         theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
         tags=_normalize_tags(row.tags),

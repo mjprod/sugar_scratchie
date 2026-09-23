@@ -1225,6 +1225,16 @@ async def post_model_swipe(
     return model.dict()
 
 
+@app.post("/api/models/{model_id}/ultra-card-trailer")
+async def post_model_ultra_card_trailer(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_video(db, MODELS_DIR, model_id, "ultra-card-trailer", file)
+    return model.dict()
+
+
 @app.post("/api/models/{model_id}/swipe-poster")
 async def post_model_swipe_poster(
     model_id: str,
@@ -1252,6 +1262,18 @@ async def post_model_pack_face_2_poster(
     file: UploadFile = File(...),
 ) -> dict:
     model = await upload_model_poster(db, MODELS_DIR, model_id, "pack-face-2-poster", file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/ultra-card-trailer-poster")
+async def post_model_ultra_card_trailer_poster(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_poster(
+        db, MODELS_DIR, model_id, "ultra-card-trailer-poster", file
+    )
     return model.dict()
 
 
