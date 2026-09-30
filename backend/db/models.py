@@ -224,6 +224,7 @@ class PhotoScratchCard(Base):
     __tablename__ = "photo_scratch_cards"
     __table_args__ = (
         CheckConstraint("slot_id ~ '^slot_[0-9]{2}$'", name="photo_scratch_cards_slot_chk"),
+        CheckConstraint("card_price IS NULL OR card_price >= 0", name="photo_scratch_cards_price_chk"),
         UniqueConstraint("card_id", "slot_id", name="photo_scratch_cards_card_slot_uq"),
         Index("photo_scratch_cards_card_idx", "card_id"),
         Index("photo_scratch_cards_sort_idx", "sort_order"),
@@ -239,6 +240,7 @@ class PhotoScratchCard(Base):
     bikini: Mapped[str] = mapped_column(Text, nullable=False)
     clothes: Mapped[str] = mapped_column(Text, nullable=False)
     mesh: Mapped[str] = mapped_column(Text, nullable=False)
+    card_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

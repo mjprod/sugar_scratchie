@@ -27,6 +27,7 @@ import {
   generatePhotoScratchLayer,
   photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
+  setPhotoScratchSlotPrice,
   setPhotoScratchSlotPrompt,
   slotLayerPrompt,
   uploadPhotoScratchLayer,
@@ -906,6 +907,50 @@ function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
   return { color: "orange", label: "3 layers · Picture Flow" };
 }
 
+function SlotPriceInput({
+  value,
+  onCommit,
+}: {
+  value: number | null | undefined;
+  onCommit: (next: number | null) => void;
+}) {
+  const saved = value == null ? "" : String(value);
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+
+  function commit() {
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : Math.floor(Number(trimmed));
+    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+      setDraft(saved);
+      return;
+    }
+    if ((parsed == null ? "" : String(parsed)) === saved) {
+      setDraft(saved);
+      return;
+    }
+    onCommit(parsed);
+  }
+
+  return (
+    <TextField.Root
+      aria-label="Card price"
+      min={0}
+      placeholder="Card price"
+      size="1"
+      step={1}
+      style={{ width: 110 }}
+      type="number"
+      value={draft}
+      onBlur={commit}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 function SlotLayerUpload({
   cardId,
   slotId,
@@ -1450,6 +1495,16 @@ function CardPhotosPanel({
     }
   }
 
+  async function handleSlotPriceCommit(slotId: string, next: number | null) {
+    setPanelError("");
+    try {
+      const updated = await setPhotoScratchSlotPrice(cardId.trim(), slotId, next, theme);
+      handleSlotUpdate(updated);
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
   const pendingByLayer = (layer: PhotoScratchLayerType) =>
     slots.filter((s) => Boolean(s[PENDING_KEY[layer]]));
 
@@ -1877,6 +1932,10 @@ function CardPhotosPanel({
                       {index + 1}. {slot.label}
                     </Text>
                     <Flex align="center" gap="2" wrap="wrap">
+                      <SlotPriceInput
+                        value={slot.card_price}
+                        onCommit={(next) => void handleSlotPriceCommit(slot.id, next)}
+                      />
                       <Badge color={status.color} variant="soft">
                         {status.label}
                       </Badge>

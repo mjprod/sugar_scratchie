@@ -70,6 +70,7 @@ from backend.cards import (
     read_photo_scratch_slot_symbols,
     reject_photo_scratch_bg,
     reject_photo_scratch_layer,
+    set_photo_scratch_slot_price,
     set_photo_scratch_slot_prompt,
     upload_photo_scratch_layer,
     write_photo_scratch_slot_symbols,
@@ -108,7 +109,11 @@ from backend.themes_store import (
     update_theme,
     upload_theme_intro,
 )
-from backend.photo_scratch_store import ensure_photo_scratch_bootstrapped, list_photo_scratch_cards
+from backend.photo_scratch_store import (
+    ensure_photo_scratch_bootstrapped,
+    list_photo_scratch_cards,
+    set_published_card_price,
+)
 from backend.symbols_store import (
     CreateSymbolGroupRequest,
     RewriteSymbolJsonRequest,
@@ -851,6 +856,10 @@ class SetSlotPromptRequest(BaseModel):
     prompt: str = ""
 
 
+class SetSlotPriceRequest(BaseModel):
+    card_price: int | None = Field(default=None, ge=0)
+
+
 @app.get("/api/cards/{card_id}/photo-scratch")
 def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
@@ -1039,6 +1048,25 @@ def patch_photo_scratch_slot_prompt(
     slot = set_photo_scratch_slot_prompt(
         CARDS_DIR, card_id, slot_id, request.layer, request.prompt, theme
     )
+    return slot.dict()
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/price")
+def patch_photo_scratch_slot_price(
+    card_id: str,
+    slot_id: str,
+    request: SetSlotPriceRequest,
+    db: Annotated[Session, Depends(get_session)],
+    theme: str = "",
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    slot = set_photo_scratch_slot_price(
+        CARDS_DIR, card_id, slot_id, request.card_price, theme
+    )
+    set_published_card_price(db, card_id, slot_id, request.card_price)
     return slot.dict()
 
 
