@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from backend.cards import optional_card_price
 from backend.db.models import Creator, MotionCard, PhotoScratchCard, Theme
 from backend.themes_store import find_theme_intro
 
@@ -45,12 +46,6 @@ def _optional_str(value: Any) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
-
-
-def _optional_price(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
 
 
 def _parse_published_id(entry_id: str) -> tuple[str, str] | None:
@@ -186,7 +181,7 @@ def _import_legacy_index(db: Session, root: Path) -> int:
                 bikini=str(entry["bikini"]).strip(),
                 clothes=str(entry["clothes"]).strip(),
                 mesh=str(entry["mesh"]).strip(),
-                card_price=_optional_price(entry.get("card_price")),
+                card_price=optional_card_price(entry.get("card_price")),
                 sort_order=index,
                 created_at=now,
                 updated_at=now,
@@ -245,7 +240,7 @@ def upsert_published(
                 bikini=str(entry["bikini"]).strip(),
                 clothes=str(entry["clothes"]).strip(),
                 mesh=str(entry["mesh"]).strip(),
-                card_price=_optional_price(entry.get("card_price")),
+                card_price=optional_card_price(entry.get("card_price")),
                 sort_order=next_order + offset,
                 created_at=now,
                 updated_at=now,

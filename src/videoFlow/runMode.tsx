@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../shared/api";
 import {
   approvePhotoScratchLayer,
+  CARD_PRICE_MAX,
   defaultPhotoScratchPrompt,
   deletePhotoScratchLayer,
   fetchPhotoScratchSlots,
@@ -912,16 +913,24 @@ function SlotPriceInput({
   onCommit,
 }: {
   value: number | null | undefined;
-  onCommit: (next: number | null) => void;
+  onCommit: (next: number | null) => Promise<boolean>;
 }) {
   const saved = value == null ? "" : String(value);
   const [draft, setDraft] = useState(saved);
   useEffect(() => setDraft(saved), [saved]);
 
-  function commit() {
+  function commit(badInput: boolean) {
+    // Number inputs report partial entries like "e" or "-" as "" — revert, don't clear.
+    if (badInput) {
+      setDraft(saved);
+      return;
+    }
     const trimmed = draft.trim();
     const parsed = trimmed === "" ? null : Math.floor(Number(trimmed));
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+    if (
+      parsed !== null &&
+      (!Number.isFinite(parsed) || parsed < 0 || parsed > CARD_PRICE_MAX)
+    ) {
       setDraft(saved);
       return;
     }
@@ -929,20 +938,24 @@ function SlotPriceInput({
       setDraft(saved);
       return;
     }
-    onCommit(parsed);
+    void onCommit(parsed).then((ok) => {
+      if (!ok) setDraft(saved);
+    });
   }
 
   return (
     <TextField.Root
       aria-label="Card price"
+      max={CARD_PRICE_MAX}
       min={0}
       placeholder="Card price"
       size="1"
       step={1}
       style={{ width: 110 }}
+      title="Saved on the slot; also updates the live catalog if this slot is already published"
       type="number"
       value={draft}
-      onBlur={commit}
+      onBlur={(event) => commit(event.currentTarget.validity.badInput)}
       onChange={(event) => setDraft(event.currentTarget.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
@@ -1495,13 +1508,15 @@ function CardPhotosPanel({
     }
   }
 
-  async function handleSlotPriceCommit(slotId: string, next: number | null) {
+  async function handleSlotPriceCommit(slotId: string, next: number | null): Promise<boolean> {
     setPanelError("");
     try {
       const updated = await setPhotoScratchSlotPrice(cardId.trim(), slotId, next, theme);
       handleSlotUpdate(updated);
+      return true;
     } catch (caught) {
       reportError(caught);
+      return false;
     }
   }
 
@@ -1934,7 +1949,7 @@ function CardPhotosPanel({
                     <Flex align="center" gap="2" wrap="wrap">
                       <SlotPriceInput
                         value={slot.card_price}
-                        onCommit={(next) => void handleSlotPriceCommit(slot.id, next)}
+                        onCommit={(next) => handleSlotPriceCommit(slot.id, next)}
                       />
                       <Badge color={status.color} variant="soft">
                         {status.label}

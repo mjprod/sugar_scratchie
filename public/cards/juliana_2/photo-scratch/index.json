@@ -4,7 +4,8 @@
     "label": "Nurse \u2013 1",
     "background": "/cards/juliana_2/photo-scratch/pending/slot_01_background.jpg",
     "bikini": "/cards/juliana_2/photo-scratch/pending/slot_01_bikini.jpg",
-    "clothes": "/cards/juliana_2/photo-scratch/pending/slot_01_clothes.jpg"
+    "clothes": "/cards/juliana_2/photo-scratch/pending/slot_01_clothes.jpg",
+    "card_price": 8
   },
   {
     "id": "slot_02",

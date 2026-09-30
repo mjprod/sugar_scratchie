@@ -51,6 +51,7 @@ from backend.cards_store import (
     upload_card_trailer_poster,
 )
 from backend.cards import (
+    CARD_PRICE_MAX,
     CardInfo,
     CreateCardRequest,
     PhotoInfo,
@@ -857,7 +858,7 @@ class SetSlotPromptRequest(BaseModel):
 
 
 class SetSlotPriceRequest(BaseModel):
-    card_price: int | None = Field(default=None, ge=0)
+    card_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
 
 
 @app.get("/api/cards/{card_id}/photo-scratch")
@@ -1063,10 +1064,11 @@ def patch_photo_scratch_slot_price(
         raise HTTPException(status_code=400, detail="Invalid card id")
     if not re.fullmatch(r"slot_\d{2}", slot_id):
         raise HTTPException(status_code=400, detail="Invalid slot_id")
+    # DB first: a failed flush must not leave the slot index ahead of the catalog.
+    set_published_card_price(db, card_id, slot_id, request.card_price)
     slot = set_photo_scratch_slot_price(
         CARDS_DIR, card_id, slot_id, request.card_price, theme
     )
-    set_published_card_price(db, card_id, slot_id, request.card_price)
     return slot.dict()
 
 

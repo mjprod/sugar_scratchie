@@ -693,6 +693,9 @@ export async function setPhotoScratchSlotPrompt(
   );
 }
 
+/** Matches the backend `CARD_PRICE_MAX` (Postgres INTEGER ceiling). */
+export const CARD_PRICE_MAX = 2_147_483_647;
+
 export async function setPhotoScratchSlotPrice(
   cardId: string,
   slotId: string,
