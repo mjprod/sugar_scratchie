@@ -3585,9 +3585,11 @@ export function RunMode(props: RunModeProps) {
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
-                  ? actionIsInteractive
-                    ? " — place points on the mesh, then save"
-                    : " — ready to run"
+                  ? actionStep === "trim"
+                    ? " — delete white frames (or keep as-is) in the Fix frames panel"
+                    : actionIsInteractive
+                      ? " — place points on the mesh, then save"
+                      : " — ready to run"
                   : actionStatus === "approved"
                     ? " — done (remake to regenerate)"
                     : actionStatus === "running" || jobBusy
@@ -3639,7 +3641,20 @@ export function RunMode(props: RunModeProps) {
             </Button>
           ) : null}
 
-          {actionStatus === "ready" ? (
+          {actionStatus === "ready" && actionIsInteractive && actionStep ? (
+            activeStep === actionStep ? null : (
+              <Button
+                disabled={jobBusy}
+                type="button"
+                onClick={() => {
+                  const nodeId = stepToNodeMap[actionStep];
+                  if (nodeId) setActiveNode(nodeId);
+                }}
+              >
+                Open {flowState?.steps[actionStep]?.label ?? actionStep}
+              </Button>
+            )
+          ) : actionStatus === "ready" ? (
             <Button
               disabled={!canRunActionStep}
               type="button"

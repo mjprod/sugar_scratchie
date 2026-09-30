@@ -61,6 +61,16 @@ function looksLikeWorkspaceRootPath(value: string): boolean {
   return /(?:^|\/)sugar_scratchie\/?$/.test(trimmed);
 }
 
+const DRAFT_SAVE_ERROR_PREFIX = "Could not save card settings";
+
+function draftSaveErrorMessage(caught: unknown): string {
+  const raw = caught instanceof Error ? caught.message : String(caught);
+  if (raw.includes("operator-unauthorized")) {
+    return `${DRAFT_SAVE_ERROR_PREFIX}: dashboard session expired — sign in again at /dashboard/login, then re-pick the theme.`;
+  }
+  return `${DRAFT_SAVE_ERROR_PREFIX}: ${raw}`;
+}
+
 function draftPayload(
   draft: StoredVideoFlowDraft,
   flow: VideoFlowJson,
@@ -209,6 +219,7 @@ export function useVideoFlowState() {
   const selectionTokenRef = useRef(0);
   const desiredCardIdRef = useRef(cardId.trim());
   const switchingCardRef = useRef(false);
+  const draftSaveSeqRef = useRef(0);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
 
@@ -509,10 +520,23 @@ export function useVideoFlowState() {
     const timer = window.setTimeout(() => {
       if (switchingCardRef.current) return;
       if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
+      const seq = ++draftSaveSeqRef.current;
+      const isLatestSave = () =>
+        seq === draftSaveSeqRef.current &&
+        !switchingCardRef.current &&
+        (!desiredCardIdRef.current || id === desiredCardIdRef.current);
       void api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
         method: "POST",
         body: JSON.stringify(draftPayload(draft, flow, enhancePrompt)),
-      }).catch(() => undefined);
+      })
+        .then(() => {
+          if (!isLatestSave()) return;
+          setError((current) => (current.startsWith(DRAFT_SAVE_ERROR_PREFIX) ? "" : current));
+        })
+        .catch((caught: unknown) => {
+          if (!isLatestSave()) return;
+          setError(draftSaveErrorMessage(caught));
+        });
     }, 500);
     return () => window.clearTimeout(timer);
   }, [
