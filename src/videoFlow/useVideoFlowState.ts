@@ -219,6 +219,7 @@ export function useVideoFlowState() {
   const selectionTokenRef = useRef(0);
   const desiredCardIdRef = useRef(cardId.trim());
   const switchingCardRef = useRef(false);
+  const draftSaveSeqRef = useRef(0);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
 
@@ -519,14 +520,21 @@ export function useVideoFlowState() {
     const timer = window.setTimeout(() => {
       if (switchingCardRef.current) return;
       if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
+      const seq = ++draftSaveSeqRef.current;
+      const isLatestSave = () =>
+        seq === draftSaveSeqRef.current &&
+        !switchingCardRef.current &&
+        (!desiredCardIdRef.current || id === desiredCardIdRef.current);
       void api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
         method: "POST",
         body: JSON.stringify(draftPayload(draft, flow, enhancePrompt)),
       })
         .then(() => {
+          if (!isLatestSave()) return;
           setError((current) => (current.startsWith(DRAFT_SAVE_ERROR_PREFIX) ? "" : current));
         })
         .catch((caught: unknown) => {
+          if (!isLatestSave()) return;
           setError(draftSaveErrorMessage(caught));
         });
     }, 500);
