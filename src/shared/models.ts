@@ -456,6 +456,8 @@ export type PhotoScratchSlot = {
   prompt_background?: string;
   prompt_bikini?: string;
   prompt_clothes?: string;
+  /** Whole-number price shown in the game UI; copied to the catalog on publish. */
+  card_price?: number | null;
   /** Per-slot static photo mesh URL (not the motion-card video mesh). */
   mesh?: string;
   has_symbols?: boolean;
@@ -687,6 +689,25 @@ export async function setPhotoScratchSlotPrompt(
     {
       method: "PATCH",
       body: JSON.stringify({ layer, prompt }),
+    },
+  );
+}
+
+/** Matches the backend `CARD_PRICE_MAX` (Postgres INTEGER ceiling). */
+export const CARD_PRICE_MAX = 2_147_483_647;
+
+export async function setPhotoScratchSlotPrice(
+  cardId: string,
+  slotId: string,
+  cardPrice: number | null,
+  theme = "",
+): Promise<PhotoScratchSlot> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  return api<PhotoScratchSlot>(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/price${params}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ card_price: cardPrice }),
     },
   );
 }

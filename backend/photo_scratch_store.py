@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from backend.cards import optional_card_price
 from backend.db.models import Creator, MotionCard, PhotoScratchCard, Theme
 from backend.themes_store import find_theme_intro
 
@@ -28,6 +29,7 @@ class PhotoScratchCardInfo(BaseModel):
     model_id: str | None = None
     theme_id: str | None = None
     intro: str | None = None
+    card_price: int | None = None
     sort_order: int = 0
 
 
@@ -91,6 +93,7 @@ def _row_to_info(row: PhotoScratchCard, themes_dir: Path) -> PhotoScratchCardInf
         model_id=row.model_id,
         theme_id=row.theme_id,
         intro=intro,
+        card_price=row.card_price,
         sort_order=row.sort_order,
     )
 
@@ -178,6 +181,7 @@ def _import_legacy_index(db: Session, root: Path) -> int:
                 bikini=str(entry["bikini"]).strip(),
                 clothes=str(entry["clothes"]).strip(),
                 mesh=str(entry["mesh"]).strip(),
+                card_price=optional_card_price(entry.get("card_price")),
                 sort_order=index,
                 created_at=now,
                 updated_at=now,
@@ -236,6 +240,7 @@ def upsert_published(
                 bikini=str(entry["bikini"]).strip(),
                 clothes=str(entry["clothes"]).strip(),
                 mesh=str(entry["mesh"]).strip(),
+                card_price=optional_card_price(entry.get("card_price")),
                 sort_order=next_order + offset,
                 created_at=now,
                 updated_at=now,
@@ -243,6 +248,23 @@ def upsert_published(
         )
     db.flush()
     return len(entries)
+
+
+def set_published_card_price(
+    db: Session, card_id: str, slot_id: str, card_price: int | None
+) -> bool:
+    """Update the price on an already-published slot; returns False if not published."""
+    row = db.scalars(
+        select(PhotoScratchCard).where(
+            PhotoScratchCard.card_id == card_id,
+            PhotoScratchCard.slot_id == slot_id,
+        )
+    ).first()
+    if row is None:
+        return False
+    row.card_price = card_price
+    db.flush()
+    return True
 
 
 def prune_published_photo_scratch(db: Session, root: Path, card_id: str) -> int:

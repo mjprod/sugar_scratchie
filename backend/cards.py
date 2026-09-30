@@ -256,6 +256,8 @@ def compress_card(
 
 PHOTO_SCRATCH_SLOT_COUNT = 10
 PHOTO_SCRATCH_LAYER_NAMES = {"background", "bikini", "clothes"}
+# Postgres INTEGER ceiling for photo_scratch_cards.card_price.
+CARD_PRICE_MAX = 2_147_483_647
 
 # Maps logical layer → (approved_field, pending_field)
 PHOTO_SCRATCH_PENDING_FIELDS = {
@@ -278,6 +280,8 @@ class PhotoScratchSlot(BaseModel):
     prompt_background: str | None = None
     prompt_bikini: str | None = None
     prompt_clothes: str | None = None
+    # Whole-number price shown in the game UI; copied to the catalog on publish.
+    card_price: int | None = None
     # Per-slot static photo mesh (not the motion-card video mesh).
     mesh: str | None = None
     has_symbols: bool = False
@@ -323,6 +327,14 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def optional_card_price(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0 or value > CARD_PRICE_MAX:
+        return None
+    return value
 
 
 def _photo_scratch_dir(cards_dir: Path, card_id: str) -> Path:
@@ -764,6 +776,7 @@ def list_photo_scratch_slots(
                 prompt_background=_optional_str(entry.get("prompt_background")),
                 prompt_bikini=_optional_str(entry.get("prompt_bikini")),
                 prompt_clothes=_optional_str(entry.get("prompt_clothes")),
+                card_price=optional_card_price(entry.get("card_price")),
                 mesh=mesh_url,
                 has_symbols=photo_scratch_slot_has_symbols(cards_dir, card_id, slot_id),
                 has_cutout=has_cutout,
@@ -1036,6 +1049,27 @@ def set_photo_scratch_slot_prompt(
     if slot is None:
         raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
     setattr(slot, field, prompt.strip() or None)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return slot
+
+
+def set_photo_scratch_slot_price(
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    card_price: int | None,
+    theme: str = "",
+) -> PhotoScratchSlot:
+    """Persist the per-slot card price (None clears it)."""
+    if card_price is not None and not 0 <= card_price <= CARD_PRICE_MAX:
+        raise HTTPException(
+            status_code=400, detail=f"card_price must be between 0 and {CARD_PRICE_MAX}"
+        )
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    slot.card_price = card_price
     _save_photo_scratch_slots(cards_dir, card_id, slots)
     return slot
 
@@ -1517,6 +1551,7 @@ def publish_photo_scratch_game(
                     "bikini": bikini_url,
                     "clothes": clothes_url,
                     "mesh": slot.mesh or photo_scratch_slot_mesh_url(card_id, slot.id),
+                    "card_price": slot.card_price,
                 }
             )
         upsert_published(session, card_id, new_entries, slot_id=slot_id)
