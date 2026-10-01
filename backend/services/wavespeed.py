@@ -19,7 +19,10 @@ from backend.services.grok import (
     API_MAX_RETRIES,
     API_RETRY_BASE_S,
     API_TIMEOUT_S,
+    MAX_DURATION_S as GROK_MAX_DURATION_S,
+    MAX_SHORT_SIDE as GROK_MAX_SHORT_SIDE,
     check_grok_limits,
+    check_video_limits,
     download_image,
     download_video,
     is_stock_portrait_prompt,
@@ -42,6 +45,11 @@ SEEDANCE2_VIDEO_EDIT_PATH = "/bytedance/seedance-2.0/video-edit"
 VIDEO_I2V_PATH = "/x-ai/grok-imagine-video-v1.5/image-to-video"
 VIDEO_EDIT_PATH = "/x-ai/grok-imagine-video/edit-video"
 POLL_PATH = "/predictions/{request_id}/result"
+
+WAN30_MAX_DURATION_S = 15.0
+WAN30_MAX_SHORT_SIDE = 1080
+SEEDANCE2_MAX_DURATION_S = 15.0
+SEEDANCE2_MAX_SHORT_SIDE = 2160
 
 SEEDREAM_FACE_SWAP_PROMPT = (
     "Replace the face in Figure 1 with the face from Figure 2. "
@@ -499,15 +507,19 @@ def image_to_video_wan_spicy(
     finish_video_job(request_id, out, label="wan-2.2-spicy image-to-video")
 
 
-def _edit_input_video_url(video: str | Path) -> str:
+def _edit_input_video_url(
+    video: str | Path, *, max_duration_s: float, max_short_side: int, model_label: str
+) -> str:
     video_str = str(video)
     if video_str.startswith(("http://", "https://", "data:")):
         return video_str
     src = Path(video_str)
     if not src.exists():
         raise RuntimeError(f"Video not found: {src}")
-    src = prepare_compatible_video(src)
-    check_grok_limits(src)
+    src = prepare_compatible_video(src, max_short_side=max_short_side, model_label=model_label)
+    check_video_limits(
+        src, max_duration_s=max_duration_s, max_short_side=max_short_side, model_label=model_label
+    )
     return media_url(src, "video/mp4")
 
 
@@ -519,7 +531,12 @@ def edit_video_wan22(
     resolution: str = "720p",
     reference_image: str | Path | None = None,
 ) -> None:
-    video_url = _edit_input_video_url(video)
+    video_url = _edit_input_video_url(
+        video,
+        max_duration_s=GROK_MAX_DURATION_S,
+        max_short_side=GROK_MAX_SHORT_SIDE,
+        model_label="WAN 2.2",
+    )
 
     final_prompt = prompt.strip()
     reference_str = str(reference_image).strip() if reference_image is not None else ""
@@ -561,7 +578,12 @@ def edit_video_wan30(
     res = resolution if resolution in ("480p", "720p", "1080p") else "720p"
     payload: dict = {
         "prompt": prompt.strip(),
-        "video": _edit_input_video_url(video),
+        "video": _edit_input_video_url(
+            video,
+            max_duration_s=WAN30_MAX_DURATION_S,
+            max_short_side=WAN30_MAX_SHORT_SIDE,
+            model_label="WAN 3.0",
+        ),
         "resolution": res,
         # False keeps the source audio track instead of paying for generated audio.
         "generate_audio": False,
@@ -593,7 +615,12 @@ def edit_video_seedance2(
     res = resolution if resolution in ("480p", "720p", "1080p", "4k") else "720p"
     payload: dict = {
         "prompt": prompt.strip(),
-        "video": _edit_input_video_url(video),
+        "video": _edit_input_video_url(
+            video,
+            max_duration_s=SEEDANCE2_MAX_DURATION_S,
+            max_short_side=SEEDANCE2_MAX_SHORT_SIDE,
+            model_label="Seedance 2.0",
+        ),
         "resolution": res,
         "generate_audio": False,
         "enable_web_search": False,
