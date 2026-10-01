@@ -55,6 +55,13 @@ PRESET_SPECS: dict[CompressPreset, dict] = {
     },
 }
 
+# Player "HD videos" twin written beside every delivery clip. Same 390∶672
+# cover-crop and timing as the delivery encode, so the tracked mesh (canvas +
+# UV coordinates) lines up unchanged. Never upscaled from a smaller source.
+HD_VARIANT_WIDTH = 720
+HD_VARIANT_CRF = 20
+HD_VARIANT_SUFFIX = ".hd"
+
 
 def normalize_compress_preset(value: str | None) -> CompressPreset:
     if value in PRESET_SPECS:
@@ -839,6 +846,85 @@ def _clip_report(path: Path, *, role: str) -> dict:
     }
 
 
+def hd_variant_path(clip: Path) -> Path:
+    """`background.mp4` → `background.hd.mp4` (sibling of the delivery clip)."""
+    return clip.with_name(f"{clip.stem}{HD_VARIANT_SUFFIX}{clip.suffix}")
+
+
+def hd_variant_size() -> tuple[int, int]:
+    width = HD_VARIANT_WIDTH - HD_VARIANT_WIDTH % 2
+    height = int(round(width * DELIVERY_ASPECT_H / DELIVERY_ASPECT_W))
+    return width, height - height % 2
+
+
+def remove_hd_variants(*clips: Path) -> None:
+    for clip in clips:
+        hd_variant_path(clip).unlink(missing_ok=True)
+
+
+def write_hd_variants(
+    *,
+    background_src: Path,
+    foreground_src: Path,
+    background_dst: Path,
+    foreground_dst: Path,
+    work_dir: Path,
+) -> dict:
+    """Encode the HD twins of a delivery pair from full-resolution sources.
+
+    Leaves existing twins untouched when either source is narrower than the HD
+    width — call `drop_out_of_sync_hd_variants` afterwards to discard stale ones.
+    """
+    width, height = hd_variant_size()
+    for src in (background_src, foreground_src):
+        src_width = int(probe_video(src)["width"])
+        if src_width < width:
+            reason = f"{src.name} is {src_width}px wide (< {width}px), not upscaling"
+            print(f"HD variants skipped: {reason}")
+            return {"written": False, "reason": reason}
+    work_dir.mkdir(parents=True, exist_ok=True)
+    pairs = ((background_src, background_dst), (foreground_src, foreground_dst))
+    tmps: list[tuple[Path, Path]] = []
+    for src, dst in pairs:
+        tmp = work_dir / f"hd-{dst.stem}-tmp.mp4"
+        compress_video(src, tmp, width=width, height=height, crf=HD_VARIANT_CRF)
+        tmps.append((tmp, hd_variant_path(dst)))
+    for tmp, out in tmps:
+        shutil.move(str(tmp), str(out))
+    return {
+        "written": True,
+        "width": width,
+        "height": height,
+        "crf": HD_VARIANT_CRF,
+        "background": _clip_report(hd_variant_path(background_dst), role="background_hd"),
+        "foreground": _clip_report(hd_variant_path(foreground_dst), role="foreground_hd"),
+    }
+
+
+def drop_out_of_sync_hd_variants(background: Path, foreground: Path) -> bool:
+    """Delete the HD twins unless both exist and match their delivery clip's
+    fps + frame count (the mesh is timed against the delivery foreground).
+
+    Returns True when a usable HD pair remains.
+    """
+    hd_bg, hd_fg = hd_variant_path(background), hd_variant_path(foreground)
+    if not hd_bg.is_file() and not hd_fg.is_file():
+        return False
+    in_sync = hd_bg.is_file() and hd_fg.is_file()
+    for clip, twin in ((background, hd_bg), (foreground, hd_fg)):
+        if not in_sync:
+            break
+        base = probe_video_timing(clip)
+        hd = probe_video_timing(twin)
+        in_sync = int(base["frames"]) == int(hd["frames"]) and abs(
+            float(base["fps"]) - float(hd["fps"])
+        ) < 0.01
+    if not in_sync:
+        print(f"Removing out-of-sync HD variants for {background.parent.name}")
+        remove_hd_variants(background, foreground)
+    return in_sync
+
+
 def finalize_card_videos(
     *,
     background_src: Path,
@@ -850,9 +936,12 @@ def finalize_card_videos(
     backup_dir: Path,
     preset: CompressPreset = DEFAULT_PRESET,
     write_webm: bool = False,
+    write_hd: bool = True,
     report_path: Path | None = None,
 ) -> dict:
-    """Align FG to BG, cover-crop both to a fixed prototype-aspect canvas, optional WebM."""
+    """Align FG to BG, cover-crop both to a fixed prototype-aspect canvas, optional WebM.
+
+    Also writes the player's HD twins (`*.hd.mp4`) from the same sources."""
     preset = normalize_compress_preset(preset)
     spec = PRESET_SPECS[preset]
     target_w, target_h = delivery_size(preset)
@@ -913,10 +1002,22 @@ def finalize_card_videos(
     # share the same pixel grid before the identical cover-crop.
     compress_video(background_dst, bg_tmp, preset=preset)
     compress_video(aligned_fg, fg_tmp, preset=preset)
+    hd_report = (
+        write_hd_variants(
+            background_src=background_dst,
+            foreground_src=aligned_fg,
+            background_dst=background_dst,
+            foreground_dst=foreground_dst,
+            work_dir=work_dir,
+        )
+        if write_hd
+        else {"written": False, "reason": "disabled"}
+    )
     backup_video(background_dst, backup_dir)
     backup_video(foreground_dst, backup_dir)
     shutil.move(str(bg_tmp), str(background_dst))
     shutil.move(str(fg_tmp), str(foreground_dst))
+    hd_report["available"] = drop_out_of_sync_hd_variants(background_dst, foreground_dst)
 
     webm_paths: list[str] = []
     if write_webm:
@@ -971,6 +1072,7 @@ def finalize_card_videos(
         "saved_bytes": max(0, before_bytes - after_bytes),
         "saved": _format_bytes(max(0, before_bytes - after_bytes)),
         "webm_paths": webm_paths,
+        "hd": hd_report,
         "backups": [
             str(backup_dir / f"{background_dst.parent.name}_{background_dst.name}"),
             str(backup_dir / f"{foreground_dst.parent.name}_{foreground_dst.name}"),
