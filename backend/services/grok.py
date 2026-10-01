@@ -796,12 +796,22 @@ def photo_scratch_clothes_pose_locks() -> str:
     )
 
 
-def photo_scratch_clothes_prompt(theme: str, variation: str = "") -> str:
-    """Top layer must fully cover the bikini body — only the outfit fabric changes."""
+def photo_scratch_clothes_prompt(theme: str, variation: str = "", outfit: str = "") -> str:
+    """Top layer must fully cover the bikini body — only the outfit fabric changes.
+
+    When `outfit` (a reference-image caption) is set it replaces the themed costume and the
+    `variation` accent is dropped so it cannot recolor the referenced outfit.
+    """
     scenery = (theme or "").strip() or "stylish"
-    hint = f" Outfit detail: {variation.strip()}." if variation.strip() else ""
+    outfit = (outfit or "").strip()
+    if outfit:
+        target = f"this exact outfit from the clothes reference: {outfit}"
+        hint = ""
+    else:
+        target = f"a fully clothed {scenery} costume"
+        hint = f" Outfit detail: {variation.strip()}." if variation.strip() else ""
     return (
-        f"Change ONLY the bikini fabric to a fully clothed {scenery} costume — nothing else. "
+        f"Change ONLY the bikini fabric to {target} — nothing else. "
         f"The body underneath does NOT change: every curve, the bust size and projection, "
         f"waist, and hips stay exactly as they appear in the reference. "
         f"Make the costume a little bigger / fuller than a skintight wrap: slightly looser "

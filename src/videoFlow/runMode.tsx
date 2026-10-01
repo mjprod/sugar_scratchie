@@ -18,7 +18,7 @@ import {
   TextField,
 } from "@radix-ui/themes";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../shared/api";
+import { api, uploadFile } from "../shared/api";
 import {
   approvePhotoScratchLayer,
   CARD_PRICE_MAX,
@@ -28,6 +28,7 @@ import {
   generatePhotoScratchLayer,
   photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
+  setPhotoScratchClothesRef,
   setPhotoScratchSlotPrice,
   setPhotoScratchSlotPrompt,
   slotLayerPrompt,
@@ -51,7 +52,7 @@ import { MaskEditor } from "./MaskEditor";
 import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
-import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, type MeshTracker, type MeshTrackerMode } from "./ui";
+import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
 import { DRESS_VIDEO_MODELS, dressModelTakesReferenceImage, isStockPortraitPrompt, isWavespeedDressVideoModel, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
 
 function ThemeSelect({
@@ -981,6 +982,8 @@ function SlotLayerUpload({
   onError,
   onSlotAiDone,
   onSlotPromptBlur,
+  clothesRef,
+  onClothesRefChange,
 }: {
   cardId: string;
   slotId: string;
@@ -1000,10 +1003,15 @@ function SlotLayerUpload({
   onError: (msg: string) => void;
   onSlotAiDone: () => void;
   onSlotPromptBlur: (slotId: string, layer: PhotoScratchLayerType, value: string) => void;
+  /** Top tile only: this slot's clothes reference (empty = random themed costume). */
+  clothesRef?: string;
+  onClothesRefChange?: (slotId: string, image: string) => Promise<void>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const refInputRef = useRef<HTMLInputElement>(null);
   const meta = LAYER_META[layer];
   const [aiBusy, setAiBusy] = useState(false);
+  const [refBusy, setRefBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -1019,6 +1027,32 @@ function SlotLayerUpload({
       onUpdate(updated);
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+async function handleClothesRef(image: string) {
+    if (!onClothesRefChange) return;
+    setRefBusy(true);
+    onError("");
+    try {
+      await onClothesRefChange(slotId, image);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRefBusy(false);
+    }
+  }
+
+  async function handleClothesRefFile(file: File) {
+    setRefBusy(true);
+    onError("");
+    try {
+      const uploaded = await uploadFile(file);
+      await handleClothesRef(uploaded.path);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRefBusy(false);
     }
   }
 
@@ -1192,6 +1226,52 @@ function SlotLayerUpload({
           style={{ width: "100%" }}
           onBlur={(event) => onSlotPromptBlur(slotId, layer, event.target.value)}
         />
+        {onClothesRefChange ? (
+          <Flex align="center" gap="2" mt="1">
+            {clothesRef ? (
+              <img
+                alt="Clothes reference"
+                src={previewSource(clothesRef)}
+                title={clothesRef}
+                style={{
+                  width: 28,
+                  height: 40,
+                  objectFit: "cover",
+                  borderRadius: 4,
+                  flexShrink: 0,
+                }}
+              />
+            ) : null}
+            <Text color="gray" size="1" style={{ flex: 1, minWidth: 0 }}>
+              {clothesRef ? "Clothes ref" : "Clothes: random"}
+            </Text>
+            <Button
+              color="gray"
+              disabled={disabled || refBusy}
+              size="1"
+              title="Upload a clothes reference for this card only"
+              type="button"
+              variant="soft"
+              onClick={() => refInputRef.current?.click()}
+            >
+              {refBusy ? <Loader2 {...iconProps} className="spin" /> : <ImagePlus {...iconProps} />}
+              Ref
+            </Button>
+            {clothesRef ? (
+              <Button
+                color="red"
+                disabled={disabled || refBusy}
+                size="1"
+                title="Clear clothes reference (back to random costume)"
+                type="button"
+                variant="soft"
+                onClick={() => void handleClothesRef("")}
+              >
+                <X {...iconProps} />
+              </Button>
+            ) : null}
+          </Flex>
+        ) : null}
       </Box>
       <input
         ref={inputRef}
@@ -1204,6 +1284,19 @@ function SlotLayerUpload({
           if (file) void handleFile(file);
         }}
       />
+      {onClothesRefChange ? (
+        <input
+          ref={refInputRef}
+          accept="image/jpeg,image/png,image/webp"
+          hidden
+          type="file"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void handleClothesRefFile(file);
+          }}
+        />
+      ) : null}
     </Box>
   );
 }
@@ -1239,6 +1332,31 @@ function CardPhotosPanel({
   }));
   const prevThemeRef = useRef(theme);
   const prevHasBgRef = useRef(false);
+  // The default top prompt names a themed costume; send it blank so the backend can swap
+  // in the clothes-reference caption (it falls back to the same themed wording otherwise).
+  function requestPrompt(layer: PhotoScratchLayerType): string {
+    const value = prompts[layer];
+    if (layer === "clothes" && value.trim() === defaultPhotoScratchPrompt("clothes", theme).trim()) {
+      return "";
+    }
+    return value;
+  }
+  const [clothesRefDraft, setClothesRefDraft] = useState("");
+  const [clothesRefBusy, setClothesRefBusy] = useState(false);
+  const clothesRefPrefilledRef = useRef(false);
+
+  useEffect(() => {
+    clothesRefPrefilledRef.current = false;
+    setClothesRefDraft("");
+  }, [cardId]);
+
+  // Show the card's existing reference in the "apply to all" picker after load.
+  useEffect(() => {
+    if (clothesRefPrefilledRef.current || slots.length === 0) return;
+    clothesRefPrefilledRef.current = true;
+    const existing = slots.find((s) => s.clothes_ref)?.clothes_ref ?? "";
+    if (existing) setClothesRefDraft(existing);
+  }, [slots]);
 
   // Keep the provider dropdown honest: show the default for the next generatable layer
   // (bikini → WaveSpeed/Seedream; background/top → x.ai) until the user overrides.
@@ -1450,7 +1568,7 @@ function CardPhotosPanel({
         imageModel,
         image.trim(),
         "",
-        prompts[layer],
+        requestPrompt(layer),
         count,
         fillEmptyOnly,
       );
@@ -1508,6 +1626,27 @@ function CardPhotosPanel({
     }
   }
 
+  /** Empty `slotId` applies to every slot; empty `image` clears. */
+  async function handleClothesRefChange(image: string, slotId = "") {
+    setPanelError("");
+    try {
+      const updated = await setPhotoScratchClothesRef(cardId.trim(), image, slotId, theme);
+      const byId = new Map(updated.map((s) => [s.id, s]));
+      setSlots((prev) => prev.map((s) => byId.get(s.id) ?? s));
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  async function handleClothesRefAll(image: string) {
+    setClothesRefBusy(true);
+    try {
+      await handleClothesRefChange(image);
+    } finally {
+      setClothesRefBusy(false);
+    }
+  }
+
   async function handleSlotPriceCommit(slotId: string, next: number | null): Promise<boolean> {
     setPanelError("");
     try {
@@ -1534,6 +1673,7 @@ function CardPhotosPanel({
     (s) => Boolean(s.background && s.bikini && s.clothes),
   ).length;
   const photoScratchDoneCount = slots.filter((s) => photoScratchSlotIsDone(s)).length;
+  const clothesRefCount = slots.filter((s) => Boolean(s.clothes_ref)).length;
   const anyGenBusy = Object.keys(genJobs).length > 0;
   const hasSourceImage = Boolean(image.trim());
   const pictureFlowHref = cardId.trim()
@@ -1734,6 +1874,9 @@ function CardPhotosPanel({
             >
               Done: {photoScratchDoneCount}/10
             </Badge>
+            <Badge color={clothesRefCount > 0 ? "blue" : "gray"} variant="soft">
+              Clothes ref: {clothesRefCount}/10
+            </Badge>
             <Text color="gray" size="1">
               Upload 3 layers per card, then Create game → Picture Flow (cutout / mesh /
               symbols). Done = match + cutout + mesh + symbols.
@@ -1823,6 +1966,54 @@ function CardPhotosPanel({
         </Text>
       </Flex>
 
+      <Flex align="end" gap="3" mb="4" wrap="wrap">
+        <Box style={{ flex: "1 1 320px", minWidth: 0 }}>
+          <Text as="div" size="1" weight="medium" mb="1">
+            Clothes reference (optional)
+          </Text>
+          <FilePathPicker
+            accept="image/*"
+            placeholder="Upload a clothes photo or paste a path"
+            preview="image"
+            previewLabel="Clothes reference"
+            previewSize="compact"
+            value={clothesRefDraft}
+            onChange={setClothesRefDraft}
+            onError={(msg) => {
+              setPanelError(msg);
+              if (msg) onError(msg);
+            }}
+          />
+        </Box>
+        <Flex gap="2" wrap="wrap">
+          <Button
+            disabled={!cardId.trim() || !clothesRefDraft.trim() || clothesRefBusy}
+            size="2"
+            type="button"
+            onClick={() => void handleClothesRefAll(clothesRefDraft)}
+          >
+            {clothesRefBusy ? <Loader2 {...iconProps} className="spin" /> : <Check {...iconProps} />}
+            Apply to all cards
+          </Button>
+          <Button
+            color="gray"
+            disabled={!cardId.trim() || clothesRefCount === 0 || clothesRefBusy}
+            size="2"
+            type="button"
+            variant="soft"
+            onClick={() => void handleClothesRefAll("")}
+          >
+            <X {...iconProps} />
+            Clear all
+          </Button>
+        </Flex>
+        <Text color="gray" size="1" style={{ maxWidth: 400 }}>
+          Tops copy this outfit (captioned by Grok vision, needs XAI_API_KEY). Use{" "}
+          <strong>Ref</strong> on a card&apos;s Top tile to set one card only. No reference =
+          random themed costume per card.
+        </Text>
+      </Flex>
+
       {showPrompts ? (
         <Box
           mb="4"
@@ -1873,7 +2064,10 @@ function CardPhotosPanel({
                     ? "Bikini (place girl onto approved background)"
                     : "Bikini (studio; uses background once you approve one)",
                 ],
-                ["clothes", "Top (dress over bikini — keep same scene)"],
+                [
+                  "clothes",
+                  "Top (dress over bikini — keep same scene; a clothes reference replaces the costume wording)",
+                ],
               ] as const
             ).map(([layer, label]) => (
               <label key={layer}>
@@ -1991,7 +2185,7 @@ function CardPhotosPanel({
                           sourceImage={image.trim()}
                           aiProvider={layerAi.provider}
                           sourceImageModel={layerAi.imageModel}
-                          prompt={slotLayerPrompt(slot, layer) || prompts[layer]}
+                          prompt={slotLayerPrompt(slot, layer) || requestPrompt(layer)}
                           slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
                           busy={layerBusy}
@@ -2003,6 +2197,12 @@ function CardPhotosPanel({
                           onSlotAiDone={() => void refreshSlots(true)}
                           onSlotPromptBlur={(id, layerType, value) =>
                             void handleSlotPromptBlur(id, layerType, value)
+                          }
+                          clothesRef={layer === "clothes" ? slot.clothes_ref : undefined}
+                          onClothesRefChange={
+                            layer === "clothes"
+                              ? (id, nextImage) => handleClothesRefChange(nextImage, id)
+                              : undefined
                           }
                         />
                       );

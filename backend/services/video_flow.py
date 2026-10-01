@@ -23,10 +23,13 @@ from backend.services.ai_provider import (
     normalize_provider,
     normalize_source_image_model,
     swap_face_on_image,
+    xai_key_available,
 )
 from backend.services.grok import (
     DRESS_ENHANCE_SYSTEM,
     DEFAULT_PORTRAIT_PROMPT,
+    api_key,
+    describe_outfit,
     is_stock_portrait_prompt,
     normalize_background_motion_prompt,
     output_video_ready,
@@ -1402,6 +1405,42 @@ def _resolve_photo_scratch_media(src: str) -> Path:
     return path
 
 
+def _caption_clothes_ref(ref: str, cache: dict[str, str]) -> str:
+    """Caption a slot's clothes reference via Grok vision; "" when unavailable or failed."""
+    ref = ref.strip()
+    if not ref:
+        return ""
+    if ref in cache:
+        return cache[ref]
+    caption = ""
+    if not xai_key_available():
+        print("Clothes reference ignored — XAI_API_KEY not set (needed to caption it).")
+    else:
+        image: str | Path | None = None
+        if ref.startswith(("http://", "https://")):
+            image = ref
+        else:
+            candidate = Path(ref)
+            if not candidate.is_absolute():
+                candidate = ROOT / candidate
+            if candidate.is_file():
+                image = candidate
+            else:
+                try:
+                    image = _resolve_photo_scratch_media(ref)
+                except RuntimeError:
+                    print(f"Clothes reference not found, using random costume: {ref}")
+        if image is not None:
+            print(f"Captioning clothes reference: {ref}")
+            caption = describe_outfit(image, api_key()) or ""
+            if caption:
+                print(f"Clothes reference caption:\n  {caption}\n")
+            else:
+                print("Clothes reference caption was empty — using random costume.")
+    cache[ref] = caption
+    return caption
+
+
 def run_generate_photo_scratch_layer(
     *,
     card_id: str,
@@ -1535,6 +1574,7 @@ def run_generate_photo_scratch_layer(
                 "Approve at least one bikini first so top/clothes match the same girl and pose."
             )
 
+    clothes_captions: dict[str, str] = {}
     for slot in slots_to_run:
         # Variation hint keyed off slot number so regenerations stay distinctive.
         try:
@@ -1616,10 +1656,21 @@ def run_generate_photo_scratch_layer(
                     continue
                 # Bikini already has pose+scene; lock them for scratch alignment.
                 edit_src = _resolve_photo_scratch_media(slot.bikini)
-                final_prompt = (
-                    f"{custom} Outfit accent: {scene_hint}."
-                    if custom
-                    else photo_scratch_clothes_prompt(theme_str, scene_hint)
+                outfit = _caption_clothes_ref(slot.clothes_ref or "", clothes_captions)
+                if outfit and custom:
+                    final_prompt = (
+                        f"{custom} CRITICAL — the outfit must match the clothes reference "
+                        f"exactly: {outfit}"
+                    )
+                elif outfit:
+                    final_prompt = photo_scratch_clothes_prompt(theme_str, outfit=outfit)
+                elif custom:
+                    final_prompt = f"{custom} Outfit accent: {scene_hint}."
+                else:
+                    final_prompt = photo_scratch_clothes_prompt(theme_str, scene_hint)
+                print(
+                    f"Photo-scratch top {slot.id}: "
+                    f"{'clothes reference' if outfit else 'random themed costume'}"
                 )
                 # Flux Kontext keeps pose/frame/bg locked by construction — best for
                 # scratch alignment.

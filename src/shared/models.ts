@@ -456,6 +456,8 @@ export type PhotoScratchSlot = {
   prompt_background?: string;
   prompt_bikini?: string;
   prompt_clothes?: string;
+  /** Clothes reference image (workspace path or URL); captioned into the top prompt. */
+  clothes_ref?: string;
   /** Whole-number price shown in the game UI; copied to the catalog on publish. */
   card_price?: number | null;
   /** Per-slot static photo mesh URL (not the motion-card video mesh). */
@@ -691,6 +693,24 @@ export async function setPhotoScratchSlotPrompt(
       body: JSON.stringify({ layer, prompt }),
     },
   );
+}
+
+/** Set (or clear, when `image` is empty) the clothes reference; empty `slotId` = every slot. */
+export async function setPhotoScratchClothesRef(
+  cardId: string,
+  image: string,
+  slotId = "",
+  theme = "",
+): Promise<PhotoScratchSlot[]> {
+  const params = theme.trim() ? `?theme=${encodeURIComponent(theme.trim())}` : "";
+  const data = await api<{ slots: PhotoScratchSlot[] }>(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/clothes-ref${params}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ image: image.trim(), slot_id: slotId }),
+    },
+  );
+  return data.slots;
 }
 
 /** Matches the backend `CARD_PRICE_MAX` (Postgres INTEGER ceiling). */

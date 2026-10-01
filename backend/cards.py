@@ -280,6 +280,8 @@ class PhotoScratchSlot(BaseModel):
     prompt_background: str | None = None
     prompt_bikini: str | None = None
     prompt_clothes: str | None = None
+    # Optional clothes reference image (workspace path or URL) captioned into the top prompt.
+    clothes_ref: str | None = None
     # Whole-number price shown in the game UI; copied to the catalog on publish.
     card_price: int | None = None
     # Per-slot static photo mesh (not the motion-card video mesh).
@@ -776,6 +778,7 @@ def list_photo_scratch_slots(
                 prompt_background=_optional_str(entry.get("prompt_background")),
                 prompt_bikini=_optional_str(entry.get("prompt_bikini")),
                 prompt_clothes=_optional_str(entry.get("prompt_clothes")),
+                clothes_ref=_optional_str(entry.get("clothes_ref")),
                 card_price=optional_card_price(entry.get("card_price")),
                 mesh=mesh_url,
                 has_symbols=photo_scratch_slot_has_symbols(cards_dir, card_id, slot_id),
@@ -1051,6 +1054,32 @@ def set_photo_scratch_slot_prompt(
     setattr(slot, field, prompt.strip() or None)
     _save_photo_scratch_slots(cards_dir, card_id, slots)
     return slot
+
+
+def set_photo_scratch_clothes_ref(
+    cards_dir: Path,
+    card_id: str,
+    image: str,
+    slot_id: str | None = None,
+    theme: str = "",
+) -> list[PhotoScratchSlot]:
+    """Set (or clear, when empty) the clothes reference on one slot or on every slot.
+
+    Returns the slots that were updated.
+    """
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    if slot_id:
+        slot = _get_slot(slots, slot_id)
+        if slot is None:
+            raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+        targets = [slot]
+    else:
+        targets = slots
+    value = image.strip() or None
+    for slot in targets:
+        slot.clothes_ref = value
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+    return targets
 
 
 def set_photo_scratch_slot_price(
