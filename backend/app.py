@@ -1061,9 +1061,10 @@ def patch_photo_scratch_clothes_ref(
     image = request.image.strip()
     if image and not image.startswith(("http://", "https://")):
         if image.startswith("/cards/"):
-            workspace_path(f"public/{image.lstrip('/')}" , must_exist=True)
+            workspace_path(f"public/{image.lstrip('/')}", must_exist=True)
         else:
             workspace_path(image, must_exist=True)
+    slots = set_photo_scratch_clothes_ref(
         CARDS_DIR, card_id, image, slot_id or None, theme
     )
     return {"slots": [slot.dict() for slot in slots]}
