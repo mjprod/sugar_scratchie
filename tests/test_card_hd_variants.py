@@ -13,6 +13,8 @@ from backend.cards_store import get_card, update_card
 from backend.db.models import MotionCard
 from backend.services.grok import probe_video
 from backend.services.video_prep import (
+    backup_video,
+    compress_video,
     drop_out_of_sync_hd_variants,
     hd_variant_path,
     hd_variant_size,
@@ -105,11 +107,13 @@ needs_ffmpeg = pytest.mark.skipif(
 )
 
 
-def _test_clip(path: Path, *, width: int, height: int, frames: int) -> Path:
+def _test_clip(
+    path: Path, *, width: int, height: int, frames: int, pattern: str = "testsrc"
+) -> Path:
     subprocess.run(
         [
             "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", f"testsrc=size={width}x{height}:rate=24",
+            "-f", "lavfi", "-i", f"{pattern}=size={width}x{height}:rate=24",
             "-frames:v", str(frames),
             "-c:v", "libx264", "-pix_fmt", "yuv420p",
             str(path),
@@ -124,9 +128,8 @@ def test_write_hd_variants_matches_delivery_crop_and_timing(tmp_path):
     src_bg = _test_clip(tmp_path / "src-bg.mp4", width=720, height=1280, frames=12)
     src_fg = _test_clip(tmp_path / "src-fg.mp4", width=720, height=1280, frames=12)
     card_dir = tmp_path / "card"
-    card_dir.mkdir()
-    bg = _test_clip(card_dir / "background.mp4", width=390, height=672, frames=12)
-    fg = _test_clip(card_dir / "foreground.mp4", width=390, height=672, frames=12)
+    bg = compress_video(src_bg, card_dir / "background.mp4", preset="mobile")
+    fg = compress_video(src_fg, card_dir / "foreground.mp4", preset="mobile")
 
     report = write_hd_variants(
         background_src=src_bg,
@@ -177,8 +180,10 @@ def test_recompress_keeps_full_res_backups_for_hd_backfill(layout):
     backup_dir = root / ".video-backups"
     backup_dir.mkdir()
     for name in ("background.mp4", "foreground.mp4"):
-        _test_clip(backup_dir / f"{card_id}_{name}", width=720, height=1280, frames=12)
-        _test_clip(card_dir / name, width=390, height=672, frames=12)
+        original = _test_clip(
+            backup_dir / f"{card_id}_{name}", width=720, height=1280, frames=12
+        )
+        compress_video(original, card_dir / name, preset="mobile")
 
     compress_card(root, cards_dir, card_id, compress_preset="mobile")
 
@@ -186,3 +191,39 @@ def test_recompress_keeps_full_res_backups_for_hd_backfill(layout):
         assert int(probe_video(backup_dir / f"{card_id}_{name}")["width"]) == 720
     result = backfill_card_hd_variants(root, cards_dir, card_id)
     assert result["available"] is True, result
+
+
+@needs_ffmpeg
+def test_backup_replaces_wider_leftover_of_a_different_clip(tmp_path):
+    card_dir = tmp_path / "card"
+    card_dir.mkdir()
+    backup_dir = tmp_path / ".video-backups"
+    backup_dir.mkdir()
+    leftover = _test_clip(
+        backup_dir / "card_background.mp4", width=720, height=1280, frames=12, pattern="smptebars"
+    )
+    src = _test_clip(card_dir / "background.mp4", width=390, height=672, frames=12)
+
+    assert backup_video(src, backup_dir) == leftover
+    assert int(probe_video(leftover)["width"]) == 390
+
+
+@needs_ffmpeg
+def test_stale_backups_with_matching_timing_never_publish_hd(layout):
+    root, cards_dir, _ = layout
+    card_id = f"test_hd_{uuid.uuid4().hex[:8]}"
+    card_dir = cards_dir / card_id
+    card_dir.mkdir()
+    backup_dir = root / ".video-backups"
+    backup_dir.mkdir()
+    for name in ("background.mp4", "foreground.mp4"):
+        _test_clip(
+            backup_dir / f"{card_id}_{name}", width=720, height=1280, frames=12, pattern="smptebars"
+        )
+        _test_clip(card_dir / name, width=390, height=672, frames=12)
+
+    result = backfill_card_hd_variants(root, cards_dir, card_id)
+
+    assert result["available"] is False, result
+    assert not hd_variant_path(card_dir / "background.mp4").exists()
+    assert not hd_variant_path(card_dir / "foreground.mp4").exists()

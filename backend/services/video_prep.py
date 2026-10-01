@@ -62,6 +62,14 @@ HD_VARIANT_WIDTH = 720
 HD_VARIANT_CRF = 20
 HD_VARIANT_SUFFIX = ".hd"
 
+# Same-footage check: tiny grayscale cover-cropped frames sampled across the
+# shared timeline. Re-encodes/rescales of one clip differ by ≲12 mean luma;
+# different cards (even same performer + set) differ by ≳38.
+CLIP_SIGNATURE_WIDTH = 30
+CLIP_SIGNATURE_HEIGHT = 52
+CLIP_SIGNATURE_FRAMES = 5
+CLIP_MATCH_MAX_LUMA_DIFF = 20.0
+
 
 def normalize_compress_preset(value: str | None) -> CompressPreset:
     if value in PRESET_SPECS:
@@ -130,11 +138,55 @@ def _video_width(path: Path) -> int | None:
         return None
 
 
+def _luma_thumbnail(path: Path, at: float) -> bytes:
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            f"{at:.3f}",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-vf",
+            f"{cover_crop_filter(CLIP_SIGNATURE_WIDTH, CLIP_SIGNATURE_HEIGHT)},format=gray",
+            "-f",
+            "rawvideo",
+            "-",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0 or len(result.stdout) != CLIP_SIGNATURE_WIDTH * CLIP_SIGNATURE_HEIGHT:
+        raise RuntimeError(f"Could not sample {path} at {at:.3f}s")
+    return result.stdout
+
+
+def clips_look_alike(a: Path, b: Path) -> bool:
+    """True when both files show the same footage on the same timeline,
+    whatever their resolution, 390∶672 cover-crop or encode quality."""
+    try:
+        duration = min(float(probe_video(a)["duration"]), float(probe_video(b)["duration"]))
+        for i in range(CLIP_SIGNATURE_FRAMES):
+            at = (i + 0.5) / CLIP_SIGNATURE_FRAMES * duration
+            thumb_a, thumb_b = _luma_thumbnail(a, at), _luma_thumbnail(b, at)
+            diff = sum(abs(x - y) for x, y in zip(thumb_a, thumb_b)) / len(thumb_a)
+            if diff > CLIP_MATCH_MAX_LUMA_DIFF:
+                return False
+    except Exception:
+        return False
+    return True
+
+
 def backup_video(src: Path, backup_dir: Path | str = ".video-backups") -> Path | None:
-    """Copy `src` into the backup dir, unless the existing backup is wider.
+    """Copy `src` into the backup dir, unless the existing backup is a wider
+    copy of the same footage.
 
     Backups are the full-resolution sources for HD twins, so re-compressing an
-    already-downscaled delivery clip must not replace them.
+    already-downscaled delivery clip must not replace them — but a leftover
+    from a replaced clip or a reused card id must be.
     """
     if not src.is_file():
         return None
@@ -145,7 +197,12 @@ def backup_video(src: Path, backup_dir: Path | str = ".video-backups") -> Path |
         backup = root / f"{src.stem}-{src.parent.name}{src.suffix}"
     if backup.is_file():
         backup_width, src_width = _video_width(backup), _video_width(src)
-        if backup_width is not None and src_width is not None and backup_width > src_width:
+        if (
+            backup_width is not None
+            and src_width is not None
+            and backup_width > src_width
+            and clips_look_alike(backup, src)
+        ):
             print(
                 f"Kept {backup} ({backup_width}px wide) instead of backing up "
                 f"{src} ({src_width}px wide)"
@@ -922,8 +979,9 @@ def write_hd_variants(
 
 
 def drop_out_of_sync_hd_variants(background: Path, foreground: Path) -> bool:
-    """Delete the HD twins unless both exist and match their delivery clip's
-    fps + frame count (the mesh is timed against the delivery foreground).
+    """Delete the HD twins unless both exist, match their delivery clip's
+    fps + frame count (the mesh is timed against the delivery foreground) and
+    show the same footage (a stale source can share the timing).
 
     Returns True when a usable HD pair remains.
     """
@@ -936,9 +994,11 @@ def drop_out_of_sync_hd_variants(background: Path, foreground: Path) -> bool:
             break
         base = probe_video_timing(clip)
         hd = probe_video_timing(twin)
-        in_sync = int(base["frames"]) == int(hd["frames"]) and abs(
-            float(base["fps"]) - float(hd["fps"])
-        ) < 0.01
+        in_sync = (
+            int(base["frames"]) == int(hd["frames"])
+            and abs(float(base["fps"]) - float(hd["fps"])) < 0.01
+            and clips_look_alike(clip, twin)
+        )
     if not in_sync:
         print(f"Removing out-of-sync HD variants for {background.parent.name}")
         remove_hd_variants(background, foreground)

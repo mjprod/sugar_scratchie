@@ -283,7 +283,8 @@ def compress_card(
 
 def backfill_card_hd_variants(root: Path, cards_dir: Path, card_id: str) -> dict:
     """Build a published card's HD twins from its pre-finalize originals in
-    .video-backups/. Kept only if they match the live clips' fps + frame count."""
+    .video-backups/. Kept only if they match the live clips' footage, fps and
+    frame count."""
     from backend.services.video_prep import (
         align_clip_to_reference,
         drop_out_of_sync_hd_variants,
