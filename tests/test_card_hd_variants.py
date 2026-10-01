@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.cards import UpdateCardRequest
+from backend.cards import UpdateCardRequest, backfill_card_hd_variants, compress_card
 from backend.cards_store import get_card, update_card
 from backend.db.models import MotionCard
 from backend.services.grok import probe_video
@@ -166,3 +166,23 @@ def test_hd_variants_never_upscale_and_drop_when_out_of_sync(tmp_path):
     assert drop_out_of_sync_hd_variants(bg, fg) is False
     assert not hd_variant_path(bg).exists()
     assert not hd_variant_path(fg).exists()
+
+
+@needs_ffmpeg
+def test_recompress_keeps_full_res_backups_for_hd_backfill(layout):
+    root, cards_dir, _ = layout
+    card_id = f"test_hd_{uuid.uuid4().hex[:8]}"
+    card_dir = cards_dir / card_id
+    card_dir.mkdir()
+    backup_dir = root / ".video-backups"
+    backup_dir.mkdir()
+    for name in ("background.mp4", "foreground.mp4"):
+        _test_clip(backup_dir / f"{card_id}_{name}", width=720, height=1280, frames=12)
+        _test_clip(card_dir / name, width=390, height=672, frames=12)
+
+    compress_card(root, cards_dir, card_id, compress_preset="mobile")
+
+    for name in ("background.mp4", "foreground.mp4"):
+        assert int(probe_video(backup_dir / f"{card_id}_{name}")["width"]) == 720
+    result = backfill_card_hd_variants(root, cards_dir, card_id)
+    assert result["available"] is True, result

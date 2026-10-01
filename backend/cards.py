@@ -245,7 +245,8 @@ def compress_card(
 ) -> None:
     """Re-encode a card's background/foreground in place using the same settings
     as the Video Flow finalize step. Originals are backed up under .video-backups/
-    before being overwritten. HD twins are refreshed from the pre-compress files."""
+    before being overwritten (a wider existing backup is kept). HD twins are
+    refreshed from the pre-compress files."""
     from backend.services.video_prep import (
         backup_video,
         compress_video,

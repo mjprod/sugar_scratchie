@@ -123,7 +123,19 @@ def log_video(label: str, path: Path) -> None:
     )
 
 
+def _video_width(path: Path) -> int | None:
+    try:
+        return int(probe_video(path)["width"])
+    except Exception:
+        return None
+
+
 def backup_video(src: Path, backup_dir: Path | str = ".video-backups") -> Path | None:
+    """Copy `src` into the backup dir, unless the existing backup is wider.
+
+    Backups are the full-resolution sources for HD twins, so re-compressing an
+    already-downscaled delivery clip must not replace them.
+    """
     if not src.is_file():
         return None
     root = Path(backup_dir)
@@ -131,6 +143,14 @@ def backup_video(src: Path, backup_dir: Path | str = ".video-backups") -> Path |
     backup = root / f"{src.parent.name}_{src.name}"
     if backup.resolve() == src.resolve():
         backup = root / f"{src.stem}-{src.parent.name}{src.suffix}"
+    if backup.is_file():
+        backup_width, src_width = _video_width(backup), _video_width(src)
+        if backup_width is not None and src_width is not None and backup_width > src_width:
+            print(
+                f"Kept {backup} ({backup_width}px wide) instead of backing up "
+                f"{src} ({src_width}px wide)"
+            )
+            return backup
     shutil.copy2(src, backup)
     print(f"Backed up {src} -> {backup}")
     return backup
