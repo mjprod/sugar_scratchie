@@ -1332,6 +1332,15 @@ function CardPhotosPanel({
   }));
   const prevThemeRef = useRef(theme);
   const prevHasBgRef = useRef(false);
+  // The default top prompt names a themed costume; send it blank so the backend can swap
+  // in the clothes-reference caption (it falls back to the same themed wording otherwise).
+  function requestPrompt(layer: PhotoScratchLayerType): string {
+    const value = prompts[layer];
+    if (layer === "clothes" && value.trim() === defaultPhotoScratchPrompt("clothes", theme).trim()) {
+      return "";
+    }
+    return value;
+  }
   const [clothesRefDraft, setClothesRefDraft] = useState("");
   const [clothesRefBusy, setClothesRefBusy] = useState(false);
   const clothesRefPrefilledRef = useRef(false);
@@ -1559,7 +1568,7 @@ function CardPhotosPanel({
         imageModel,
         image.trim(),
         "",
-        prompts[layer],
+        requestPrompt(layer),
         count,
         fillEmptyOnly,
       );
@@ -2176,7 +2185,7 @@ function CardPhotosPanel({
                           sourceImage={image.trim()}
                           aiProvider={layerAi.provider}
                           sourceImageModel={layerAi.imageModel}
-                          prompt={slotLayerPrompt(slot, layer) || prompts[layer]}
+                          prompt={slotLayerPrompt(slot, layer) || requestPrompt(layer)}
                           slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
                           busy={layerBusy}
