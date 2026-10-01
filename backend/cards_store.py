@@ -25,6 +25,7 @@ from backend.cards import (
     CreateCardRequest,
     PhotoInfo,
     UpdateCardRequest,
+    card_hd_paths,
     card_paths,
     card_photos_dir,
     copy_video,
@@ -41,6 +42,7 @@ from backend.cards import (
 )
 from backend.photo_scratch_store import prune_published_photo_scratch
 from backend.db.models import Creator, MotionCard, Theme
+from backend.services.video_prep import remove_hd_variants
 
 
 def _photo_counts(cards_dir: Path, card_id: str) -> tuple[int, int, int, int]:
@@ -108,11 +110,14 @@ def _row_to_info(
     meshes = mesh_names(mesh_dir)
     mesh = f"{row.id}.json"
     done, draft, mesh_count, symbols_count = _photo_counts(cards_dir, row.id)
+    hd = card_hd_paths(root, cards_dir, row.id)
     return CardInfo(
         id=row.id,
         label=row.label,
         background=relative(root, background),
         foreground=relative(root, foreground),
+        background_hd=relative(root, hd[0]) if hd else None,
+        foreground_hd=relative(root, hd[1]) if hd else None,
         mesh=mesh,
         has_mesh=mesh in meshes,
         model_id=row.model_id,
@@ -308,6 +313,7 @@ def create_card(
     card_dir.mkdir(parents=True, exist_ok=True)
     copy_video(resolve_source(root, request.background), background_dst)
     copy_video(resolve_source(root, request.foreground), foreground_dst)
+    remove_hd_variants(background_dst, foreground_dst)
 
     now = datetime.now(timezone.utc)
     row = MotionCard(
@@ -354,6 +360,9 @@ def update_card(
         copy_video(resolve_source(root, request.background), background_dst)
     if request.foreground is not None:
         copy_video(resolve_source(root, request.foreground), foreground_dst)
+    if request.background is not None or request.foreground is not None:
+        # Replacing either clip breaks the HD pair's sync with the new delivery pair.
+        remove_hd_variants(background_dst, foreground_dst)
 
     set_fields = request.model_fields_set
     if request.label is not None:

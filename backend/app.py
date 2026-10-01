@@ -60,7 +60,9 @@ from backend.cards import (
     UpdateCardRequest,
     approve_photo_scratch_bg,
     approve_photo_scratch_layer,
+    backfill_card_hd_variants,
     compress_card,
+    safe_card_id,
     delete_photo_scratch_layer,
     list_photo_scratch_slots,
     confirm_photo_scratch_slot_adjust,
@@ -1570,6 +1572,32 @@ def compress_card_videos(card_id: str, request: CompressCardRequest) -> dict:
         ["backend.cards.compress_card", card_id, request.compress_preset],
         action,
     )
+    return job.public()
+
+
+@app.post("/api/jobs/cards/hd-variants")
+def backfill_hd_variants(
+    db: Annotated[Session, Depends(get_session)],
+    card_id: str | None = None,
+) -> dict:
+    """Build missing HD video twins for published cards from .video-backups/."""
+    if card_id:
+        card_ids = [safe_card_id(card_id)]
+    else:
+        card_ids = [
+            card.id
+            for card in list_cards(db, ROOT, CARDS_DIR, MESH_DIR)
+            if card.id != "original" and not card.background_hd
+        ]
+
+    def action(card_ids: list[str] = card_ids) -> None:
+        print(f"HD backfill: {len(card_ids)} card(s)")
+        for target in card_ids:
+            result = backfill_card_hd_variants(ROOT, CARDS_DIR, target)
+            status = "ok" if result["available"] else f"skipped ({result['reason']})"
+            print(f"HD backfill {target}: {status}")
+
+    job = enqueue("hd-variants", ["backend.cards.backfill_card_hd_variants", card_id or "all"], action)
     return job.public()
 
 

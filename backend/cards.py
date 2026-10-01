@@ -10,6 +10,8 @@ from urllib.parse import quote
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from backend.services.video_prep import hd_variant_path
+
 
 CARD_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -29,6 +31,9 @@ class CardInfo(BaseModel):
     label: str
     background: str
     foreground: str
+    # Player "HD videos" twins; set only when both exist (same timing as the pair above).
+    background_hd: str | None = None
+    foreground_hd: str | None = None
     mesh: str
     has_mesh: bool
     model_id: str | None = None
@@ -186,6 +191,15 @@ def card_paths(root: Path, cards_dir: Path, card_id: str) -> tuple[Path, Path]:
     return card_dir / "background.mp4", card_dir / "foreground.mp4"
 
 
+def card_hd_paths(root: Path, cards_dir: Path, card_id: str) -> tuple[Path, Path] | None:
+    """The card's HD video twins, or None unless both exist."""
+    background, foreground = card_paths(root, cards_dir, card_id)
+    hd_background, hd_foreground = hd_variant_path(background), hd_variant_path(foreground)
+    if hd_background.is_file() and hd_foreground.is_file():
+        return hd_background, hd_foreground
+    return None
+
+
 def card_directory(cards_dir: Path, card_id: str) -> Path:
     if card_id == ORIGINAL_ID:
         return cards_dir
@@ -231,12 +245,15 @@ def compress_card(
 ) -> None:
     """Re-encode a card's background/foreground in place using the same settings
     as the Video Flow finalize step. Originals are backed up under .video-backups/
-    before being overwritten."""
+    before being overwritten (a wider existing backup is kept). HD twins are
+    refreshed from the pre-compress files."""
     from backend.services.video_prep import (
         backup_video,
         compress_video,
         compress_video_webm,
+        drop_out_of_sync_hd_variants,
         normalize_compress_preset,
+        write_hd_variants,
     )
 
     background, foreground = card_paths(root, cards_dir, card_id)
@@ -245,6 +262,14 @@ def compress_card(
 
     preset = normalize_compress_preset(compress_preset)
     backup_dir = root / ".video-backups"
+    if card_id != ORIGINAL_ID:
+        write_hd_variants(
+            background_src=background,
+            foreground_src=foreground,
+            background_dst=background,
+            foreground_dst=foreground,
+            work_dir=background.parent,
+        )
     for src in (background, foreground):
         backup_video(src, backup_dir)
         tmp = src.with_name(f"{src.stem}-compress-tmp{src.suffix}")
@@ -252,6 +277,46 @@ def compress_card(
         shutil.move(str(tmp), str(src))
         if write_webm:
             compress_video_webm(src, src.with_suffix(".webm"), preset=preset)
+    if card_id != ORIGINAL_ID:
+        drop_out_of_sync_hd_variants(background, foreground)
+
+
+def backfill_card_hd_variants(root: Path, cards_dir: Path, card_id: str) -> dict:
+    """Build a published card's HD twins from its pre-finalize originals in
+    .video-backups/. Kept only if they match the live clips' footage, fps and
+    frame count."""
+    from backend.services.video_prep import (
+        align_clip_to_reference,
+        drop_out_of_sync_hd_variants,
+        write_hd_variants,
+    )
+
+    background, foreground = card_paths(root, cards_dir, card_id)
+    if card_id == ORIGINAL_ID or not background.is_file() or not foreground.is_file():
+        return {"card_id": card_id, "available": False, "reason": "card videos missing"}
+    backup_dir = root / ".video-backups"
+    background_src = backup_dir / f"{card_id}_{background.name}"
+    foreground_src = backup_dir / f"{card_id}_{foreground.name}"
+    if not background_src.is_file() or not foreground_src.is_file():
+        return {"card_id": card_id, "available": False, "reason": "no originals in .video-backups"}
+
+    work_dir = root / ".tmp" / "hd-backfill" / card_id
+    try:
+        aligned_fg = align_clip_to_reference(
+            background_src, foreground_src, work_dir / "foreground-aligned.mp4"
+        )
+        report = write_hd_variants(
+            background_src=background_src,
+            foreground_src=aligned_fg,
+            background_dst=background,
+            foreground_dst=foreground,
+            work_dir=work_dir,
+        )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    available = drop_out_of_sync_hd_variants(background, foreground)
+    reason = report.get("reason") or ("" if available else "originals don't match the live clips")
+    return {"card_id": card_id, "available": available, "reason": reason}
 
 
 PHOTO_SCRATCH_SLOT_COUNT = 10
