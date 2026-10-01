@@ -72,6 +72,7 @@ from backend.cards import (
     reject_photo_scratch_bg,
     reject_photo_scratch_layer,
     set_photo_scratch_slot_price,
+    set_photo_scratch_clothes_ref,
     set_photo_scratch_slot_prompt,
     upload_photo_scratch_layer,
     write_photo_scratch_slot_symbols,
@@ -862,6 +863,11 @@ class SetSlotPromptRequest(BaseModel):
     prompt: str = ""
 
 
+class SetClothesRefRequest(BaseModel):
+    image: str = ""  # Workspace path or URL; empty clears the reference
+    slot_id: str = ""  # Empty = apply to every slot
+
+
 class SetSlotPriceRequest(BaseModel):
     card_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
 
@@ -1041,6 +1047,24 @@ def save_photo_scratch_slot_symbols(
         raise HTTPException(status_code=400, detail="Invalid slot_id")
     slot = write_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id, request.points)
     return slot.dict()
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/clothes-ref")
+def patch_photo_scratch_clothes_ref(
+    card_id: str, request: SetClothesRefRequest, theme: str = ""
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    slot_id = request.slot_id.strip()
+    if slot_id and not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    image = request.image.strip()
+    if image and not image.startswith(("http://", "https://")):
+        workspace_path(image, must_exist=True)
+    slots = set_photo_scratch_clothes_ref(
+        CARDS_DIR, card_id, image, slot_id or None, theme
+    )
+    return {"slots": [slot.dict() for slot in slots]}
 
 
 @app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/prompt")
