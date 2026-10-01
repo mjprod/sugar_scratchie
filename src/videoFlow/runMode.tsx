@@ -1030,12 +1030,14 @@ function SlotLayerUpload({
     }
   }
 
-  async function handleClothesRef(image: string) {
+async function handleClothesRef(image: string) {
     if (!onClothesRefChange) return;
     setRefBusy(true);
     onError("");
     try {
       await onClothesRefChange(slotId, image);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setRefBusy(false);
     }
