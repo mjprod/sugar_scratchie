@@ -212,25 +212,34 @@ def probe_video(path: Path) -> dict[str, int | float | str]:
     }
 
 
-def compatible_size(width: int, height: int) -> tuple[int, int]:
+def compatible_size(
+    width: int, height: int, max_short_side: int = MAX_SHORT_SIDE
+) -> tuple[int, int]:
     short_side = min(width, height)
-    if short_side <= MAX_SHORT_SIDE:
+    if short_side <= max_short_side:
         return width, height
-    scale = MAX_SHORT_SIDE / short_side
+    scale = max_short_side / short_side
     next_width = max(2, round(width * scale / 2) * 2)
     next_height = max(2, round(height * scale / 2) * 2)
     return next_width, next_height
 
 
-def prepare_compatible_video(src: Path) -> Path:
+def prepare_compatible_video(
+    src: Path, *, max_short_side: int = MAX_SHORT_SIDE, model_label: str = "Grok"
+) -> Path:
     meta = probe_video(src)
-    next_width, next_height = compatible_size(int(meta["width"]), int(meta["height"]))
+    next_width, next_height = compatible_size(
+        int(meta["width"]), int(meta["height"]), max_short_side
+    )
     if (next_width, next_height) == (meta["width"], meta["height"]):
         return src
 
-    out = src.parent / f"{src.stem}-grok-compatible.mp4"
+    if max_short_side == MAX_SHORT_SIDE:
+        out = src.parent / f"{src.stem}-grok-compatible.mp4"
+    else:
+        out = src.parent / f"{src.stem}-{max_short_side}p-compatible.mp4"
     print(
-        "Preparing Grok-compatible copy: "
+        f"Preparing {model_label}-compatible copy: "
         f"{meta['width']}x{meta['height']} -> {next_width}x{next_height}"
     )
     run_media_command(
@@ -255,21 +264,29 @@ def prepare_compatible_video(src: Path) -> Path:
     return out
 
 
-def check_grok_limits(src: Path) -> None:
+def check_video_limits(
+    src: Path, *, max_duration_s: float, max_short_side: int, model_label: str
+) -> None:
     meta = probe_video(src)
     print(f"Input: {meta['width']}x{meta['height']} {meta['codec']} {meta['duration']:.2f}s")
 
     problems = []
-    if float(meta["duration"]) > MAX_DURATION_S:
-        problems.append(f"duration {meta['duration']:.2f}s > {MAX_DURATION_S}s")
-    if min(int(meta["width"]), int(meta["height"])) > MAX_SHORT_SIDE:
-        problems.append(f"resolution {meta['width']}x{meta['height']} exceeds {MAX_SHORT_SIDE}p")
+    if float(meta["duration"]) > max_duration_s:
+        problems.append(f"duration {meta['duration']:.2f}s > {max_duration_s}s")
+    if min(int(meta["width"]), int(meta["height"])) > max_short_side:
+        problems.append(f"resolution {meta['width']}x{meta['height']} exceeds {max_short_side}p")
     if problems:
         raise RuntimeError(
-            "Incompatible with Grok (not uploading): "
+            f"Incompatible with {model_label} (not uploading): "
             + "; ".join(problems)
             + ". Provide a clip within the limits."
         )
+
+
+def check_grok_limits(src: Path) -> None:
+    check_video_limits(
+        src, max_duration_s=MAX_DURATION_S, max_short_side=MAX_SHORT_SIDE, model_label="Grok"
+    )
 
 
 def to_data_uri(path: Path, mime: str) -> str:
