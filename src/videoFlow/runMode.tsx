@@ -52,7 +52,7 @@ import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, type MeshTracker, type MeshTrackerMode } from "./ui";
-import { isStockPortraitPrompt, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
+import { DRESS_VIDEO_MODELS, dressModelTakesReferenceImage, isStockPortraitPrompt, isWavespeedDressVideoModel, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
 
 function ThemeSelect({
   themes,
@@ -539,7 +539,7 @@ function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | nu
     ) {
       return cleaned;
     }
-    return `${cleaned} Step 3 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to WaveSpeed WAN 2.2 Video Edit above.`;
+    return `${cleaned} Step 3 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to a WaveSpeed video edit model above, or upload your own dress video.`;
   }
   return cleaned;
 }
@@ -2095,6 +2095,7 @@ export function RunMode(props: RunModeProps) {
   const [manualBackground, setManualBackground] = useState("");
   const [manualForeground, setManualForeground] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [manualDress, setManualDress] = useState("");
   const [showFaceSwapPrompt, setShowFaceSwapPrompt] = useState(false);
   const [showMeshAdvanced, setShowMeshAdvanced] = useState(false);
   const [sourceJobHandledId, setSourceJobHandledId] = useState("");
@@ -2373,13 +2374,13 @@ export function RunMode(props: RunModeProps) {
   const actionNeedsGrok =
     (actionStep === "dress" && dressVideoModel === "grok-imagine") ||
     (actionStep === "background" && backgroundVideoModel === "grok-imagine");
+  const dressOnWavespeed = isWavespeedDressVideoModel(dressVideoModel);
   const actionNeedsWavespeed =
-    (actionStep === "dress" && dressVideoModel === "wan-2.2-video-edit") ||
+    (actionStep === "dress" && dressOnWavespeed) ||
     (actionStep === "background" && backgroundVideoModel === "wan-2.2-spicy");
   const canUseBackgroundVideo =
     backgroundVideoModel === "wan-2.2-spicy" ? canUseWavespeed : canUseGrok;
-  const canUseDressVideo =
-    dressVideoModel === "wan-2.2-video-edit" ? canUseWavespeed : canUseGrok;
+  const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
   const actionIsInteractive = actionStep === "symbols" || actionStep === "trim";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
@@ -2547,6 +2548,36 @@ export function RunMode(props: RunModeProps) {
       setManualForeground("");
       await onRefreshAssets();
       selectStep("mesh");
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  const dressUnlocked = Boolean(
+    flowState?.steps.dress && flowState.steps.dress.status !== "locked",
+  );
+  const canImportManualDress = Boolean(
+    cardId.trim() && manualDress.trim() && dressUnlocked && !importBusy && !jobBusy,
+  );
+
+  async function importManualDress() {
+    const id = cardId.trim();
+    if (!id || !canImportManualDress) return;
+    setImportBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState>(
+        `/api/video-flow/${encodeURIComponent(id)}/import-dress`,
+        {
+          method: "POST",
+          body: JSON.stringify({ foreground: manualDress.trim() }),
+        },
+      );
+      setFlowState(next);
+      setManualDress("");
+      await onRefreshAssets();
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -3173,8 +3204,9 @@ export function RunMode(props: RunModeProps) {
             <Callout.Root color="orange">
               <Callout.Text size="2">
                 Step 3 edits your approved (trimmed) bikini clip in place. x.ai Grok scans every
-                frame of that video for moderation — a modest dress prompt can still fail. Use{" "}
-                <strong>WaveSpeed WAN 2.2 Video Edit</strong> to avoid that scan.
+                frame of that video for moderation — a modest dress prompt can still fail. Use a{" "}
+                <strong>WaveSpeed</strong> video edit model to avoid that scan, or upload your own
+                dress video below.
               </Callout.Text>
             </Callout.Root>
             <Field label="Step 3 video model">
@@ -3184,16 +3216,17 @@ export function RunMode(props: RunModeProps) {
               >
                 <Select.Trigger />
                 <Select.Content>
-                  <Select.Item value="grok-imagine">x.ai Grok Imagine</Select.Item>
-                  <Select.Item value="wan-2.2-video-edit">
-                    WaveSpeed WAN 2.2 Video Edit
-                  </Select.Item>
+                  {DRESS_VIDEO_MODELS.map((entry) => (
+                    <Select.Item key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </Select.Item>
+                  ))}
                 </Select.Content>
               </Select.Root>
             </Field>
             {!canUseDressVideo ? (
               <Text color="gray" size="2">
-                {dressVideoModel === "wan-2.2-video-edit"
+                {dressOnWavespeed
                   ? "Add WAVESPEED_API_KEY to .env first."
                   : "Add XAI_API_KEY to .env first."}
               </Text>
@@ -3208,7 +3241,13 @@ export function RunMode(props: RunModeProps) {
             <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
               Apply theme to dress prompt
             </Button>
-            <Field label="Dress reference image (optional — captioned into prompt for WAN & Grok)">
+            <Field
+              label={
+                dressModelTakesReferenceImage(dressVideoModel)
+                  ? "Dress reference image (optional — sent to the model as Image 1)"
+                  : "Dress reference image (optional — captioned into prompt for WAN 2.2 & Grok)"
+              }
+            >
               <FilePathPicker
                 accept="image/*"
                 placeholder="Pick a dress photo or paste a path/URL"
@@ -3222,14 +3261,16 @@ export function RunMode(props: RunModeProps) {
             </Field>
             {dressReferenceImage.trim() ? (
               <Text color="gray" size="2">
-                Reference is captioned and appended after prompt enhance so the outfit match
-                wins. Click Apply theme if the dress prompt still looks generic.
+                {dressModelTakesReferenceImage(dressVideoModel)
+                  ? "The image is attached to the edit and the prompt tells the model to copy that outfit."
+                  : "Reference is captioned and appended after prompt enhance so the outfit match wins."}{" "}
+                Click Apply theme if the dress prompt still looks generic.
               </Text>
             ) : null}
             <label className="checkbox-label">
               <Checkbox
                 checked={enhancePrompt}
-                disabled={dressVideoModel === "wan-2.2-video-edit" && !canUseGrok}
+                disabled={dressOnWavespeed && !canUseGrok}
                 onCheckedChange={(checked) => onEnhancePromptChange(checked === true)}
               />
               Enhance dress prompt with Grok chat before video edit
@@ -3237,12 +3278,50 @@ export function RunMode(props: RunModeProps) {
             <Text color="gray" size="2">
               Edits the approved background clip frame-for-frame — same scenery, motion, and
               subject scale; only the outfit changes.
-              {dressVideoModel === "wan-2.2-video-edit"
+              {dressOnWavespeed
                 ? enhancePrompt && canUseGrok
-                  ? " WAN edit uses a Grok-enhanced prompt (locked framing) when XAI_API_KEY is set."
-                  : " WAN edit uses your prompt as written unless Grok enhancement is on with XAI_API_KEY."
+                  ? " The WaveSpeed edit uses a Grok-enhanced prompt (locked framing)."
+                  : " The WaveSpeed edit uses your prompt as written unless Grok enhancement is on with XAI_API_KEY."
                 : ` Prompt enhancement is ${enhancePrompt ? "on" : "off"}.`}
             </Text>
+
+            <Separator size="4" />
+            <Heading as="h3" size="3">
+              Or upload your own dress video
+            </Heading>
+            <Text color="gray" size="2">
+              Use a hand-made foreground clip instead of an AI edit. It is aligned to the approved
+              bikini clip (size and duration), then lands in review — approve it like an AI result.
+              Uploading replaces any current step 3 result and resets the later steps.
+            </Text>
+            <Field label="Foreground video (dress / scratch layer)">
+              <FilePathPicker
+                accept="video/*"
+                placeholder="Pick a dress video or paste a path"
+                preview="video"
+                previewLabel="foreground"
+                previewSize="compact"
+                value={manualDress}
+                onChange={setManualDress}
+                onError={onError}
+              />
+            </Field>
+            <Flex align="center" gap="3" wrap="wrap">
+              <Button
+                disabled={!canImportManualDress}
+                type="button"
+                variant="soft"
+                onClick={() => void importManualDress()}
+              >
+                {importBusy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
+                Use this video for step 3
+              </Button>
+              {!dressUnlocked ? (
+                <Text color="gray" size="2">
+                  Approve Fix frames first.
+                </Text>
+              ) : null}
+            </Flex>
           </Flex>
         ) : null}
 

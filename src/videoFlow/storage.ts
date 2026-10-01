@@ -21,20 +21,39 @@ export type SourceImageModel = "grok-imagine" | "seedream-v5-lite";
 
 export type BackgroundVideoModel = "grok-imagine" | "wan-2.2-spicy";
 
-export type DressVideoModel = "grok-imagine" | "wan-2.2-video-edit";
+export type DressVideoModel =
+  | "grok-imagine"
+  | "wan-2.2-video-edit"
+  | "wan-3.0-video-edit"
+  | "seedance-2.0-video-edit";
+
+export const DRESS_VIDEO_MODELS: { id: DressVideoModel; label: string; wavespeed: boolean }[] = [
+  { id: "seedance-2.0-video-edit", label: "WaveSpeed ByteDance Seedance 2.0 Video Edit", wavespeed: true },
+  { id: "wan-3.0-video-edit", label: "WaveSpeed Alibaba WAN 3.0 Video Edit", wavespeed: true },
+  { id: "wan-2.2-video-edit", label: "WaveSpeed WAN 2.2 Video Edit", wavespeed: true },
+  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
+];
 
 export const DEFAULT_SOURCE_IMAGE_PROVIDER: AiProvider = "wavespeed";
 export const DEFAULT_SOURCE_IMAGE_MODEL: SourceImageModel = "seedream-v5-lite";
 export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "wan-2.2-video-edit";
+
+export function isWavespeedDressVideoModel(model: DressVideoModel): boolean {
+  return DRESS_VIDEO_MODELS.some((entry) => entry.id === model && entry.wavespeed);
+}
+
+/** WaveSpeed edit models that accept the dress reference image directly (no Grok caption). */
+export function dressModelTakesReferenceImage(model: DressVideoModel): boolean {
+  return model === "wan-3.0-video-edit" || model === "seedance-2.0-video-edit";
+}
 
 export function parseBackgroundVideoModel(value: unknown): BackgroundVideoModel {
   return value === "wan-2.2-spicy" ? "wan-2.2-spicy" : "grok-imagine";
 }
 
 export function parseDressVideoModel(value: unknown): DressVideoModel {
-  if (value === "grok-imagine") return "grok-imagine";
-  if (value === "wan-2.2-video-edit") return "wan-2.2-video-edit";
-  return DEFAULT_DRESS_VIDEO_MODEL;
+  const match = DRESS_VIDEO_MODELS.find((entry) => entry.id === value);
+  return match ? match.id : DEFAULT_DRESS_VIDEO_MODEL;
 }
 
 export function wavespeedPipelineModelValue(

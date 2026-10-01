@@ -37,6 +37,8 @@ SEEDREAM_T2I_PATH = "/bytedance/seedream-v5.0-lite"
 SEEDREAM_EDIT_PATH = "/bytedance/seedream-v5.0-lite/edit"
 WAN_SPICY_I2V_PATH = "/wavespeed-ai/wan-2.2-spicy/image-to-video"
 WAN_VIDEO_EDIT_PATH = "/wavespeed-ai/wan-2.2/video-edit"
+WAN30_VIDEO_EDIT_PATH = "/alibaba/wan-3.0/video-edit"
+SEEDANCE2_VIDEO_EDIT_PATH = "/bytedance/seedance-2.0/video-edit"
 VIDEO_I2V_PATH = "/x-ai/grok-imagine-video-v1.5/image-to-video"
 VIDEO_EDIT_PATH = "/x-ai/grok-imagine-video/edit-video"
 POLL_PATH = "/predictions/{request_id}/result"
@@ -179,7 +181,7 @@ def poll_task(request_id: str, key: str, *, label: str) -> list[str]:
                     f"WaveSpeed {label} completed but outputs were empty:\n{json.dumps(result, indent=2)}"
                 )
             return urls
-        if status in ("failed", "expired", "cancelled"):
+        if status in ("failed", "expired", "cancelled", "timeout", "deleted"):
             err = result.get("error")
             if isinstance(err, str) and err.strip():
                 raise RuntimeError(f"WaveSpeed {label} failed: {err}")
@@ -497,6 +499,18 @@ def image_to_video_wan_spicy(
     finish_video_job(request_id, out, label="wan-2.2-spicy image-to-video")
 
 
+def _edit_input_video_url(video: str | Path) -> str:
+    video_str = str(video)
+    if video_str.startswith(("http://", "https://", "data:")):
+        return video_str
+    src = Path(video_str)
+    if not src.exists():
+        raise RuntimeError(f"Video not found: {src}")
+    src = prepare_compatible_video(src)
+    check_grok_limits(src)
+    return media_url(src, "video/mp4")
+
+
 def edit_video_wan22(
     *,
     video: str | Path,
@@ -505,16 +519,7 @@ def edit_video_wan22(
     resolution: str = "720p",
     reference_image: str | Path | None = None,
 ) -> None:
-    video_str = str(video)
-    if video_str.startswith(("http://", "https://", "data:")):
-        video_url = video_str
-    else:
-        src = Path(video_str)
-        if not src.exists():
-            raise RuntimeError(f"Video not found: {src}")
-        src = prepare_compatible_video(src)
-        check_grok_limits(src)
-        video_url = media_url(src, "video/mp4")
+    video_url = _edit_input_video_url(video)
 
     final_prompt = prompt.strip()
     reference_str = str(reference_image).strip() if reference_image is not None else ""
@@ -535,6 +540,75 @@ def edit_video_wan22(
         label="wan-2.2 video edit",
     )
     finish_video_job(request_id, out, label="wan-2.2 video edit")
+
+
+def _reference_image_urls(reference_image: str | Path | None) -> list[str]:
+    reference_str = str(reference_image).strip() if reference_image is not None else ""
+    if not reference_str:
+        return []
+    return [media_url(reference_str, "image/png")]
+
+
+def edit_video_wan30(
+    *,
+    video: str | Path,
+    prompt: str,
+    out: Path,
+    resolution: str = "720p",
+    reference_image: str | Path | None = None,
+) -> None:
+    """Alibaba WAN 3.0 video edit. The prompt refers to the reference as ``Image 1``."""
+    res = resolution if resolution in ("480p", "720p", "1080p") else "720p"
+    payload: dict = {
+        "prompt": prompt.strip(),
+        "video": _edit_input_video_url(video),
+        "resolution": res,
+        # False keeps the source audio track instead of paying for generated audio.
+        "generate_audio": False,
+        "enable_prompt_expansion": False,
+        "seed": -1,
+    }
+    references = _reference_image_urls(reference_image)
+    if references:
+        payload["reference_images"] = references
+    label = "wan-3.0 video edit"
+    request_id = submit_video_job(
+        path=WAN30_VIDEO_EDIT_PATH,
+        payload=payload,
+        out=out,
+        label=label,
+    )
+    finish_video_job(request_id, out, label=label)
+
+
+def edit_video_seedance2(
+    *,
+    video: str | Path,
+    prompt: str,
+    out: Path,
+    resolution: str = "720p",
+    reference_image: str | Path | None = None,
+) -> None:
+    """ByteDance Seedance 2.0 video edit. The prompt refers to the reference as ``@Image 1``."""
+    res = resolution if resolution in ("480p", "720p", "1080p", "4k") else "720p"
+    payload: dict = {
+        "prompt": prompt.strip(),
+        "video": _edit_input_video_url(video),
+        "resolution": res,
+        "generate_audio": False,
+        "enable_web_search": False,
+    }
+    references = _reference_image_urls(reference_image)
+    if references:
+        payload["reference_images"] = references
+    label = "seedance-2.0 video edit"
+    request_id = submit_video_job(
+        path=SEEDANCE2_VIDEO_EDIT_PATH,
+        payload=payload,
+        out=out,
+        label=label,
+    )
+    finish_video_job(request_id, out, label=label)
 
 
 def edit_video(

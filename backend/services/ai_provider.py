@@ -9,7 +9,17 @@ from backend.services import grok, wavespeed
 AiProvider = Literal["xai", "wavespeed"]
 SourceImageModel = Literal["grok-imagine", "seedream-v5-lite"]
 BackgroundVideoModel = Literal["grok-imagine", "wan-2.2-spicy"]
-DressVideoModel = Literal["grok-imagine", "wan-2.2-video-edit"]
+DressVideoModel = Literal[
+    "grok-imagine",
+    "wan-2.2-video-edit",
+    "wan-3.0-video-edit",
+    "seedance-2.0-video-edit",
+]
+# How each WaveSpeed edit model expects the prompt to bind the first reference image.
+DRESS_REFERENCE_TOKENS: dict[str, str] = {
+    "wan-3.0-video-edit": "Image 1",
+    "seedance-2.0-video-edit": "@Image 1",
+}
 SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite"]
 
 
@@ -41,6 +51,10 @@ def normalize_background_video_model(model: str | None) -> BackgroundVideoModel:
 def normalize_dress_video_model(model: str | None) -> DressVideoModel:
     if model in ("grok-imagine", "grok-imagine-video"):
         return "grok-imagine"
+    if model in ("wan-3.0-video-edit", "alibaba/wan-3.0/video-edit"):
+        return "wan-3.0-video-edit"
+    if model in ("seedance-2.0-video-edit", "bytedance/seedance-2.0/video-edit"):
+        return "seedance-2.0-video-edit"
     return "wan-2.2-video-edit"
 
 
@@ -354,6 +368,37 @@ def edit_video(
     reference_field: str = "image",
     dress_video_model: DressVideoModel = "wan-2.2-video-edit",
 ) -> None:
+    native_reference_token = DRESS_REFERENCE_TOKENS.get(dress_video_model)
+    if native_reference_token:
+        # These models take the reference image directly — no Grok captioning needed.
+        final_prompt = prompt
+        reference_str = str(reference_image).strip() if reference_image is not None else ""
+        if enhance and xai_key_available():
+            print(f"Enhancing dress prompt via {grok.chat_model()} (for {dress_video_model}) ...")
+            final_prompt = grok.enhance_prompt(final_prompt, grok.api_key(), system=enhance_system)
+            print(f"Enhanced dress prompt:\n  {final_prompt}\n")
+        elif enhance:
+            print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+        if reference_str:
+            final_prompt = (
+                f"{final_prompt.rstrip()}\n\n"
+                f"CRITICAL — dress her in the exact outfit shown in {native_reference_token} "
+                "(shape, color, cut, accessories, emissive glow/shine). "
+                "Keep her face, body, pose, motion, framing, and background unchanged."
+            )
+        edit_fn = (
+            wavespeed.edit_video_wan30
+            if dress_video_model == "wan-3.0-video-edit"
+            else wavespeed.edit_video_seedance2
+        )
+        edit_fn(
+            video=video,
+            prompt=final_prompt,
+            out=out,
+            resolution=resolution or "720p",
+            reference_image=reference_str or None,
+        )
+        return
     if dress_video_model == "wan-2.2-video-edit":
         final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""

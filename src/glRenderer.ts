@@ -232,6 +232,7 @@ in vec2 vLocal;
 in vec2 vFabricUV;
 uniform sampler2D uFabric;
 uniform float uAlpha;
+uniform float uRotation;
 out vec4 frag;
 void main() {
   vec4 fabric = texture(uFabric, vFabricUV);
@@ -239,16 +240,22 @@ void main() {
   float round = smoothstep(1.0, 0.25, d);
   float tear = smoothstep(0.95, 0.55, abs(vLocal.x) + abs(vLocal.y) * 0.35);
   float mask = round * tear;
-  frag = vec4(fabric.rgb, mask * uAlpha);
+  // Tumble shading + dark rim: a fabric-colored flake is otherwise invisible
+  // while it passes over the same fabric it tore off.
+  float tumble = 0.7 + 0.45 * abs(cos(uRotation));
+  float rim = mix(0.55, 1.0, smoothstep(0.95, 0.5, d));
+  frag = vec4(fabric.rgb * tumble * rim, mask * uAlpha);
 }`;
 
+// Same launch as the TopSymbolBar foil flakes, at roughly half its size/count.
+// Units are logical canvas px (390×672) — no DPR scaling here.
 const FLAKE_COUNT_PER_SCRATCH = 2;
 const FLAKE_MAX = 120;
-const FLAKE_LIFE = 0.7;
-const FLAKE_SCALE_MIN = 0.2;
-const FLAKE_SCALE_MAX = 0.55;
-const FLAKE_BASE_SIZE = 6;
-const FLAKE_GRAVITY = 140;
+const FLAKE_LIFE = 0.3;
+const FLAKE_SCALE_MIN = 0.55;
+const FLAKE_SCALE_MAX = 1;
+const FLAKE_BASE_SIZE = 2.5;
+const FLAKE_GRAVITY = 627;
 
 type Flake = {
   x: number;
@@ -540,20 +547,20 @@ export class GarmentGLRenderer {
 
   spawnFlakes(refX: number, refY: number, count = FLAKE_COUNT_PER_SCRATCH) {
     for (let i = 0; i < count; i += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 60;
+      const angle = (Math.random() - 0.5) * Math.PI * 0.9;
+      const speed = 70 + Math.random() * 110;
       this.flakes.push({
-        x: refX + (Math.random() - 0.5) * 8,
-        y: refY + (Math.random() - 0.5) * 8,
+        x: refX + (Math.random() - 0.5) * 6,
+        y: refY + (Math.random() - 0.5) * 6,
         spawnU: refX / this.width,
         spawnV: refY / this.height,
-        baseSize: FLAKE_BASE_SIZE * (0.75 + Math.random() * 0.5),
+        baseSize: FLAKE_BASE_SIZE * (0.7 + Math.random() * 0.45),
         rotation: Math.random() * Math.PI * 2,
-        angularVel: (Math.random() - 0.5) * 10,
-        vx: Math.cos(angle) * speed * 0.35,
-        vy: Math.sin(angle) * speed * 0.35 - 30,
+        angularVel: (Math.random() - 0.5) * 12,
+        vx: Math.sin(angle) * speed * 0.45,
+        vy: 40 + Math.random() * 80,
         age: 0,
-        life: FLAKE_LIFE * (0.85 + Math.random() * 0.3),
+        life: FLAKE_LIFE * (0.85 + Math.random() * 0.35),
       });
     }
     while (this.flakes.length > FLAKE_MAX) {

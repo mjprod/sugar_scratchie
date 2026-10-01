@@ -104,6 +104,13 @@ STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
 
 REVIEW_STEPS = frozenset({"background", "trim", "dress"})
 
+DRESS_VIDEO_MODEL_LABELS: dict[str, str] = {
+    "grok-imagine": "x.ai Grok Imagine (scans the bikini input video for moderation)",
+    "wan-2.2-video-edit": "WaveSpeed WAN 2.2 Video Edit",
+    "wan-3.0-video-edit": "WaveSpeed Alibaba WAN 3.0 Video Edit",
+    "seedance-2.0-video-edit": "WaveSpeed ByteDance Seedance 2.0 Video Edit",
+}
+
 STEP_LABELS: dict[VideoFlowStep, str] = {
     "background": "Background bikini (image to video)",
     "trim": "Fix frames (delete white frames)",
@@ -814,6 +821,60 @@ def import_manual_clips(
         f"Imported manual clips for {card_id} — "
         "background, trim, dress, and card marked approved."
     )
+    return flow_state(card_id)
+
+
+def _ensure_dress_input_clip(work: Path, card_id: str, paths: dict[str, Path]) -> None:
+    if not output_video_ready(paths["background_raw"]):
+        # Work-dir raw is often cleaned up after publish; restore from the card.
+        card_bg = CARDS_DIR / card_id / "background.mp4"
+        if output_video_ready(card_bg):
+            shutil.copy2(card_bg, paths["background_raw"])
+            print(f"Restored background clip from published card: {card_bg}")
+        else:
+            raise RuntimeError("Background clip missing — run the bikini step first.")
+    _ensure_background_source(work, paths)
+
+
+def import_dress_clip(*, card_id: str, foreground: str | Path) -> dict:
+    """Use a hand-made foreground (dress) video as the step 3 result.
+
+    The clip is aligned to the approved background like an AI edit, then left
+    in review so the operator approves it with the normal step 3 controls.
+    Replacing an earlier dress result resets the steps that depended on it.
+    """
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise RuntimeError("Invalid card id")
+    foreground_src = Path(foreground)
+    if not foreground_src.is_absolute():
+        foreground_src = ROOT / foreground_src
+    foreground_src = foreground_src.resolve()
+    if ROOT.resolve() not in foreground_src.parents:
+        raise RuntimeError(f"Foreground path is outside the project: {foreground}")
+    if not foreground_src.is_file():
+        raise RuntimeError(f"Foreground video not found: {foreground}")
+
+    work = work_dir(card_id)
+    state = read_state(work)
+    if not step_unlocked(state, "dress"):
+        missing = next(dep for dep in STEP_DEPS["dress"] if dep not in state["approved"])
+        raise RuntimeError(
+            f"Approve the {STEP_LABELS[missing]} result before uploading a dress video."
+        )
+    if not output_video_ready(foreground_src):
+        raise RuntimeError(f"Foreground video is unreadable: {foreground}")
+
+    paths = _paths(work)
+    if "dress" in state["approved"] or video_file_present(paths["foreground_dressed"]):
+        reject_flow_step(card_id, "dress")
+    _ensure_dress_input_clip(work, card_id, paths)
+
+    record_step_started(work, "dress")
+    shutil.copy2(foreground_src, paths["foreground_dressed"])
+    request_id_sidecar(paths["foreground_dressed"]).unlink(missing_ok=True)
+    _sync_foreground_to_background(work, paths)
+    record_step_finished(work, "dress")
+    print(f"Imported manual dress clip for {card_id} from {foreground_src.name} — ready for review.")
     return flow_state(card_id)
 
 
@@ -2076,20 +2137,9 @@ def run_video_flow_step(
     elif step == "trim":
         apply_trim_step(card_id, auto=True)
     elif step == "dress":
-        if not output_video_ready(paths["background_raw"]):
-            # Work-dir raw is often cleaned up after publish; restore from the card.
-            card_bg = CARDS_DIR / card_id / "background.mp4"
-            if output_video_ready(card_bg):
-                shutil.copy2(card_bg, paths["background_raw"])
-                print(f"Restored background clip from published card: {card_bg}")
-            else:
-                raise RuntimeError("Background clip missing — run the bikini step first.")
-        _ensure_background_source(work, paths)
+        _ensure_dress_input_clip(work, card_id, paths)
         print("Dress edit uses the approved (trimmed) background clip as input.")
-        if dress_model == "wan-2.2-video-edit":
-            print("Dress video: WaveSpeed WAN 2.2 Video Edit")
-        else:
-            print("Dress video: x.ai Grok Imagine (scans the bikini input video for moderation)")
+        print(f"Dress video: {DRESS_VIDEO_MODEL_LABELS[dress_model]}")
         reference = (dress_reference_image or "").strip()
         if reference:
             if dress_model == "wan-2.2-video-edit":
