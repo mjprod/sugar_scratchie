@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
+from backend.db.card_plays import card_kind_for_id, card_price, get_played, register_play
 from backend.db.engine import get_session
 from backend.db.models import (
     DailyRewardClaim,
@@ -151,14 +152,35 @@ def start_scratch_hand(
         user_id=user.id,
         card_id=card_id,
         claimed_milestones=[],
+        rewards_enabled=False,
     )
     db.add(hand)
     db.flush()
+    if card_id is not None:
+        hand.rewards_enabled = _bind_rewarded_hand(db, user.id, card_id, hand.id)
+        db.flush()
     return {
         "handId": str(hand.id),
-        "milestonesRemaining": SCRATCH_MILESTONE_MAX,
+        "rewardsEnabled": hand.rewards_enabled,
+        "milestonesRemaining": SCRATCH_MILESTONE_MAX if hand.rewards_enabled else 0,
         "handsRemainingToday": max(0, SCRATCH_HANDS_PER_DAY - started - 1),
     }
+
+
+def _bind_rewarded_hand(db: Session, user_id: uuid.UUID, card_id: str, hand_id: uuid.UUID) -> bool:
+    """True when this hand is the card's one rewarded play; later hands are free play."""
+    kind = card_kind_for_id(card_id)
+    row = get_played(db, user_id, kind, card_id, lock=True)
+    if row is None:
+        # Cards outside the catalog (pack / lab ids) are treated as free.
+        price = card_price(db, kind, card_id) or 0
+        if price > 0:
+            return False
+        row = register_play(db, user_id, kind, card_id, 0).row
+    if row.rewarded_hand_id is not None:
+        return False
+    row.rewarded_hand_id = hand_id
+    return True
 
 
 @router.post("/scratch/coins")
@@ -176,6 +198,15 @@ def claim_scratch_coins(
     )
     if hand is None or hand.user_id != user.id:
         raise HTTPException(status_code=404, detail="scratch hand not found")
+
+    if not hand.rewards_enabled:
+        return {
+            "ok": True,
+            "coins": 0,
+            "alreadyClaimed": False,
+            "practice": True,
+            "wallet": _wallet_payload(db, user.id),
+        }
 
     claimed = _claimed_list(hand)
     if body.milestone in claimed:

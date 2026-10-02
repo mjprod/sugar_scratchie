@@ -25,6 +25,7 @@ from backend.auth.operator import OperatorAuthMiddleware
 from backend.logging_config import configure_logging
 from backend.middleware.request_timing import RequestTimingMiddleware
 from backend.routers import auth as auth_router
+from backend.routers import card_plays as card_plays_router
 from backend.routers import collection as collection_router
 from backend.routers import inbox as inbox_router
 from backend.routers import me as me_router
@@ -495,6 +496,7 @@ app.include_router(wallet_router.router)
 app.include_router(store_router.router)
 app.include_router(packs_router.router)
 app.include_router(collection_router.router)
+app.include_router(card_plays_router.router)
 app.include_router(rewards_router.router)
 app.include_router(inbox_router.router)
 app.include_router(users_admin_router.router)
