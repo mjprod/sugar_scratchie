@@ -27,6 +27,7 @@ from backend.db.models import (
     StorePurchase,
     User,
     UserCard,
+    UserCardPlayed,
     UserCreatorPref,
     Wallet,
     WalletTransaction,
@@ -303,6 +304,10 @@ def delete_user_permanently(user_id: UUID, db: Annotated[Session, Depends(get_se
             synchronize_session=False
         )
     db.query(ScratchSession).filter(ScratchSession.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    # Played rows reference scratch_coin_hands.
+    db.query(UserCardPlayed).filter(UserCardPlayed.user_id == user.id).delete(
         synchronize_session=False
     )
     db.query(ScratchCoinHand).filter(ScratchCoinHand.user_id == user.id).delete(

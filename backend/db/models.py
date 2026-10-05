@@ -123,7 +123,7 @@ class WalletTransaction(Base):
     __table_args__ = (
         CheckConstraint("currency IN ('diamonds','coins')", name="wallet_tx_currency_chk"),
         CheckConstraint(
-            "reason IN ('welcome_bonus','store_purchase','pack_purchase','pack_reward','scratch_reward','daily_reward','redeem_code','refund','admin_adjust')",
+            "reason IN ('welcome_bonus','store_purchase','pack_purchase','pack_reward','scratch_reward','daily_reward','redeem_code','refund','admin_adjust','card_purchase')",
             name="wallet_tx_reason_chk",
         ),
         UniqueConstraint("idempotency_key", name="wallet_tx_idempotency_key_uq"),
@@ -456,7 +456,34 @@ class ScratchCoinHand(Base):
     card_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Milestone indexes already credited (1–10). JSON list of ints.
     claimed_milestones: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
+    # False for free-play hands (replays, unbought priced cards, no card id): claims mint 0.
+    rewards_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class UserCardPlayed(Base):
+    """One row per user x card. First play is the purchase; replays earn no rewards."""
+
+    __tablename__ = "user_cards_played"
+    __table_args__ = (
+        CheckConstraint("card_kind IN ('motion','photo')", name="user_cards_played_kind_chk"),
+        CheckConstraint("price_paid >= 0", name="user_cards_played_price_chk"),
+        UniqueConstraint("user_id", "card_kind", "card_id", name="user_cards_played_user_card_uq"),
+        Index("user_cards_played_user_idx", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    card_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    card_id: Mapped[str] = mapped_column(Text, nullable=False)
+    price_paid: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rewarded_hand_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scratch_coin_hands.id"), nullable=True
+    )
+    play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class GameSession(Base):
