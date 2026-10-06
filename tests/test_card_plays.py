@@ -115,6 +115,23 @@ def test_first_hand_rewarded_replay_hands_mint_nothing(client):
     assert practice["wallet"]["coins"] == WELCOME_COINS + claim["coins"]
 
 
+def test_lost_purchase_response_retry_keeps_rewarded_hand(client):
+    """Client dropped the buy response and POSTed again before any hand started."""
+    register_and_login(client)
+    _, photo_id = _create_cards(photo_price=3)
+    assert _play(client, "photo", photo_id).status_code == 200
+
+    retry = _play(client, "photo", photo_id).json()
+    assert retry["firstPlay"] is False
+    assert retry["pricePaid"] == 0
+    assert retry["rewardsEnabled"] is True
+    assert retry["wallet"]["diamonds"] == WELCOME_DIAMONDS - 3
+
+    hand = _start_hand(client, photo_id)
+    assert hand["rewardsEnabled"] is True
+    assert _claim(client, hand["handId"])["coins"] > 0
+
+
 def test_unbought_priced_photo_card_gets_practice_hand(client):
     register_and_login(client)
     _, photo_id = _create_cards(photo_price=2)
