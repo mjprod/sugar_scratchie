@@ -68,7 +68,12 @@ def exchange_code(code: str) -> GoogleClaims:
     if response.status_code != 200:
         raise GoogleAuthError("token_exchange_failed")
 
-    raw_token = response.json().get("id_token")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise GoogleAuthError("token_exchange_failed") from exc
+
+    raw_token = data.get("id_token")
     if not raw_token:
         raise GoogleAuthError("missing_id_token")
 
