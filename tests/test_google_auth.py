@@ -89,6 +89,28 @@ def test_google_login_matches_by_subject(client, google_identity):
     assert second.json()["user"]["id"] == first["id"]
 
 
+def test_google_login_rejects_email_owned_by_other_subject(client, google_identity):
+    email, sub = _unique()
+    google_identity(_claims(email, sub))
+    first = client.post("/api/auth/google", json={"code": "good-code"}).json()["user"]
+
+    client.cookies.clear()
+    google_identity(_claims(f"changed-{email}", sub))
+    assert client.post("/api/auth/google", json={"code": "good-code"}).status_code == 200
+
+    client.cookies.clear()
+    google_identity(_claims(email, f"other-{sub}"))
+    response = client.post("/api/auth/google", json={"code": "good-code"})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "google_subject_mismatch"
+    assert client.get("/api/auth/session").json()["authenticated"] is False
+
+    client.cookies.clear()
+    google_identity(_claims(email, sub))
+    again = client.post("/api/auth/google", json={"code": "good-code"})
+    assert again.json()["user"]["id"] == first["id"]
+
+
 def test_google_login_rejects_unverified_email(client, google_identity):
     email, sub = _unique()
     google_identity(_claims(email, sub, email_verified=False))

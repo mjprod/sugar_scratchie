@@ -328,16 +328,17 @@ def google_login(
     except google_auth.GoogleAuthError:
         raise HTTPException(status_code=401, detail="google_auth_failed")
 
-email = _normalize_email(claims.email)
-user = (
-    db.query(User)
-    .filter(User.provider_subject == claims.sub, User.auth_provider.in_(("google", "email")))
-    .first()
-)
-if user is None:
-    user = db.query(User).filter(User.email == email).one_or_none()
-    if user is not None and user.provider_subject and user.provider_subject != claims.sub:
-        raise HTTPException(status_code=409, detail="google_subject_mismatch")
+    email = _normalize_email(claims.email)
+    user = (
+        db.query(User)
+        .filter(User.provider_subject == claims.sub, User.auth_provider.in_(("google", "email")))
+        .first()
+    )
+    if user is None:
+        user = db.query(User).filter(User.email == email).one_or_none()
+        if user is not None and user.provider_subject and user.provider_subject != claims.sub:
+            raise HTTPException(status_code=409, detail="google_subject_mismatch")
+
     if user is None:
         user = _create_user(
             db,
