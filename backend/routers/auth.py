@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from backend.auth import google as google_auth
 from backend.auth.operator import (
     clear_operator_cookie,
     operator_secret_ok,
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 AuthProvider = Literal["google", "apple", "email"]
 
+DISPLAY_NAME_MAX_LENGTH = 80
 VERIFY_CODE_TTL = timedelta(minutes=15)
 VERIFY_CONFIRM_MAX_ATTEMPTS = 5
 VERIFY_CONFIRM_WINDOW_S = 15 * 60
@@ -69,6 +71,10 @@ class OAuthRequest(BaseModel):
     email: str
     subject: str | None = None
     display_name: str | None = None
+
+
+class GoogleLoginRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
 
 
 class EmailRequest(BaseModel):
@@ -305,6 +311,48 @@ def oauth(
             user.provider_subject = body.subject
         if user.email_verified_at is None:
             user.email_verified_at = utcnow()
+    return _issue(response, db, user, request)
+
+
+@router.post("/google")
+def google_login(
+    body: GoogleLoginRequest,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_session)],
+):
+    try:
+        claims = google_auth.exchange_code(body.code)
+    except google_auth.GoogleNotConfigured:
+        raise HTTPException(status_code=503, detail="google_not_configured")
+    except google_auth.GoogleAuthError:
+        raise HTTPException(status_code=401, detail="google_auth_failed")
+
+    email = _normalize_email(claims.email)
+    user = db.query(User).filter(User.provider_subject == claims.sub).first()
+    if user is None:
+        user = db.query(User).filter(User.email == email).one_or_none()
+
+    if user is None:
+        user = _create_user(
+            db,
+            email=email,
+            provider="google",
+            display_name=(claims.name or "")[:DISPLAY_NAME_MAX_LENGTH] or None,
+            subject=claims.sub,
+            verified=True,
+        )
+        if claims.picture:
+            user.avatar_url = claims.picture
+    else:
+        if user.status != "active":
+            raise HTTPException(status_code=403, detail="Account unavailable.")
+        if not user.provider_subject:
+            user.provider_subject = claims.sub
+        if user.email_verified_at is None:
+            user.email_verified_at = utcnow()
+        if not user.avatar_url and claims.picture:
+            user.avatar_url = claims.picture
     return _issue(response, db, user, request)
 
 

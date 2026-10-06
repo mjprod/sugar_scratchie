@@ -7,5 +7,7 @@ alembic>=1.13
 argon2-cffi
 pydantic-settings
 httpx>=0.27
+google-auth>=2.30
+requests
 # Video-flow mesh tracking needs ML packages in the same .venv (in-process).
 # Install those with: pip install -r backend/requirements-ml.txt
