@@ -127,6 +127,15 @@ def register_and_login(
     return address, body["user"]
 
 
+def mark_email_verified(user_id: str) -> None:
+    from backend.db.engine import get_engine
+    from backend.db.models import User, utcnow
+
+    with Session(get_engine()) as db:
+        db.get(User, uuid.UUID(user_id)).email_verified_at = utcnow()
+        db.commit()
+
+
 def login(client: TestClient, email: str, password: str = "testpassword123") -> dict:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text

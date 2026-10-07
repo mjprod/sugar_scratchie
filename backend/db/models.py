@@ -38,6 +38,7 @@ class User(Base):
             name="users_gender_interest_chk",
         ),
         CheckConstraint("status IN ('active','banned','deleted')", name="users_status_chk"),
+        UniqueConstraint("apple_subject", name="users_apple_subject_uq"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -45,6 +46,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     auth_provider: Mapped[str] = mapped_column(Text, nullable=False, default="email")
     provider_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    apple_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     username: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
