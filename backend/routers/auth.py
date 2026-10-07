@@ -3,14 +3,17 @@ from __future__ import annotations
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.auth import apple as apple_auth
 from backend.auth import google as google_auth
 from backend.auth.operator import (
     clear_operator_cookie,
@@ -34,6 +37,7 @@ from backend.auth.sessions import (
 )
 from backend.db.engine import get_session
 from backend.db.models import EmailToken, User, utcnow
+from backend.db.models import Session as UserSession
 from backend.db.wallet import grant_welcome
 from backend.mail import send_reset_email, send_verify_email
 
@@ -75,6 +79,13 @@ class OAuthRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     code: str = Field(min_length=1, max_length=2048)
+
+
+class AppleLoginRequest(BaseModel):
+    id_token: str = Field(min_length=1, max_length=8192)
+    nonce: str = Field(min_length=16, max_length=256)
+    # Apple only reveals the name to the browser, on the very first sign-in.
+    name: str | None = Field(default=None, max_length=200)
 
 
 class EmailRequest(BaseModel):
@@ -137,6 +148,7 @@ def _create_user(
     username: str | None = None,
     display_name: str | None = None,
     subject: str | None = None,
+    apple_subject: str | None = None,
     verified: bool = False,
 ) -> User:
     user = User(
@@ -144,6 +156,7 @@ def _create_user(
         password_hash=hash_password(password) if password else None,
         auth_provider=provider,
         provider_subject=subject,
+        apple_subject=apple_subject,
         username=username,
         display_name=display_name or (username or email.split("@")[0]),
         email_verified_at=utcnow() if verified else None,
@@ -153,6 +166,39 @@ def _create_user(
     db.flush()
     grant_welcome(db, user.id)
     return user
+
+
+def _create_social_user(
+    db: Session, find_existing: Callable[[], User | None], **fields: Any
+) -> tuple[User, bool]:
+    """Create a social-login user, or return the row a concurrent first login just created.
+
+    Returns (user, created).
+    """
+    try:
+        with db.begin_nested():
+            return _create_user(db, **fields), True
+    except IntegrityError:
+        user = find_existing()
+        if user is None:
+            raise HTTPException(status_code=409, detail="account_conflict")
+        return user, False
+
+
+def _secure_social_link(db: Session, user: User) -> None:
+    """Mark the email verified when a provider vouches for it.
+
+    If it was never verified, whoever registered it may not own the address:
+    drop their password and sessions so the provider's user takes sole control.
+    """
+    if user.email_verified_at is not None:
+        return
+    now = utcnow()
+    user.password_hash = None
+    db.query(UserSession).filter(
+        UserSession.user_id == user.id, UserSession.revoked_at.is_(None)
+    ).update({UserSession.revoked_at: now}, synchronize_session=False)
+    user.email_verified_at = now
 
 
 def _issue(response: Response, db: Session, user: User, request: Request) -> dict:
@@ -329,36 +375,92 @@ def google_login(
         raise HTTPException(status_code=401, detail="google_auth_failed")
 
     email = _normalize_email(claims.email)
-    user = (
-        db.query(User)
-        .filter(User.provider_subject == claims.sub, User.auth_provider.in_(("google", "email")))
-        .first()
-    )
-    if user is None:
-        user = db.query(User).filter(User.email == email).one_or_none()
-        if user is not None and user.provider_subject and user.provider_subject != claims.sub:
-            raise HTTPException(status_code=409, detail="google_subject_mismatch")
 
+    def find_existing() -> User | None:
+        user = (
+            db.query(User)
+            .filter(
+                User.provider_subject == claims.sub,
+                User.auth_provider.in_(("google", "email", "apple")),
+            )
+            .first()
+        )
+        if user is None:
+            user = db.query(User).filter(User.email == email).one_or_none()
+            if user is not None and user.provider_subject and user.provider_subject != claims.sub:
+                raise HTTPException(status_code=409, detail="google_subject_mismatch")
+        return user
+
+    user = find_existing()
+    created = False
     if user is None:
-        user = _create_user(
+        user, created = _create_social_user(
             db,
+            find_existing,
             email=email,
             provider="google",
             display_name=(claims.name or "")[:DISPLAY_NAME_MAX_LENGTH] or None,
             subject=claims.sub,
             verified=True,
         )
-        if claims.picture:
-            user.avatar_url = claims.picture
-    else:
+    if not created:
         if user.status != "active":
             raise HTTPException(status_code=403, detail="Account unavailable.")
+        _secure_social_link(db, user)
         if not user.provider_subject:
             user.provider_subject = claims.sub
-        if user.email_verified_at is None:
-            user.email_verified_at = utcnow()
-        if not user.avatar_url and claims.picture:
-            user.avatar_url = claims.picture
+    if not user.avatar_url and claims.picture:
+        user.avatar_url = claims.picture
+    return _issue(response, db, user, request)
+
+
+@router.post("/apple")
+def apple_login(
+    body: AppleLoginRequest,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_session)],
+):
+    try:
+        claims = apple_auth.verify_id_token(body.id_token, body.nonce)
+    except apple_auth.AppleNotConfigured:
+        raise HTTPException(status_code=503, detail="apple_not_configured")
+    except apple_auth.AppleUnavailable:
+        raise HTTPException(status_code=503, detail="apple_unavailable")
+    except apple_auth.AppleAuthError:
+        raise HTTPException(status_code=401, detail="apple_auth_failed")
+
+    email = _normalize_email(claims.email or "")
+
+    def find_existing() -> User | None:
+        user = db.query(User).filter(User.apple_subject == claims.sub).one_or_none()
+        if user is not None:
+            return user
+        if not email:
+            raise HTTPException(status_code=401, detail="apple_email_missing")
+        user = db.query(User).filter(User.email == email).one_or_none()
+        if user is not None and user.apple_subject:
+            raise HTTPException(status_code=409, detail="apple_subject_mismatch")
+        return user
+
+    user = find_existing()
+    created = False
+    if user is None:
+        user, created = _create_social_user(
+            db,
+            find_existing,
+            email=email,
+            provider="apple",
+            display_name=(body.name or "").strip()[:DISPLAY_NAME_MAX_LENGTH] or None,
+            apple_subject=claims.sub,
+            verified=True,
+        )
+    if not created:
+        if user.status != "active":
+            raise HTTPException(status_code=403, detail="Account unavailable.")
+        _secure_social_link(db, user)
+        if not user.apple_subject:
+            user.apple_subject = claims.sub
     return _issue(response, db, user, request)
 
 

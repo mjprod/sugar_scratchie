@@ -5,7 +5,8 @@ import uuid
 import pytest
 
 from backend.auth import google as google_auth
-from tests.conftest import login, register_and_login
+from backend.auth.sessions import COOKIE_NAME
+from tests.conftest import login, mark_email_verified, register_and_login
 
 
 def _claims(email: str, sub: str, **overrides) -> dict:
@@ -60,9 +61,10 @@ def test_google_login_creates_user_and_session(client, google_identity):
     assert session["user"]["id"] == user["id"]
 
 
-def test_google_login_links_existing_email_account(client, google_identity):
+def test_google_login_links_verified_email_account(client, google_identity):
     email, sub = _unique()
     _, registered = register_and_login(client, email=email)
+    mark_email_verified(registered["id"])
     client.cookies.clear()
     google_identity(_claims(email.upper(), sub))
 
@@ -75,6 +77,50 @@ def test_google_login_links_existing_email_account(client, google_identity):
 
     client.cookies.clear()
     assert login(client, email)["id"] == registered["id"]
+
+
+def test_google_login_takes_over_unverified_email_account(client, google_identity):
+    email, sub = _unique()
+    _, registered = register_and_login(client, email=email)
+    squatter_cookie = client.cookies.get(COOKIE_NAME)
+    client.cookies.clear()
+    google_identity(_claims(email, sub))
+
+    response = client.post("/api/auth/google", json={"code": "good-code"})
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["id"] == registered["id"]
+
+    client.cookies.clear()
+    password_login = client.post(
+        "/api/auth/login", json={"email": email, "password": "testpassword123"}
+    )
+    assert password_login.status_code == 401
+    client.cookies.set(COOKIE_NAME, squatter_cookie)
+    assert client.get("/api/auth/session").json()["authenticated"] is False
+
+
+def test_google_login_matches_apple_created_account_by_subject(client, google_identity, monkeypatch):
+    from backend.auth import apple as apple_auth
+
+    email, sub = _unique()
+    monkeypatch.setattr(
+        apple_auth,
+        "verify_id_token",
+        lambda token, nonce: apple_auth.AppleClaims(sub=f"apple-{sub}", email=email),
+    )
+    apple_user = client.post(
+        "/api/auth/apple", json={"id_token": "t", "nonce": "n" * 16}
+    ).json()["user"]
+
+    client.cookies.clear()
+    google_identity(_claims(email, sub))
+    assert client.post("/api/auth/google", json={"code": "good-code"}).status_code == 200
+
+    client.cookies.clear()
+    google_identity(_claims(f"changed-{email}", sub))
+    again = client.post("/api/auth/google", json={"code": "good-code"})
+    assert again.status_code == 200, again.text
+    assert again.json()["user"]["id"] == apple_user["id"]
 
 
 def test_google_login_matches_by_subject(client, google_identity):
