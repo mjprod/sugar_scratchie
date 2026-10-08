@@ -3,7 +3,7 @@
     {
       "id": "julianaval",
       "label": "julianaval",
-      "avatar": "/models/julianaval/avatar.jpeg",
+      "avatar": "/models/julianaval/avatar.webp",
       "influencerName": "Juliana",
       "influencerCity": "Buenos Aires",
       "influencerCountry": "Argentina",
@@ -24,7 +24,7 @@
         "blond"
       ],
       "theme_avatars": {
-        "police": "/models/julianaval/themes/police/avatar.jpg"
+        "police": "/models/julianaval/themes/police/avatar.webp"
       }
     }
   ]

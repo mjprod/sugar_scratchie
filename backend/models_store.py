@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
@@ -19,8 +20,17 @@ from backend.db.models import Creator
 MODEL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+# Optimized WebP wins when a legacy original is still next to it.
+IMAGE_LOOKUP_ORDER = (".webp", ".jpg", ".jpeg", ".png")
 FLAG_EXTENSIONS = {".svg"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
+# Uploaded stills are re-encoded to WebP at most this many px on the long side.
+AVATAR_MAX_PX = 512
+# 2× the recommended 820×312 cover.
+COVER_MAX_PX = 1640
+STILL_WEBP_QUALITY = 82
+IMAGE_BACKUP_DIRNAME = ".image-backups"
 
 # Stem → ModelInfo field for per-model foil/swipe videos (Global media).
 MODEL_VIDEO_STEMS: dict[str, str] = {
@@ -38,6 +48,9 @@ MODEL_POSTER_STEMS: dict[str, str] = {
     "ultra-card-trailer-poster": "ultraCardTrailerPosterUrl",
     "cover": "coverUrl",
 }
+
+# Poster stems that are re-encoded on upload; video-paired posters keep their bytes.
+POSTER_MAX_PX: dict[str, int] = {"cover": COVER_MAX_PX}
 
 # Still image paired with swipe motion video (discovery/admin poster).
 SWIPE_POSTER_STEM = "swipe-poster"
@@ -197,12 +210,28 @@ def read_model_meta(model_dir: Path, default_label: str) -> dict:
     return {"label": default_label}
 
 
-def find_avatar(model_dir: Path) -> str | None:
-    for ext in AVATAR_EXTENSIONS:
-        candidate = model_dir / f"avatar{ext}"
+def _versioned_url(path: Path, rel: str) -> str:
+    url = public_url(rel)
+    try:
+        version = int(path.stat().st_mtime)
+    except OSError:
+        version = 0
+    return f"{url}?v={version}"
+
+
+def _find_image(directory: Path, stem: str) -> Path | None:
+    for ext in IMAGE_LOOKUP_ORDER:
+        candidate = directory / f"{stem}{ext}"
         if candidate.is_file():
-            return public_url(f"models/{model_dir.name}/avatar{ext}")
+            return candidate
     return None
+
+
+def find_avatar(model_dir: Path) -> str | None:
+    found = _find_image(model_dir, "avatar")
+    if found is None:
+        return None
+    return _versioned_url(found, f"models/{model_dir.name}/{found.name}")
 
 
 def find_theme_avatars(model_dir: Path) -> dict[str, str]:
@@ -215,13 +244,11 @@ def find_theme_avatars(model_dir: Path) -> dict[str, str]:
         theme_id = theme_dir.name
         if not MODEL_ID_PATTERN.match(theme_id):
             continue
-        for ext in AVATAR_EXTENSIONS:
-            candidate = theme_dir / f"avatar{ext}"
-            if candidate.is_file():
-                found[theme_id] = public_url(
-                    f"models/{model_dir.name}/themes/{theme_id}/avatar{ext}"
-                )
-                break
+        avatar = _find_image(theme_dir, "avatar")
+        if avatar is not None:
+            found[theme_id] = _versioned_url(
+                avatar, f"models/{model_dir.name}/themes/{theme_id}/{avatar.name}"
+            )
     return found
 
 
@@ -247,16 +274,10 @@ def find_model_video(model_dir: Path, stem: str) -> str | None:
 
 
 def find_model_poster(model_dir: Path, stem: str) -> str | None:
-    for ext in AVATAR_EXTENSIONS:
-        candidate = model_dir / f"{stem}{ext}"
-        if candidate.is_file():
-            url = public_url(f"models/{model_dir.name}/{stem}{ext}")
-            try:
-                version = int(candidate.stat().st_mtime)
-            except OSError:
-                version = 0
-            return f"{url}?v={version}"
-    return None
+    found = _find_image(model_dir, stem)
+    if found is None:
+        return None
+    return _versioned_url(found, f"models/{model_dir.name}/{found.name}")
 
 
 def find_swipe_poster(model_dir: Path) -> str | None:
@@ -524,6 +545,64 @@ def delete_model(
         shutil.rmtree(model_dir, ignore_errors=True)
 
 
+def _optimize_still(data: bytes, max_px: int) -> bytes:
+    """Apply EXIF orientation, downscale to ``max_px`` and encode WebP.
+
+    An already-small WebP is returned unchanged when re-encoding would not shrink it.
+    """
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(data)) as src:
+            fits = src.format == "WEBP" and max(src.size) <= max_px
+            img = ImageOps.exif_transpose(src)
+            img.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
+            if img.mode not in ("RGB", "RGBA"):
+                has_alpha = "A" in img.getbands() or "transparency" in img.info
+                img = img.convert("RGBA" if has_alpha else "RGB")
+            out = io.BytesIO()
+            img.save(out, format="WEBP", quality=STILL_WEBP_QUALITY)
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a readable image") from exc
+    encoded = out.getvalue()
+    if fits and len(encoded) >= len(data):
+        return data
+    return encoded
+
+
+def image_backup_dir(models_dir: Path, *parts: str) -> Path:
+    """Originals live outside public/ so they are never deployed or served."""
+    return models_dir.parent.parent / IMAGE_BACKUP_DIRNAME / models_dir.name / Path(*parts)
+
+
+def write_optimized_still(
+    target_dir: Path,
+    stem: str,
+    data: bytes,
+    max_px: int,
+    *,
+    backup: Path | None = None,
+) -> Path:
+    """Write ``{stem}.webp`` and remove any other ``{stem}.*`` still.
+
+    ``backup`` keeps the original upload (replacing older backups of the same stem).
+    """
+    encoded = _optimize_still(data, max_px)
+    if backup is not None:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        for old in backup.parent.glob(f"{stem}.*"):
+            old.unlink()
+        backup.write_bytes(data)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{stem}.webp"
+    target.write_bytes(encoded)
+    for old_ext in AVATAR_EXTENSIONS - {".webp"}:
+        old = target_dir / f"{stem}{old_ext}"
+        if old.exists():
+            old.unlink()
+    return target
+
+
 async def upload_model_avatar(
     db: Session,
     models_dir: Path,
@@ -532,7 +611,6 @@ async def upload_model_avatar(
 ) -> ModelInfo:
     row = _require_creator(db, model_id)
     model_dir = models_dir / row.id
-    model_dir.mkdir(parents=True, exist_ok=True)
     original = Path(upload.filename or "").name
     ext = Path(original).suffix.lower()
     if ext not in AVATAR_EXTENSIONS:
@@ -540,11 +618,13 @@ async def upload_model_avatar(
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded avatar is empty")
-    for old_ext in AVATAR_EXTENSIONS:
-        old = model_dir / f"avatar{old_ext}"
-        if old.exists():
-            old.unlink()
-    (model_dir / f"avatar{ext}").write_bytes(data)
+    write_optimized_still(
+        model_dir,
+        "avatar",
+        data,
+        AVATAR_MAX_PX,
+        backup=image_backup_dir(models_dir, row.id) / f"avatar{ext}",
+    )
     return _row_to_info(row, models_dir)
 
 
@@ -635,6 +715,16 @@ async def upload_model_poster(
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded poster is empty")
+    max_px = POSTER_MAX_PX.get(stem)
+    if max_px is not None:
+        write_optimized_still(
+            model_dir,
+            stem,
+            data,
+            max_px,
+            backup=image_backup_dir(models_dir, row.id) / f"{stem}{ext}",
+        )
+        return _row_to_info(row, models_dir)
     for old_ext in AVATAR_EXTENSIONS:
         old = model_dir / f"{stem}{old_ext}"
         if old.exists():
@@ -669,13 +759,13 @@ async def upload_model_theme_avatar(
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded avatar is empty")
-    theme_dir = model_dir / "themes" / slug
-    theme_dir.mkdir(parents=True, exist_ok=True)
-    for old_ext in AVATAR_EXTENSIONS:
-        old = theme_dir / f"avatar{old_ext}"
-        if old.exists():
-            old.unlink()
-    (theme_dir / f"avatar{ext}").write_bytes(data)
+    write_optimized_still(
+        model_dir / "themes" / slug,
+        "avatar",
+        data,
+        AVATAR_MAX_PX,
+        backup=image_backup_dir(models_dir, row.id, "themes", slug) / f"avatar{ext}",
+    )
     return _row_to_info(row, models_dir)
 
 
