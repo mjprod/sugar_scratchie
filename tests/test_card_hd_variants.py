@@ -93,7 +93,7 @@ def test_label_only_update_keeps_hd_pair(db_session, layout):
         db_session, root, cards_dir, mesh_dir, card_id, UpdateCardRequest(label="Renamed")
     )
 
-    assert card.foreground_hd == f"public/cards/{card_id}/foreground.hd.mp4"
+    assert card.foreground_hd.startswith(f"public/cards/{card_id}/foreground.hd.mp4?v=")
 
 
 def test_hd_backfill_job_requires_operator(client):
