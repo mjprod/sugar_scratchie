@@ -77,6 +77,7 @@ from backend.cards import (
     set_photo_scratch_slot_price,
     set_photo_scratch_clothes_ref,
     set_photo_scratch_slot_prompt,
+    strip_media_query,
     upload_photo_scratch_layer,
     write_photo_scratch_slot_symbols,
     zoom_photo_scratch_slot,
@@ -213,7 +214,7 @@ def now() -> float:
 
 
 def workspace_path(value: str, *, must_exist: bool = False) -> Path:
-    path = Path(value)
+    path = Path(strip_media_query(value))
     if not path.is_absolute():
         path = ROOT / path
     resolved = path.resolve()

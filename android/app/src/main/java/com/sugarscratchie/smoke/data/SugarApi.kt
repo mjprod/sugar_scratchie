@@ -42,7 +42,10 @@ class SugarApi(
 
     fun mediaUrl(path: String): String {
         if (path.startsWith("http://") || path.startsWith("https://")) return path
-        var cleaned = path.trim()
+        val trimmed = path.trim()
+        val queryStart = trimmed.indexOfAny(charArrayOf('?', '#')).takeIf { it >= 0 } ?: trimmed.length
+        val query = trimmed.substring(queryStart)
+        var cleaned = trimmed.substring(0, queryStart)
         if (cleaned.startsWith("public/")) {
             cleaned = cleaned.removePrefix("public/")
         }
@@ -53,7 +56,7 @@ class SugarApi(
             cleaned.split("/").joinToString("/") { segment ->
                 if (segment.isEmpty()) "" else URLEncoder.encode(segment, Charsets.UTF_8.name()).replace("+", "%20")
             }
-        return "$mediaBaseUrl$encoded"
+        return "$mediaBaseUrl$encoded$query"
     }
 
     fun pickPlayableCard(cards: List<CardInfo>): CardInfo? =

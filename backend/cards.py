@@ -98,13 +98,20 @@ def safe_card_id(value: str) -> str:
     return slug
 
 
+def strip_media_query(value: str) -> str:
+    """Drop a ``?v=`` cache-bust (or any query/fragment) from a media path or URL."""
+    return re.split(r"[?#]", value, maxsplit=1)[0].strip()
+
+
 def public_url(workspace_path: str) -> str:
     trimmed = workspace_path.strip()
-    if trimmed.startswith("public/"):
-        trimmed = trimmed.removeprefix("public/")
-    parts = [part for part in trimmed.split("/") if part]
+    cut = re.search(r"[?#]", trimmed)
+    path_part, suffix = (trimmed[: cut.start()], trimmed[cut.start() :]) if cut else (trimmed, "")
+    if path_part.startswith("public/"):
+        path_part = path_part.removeprefix("public/")
+    parts = [part for part in path_part.split("/") if part]
     encoded = "/".join(quote(part) for part in parts)
-    return f"/{encoded}"
+    return f"/{encoded}{suffix}"
 
 
 def media_mtime_version(path: Path) -> int:
@@ -136,7 +143,7 @@ def version_public_src(root: Path, src: str | None) -> str | None:
     """Refresh ?v= from disk for a stored public media URL (photo-scratch index entries)."""
     if not src:
         return None
-    base = src.split("?", 1)[0].strip()
+    base = strip_media_query(src)
     if not base:
         return None
     path = _resolve_public_media(root, base)
@@ -204,7 +211,7 @@ def mesh_names(mesh_dir: Path) -> set[str]:
 
 
 def resolve_source(root: Path, value: str) -> Path:
-    path = Path(value)
+    path = Path(strip_media_query(value))
     if not path.is_absolute():
         path = root / path
     resolved = path.resolve()
@@ -1244,7 +1251,7 @@ def slot_layer_prompt(slot: PhotoScratchSlot, layer: str) -> str:
 
 def _resolve_public_media(root: Path, src: str) -> Path:
     """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
-    trimmed = src.strip()
+    trimmed = strip_media_query(src)
     if trimmed.startswith("/"):
         trimmed = trimmed[1:]
     if trimmed.startswith("public/"):
