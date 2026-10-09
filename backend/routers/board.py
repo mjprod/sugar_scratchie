@@ -126,7 +126,12 @@ def creator_board(
     photo_ids = [p.id for photos in photos_by_card.values() for p in photos]
     state = _UserCardState(db, user.id, card_ids + photo_ids)
 
-    themes_by_id = {theme.id: theme for theme in db.scalars(select(Theme))}
+    theme_ids = sorted({card.theme_id for card in cards if card.theme_id})
+    themes_by_id = (
+        {theme.id: theme for theme in db.scalars(select(Theme).where(Theme.id.in_(theme_ids)))}
+        if theme_ids
+        else {}
+    )
     theme_entries: dict[str | None, dict[str, Any]] = {}
     ultra: dict[str, Any] | None = None
     for card in cards:
