@@ -92,9 +92,24 @@ export function toPublicMediaUrl(path: string): string {
 
   if (trimmed.startsWith("/")) return trimmed;
 
-  const withoutPublic = trimmed.startsWith("public/") ? trimmed.slice("public/".length) : trimmed;
+  let pathPart = trimmed;
+  let suffix = "";
+  const hashIdx = pathPart.indexOf("#");
+  if (hashIdx >= 0) {
+    suffix = pathPart.slice(hashIdx);
+    pathPart = pathPart.slice(0, hashIdx);
+  }
+  const queryIdx = pathPart.indexOf("?");
+  if (queryIdx >= 0) {
+    suffix = `${pathPart.slice(queryIdx)}${suffix}`;
+    pathPart = pathPart.slice(0, queryIdx);
+  }
+
+  const withoutPublic = pathPart.startsWith("public/")
+    ? pathPart.slice("public/".length)
+    : pathPart;
   const parts = withoutPublic.split("/").filter(Boolean);
-  return `/${parts.map(encodeURIComponent).join("/")}`;
+  return `/${parts.map(encodeURIComponent).join("/")}${suffix}`;
 }
 
 function optionalString(value: unknown): string | undefined {

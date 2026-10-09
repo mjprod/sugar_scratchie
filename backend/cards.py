@@ -107,11 +107,53 @@ def public_url(workspace_path: str) -> str:
     return f"/{encoded}"
 
 
+def media_mtime_version(path: Path) -> int:
+    try:
+        return int(path.stat().st_mtime)
+    except OSError:
+        return 0
+
+
+def versioned_public_url(path: Path, workspace_rel: str) -> str:
+    """Site URL (/cards/...) with ?v=mtime when the file exists."""
+    url = public_url(workspace_rel)
+    version = media_mtime_version(path) if path.is_file() else 0
+    if version > 0:
+        return f"{url}?v={version}"
+    return url
+
+
+def versioned_workspace_path(root: Path, path: Path) -> str:
+    """Workspace path (public/cards/...) with ?v=mtime for motion-card video fields."""
+    rel = relative(root, path)
+    version = media_mtime_version(path) if path.is_file() else 0
+    if version > 0:
+        return f"{rel}?v={version}"
+    return rel
+
+
+def version_public_src(root: Path, src: str | None) -> str | None:
+    """Refresh ?v= from disk for a stored public media URL (photo-scratch index entries)."""
+    if not src:
+        return None
+    base = src.split("?", 1)[0].strip()
+    if not base:
+        return None
+    path = _resolve_public_media(root, base)
+    if not path.is_file():
+        return base
+    url = base if base.startswith("/") else public_url(base)
+    version = media_mtime_version(path)
+    if version > 0:
+        return f"{url}?v={version}"
+    return url
+
+
 def find_card_trailer(card_dir: Path, card_id: str) -> str | None:
     for ext in TRAILER_EXTENSIONS:
         candidate = card_dir / f"trailer{ext}"
         if candidate.is_file():
-            return public_url(f"cards/{card_id}/trailer{ext}")
+            return versioned_public_url(candidate, f"cards/{card_id}/trailer{ext}")
     return None
 
 
@@ -119,12 +161,9 @@ def find_card_trailer_poster(card_dir: Path, card_id: str) -> str | None:
     for ext in PHOTO_EXTENSIONS:
         candidate = card_dir / f"{TRAILER_POSTER_STEM}{ext}"
         if candidate.is_file():
-            url = public_url(f"cards/{card_id}/{TRAILER_POSTER_STEM}{ext}")
-            try:
-                version = int(candidate.stat().st_mtime)
-            except OSError:
-                version = 0
-            return f"{url}?v={version}"
+            return versioned_public_url(
+                candidate, f"cards/{card_id}/{TRAILER_POSTER_STEM}{ext}"
+            )
     return None
 
 
@@ -142,12 +181,9 @@ def find_card_motion_poster(card_dir: Path, card_id: str) -> str | None:
     for ext in PHOTO_EXTENSIONS:
         candidate = card_dir / f"{MOTION_POSTER_STEM}{ext}"
         if candidate.is_file():
-            url = public_url(f"cards/{card_id}/{MOTION_POSTER_STEM}{ext}")
-            try:
-                version = candidate.stat().st_mtime_ns // 1_000_000
-            except OSError:
-                version = 0
-            return f"{url}?v={version}"
+            return versioned_public_url(
+                candidate, f"cards/{card_id}/{MOTION_POSTER_STEM}{ext}"
+            )
     return None
 
 
@@ -481,6 +517,10 @@ def photo_scratch_slot_mesh_url(card_id: str, slot_id: str) -> str:
     return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/mesh.json")
 
 
+def _photo_scratch_root(cards_dir: Path) -> Path:
+    return cards_dir.parent.parent
+
+
 def photo_scratch_slot_has_mesh(cards_dir: Path, card_id: str, slot_id: str) -> bool:
     return photo_scratch_slot_mesh_path(cards_dir, card_id, slot_id).is_file()
 
@@ -495,8 +535,12 @@ def photo_scratch_slot_matched_clothes_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / "clothes_matched.jpg"
 
 
-def photo_scratch_slot_matched_clothes_url(card_id: str, slot_id: str) -> str:
-    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/clothes_matched.jpg")
+def photo_scratch_slot_matched_clothes_url(
+    cards_dir: Path, card_id: str, slot_id: str
+) -> str:
+    path = photo_scratch_slot_matched_clothes_path(cards_dir, card_id, slot_id)
+    rel = f"cards/{card_id}/photo-scratch/{slot_id}/clothes_matched.jpg"
+    return versioned_public_url(path, rel)
 
 
 def photo_scratch_slot_matched_bikini_path(
@@ -511,8 +555,12 @@ def photo_scratch_slot_match_overlay_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / "match_overlay.jpg"
 
 
-def photo_scratch_slot_match_overlay_url(card_id: str, slot_id: str) -> str:
-    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/match_overlay.jpg")
+def photo_scratch_slot_match_overlay_url(
+    cards_dir: Path, card_id: str, slot_id: str
+) -> str:
+    path = photo_scratch_slot_match_overlay_path(cards_dir, card_id, slot_id)
+    rel = f"cards/{card_id}/photo-scratch/{slot_id}/match_overlay.jpg"
+    return versioned_public_url(path, rel)
 
 
 def photo_scratch_slot_match_blend_path(
@@ -521,8 +569,12 @@ def photo_scratch_slot_match_blend_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / "match_blend.jpg"
 
 
-def photo_scratch_slot_match_blend_url(card_id: str, slot_id: str) -> str:
-    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/match_blend.jpg")
+def photo_scratch_slot_match_blend_url(
+    cards_dir: Path, card_id: str, slot_id: str
+) -> str:
+    path = photo_scratch_slot_match_blend_path(cards_dir, card_id, slot_id)
+    rel = f"cards/{card_id}/photo-scratch/{slot_id}/match_blend.jpg"
+    return versioned_public_url(path, rel)
 
 
 def photo_scratch_slot_match_meta_path(
@@ -600,12 +652,20 @@ def photo_scratch_slot_cutout_src_path(
     return _photo_scratch_dir(cards_dir, card_id) / slot_id / f"{layer}_src.png"
 
 
-def photo_scratch_slot_cutout_url(card_id: str, slot_id: str, layer: str) -> str:
-    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}.png")
+def photo_scratch_slot_cutout_url(
+    cards_dir: Path, card_id: str, slot_id: str, layer: str
+) -> str:
+    path = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, layer)
+    rel = f"cards/{card_id}/photo-scratch/{slot_id}/{layer}.png"
+    return versioned_public_url(path, rel)
 
 
-def photo_scratch_slot_cutout_src_url(card_id: str, slot_id: str, layer: str) -> str:
-    return public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}_src.png")
+def photo_scratch_slot_cutout_src_url(
+    cards_dir: Path, card_id: str, slot_id: str, layer: str
+) -> str:
+    path = photo_scratch_slot_cutout_src_path(cards_dir, card_id, slot_id, layer)
+    rel = f"cards/{card_id}/photo-scratch/{slot_id}/{layer}_src.png"
+    return versioned_public_url(path, rel)
 
 
 def photo_scratch_slot_zoom_meta_path(
@@ -814,6 +874,7 @@ def list_photo_scratch_slots(
     cards_dir: Path, card_id: str, theme: str = ""
 ) -> list[PhotoScratchSlot]:
     """Always returns exactly PHOTO_SCRATCH_SLOT_COUNT slots, filling gaps with empties."""
+    root = _photo_scratch_root(cards_dir)
     raw = {entry["id"]: entry for entry in _read_photo_scratch_index(cards_dir, card_id) if isinstance(entry, dict)}
     slots: list[PhotoScratchSlot] = []
     for i in range(1, PHOTO_SCRATCH_SLOT_COUNT + 1):
@@ -834,12 +895,12 @@ def list_photo_scratch_slots(
             PhotoScratchSlot(
                 id=slot_id,
                 label=label,
-                background=entry.get("background") or None,
-                bikini=entry.get("bikini") or None,
-                clothes=entry.get("clothes") or None,
-                pending_bg=entry.get("pending_bg") or None,
-                pending_bikini=entry.get("pending_bikini") or None,
-                pending_clothes=entry.get("pending_clothes") or None,
+                background=version_public_src(root, entry.get("background")),
+                bikini=version_public_src(root, entry.get("bikini")),
+                clothes=version_public_src(root, entry.get("clothes")),
+                pending_bg=version_public_src(root, entry.get("pending_bg")),
+                pending_bikini=version_public_src(root, entry.get("pending_bikini")),
+                pending_clothes=version_public_src(root, entry.get("pending_clothes")),
                 prompt_background=_optional_str(entry.get("prompt_background")),
                 prompt_bikini=_optional_str(entry.get("prompt_bikini")),
                 prompt_clothes=_optional_str(entry.get("prompt_clothes")),
@@ -849,17 +910,19 @@ def list_photo_scratch_slots(
                 has_symbols=photo_scratch_slot_has_symbols(cards_dir, card_id, slot_id),
                 has_cutout=has_cutout,
                 bikini_cutout=(
-                    photo_scratch_slot_cutout_url(card_id, slot_id, "bikini")
+                    photo_scratch_slot_cutout_url(cards_dir, card_id, slot_id, "bikini")
                     if has_cutout
                     else None
                 ),
                 clothes_cutout=(
-                    photo_scratch_slot_cutout_url(card_id, slot_id, "clothes")
+                    photo_scratch_slot_cutout_url(cards_dir, card_id, slot_id, "clothes")
                     if has_cutout
                     else None
                 ),
                 bikini_cutout_src=(
-                    photo_scratch_slot_cutout_src_url(card_id, slot_id, "bikini")
+                    photo_scratch_slot_cutout_src_url(
+                        cards_dir, card_id, slot_id, "bikini"
+                    )
                     if has_cutout
                     and photo_scratch_slot_cutout_src_path(
                         cards_dir, card_id, slot_id, "bikini"
@@ -867,7 +930,9 @@ def list_photo_scratch_slots(
                     else None
                 ),
                 clothes_cutout_src=(
-                    photo_scratch_slot_cutout_src_url(card_id, slot_id, "clothes")
+                    photo_scratch_slot_cutout_src_url(
+                        cards_dir, card_id, slot_id, "clothes"
+                    )
                     if has_cutout
                     and photo_scratch_slot_cutout_src_path(
                         cards_dir, card_id, slot_id, "clothes"
@@ -876,17 +941,17 @@ def list_photo_scratch_slots(
                 ),
                 has_match=has_match,
                 clothes_matched=(
-                    photo_scratch_slot_matched_clothes_url(card_id, slot_id)
+                    photo_scratch_slot_matched_clothes_url(cards_dir, card_id, slot_id)
                     if has_match
                     else None
                 ),
                 match_overlay=(
-                    photo_scratch_slot_match_overlay_url(card_id, slot_id)
+                    photo_scratch_slot_match_overlay_url(cards_dir, card_id, slot_id)
                     if has_match and overlay_path.is_file()
                     else None
                 ),
                 match_blend=(
-                    photo_scratch_slot_match_blend_url(card_id, slot_id)
+                    photo_scratch_slot_match_blend_url(cards_dir, card_id, slot_id)
                     if has_match and blend_path.is_file()
                     else None
                 ),
@@ -1005,7 +1070,9 @@ async def upload_photo_scratch_layer(
     target = layer_dir / f"{layer}{ext}"
     target.write_bytes(data)
 
-    src = public_url(f"cards/{card_id}/photo-scratch/{slot_id}/{layer}{ext}")
+    src = versioned_public_url(
+        target, f"cards/{card_id}/photo-scratch/{slot_id}/{layer}{ext}"
+    )
     setattr(slot, layer, src)
     _save_photo_scratch_slots(cards_dir, card_id, slots)
     return slot
@@ -1510,10 +1577,14 @@ def generate_photo_scratch_slot_mesh(
     cutout_bikini = photo_scratch_slot_cutout_path(cards_dir, card_id, slot_id, "bikini")
     if cutout_clothes.is_file():
         image_path = cutout_clothes
-        layer_src = photo_scratch_slot_cutout_url(card_id, slot_id, "clothes")
+        layer_src = photo_scratch_slot_cutout_url(
+            cards_dir, card_id, slot_id, "clothes"
+        )
     elif cutout_bikini.is_file():
         image_path = cutout_bikini
-        layer_src = photo_scratch_slot_cutout_url(card_id, slot_id, "bikini")
+        layer_src = photo_scratch_slot_cutout_url(
+            cards_dir, card_id, slot_id, "bikini"
+        )
     else:
         layer_src = slot.clothes or slot.bikini
         if not layer_src:
@@ -1633,8 +1704,12 @@ def publish_photo_scratch_game(
         model_id, theme_id = card_model_theme_ids(session, card_id)
         new_entries = []
         for slot in done:
-            bikini_url = photo_scratch_slot_cutout_url(card_id, slot.id, "bikini")
-            clothes_url = photo_scratch_slot_cutout_url(card_id, slot.id, "clothes")
+            bikini_url = photo_scratch_slot_cutout_url(
+                cards_dir, card_id, slot.id, "bikini"
+            )
+            clothes_url = photo_scratch_slot_cutout_url(
+                cards_dir, card_id, slot.id, "clothes"
+            )
             new_entries.append(
                 {
                     "id": f"{card_id}_{slot.id}",

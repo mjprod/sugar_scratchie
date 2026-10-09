@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.cards import public_url
+from backend.cards import public_url, versioned_public_url
 from backend.cards_store import delete_card_standalone, list_cards_standalone
 from backend.db.models import Creator
 
@@ -211,12 +211,7 @@ def read_model_meta(model_dir: Path, default_label: str) -> dict:
 
 
 def _versioned_url(path: Path, rel: str) -> str:
-    url = public_url(rel)
-    try:
-        version = int(path.stat().st_mtime)
-    except OSError:
-        version = 0
-    return f"{url}?v={version}"
+    return versioned_public_url(path, rel)
 
 
 def _find_image(directory: Path, stem: str) -> Path | None:
@@ -256,12 +251,7 @@ def find_flag_svg(model_dir: Path) -> str | None:
     for ext in FLAG_EXTENSIONS:
         candidate = model_dir / f"flag{ext}"
         if candidate.is_file():
-            url = public_url(f"models/{model_dir.name}/flag{ext}")
-            try:
-                version = int(candidate.stat().st_mtime)
-            except OSError:
-                version = 0
-            return f"{url}?v={version}"
+            return versioned_public_url(candidate, f"models/{model_dir.name}/flag{ext}")
     return None
 
 
@@ -269,7 +259,9 @@ def find_model_video(model_dir: Path, stem: str) -> str | None:
     for ext in VIDEO_EXTENSIONS:
         candidate = model_dir / f"{stem}{ext}"
         if candidate.is_file():
-            return public_url(f"models/{model_dir.name}/{stem}{ext}")
+            return versioned_public_url(
+                candidate, f"models/{model_dir.name}/{stem}{ext}"
+            )
     return None
 
 

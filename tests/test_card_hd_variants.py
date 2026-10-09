@@ -55,8 +55,8 @@ def test_card_info_exposes_hd_pair_only_when_both_exist(db_session, layout):
 
     (card_dir / "foreground.hd.mp4").write_bytes(b"hd")
     card = get_card(db_session, root, cards_dir, mesh_dir, card_id)
-    assert card.background_hd == f"public/cards/{card_id}/background.hd.mp4"
-    assert card.foreground_hd == f"public/cards/{card_id}/foreground.hd.mp4"
+    assert card.background_hd.startswith(f"public/cards/{card_id}/background.hd.mp4?v=")
+    assert card.foreground_hd.startswith(f"public/cards/{card_id}/foreground.hd.mp4?v=")
 
 
 def test_replacing_a_clip_drops_hd_pair(db_session, layout):
