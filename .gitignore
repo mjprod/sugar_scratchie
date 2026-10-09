@@ -23,6 +23,7 @@ build/
 # Local / temp artifacts
 .tmp/
 .video-backups/
+.image-backups/
 .DS_Store
 *.log
 .cache/

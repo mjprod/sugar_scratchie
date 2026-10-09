@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.cards import public_url
+from backend.cards import versioned_public_url
 from backend.db.models import Theme
 
 THEME_COLOR_KEYS = (
@@ -105,7 +105,7 @@ def find_theme_intro(themes_dir: Path, theme_id: str) -> str | None:
     for ext in INTRO_EXTENSIONS:
         candidate = theme_dir / f"intro{ext}"
         if candidate.is_file():
-            return public_url(f"themes/{theme_id}/intro{ext}")
+            return versioned_public_url(candidate, f"themes/{theme_id}/intro{ext}")
     return None
 
 

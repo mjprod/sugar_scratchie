@@ -39,6 +39,7 @@ from backend.cards import (
     remove_card_trailer_poster_files,
     resolve_source,
     safe_card_id,
+    versioned_workspace_path,
 )
 from backend.photo_scratch_store import prune_published_photo_scratch
 from backend.db.models import Creator, MotionCard, Theme
@@ -114,10 +115,10 @@ def _row_to_info(
     return CardInfo(
         id=row.id,
         label=row.label,
-        background=relative(root, background),
-        foreground=relative(root, foreground),
-        background_hd=relative(root, hd[0]) if hd else None,
-        foreground_hd=relative(root, hd[1]) if hd else None,
+        background=versioned_workspace_path(root, background),
+        foreground=versioned_workspace_path(root, foreground),
+        background_hd=versioned_workspace_path(root, hd[0]) if hd else None,
+        foreground_hd=versioned_workspace_path(root, hd[1]) if hd else None,
         mesh=mesh,
         has_mesh=mesh in meshes,
         model_id=row.model_id,
