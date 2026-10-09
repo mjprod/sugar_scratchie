@@ -11,6 +11,5 @@ google-auth>=2.30
 PyJWT[crypto]>=2.8
 requests
 Pillow>=10
-pillow>=10
 # Video-flow mesh tracking needs ML packages in the same .venv (in-process).
 # Install those with: pip install -r backend/requirements-ml.txt
