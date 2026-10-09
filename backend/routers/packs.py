@@ -1,24 +1,31 @@
 from __future__ import annotations
 
+import random
 import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
 from backend.db.engine import get_session
 from backend.db.models import (
+    MotionCard,
     Pack,
     PackInstance,
     PackOpening,
     PackOpeningCard,
     PackPurchase,
+    PhotoScratchCard,
     User,
     UserCard,
     utcnow,
 )
+
+# (card_id, photo_slot_id) — photo slot is None for motion cards.
+DealCandidate = tuple[str, str | None]
 from backend.db.wallet import InsufficientFunds, apply_delta, ensure_wallet
 
 router = APIRouter(tags=["packs"])
@@ -76,6 +83,9 @@ def _opening_session(opening: PackOpening, cards: list[PackOpeningCard], quantit
         "cards": [
             {
                 "id": str(card.id),
+                "cardKind": card.card_kind,
+                "cardId": card.card_id,
+                "photoSlotId": card.photo_slot_id,
                 "rarity": card.rarity,
                 "reward": card.reward_diamonds,
                 "faceUrl": card.face_url,
@@ -87,22 +97,83 @@ def _opening_session(opening: PackOpening, cards: list[PackOpeningCard], quantit
     }
 
 
-def _deal_cards(opening: PackOpening, pack: Pack) -> list[PackOpeningCard]:
+def _deal_pools(db: Session, pack: Pack) -> dict[str, list[DealCandidate]]:
+    """Standard-tier catalog cards of the pack's creator. Premium / ultra are bought, not dealt."""
+    if not pack.model_id:
+        return {"motion": [], "photo": []}
+    standard = (MotionCard.model_id == pack.model_id, MotionCard.tier == "standard")
+    motion = [(card_id, None) for card_id in db.scalars(select(MotionCard.id).where(*standard))]
+    photo = [
+        (photo_id, slot_id)
+        for photo_id, slot_id in db.execute(
+            select(PhotoScratchCard.id, PhotoScratchCard.slot_id)
+            .join(MotionCard, MotionCard.id == PhotoScratchCard.card_id)
+            .where(*standard)
+        )
+    ]
+    return {"motion": motion, "photo": photo}
+
+
+def _pick(
+    pool: list[DealCandidate], owned: set[str], dealt: set[str]
+) -> DealCandidate | None:
+    for candidates in (
+        [c for c in pool if c[0] not in owned and c[0] not in dealt],
+        [c for c in pool if c[0] not in dealt],
+        pool,
+    ):
+        if candidates:
+            return random.choice(candidates)
+    return None
+
+
+def _deal_cards(
+    db: Session, opening: PackOpening, pack: Pack, user_id: uuid.UUID
+) -> list[PackOpeningCard]:
+    """Slot 0 is a motion card, the rest are photo cards; unowned cards are preferred."""
     count = pack.card_count if pack.card_count else 3
+    pools = _deal_pools(db, pack)
+    owned = set(db.scalars(select(UserCard.card_id).where(UserCard.user_id == user_id)))
+    dealt: set[str] = set()
     rows: list[PackOpeningCard] = []
     for index in range(count):
+        kind = "motion" if index == 0 else "photo"
+        other = "photo" if kind == "motion" else "motion"
+        pick = _pick(pools[kind], owned, dealt)
+        if pick is None:
+            pick = _pick(pools[other], owned, dealt)
+            kind = other if pick is not None else kind
+        if pick is None:
+            # No catalog cards for this pack (e.g. legacy promo packs).
+            pick = (f"{pack.id}-card-{index + 1}", None)
+        card_id, photo_slot_id = pick
+        dealt.add(card_id)
         rows.append(
             PackOpeningCard(
                 opening_id=opening.id,
                 slot_index=index,
-                card_kind="motion" if index == 0 else "photo",
-                card_id=f"{pack.id}-card-{index + 1}",
+                card_kind=kind,
+                card_id=card_id,
+                photo_slot_id=photo_slot_id,
                 rarity=RARITIES[index] if index < len(RARITIES) else "Rare",
                 reward_diamonds=50 if index == count - 1 else 10 + index * 5,
                 reveal_status="unscratched",
             )
         )
     return rows
+
+
+def _card_model_theme(db: Session, card: PackOpeningCard, pack: Pack | None) -> tuple[str | None, str | None]:
+    motion_id = card.card_id
+    if card.card_kind == "photo":
+        photo = db.get(PhotoScratchCard, card.card_id)
+        if photo is not None and photo.model_id:
+            return photo.model_id, photo.theme_id
+        motion_id = photo.card_id if photo is not None else ""
+    motion = db.get(MotionCard, motion_id) if motion_id else None
+    if motion is not None:
+        return motion.model_id, motion.theme_id
+    return (pack.model_id, pack.theme_id) if pack else (None, None)
 
 
 @router.get("/api/packs")
@@ -203,7 +274,7 @@ def open_pack(
         opening = PackOpening(pack_instance_id=inst.id, stage="ready", diamond_cost=pack.diamond_cost)
         db.add(opening)
         db.flush()
-        db.add_all(_deal_cards(opening, pack))
+        db.add_all(_deal_cards(db, opening, pack, user.id))
         db.flush()
     cards = db.query(PackOpeningCard).filter(PackOpeningCard.opening_id == opening.id).all()
     return {
@@ -283,14 +354,15 @@ def reveal_card(
         if existing:
             existing.duplicates += 1
         else:
+            model_id, theme_id = _card_model_theme(db, card, pack)
             db.add(
                 UserCard(
                     user_id=user.id,
                     card_kind=card.card_kind,
                     card_id=card.card_id,
                     photo_slot_id=card.photo_slot_id,
-                    model_id=pack.model_id if pack else None,
-                    theme_id=pack.theme_id if pack else None,
+                    model_id=model_id,
+                    theme_id=theme_id,
                     rarity=card.rarity,
                     source_opening_card_id=card.id,
                 )

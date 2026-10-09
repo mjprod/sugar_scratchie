@@ -132,7 +132,50 @@ def _row_to_info(
         trailer=find_card_trailer(card_dir, row.id),
         trailerPoster=find_card_trailer_poster(card_dir, row.id),
         motionPoster=find_card_motion_poster(card_dir, row.id),
+        price=row.price,
+        tier=row.tier,
+        replay_price=row.replay_price,
+        max_win=row.max_win,
     )
+
+
+def _demote_unscoped_tier(row: MotionCard) -> None:
+    """Detaching a card from its creator (or a premium card from its theme) makes it standard."""
+    if row.tier == "standard":
+        return
+    if not row.model_id or (row.tier == "premium" and not row.theme_id):
+        row.tier = "standard"
+
+
+def _validate_tier(db: Session, row: MotionCard) -> None:
+    """Premium: one per creator x theme. Ultra: one per creator.
+
+    Standard cards have no replay price or max win, so those are cleared.
+    """
+    if row.tier == "standard":
+        row.replay_price = 0
+        row.max_win = 0
+        return
+    if not row.model_id:
+        raise HTTPException(status_code=400, detail=f"A {row.tier} card needs a model")
+    clash = select(MotionCard.id).where(
+        MotionCard.id != row.id,
+        MotionCard.tier == row.tier,
+        MotionCard.model_id == row.model_id,
+    )
+    if row.tier == "premium":
+        if not row.theme_id:
+            raise HTTPException(status_code=400, detail="A premium card needs a theme")
+        clash = clash.where(MotionCard.theme_id == row.theme_id)
+    # Autoflush would hit the partial unique index before this friendlier check.
+    with db.no_autoflush:
+        existing = db.scalar(clash.limit(1))
+    if existing is not None:
+        scope = f"{row.model_id} / {row.theme_id}" if row.tier == "premium" else row.model_id
+        raise HTTPException(
+            status_code=409,
+            detail=f"{scope} already has a {row.tier} card: {existing}",
+        )
 
 
 def _card_count(db: Session) -> int:
@@ -324,9 +367,14 @@ def create_card(
         theme_id=theme_id,
         sort_order=sort_order,
         photos=[],
+        price=request.price,
+        tier=request.tier,
+        replay_price=request.replay_price,
+        max_win=request.max_win,
         created_at=now,
         updated_at=now,
     )
+    _validate_tier(db, row)
     db.add(row)
     db.flush()
     write_cards_index(db, root, cards_dir, mesh_dir)
@@ -385,6 +433,13 @@ def update_card(
     if "theme_id" in set_fields:
         row.theme_id = _validate_theme_id(db, request.theme_id)
 
+    _demote_unscoped_tier(row)
+    for field in ("price", "tier", "replay_price", "max_win"):
+        value = getattr(request, field)
+        if value is not None:
+            setattr(row, field, value)
+    _validate_tier(db, row)
+
     row.updated_at = datetime.now(timezone.utc)
     db.flush()
     write_cards_index(db, root, cards_dir, mesh_dir)
@@ -406,6 +461,8 @@ def set_card_theme_id(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Card not found: {card_id}")
     row.theme_id = _validate_theme_id(db, theme_id) if theme_id else None
+    _demote_unscoped_tier(row)
+    _validate_tier(db, row)
     row.updated_at = datetime.now(timezone.utc)
     db.flush()
     write_cards_index(db, root, cards_dir, mesh_dir)

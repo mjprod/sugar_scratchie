@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,13 @@ def apply_delta(
         raise ValueError(f"invalid currency: {currency}")
 
     wallet = ensure_wallet(session, user_id)
+
+    # A replayed key is a no-op even if the balance can no longer cover it.
+    already_applied = session.execute(
+        select(WalletTransaction.id).where(WalletTransaction.idempotency_key == idempotency_key)
+    ).first()
+    if already_applied is not None:
+        return wallet
 
     current = wallet.diamonds if currency == "diamonds" else wallet.coins
     next_balance = current + delta

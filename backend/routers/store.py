@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
 from backend.db.engine import get_session
 from backend.db.models import StoreProduct, StorePurchase, User, utcnow
-from backend.db.wallet import apply_delta, ensure_wallet
+from backend.db.wallet import InsufficientFunds, apply_delta, ensure_wallet
 
 router = APIRouter(prefix="/api/store", tags=["store"])
 
 GatewayOutcome = Literal["completed", "cancelled", "closed", "failed", "pending"]
+
+# Coins -> Diamonds tiers (mirrors COIN_EXCHANGE_OPTIONS in the player app).
+# Higher tiers are intentionally a worse Coin/Diamond rate than cash (GD-AC22).
+COIN_EXCHANGE_OPTIONS: dict[str, dict[str, int]] = {
+    "x100": {"diamonds": 100, "coins": 100},
+    "x500": {"diamonds": 500, "coins": 780},
+    "x1200": {"diamonds": 1200, "coins": 2400},
+    "x2500": {"diamonds": 2500, "coins": 5800},
+    "x5000": {"diamonds": 5000, "coins": 13000},
+}
 
 
 class CreatePurchaseBody(BaseModel):
@@ -22,6 +33,13 @@ class CreatePurchaseBody(BaseModel):
 
 class VerifyBody(BaseModel):
     outcome: GatewayOutcome = "completed"
+
+
+class ExchangeBody(BaseModel):
+    optionId: str = Field(min_length=1, max_length=32)
+    # Amounts the client displayed; a mismatch means the rate changed under it.
+    diamonds: int | None = None
+    coins: int | None = None
 
 
 def _product_public(p: StoreProduct) -> dict:
@@ -59,6 +77,60 @@ def _session_public(row: StorePurchase, product_title: str) -> dict:
 def list_products(db: Annotated[Session, Depends(get_session)]):
     rows = db.query(StoreProduct).filter(StoreProduct.available.is_(True)).order_by(StoreProduct.sort_order).all()
     return {"products": [_product_public(p) for p in rows]}
+
+
+@router.get("/exchange/options")
+def list_exchange_options():
+    return {"options": [{"id": option_id, **amounts} for option_id, amounts in COIN_EXCHANGE_OPTIONS.items()]}
+
+
+@router.post("/exchange")
+def exchange_coins(
+    body: ExchangeBody,
+    db: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+):
+    """Spend Coins for Diamonds at a fixed server-side tier. Both legs commit together."""
+    option = COIN_EXCHANGE_OPTIONS.get(body.optionId)
+    if option is None:
+        raise HTTPException(status_code=404, detail="Exchange option not found.")
+    if (body.diamonds is not None and body.diamonds != option["diamonds"]) or (
+        body.coins is not None and body.coins != option["coins"]
+    ):
+        raise HTTPException(status_code=409, detail="exchange_rate_changed")
+
+    key = f"exchange:{user.id}:{idempotency_key or uuid.uuid4().hex}"
+    try:
+        apply_delta(
+            db,
+            user_id=user.id,
+            currency="coins",
+            delta=-option["coins"],
+            reason="coin_exchange",
+            idempotency_key=f"{key}:coins",
+            ref_type="coin_exchange",
+            ref_id=body.optionId,
+        )
+    except InsufficientFunds:
+        raise HTTPException(status_code=400, detail="insufficient")
+    wallet = apply_delta(
+        db,
+        user_id=user.id,
+        currency="diamonds",
+        delta=option["diamonds"],
+        reason="coin_exchange",
+        idempotency_key=f"{key}:diamonds",
+        ref_type="coin_exchange",
+        ref_id=body.optionId,
+    )
+    return {
+        "status": "success",
+        "optionId": body.optionId,
+        "diamonds": option["diamonds"],
+        "coins": option["coins"],
+        "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
+    }
 
 
 @router.post("/purchases")

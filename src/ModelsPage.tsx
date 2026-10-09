@@ -57,6 +57,7 @@ import {
   photoScratchPlayHref,
   publishPhotoScratchGame,
   reorderModelCards,
+  updateCardPricing,
   updateModel,
   uploadCardTrailer,
   uploadCardTrailerPoster,
@@ -67,12 +68,17 @@ import {
   uploadModelVideo,
   uploadModelPoster,
   uploadModelCover,
+  MODEL_SOCIAL_FIELDS,
   MODEL_VIDEO_POSTER_KIND,
+  type CardPricing,
+  type CardTier,
   type ModelInfo,
+  type ModelSocialKey,
   type ModelVideoKind,
   type PhotoInfo,
   type PhotoScratchSlot,
 } from "./shared/models";
+import { CardPricingControl, CardTierBadge } from "./CardPricingControl";
 import { fetchThemes, uploadThemeIntro, type ThemeInfo } from "./shared/themes";
 import {
   labelFromProjectId,
@@ -117,7 +123,30 @@ type CardInfo = {
   trailerPoster?: string | null;
   /** First-frame poster for the motion clip (foreground/background). */
   motionPoster?: string | null;
+  /** Diamonds; `price` is the first play (unlock for premium / ultra). */
+  price?: number;
+  tier?: CardTier;
+  replay_price?: number;
+  max_win?: number;
 };
+
+function modelSocials(model: ModelInfo): Record<ModelSocialKey, string> {
+  return {
+    instagramUrl: model.instagramUrl?.trim() ?? "",
+    tiktokUrl: model.tiktokUrl?.trim() ?? "",
+    xUrl: model.xUrl?.trim() ?? "",
+    onlyfansUrl: model.onlyfansUrl?.trim() ?? "",
+  };
+}
+
+function cardPricing(card: CardInfo): CardPricing {
+  return {
+    tier: card.tier ?? "standard",
+    price: card.price ?? 0,
+    replay_price: card.replay_price ?? 0,
+    max_win: card.max_win ?? 0,
+  };
+}
 
 function slotLayersComplete(slot: PhotoScratchSlot): boolean {
   return Boolean(slot.background && slot.bikini && slot.clothes);
@@ -829,6 +858,37 @@ export function ModelsPage() {
     }
   }
 
+  async function handleSaveSocials(modelId: string, socials: Record<ModelSocialKey, string>) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateModel(modelId, {
+        instagramUrl: socials.instagramUrl.trim(),
+        tiktokUrl: socials.tiktokUrl.trim(),
+        xUrl: socials.xUrl.trim(),
+        onlyfansUrl: socials.onlyfansUrl.trim(),
+      });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveCardPricing(cardId: string, pricing: CardPricing) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateCardPricing(cardId, pricing);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteModel(modelId: string) {
     const linked = cardsByModel.get(modelId) ?? [];
     const cardNote =
@@ -1368,6 +1428,8 @@ export function ModelsPage() {
                 void handleSavePackNames(selectedModel.id, cardPackName, cardPackName2)
               }
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
+              onSaveSocials={(socials) => void handleSaveSocials(selectedModel.id, socials)}
+              onSaveCardPricing={(cardId, pricing) => void handleSaveCardPricing(cardId, pricing)}
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
@@ -2679,6 +2741,8 @@ function ModelDetail({
   onCoverClick,
   onSavePackNames,
   onSaveTags,
+  onSaveSocials,
+  onSaveCardPricing,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -2743,6 +2807,8 @@ function ModelDetail({
   onCoverClick: () => void;
   onSavePackNames: (cardPackName: string, cardPackName2: string) => void;
   onSaveTags: (tags: string[]) => void;
+  onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
+  onSaveCardPricing: (cardId: string, pricing: CardPricing) => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
@@ -2759,12 +2825,22 @@ function ModelDetail({
   const [packName2Draft, setPackName2Draft] = useState(model.cardPackName2 ?? "");
   const [tagsDraft, setTagsDraft] = useState(formatTagsInput(model.tags));
   const tagsSaveTimer = useRef<number | null>(null);
+  const savedSocials = modelSocials(model);
+  const [socialsDraft, setSocialsDraft] = useState(savedSocials);
 
   useEffect(() => {
     setPackNameDraft(model.cardPackName ?? "");
     setPackName2Draft(model.cardPackName2 ?? "");
     setTagsDraft(formatTagsInput(model.tags));
   }, [model.id, model.cardPackName, model.cardPackName2, model.tags]);
+
+  useEffect(() => {
+    setSocialsDraft(modelSocials(model));
+  }, [model.id, model.instagramUrl, model.tiktokUrl, model.xUrl, model.onlyfansUrl]);
+
+  const socialsDirty = MODEL_SOCIAL_FIELDS.some(
+    ({ key }) => socialsDraft[key].trim() !== savedSocials[key],
+  );
 
   useEffect(() => {
     return () => {
@@ -3176,6 +3252,44 @@ function ModelDetail({
           </Flex>
         </Box>
 
+        <Box mb="3">
+          <Text as="div" mb="2" size="2" weight="bold">
+            Social links
+          </Text>
+          <Grid columns={{ initial: "1", sm: "2", lg: "4" }} gap="2">
+            {MODEL_SOCIAL_FIELDS.map(({ key, label, placeholder }) => (
+              <label key={key}>
+                <Text as="div" mb="1" size="1" weight="medium">
+                  {label}
+                </Text>
+                <TextField.Root
+                  disabled={busy}
+                  placeholder={placeholder}
+                  value={socialsDraft[key]}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSocialsDraft((current) => ({ ...current, [key]: value }));
+                  }}
+                />
+              </label>
+            ))}
+          </Grid>
+          <Flex align="center" gap="2" mt="2" wrap="wrap">
+            <Button
+              disabled={busy || !socialsDirty}
+              size="1"
+              onClick={() => onSaveSocials(socialsDraft)}
+            >
+              Save social links
+            </Button>
+            {socialsDirty ? (
+              <Text color="gray" size="1">
+                Unsaved link changes
+              </Text>
+            ) : null}
+          </Flex>
+        </Box>
+
         {creatingCardFor === model.id ? (
           <Box mb="3">
             <CreateCardForm
@@ -3269,6 +3383,7 @@ function ModelDetail({
                         onMoveDown={() => onMoveCard(card.id, 1)}
                         onMoveUp={() => onMoveCard(card.id, -1)}
                         onPublishGame={() => onPublishGame(card.id)}
+                        onSavePricing={(pricing) => onSaveCardPricing(card.id, pricing)}
                         onTrailerClick={() => onTrailerClick(card.id)}
                         onTrailerPosterClick={() => onTrailerPosterClick(card.id)}
                         onGenerateTrailerPoster={() => {
@@ -3963,6 +4078,7 @@ function MotionCardRow({
   onMoveDown,
   onMoveUp,
   onPublishGame,
+  onSavePricing,
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
@@ -3980,6 +4096,7 @@ function MotionCardRow({
   onMoveDown: () => void;
   onMoveUp: () => void;
   onPublishGame: () => void;
+  onSavePricing: (pricing: CardPricing) => void;
   onTrailerClick: () => void;
   onTrailerPosterClick: () => void;
   onGenerateTrailerPoster: () => void;
@@ -4025,6 +4142,7 @@ function MotionCardRow({
                   trailer
                 </Badge>
               ) : null}
+              {!isDraft ? <CardTierBadge tier={card.tier} /> : null}
             </Flex>
             <CodeInline>{card.id}</CodeInline>
             {!isDraft ? (
@@ -4138,6 +4256,17 @@ function MotionCardRow({
           </Flex>
         </div>
       </div>
+
+      {!isDraft ? (
+        <div className="models-card-list-line">
+          <div className="models-card-list-identity-text">
+            <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
+              Pricing
+            </Text>
+            <CardPricingControl busy={busy} pricing={cardPricing(card)} onSave={onSavePricing} />
+          </div>
+        </div>
+      ) : null}
 
       {!isDraft ? (
         <div className="models-card-list-line models-card-list-line--trailer">

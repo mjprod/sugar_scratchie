@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
@@ -10,7 +11,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
-from backend.db.card_plays import card_kind_for_id, card_price, get_played, register_play
+from backend.db.card_plays import (
+    CardTerms,
+    card_kind_for_id,
+    card_terms,
+    get_played,
+    owns_from_pack,
+    register_play,
+)
 from backend.db.engine import get_session
 from backend.db.models import (
     DailyRewardClaim,
@@ -31,6 +39,10 @@ DAILY_DIAMONDS = 10
 SCRATCH_COIN_MIN = 80
 SCRATCH_COIN_MAX = 100
 SCRATCH_MILESTONE_MAX = 10
+# Premium / ultra hands pay diamonds: each milestone rolls between this fraction
+# and 100% of its share of max_win, and the hand never exceeds max_win.
+DIAMOND_MILESTONE_MIN_FRACTION = 0.8
+DIAMOND_PAYOUT_TIERS = ("premium", "ultra")
 # Economic bound: inventing hands cannot mint forever.
 SCRATCH_HANDS_PER_DAY = 24
 
@@ -41,6 +53,8 @@ class RedeemBody(BaseModel):
 
 class ScratchHandBody(BaseModel):
     cardId: str | None = Field(default=None, max_length=128)
+    # Free-play launches never mint, even when a rewarded hand is still pending.
+    freePlay: bool = False
 
 
 class ScratchCoinsBody(BaseModel):
@@ -156,31 +170,58 @@ def start_scratch_hand(
     )
     db.add(hand)
     db.flush()
-    if card_id is not None:
-        hand.rewards_enabled = _bind_rewarded_hand(db, user.id, card_id, hand.id)
+    if card_id is not None and not body.freePlay:
+        kind = card_kind_for_id(card_id)
+        # Cards outside the catalog (pack / lab ids) are treated as free.
+        terms = card_terms(db, kind, card_id) or CardTerms(price=0)
+        hand.rewards_enabled = _bind_rewarded_hand(db, user.id, kind, card_id, terms, hand.id)
+        if hand.rewards_enabled and terms.tier in DIAMOND_PAYOUT_TIERS and terms.max_win > 0:
+            hand.currency = "diamonds"
+            hand.payout_cap = terms.max_win
         db.flush()
     return {
         "handId": str(hand.id),
         "rewardsEnabled": hand.rewards_enabled,
+        "currency": hand.currency,
+        "maxWin": hand.payout_cap,
         "milestonesRemaining": SCRATCH_MILESTONE_MAX if hand.rewards_enabled else 0,
         "handsRemainingToday": max(0, SCRATCH_HANDS_PER_DAY - started - 1),
     }
 
 
-def _bind_rewarded_hand(db: Session, user_id: uuid.UUID, card_id: str, hand_id: uuid.UUID) -> bool:
-    """True when this hand is the card's one rewarded play; later hands are free play."""
-    kind = card_kind_for_id(card_id)
+def _bind_rewarded_hand(
+    db: Session,
+    user_id: uuid.UUID,
+    kind: str,
+    card_id: str,
+    terms: CardTerms,
+    hand_id: uuid.UUID,
+) -> bool:
+    """True when this hand is the card's rewarded play; other hands are free play."""
     row = get_played(db, user_id, kind, card_id, lock=True)
     if row is None:
-        # Cards outside the catalog (pack / lab ids) are treated as free.
-        price = card_price(db, kind, card_id) or 0
-        if price > 0:
+        owned = owns_from_pack(db, user_id, kind, card_id)
+        if terms.price > 0 and not owned:
             return False
-        row = register_play(db, user_id, kind, card_id, 0).row
+        row = register_play(db, user_id, kind, card_id, terms, owned=owned).row
     if row.rewarded_hand_id is not None:
         return False
     row.rewarded_hand_id = hand_id
     return True
+
+
+def _roll_diamonds(hand: ScratchCoinHand, slot: int) -> int:
+    """Roll the payout for the hand's ``slot``-th claim (0-based).
+
+    The cap is split into SCRATCH_MILESTONE_MAX shares summing to exactly ``cap``;
+    the first ``cap % SCRATCH_MILESTONE_MAX`` claims carry the remainder.
+    """
+    cap = hand.payout_cap or 0
+    base, remainder = divmod(cap, SCRATCH_MILESTONE_MAX)
+    share = base + (1 if slot < remainder else 0)
+    low = max(1, math.ceil(share * DIAMOND_MILESTONE_MIN_FRACTION))
+    amount = random.randint(low, max(low, share))
+    return max(0, min(amount, cap - hand.paid_total))
 
 
 @router.post("/scratch/coins")
@@ -221,22 +262,29 @@ def claim_scratch_coins(
     if len(claimed) >= SCRATCH_MILESTONE_MAX:
         raise HTTPException(status_code=400, detail="scratch hand has no milestones left")
 
-    amount = random.randint(SCRATCH_COIN_MIN, SCRATCH_COIN_MAX)
-    apply_delta(
-        db,
-        user_id=user.id,
-        currency="coins",
-        delta=amount,
-        reason="scratch_reward",
-        idempotency_key=f"scratch-coins:{user.id}:{hand.id}:{body.milestone}",
-        ref_type="scratch_card",
-        ref_id=body.cardId or hand.card_id,
-    )
+    if hand.currency == "diamonds":
+        amount = _roll_diamonds(hand, len(claimed))
+    else:
+        amount = random.randint(SCRATCH_COIN_MIN, SCRATCH_COIN_MAX)
+    if amount > 0:
+        apply_delta(
+            db,
+            user_id=user.id,
+            currency=hand.currency,
+            delta=amount,
+            reason="scratch_reward",
+            idempotency_key=f"scratch-coins:{user.id}:{hand.id}:{body.milestone}",
+            ref_type="scratch_card",
+            ref_id=body.cardId or hand.card_id,
+        )
+    hand.paid_total += amount
     hand.claimed_milestones = sorted({*claimed, body.milestone})
     db.flush()
     return {
         "ok": True,
-        "coins": amount,
+        "currency": hand.currency,
+        "coins": amount if hand.currency == "coins" else 0,
+        "diamonds": amount if hand.currency == "diamonds" else 0,
         "alreadyClaimed": False,
         "wallet": _wallet_payload(db, user.id),
     }
