@@ -22,7 +22,21 @@ export type ModelInfluencerProfile = {
   cardLightColor2?: string | null;
   /** Freeform labels for dashboard filtering, e.g. ["latina", "featured"]. */
   tags?: string[];
+  /** Creator social profile URLs shown on the player creator screen. */
+  instagramUrl?: string | null;
+  tiktokUrl?: string | null;
+  xUrl?: string | null;
+  onlyfansUrl?: string | null;
 };
+
+export const MODEL_SOCIAL_FIELDS = [
+  { key: "instagramUrl", label: "Instagram", placeholder: "https://instagram.com/…" },
+  { key: "tiktokUrl", label: "TikTok", placeholder: "https://tiktok.com/@…" },
+  { key: "xUrl", label: "X", placeholder: "https://x.com/…" },
+  { key: "onlyfansUrl", label: "OnlyFans", placeholder: "https://onlyfans.com/…" },
+] as const;
+
+export type ModelSocialKey = (typeof MODEL_SOCIAL_FIELDS)[number]["key"];
 
 export type ModelGlobalMedia = {
   /** Foil 3D pack video 1, e.g. "/models/julianaval/pack-face.mp4". */
@@ -153,6 +167,24 @@ export async function deleteModel(modelId: string): Promise<void> {
 /** Recursively deletes a motion card (videos, photo-scratch, mesh, video-flow draft). */
 export async function deleteCard(cardId: string): Promise<void> {
   await api(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" });
+}
+
+/** standard = dealt in packs; premium = one per model × theme; ultra = one per model. */
+export type CardTier = "standard" | "premium" | "ultra";
+
+/** Diamonds. `price` is the first play (the unlock for premium / ultra). */
+export type CardPricing = {
+  tier: CardTier;
+  price: number;
+  replay_price: number;
+  max_win: number;
+};
+
+export async function updateCardPricing(cardId: string, pricing: CardPricing): Promise<void> {
+  await api(`/api/cards/${encodeURIComponent(cardId)}`, {
+    method: "PUT",
+    body: JSON.stringify(pricing),
+  });
 }
 
 export async function assignCardToModel(cardId: string, modelId: string): Promise<void> {

@@ -5,6 +5,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
@@ -14,6 +15,10 @@ from backend.services.video_prep import hd_variant_path
 
 
 CARD_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+# Postgres INTEGER ceiling for card prices.
+CARD_PRICE_MAX = 2_147_483_647
+
+CardTier = Literal["standard", "premium", "ultra"]
 
 ORIGINAL_ID = "original"
 ORIGINAL_BACKGROUND = "public/cards/ai girl 2.mp4"
@@ -54,6 +59,11 @@ class CardInfo(BaseModel):
     trailerPoster: str | None = None
     # Still first-frame poster for the motion clip (foreground/background face).
     motionPoster: str | None = None
+    # Diamonds. `price` is the first play (the unlock for premium / ultra cards).
+    price: int = 0
+    tier: CardTier = "standard"
+    replay_price: int = 0
+    max_win: int = 0
 
 
 class CreateCardRequest(BaseModel):
@@ -63,6 +73,10 @@ class CreateCardRequest(BaseModel):
     foreground: str
     model_id: str | None = None
     theme_id: str | None = None
+    price: int = Field(default=0, ge=0, le=CARD_PRICE_MAX)
+    tier: CardTier = "standard"
+    replay_price: int = Field(default=0, ge=0, le=CARD_PRICE_MAX)
+    max_win: int = Field(default=0, ge=0, le=CARD_PRICE_MAX)
 
 
 class UpdateCardRequest(BaseModel):
@@ -72,6 +86,10 @@ class UpdateCardRequest(BaseModel):
     model_id: str | None = None
     theme_id: str | None = None
     sort_order: int | None = None
+    price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
+    tier: CardTier | None = None
+    replay_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
+    max_win: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
 
 
 class ReorderCardsRequest(BaseModel):
@@ -364,8 +382,6 @@ def backfill_card_hd_variants(root: Path, cards_dir: Path, card_id: str) -> dict
 
 PHOTO_SCRATCH_SLOT_COUNT = 10
 PHOTO_SCRATCH_LAYER_NAMES = {"background", "bikini", "clothes"}
-# Postgres INTEGER ceiling for photo_scratch_cards.card_price.
-CARD_PRICE_MAX = 2_147_483_647
 
 # Maps logical layer → (approved_field, pending_field)
 PHOTO_SCRATCH_PENDING_FIELDS = {

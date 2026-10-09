@@ -66,6 +66,10 @@ INFLUENCER_META_KEYS = (
     "cardLightColor2",
     "cardPackName",
     "cardPackName2",
+    "instagramUrl",
+    "tiktokUrl",
+    "xUrl",
+    "onlyfansUrl",
 )
 
 _INFLUENCER_COLUMNS = {
@@ -79,7 +83,13 @@ _INFLUENCER_COLUMNS = {
     "cardLightColor2": "card_light_color_2",
     "cardPackName": "card_pack_name",
     "cardPackName2": "card_pack_name_2",
+    "instagramUrl": "instagram_url",
+    "tiktokUrl": "tiktok_url",
+    "xUrl": "x_url",
+    "onlyfansUrl": "onlyfans_url",
 }
+
+SOCIAL_URL_MAX_LENGTH = 300
 
 
 class ModelInfo(BaseModel):
@@ -98,6 +108,10 @@ class ModelInfo(BaseModel):
     cardLightColor2: str | None = None
     cardPackName: str | None = None
     cardPackName2: str | None = None
+    instagramUrl: str | None = None
+    tiktokUrl: str | None = None
+    xUrl: str | None = None
+    onlyfansUrl: str | None = None
     packFaceVideoUrl: str | None = None
     packFaceVideoUrl2: str | None = None
     packFacePosterUrl: str | None = None
@@ -127,6 +141,10 @@ class CreateModelRequest(BaseModel):
     cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
+    instagramUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    tiktokUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    xUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    onlyfansUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
     tags: list[str] | None = None
 
 
@@ -142,6 +160,10 @@ class UpdateModelRequest(BaseModel):
     cardLightColor2: str | None = Field(default=None, max_length=32)
     cardPackName: str | None = Field(default=None, max_length=120)
     cardPackName2: str | None = Field(default=None, max_length=120)
+    instagramUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    tiktokUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    xUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
+    onlyfansUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
     tags: list[str] | None = None
 
 
@@ -324,6 +346,10 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         cardLightColor2=row.card_light_color_2,
         cardPackName=row.card_pack_name,
         cardPackName2=row.card_pack_name_2,
+        instagramUrl=row.instagram_url,
+        tiktokUrl=row.tiktok_url,
+        xUrl=row.x_url,
+        onlyfansUrl=row.onlyfans_url,
         packFaceVideoUrl=videos.get("packFaceVideoUrl"),
         packFaceVideoUrl2=videos.get("packFaceVideoUrl2"),
         packFacePosterUrl=posters.get("packFacePosterUrl"),
@@ -432,16 +458,7 @@ def create_model(db: Session, models_dir: Path, request: CreateModelRequest) -> 
         created_at=now,
         updated_at=now,
         tags=tags,
-        influencer_name=influencer["influencerName"],
-        influencer_city=influencer["influencerCity"],
-        influencer_country=influencer["influencerCountry"],
-        influencer_flag=influencer["influencerFlag"],
-        card_overlay_color_start=influencer["cardOverlayColorStart"],
-        card_overlay_color_end=influencer["cardOverlayColorEnd"],
-        card_light_color_1=influencer["cardLightColor1"],
-        card_light_color_2=influencer["cardLightColor2"],
-        card_pack_name=influencer["cardPackName"],
-        card_pack_name_2=influencer["cardPackName2"],
+        **{column: influencer[key] for key, column in _INFLUENCER_COLUMNS.items()},
     )
     db.add(row)
     db.flush()

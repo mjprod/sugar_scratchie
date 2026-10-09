@@ -125,7 +125,7 @@ class WalletTransaction(Base):
     __table_args__ = (
         CheckConstraint("currency IN ('diamonds','coins')", name="wallet_tx_currency_chk"),
         CheckConstraint(
-            "reason IN ('welcome_bonus','store_purchase','pack_purchase','pack_reward','scratch_reward','daily_reward','redeem_code','refund','admin_adjust','card_purchase')",
+            "reason IN ('welcome_bonus','store_purchase','pack_purchase','pack_reward','scratch_reward','daily_reward','redeem_code','refund','admin_adjust','card_purchase','card_replay','coin_exchange')",
             name="wallet_tx_reason_chk",
         ),
         UniqueConstraint("idempotency_key", name="wallet_tx_idempotency_key_uq"),
@@ -202,13 +202,32 @@ class Creator(Base):
     card_pack_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     card_pack_name_2: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    instagram_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tiktok_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    x_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    onlyfans_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+CARD_TIERS = ("standard", "premium", "ultra")
 
 
 class MotionCard(Base):
     """Admin catalog of motion cards (metadata only; videos/mesh/photos stay on disk)."""
 
     __tablename__ = "cards"
-    __table_args__ = (Index("cards_model_sort_idx", "model_id", "sort_order"),)
+    __table_args__ = (
+        Index("cards_model_sort_idx", "model_id", "sort_order"),
+        CheckConstraint("tier IN ('standard','premium','ultra')", name="cards_tier_chk"),
+        CheckConstraint("price >= 0 AND replay_price >= 0 AND max_win >= 0", name="cards_prices_chk"),
+        Index(
+            "cards_premium_model_theme_uq",
+            "model_id",
+            "theme_id",
+            unique=True,
+            postgresql_where=text("tier = 'premium'"),
+        ),
+        Index("cards_ultra_model_uq", "model_id", unique=True, postgresql_where=text("tier = 'ultra'")),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
@@ -216,6 +235,11 @@ class MotionCard(Base):
     theme_id: Mapped[str | None] = mapped_column(Text, ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     photos: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    # Diamonds. `price` is the first play (the unlock for premium / ultra cards).
+    price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tier: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
+    replay_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_win: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -451,6 +475,7 @@ class ScratchCoinHand(Base):
     __tablename__ = "scratch_coin_hands"
     __table_args__ = (
         Index("scratch_coin_hands_user_created_idx", "user_id", "created_at"),
+        CheckConstraint("currency IN ('coins','diamonds')", name="scratch_coin_hands_currency_chk"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -460,6 +485,10 @@ class ScratchCoinHand(Base):
     claimed_milestones: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
     # False for free-play hands (replays, unbought priced cards, no card id): claims mint 0.
     rewards_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Premium / ultra hands pay diamonds; `payout_cap` is the card's max win at issue time.
+    currency: Mapped[str] = mapped_column(Text, nullable=False, default="coins")
+    payout_cap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    paid_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 

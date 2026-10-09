@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
-from backend.db.card_plays import card_price, register_play
+from backend.db.card_plays import FreePlayLocked, card_terms, is_free_playable, owns_from_pack, register_play
 from backend.db.engine import get_session
 from backend.db.models import User, UserCardPlayed
 from backend.db.wallet import InsufficientFunds, ensure_wallet
@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/me/cards", tags=["card-plays"])
 class PlayBody(BaseModel):
     cardKind: Literal["motion", "photo"]
     cardId: str = Field(min_length=1, max_length=128)
+    # Theme free-play toggle: no charge, no rewards; needs a free-playable card.
+    freePlay: bool = False
 
 
 def _played_public(row: UserCardPlayed) -> dict:
@@ -48,19 +50,25 @@ def play_card(
     user: Annotated[User, Depends(current_user)],
 ):
     card_id = body.cardId.strip()
-    price = card_price(db, body.cardKind, card_id)
-    if price is None:
+    terms = card_terms(db, body.cardKind, card_id)
+    if terms is None:
         raise HTTPException(status_code=404, detail="Card not found.")
+    owned = owns_from_pack(db, user.id, body.cardKind, card_id)
     try:
-        result = register_play(db, user.id, body.cardKind, card_id, price)
+        result = register_play(
+            db, user.id, body.cardKind, card_id, terms, owned=owned, free_play=body.freePlay
+        )
     except InsufficientFunds:
         raise HTTPException(status_code=400, detail="insufficient")
+    except FreePlayLocked:
+        raise HTTPException(status_code=403, detail="free_play_locked")
     wallet = ensure_wallet(db, user.id)
     return {
         "firstPlay": result.first_play,
         # Rewards stay on until the purchased play's scratch hand has been issued.
-        "rewardsEnabled": result.row.rewarded_hand_id is None,
-        "pricePaid": price if result.first_play else 0,
+        "rewardsEnabled": not body.freePlay and result.row.rewarded_hand_id is None,
+        "pricePaid": result.charged,
+        "freePlayable": is_free_playable(result.row, owned=owned, price=terms.price),
         "played": _played_public(result.row),
         "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
     }
