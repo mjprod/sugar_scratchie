@@ -91,20 +91,11 @@ export function CardPricingControl({
     max_win: isTiered ? parseDiamonds(draft.max_win) : 0,
   };
   const valid = parsed.price !== null && parsed.replay_price !== null && parsed.max_win !== null;
-<<<<<<< Updated upstream
-const dirty =
-  draft.tier !== pricing.tier ||
-  draft.price.trim() !== String(pricing.price) ||
-  draft.replay_price.trim() !== String(pricing.replay_price) ||
-  draft.max_win.trim() !== String(pricing.max_win);
-  const isTiered = draft.tier !== "standard";
-=======
   const dirty =
     draft.tier !== pricing.tier ||
     parsed.price !== pricing.price ||
     parsed.replay_price !== pricing.replay_price ||
     parsed.max_win !== pricing.max_win;
->>>>>>> Stashed changes
 
   function setField(key: PriceKey, value: string) {
     setDraft((current) => ({ ...current, [key]: value }));
