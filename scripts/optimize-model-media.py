@@ -44,12 +44,17 @@ def _targets(models_dir: Path) -> list[tuple[Path, str, int]]:
 
 
 def _source(directory: Path, stem: str) -> Path | None:
-    """Prefer a non-WebP original so a stale .webp never shadows a newer upload."""
+    """Prefer a non-WebP original only when it is newer than the WebP."""
     candidates = [directory / f"{stem}{ext}" for ext in sorted(AVATAR_EXTENSIONS)]
     existing = [p for p in candidates if p.is_file()]
     if not existing:
         return None
-    return max(existing, key=lambda p: (p.suffix != ".webp", p.stat().st_mtime))
+    newest = max(existing, key=lambda p: p.stat().st_mtime)
+    if newest.suffix == ".webp":
+        newer_non_webp = [p for p in existing if p.suffix != ".webp" and p.stat().st_mtime >= newest.stat().st_mtime]
+        if newer_non_webp:
+            return max(newer_non_webp, key=lambda p: p.stat().st_mtime)
+    return newest
 
 
 def _already_optimized(path: Path, max_px: int) -> bool:
