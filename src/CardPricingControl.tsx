@@ -110,7 +110,7 @@ export function CardPricingControl({
           disabled={busy}
           size="1"
           value={draft.tier}
-          onValueChange={(value) => setDraft((current) => ({ ...current, tier: value as CardTier }))}
+          onValueChange={(value) => { const tier = value as CardTier; setDraft((current) => (tier === "standard" ? { ...current, tier, replay_price: "0", max_win: "0" } : { ...current, tier })); }}
         >
           <Select.Trigger />
           <Select.Content>
