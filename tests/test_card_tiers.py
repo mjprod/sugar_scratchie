@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -102,6 +103,28 @@ def _creator_with_cards(*, photo_price: int = 5) -> dict[str, str]:
     return ids
 
 
+@pytest.fixture
+def card_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Point the card API at a temp `public/` and write placeholder clips for the given cards."""
+    import backend.app as app_module
+
+    cards_dir = tmp_path / "public" / "cards"
+    mesh_dir = tmp_path / "public" / "mesh"
+    mesh_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_module, "ROOT", tmp_path)
+    monkeypatch.setattr(app_module, "CARDS_DIR", cards_dir)
+    monkeypatch.setattr(app_module, "MESH_DIR", mesh_dir)
+
+    def write(*card_ids: str) -> None:
+        for card_id in card_ids:
+            card_dir = cards_dir / card_id
+            card_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("background.mp4", "foreground.mp4"):
+                (card_dir / name).write_bytes(b"clip")
+
+    return write
+
+
 def _play(client, kind: str, card_id: str, *, free_play: bool = False):
     return client.post(
         "/api/me/cards/play", json={"cardKind": kind, "cardId": card_id, "freePlay": free_play}
@@ -172,6 +195,22 @@ def test_ultra_payout_never_exceeds_small_max_win(client):
     hand = _hand(client, ids["ultra"])
     total = sum(_claim(client, hand["handId"], m)["diamonds"] for m in range(1, 11))
     assert total == 7
+
+
+def test_diamond_payout_awards_max_win_remainder(client):
+    _, user = register_and_login(client)
+    _grant(user["id"])
+    ids = _creator_with_cards()
+    with Session(get_engine()) as db:
+        db.get(MotionCard, ids["premium"]).max_win = 15
+        db.commit()
+    assert _play(client, "motion", ids["premium"]).json()["pricePaid"] == 100
+
+    hand = _hand(client, ids["premium"])
+    assert hand["maxWin"] == 15
+    payouts = [_claim(client, hand["handId"], m)["diamonds"] for m in range(1, 11)]
+    assert payouts == [2] * 5 + [1] * 5
+    assert sum(payouts) == 15
 
 
 def test_free_play_requires_purchase_and_never_charges(client):
@@ -319,6 +358,51 @@ def test_tier_validation(db_session):
     with pytest.raises(HTTPException) as missing:
         _validate_tier(db_session, themeless)
     assert missing.value.status_code == 400
+
+
+def test_detaching_tiered_cards_demotes_to_standard(client, dashboard_headers, card_media):
+    ids = _creator_with_cards()
+    card_media(ids["standard"], ids["premium"], ids["ultra"])
+
+    def put(key: str, body: dict):
+        return client.put(f"/api/cards/{ids[key]}", json=body, headers=dashboard_headers)
+
+    ultra = put("ultra", {"model_id": ""})
+    assert ultra.status_code == 200, ultra.text
+    assert (ultra.json()["model_id"], ultra.json()["tier"]) == (None, "standard")
+
+    premium = put("premium", {"theme_id": ""})
+    assert premium.status_code == 200, premium.text
+    assert (premium.json()["theme_id"], premium.json()["tier"]) == (None, "standard")
+
+    assert put("standard", {"model_id": "", "tier": "ultra"}).status_code == 400
+
+
+def test_standard_cards_never_charge_replays(client, dashboard_headers, card_media):
+    ids = _creator_with_cards()
+    card_media(ids["premium"])
+    downgraded = client.put(
+        f"/api/cards/{ids['premium']}",
+        json={"tier": "standard", "price": 100, "replay_price": 20, "max_win": 200},
+        headers=dashboard_headers,
+    )
+    assert downgraded.status_code == 200, downgraded.text
+    card = downgraded.json()
+    assert (card["tier"], card["replay_price"], card["max_win"]) == ("standard", 0, 0)
+
+    legacy_id = f"{ids['model']}_legacy"
+    with Session(get_engine()) as db:
+        db.add(MotionCard(id=legacy_id, label="Legacy", model_id=ids["model"], price=10, replay_price=20))
+        db.commit()
+
+    _, user = register_and_login(client)
+    _grant(user["id"])
+    for card_id in (ids["premium"], legacy_id):
+        assert _play(client, "motion", card_id).json()["firstPlay"] is True
+        hand = _hand(client, card_id)
+        _claim(client, hand["handId"], 1)
+        replay = _play(client, "motion", card_id).json()
+        assert replay["pricePaid"] == 0
 
 
 def test_model_social_links_round_trip(client, dashboard_headers):

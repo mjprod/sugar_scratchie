@@ -40,6 +40,8 @@ def card_terms(db: Session, kind: str, card_id: str) -> CardTerms | None:
     motion = db.get(MotionCard, card_id)
     if motion is None:
         return None
+    if motion.tier == "standard":
+        return CardTerms(price=motion.price)
     return CardTerms(
         price=motion.price,
         replay_price=motion.replay_price,

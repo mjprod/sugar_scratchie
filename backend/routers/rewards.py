@@ -40,7 +40,7 @@ SCRATCH_COIN_MIN = 80
 SCRATCH_COIN_MAX = 100
 SCRATCH_MILESTONE_MAX = 10
 # Premium / ultra hands pay diamonds: each milestone rolls between this fraction
-# and 100% of max_win / SCRATCH_MILESTONE_MAX, and the hand never exceeds max_win.
+# and 100% of its share of max_win, and the hand never exceeds max_win.
 DIAMOND_MILESTONE_MIN_FRACTION = 0.8
 DIAMOND_PAYOUT_TIERS = ("premium", "ultra")
 # Economic bound: inventing hands cannot mint forever.
@@ -210,11 +210,17 @@ def _bind_rewarded_hand(
     return True
 
 
-def _roll_diamonds(hand: ScratchCoinHand) -> int:
+def _roll_diamonds(hand: ScratchCoinHand, slot: int) -> int:
+    """Roll the payout for the hand's ``slot``-th claim (0-based).
+
+    The cap is split into SCRATCH_MILESTONE_MAX shares summing to exactly ``cap``;
+    the first ``cap % SCRATCH_MILESTONE_MAX`` claims carry the remainder.
+    """
     cap = hand.payout_cap or 0
-    base = cap // SCRATCH_MILESTONE_MAX
-    low = max(1, math.ceil(base * DIAMOND_MILESTONE_MIN_FRACTION))
-    amount = random.randint(low, max(low, base))
+    base, remainder = divmod(cap, SCRATCH_MILESTONE_MAX)
+    share = base + (1 if slot < remainder else 0)
+    low = max(1, math.ceil(share * DIAMOND_MILESTONE_MIN_FRACTION))
+    amount = random.randint(low, max(low, share))
     return max(0, min(amount, cap - hand.paid_total))
 
 
@@ -257,7 +263,7 @@ def claim_scratch_coins(
         raise HTTPException(status_code=400, detail="scratch hand has no milestones left")
 
     if hand.currency == "diamonds":
-        amount = _roll_diamonds(hand)
+        amount = _roll_diamonds(hand, len(claimed))
     else:
         amount = random.randint(SCRATCH_COIN_MIN, SCRATCH_COIN_MAX)
     if amount > 0:
