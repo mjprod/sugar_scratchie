@@ -148,9 +148,11 @@ from backend.services.mesh_symbols import (
 )
 from backend.services.mesh_tracking import default_mesh_device, generate_mesh as run_generate_mesh
 from backend.services.mesh_tune import MeshTuneOptions, build_mesh_tracking_env, mesh_tune_from_dict
+from backend.services.video_prep import BOOMERANG_DEFAULT_SECONDS
 from backend.services.video_flow import (
     VideoFlowStep,
     STEP_ORDER,
+    apply_boomerang_step,
     apply_trim_step,
     approve_flow_step,
     flow_state,
@@ -160,6 +162,7 @@ from backend.services.video_flow import (
     patch_flow_draft_model,
     read_flow_draft,
     reject_flow_step,
+    reset_boomerang_step,
     reset_trim_step,
     run_generate_photo_scratch_backgrounds,
     run_generate_photo_scratch_layer,
@@ -346,6 +349,15 @@ class VideoFlowTrimRequest(BaseModel):
     drop_start: int | None = Field(default=None, ge=0, le=60)
     drop_end: int | None = Field(default=None, ge=0, le=60)
     auto: bool = False
+
+
+class VideoFlowBoomerangRequest(BaseModel):
+    card_label: str = Field(min_length=1, max_length=120)
+    seconds: float = Field(default=BOOMERANG_DEFAULT_SECONDS, ge=1, le=30)
+
+
+class VideoFlowBoomerangResetRequest(BaseModel):
+    card_label: str = Field(min_length=1, max_length=120)
 
 
 class VideoFlowImportClipsRequest(BaseModel):
@@ -2007,6 +2019,36 @@ def post_video_flow_trim_reset(card_id: str) -> dict:
         raise HTTPException(status_code=400, detail="Invalid card id")
     try:
         result = reset_trim_step(card_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.post("/api/video-flow/{card_id}/boomerang")
+def post_video_flow_boomerang(card_id: str, request: VideoFlowBoomerangRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = apply_boomerang_step(
+            card_id,
+            card_label=request.card_label,
+            seconds=request.seconds,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.post("/api/video-flow/{card_id}/boomerang/reset")
+def post_video_flow_boomerang_reset(
+    card_id: str, request: VideoFlowBoomerangResetRequest
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = reset_boomerang_step(card_id, card_label=request.card_label)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     cancel_stale_video_flow_jobs(card_id)

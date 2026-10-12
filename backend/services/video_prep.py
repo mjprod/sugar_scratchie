@@ -70,6 +70,10 @@ CLIP_SIGNATURE_HEIGHT = 52
 CLIP_SIGNATURE_FRAMES = 5
 CLIP_MATCH_MAX_LUMA_DIFF = 20.0
 
+# Boomerang: play the first N seconds forward, then the same frames in reverse.
+BOOMERANG_DEFAULT_SECONDS = 5.0
+BOOMERANG_MIN_FORWARD_FRAMES = 3
+
 
 def normalize_compress_preset(value: str | None) -> CompressPreset:
     if value in PRESET_SPECS:
@@ -481,6 +485,74 @@ def trim_video_frames(
         "fps": fps,
         "drop_start": drop_start,
         "drop_end": drop_end,
+        "duration_after": float(after["duration"]),
+    }
+
+
+def make_boomerang(
+    src: Path,
+    dst: Path,
+    *,
+    seconds: float = BOOMERANG_DEFAULT_SECONDS,
+) -> dict:
+    """Write the first `seconds` of src forward, then the same frames reversed.
+
+    The reversed half skips only the turnaround frame (already shown at the end
+    of the forward half) and runs back to frame 0, so the result has 2K-1
+    frames and ends on the same frame it starts with.
+    """
+    if seconds <= 0:
+        raise RuntimeError("Boomerang seconds must be > 0")
+    timing = probe_video_timing(src)
+    frames = int(timing["frames"])
+    fps = float(timing["fps"])
+    forward = min(frames, int(round(seconds * fps)))
+    if forward < BOOMERANG_MIN_FORWARD_FRAMES:
+        raise RuntimeError(
+            f"Clip too short for a boomerang: {forward} frames in the first {seconds:.2f}s."
+        )
+    rate = Fraction(fps).limit_denominator(1001)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.stem}.boomerang-tmp{dst.suffix}")
+    print(
+        f"Boomerang {src.name}: frames 0..{forward - 1} forward + reverse "
+        f"({forward / fps:.2f}s → {(2 * forward - 1) / fps:.2f}s)"
+    )
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-filter_complex",
+            f"[0:v]select=lt(n\\,{forward}),setpts=N/({fps})/TB,split[fwd][rev];"
+            f"[rev]reverse,trim=start_frame=1,"
+            f"setpts=N/({fps})/TB[back];"
+            f"[fwd][back]concat=n=2:v=1:a=0,setpts=N/({fps})/TB[out]",
+            "-map",
+            "[out]",
+            "-r",
+            f"{rate.numerator}/{rate.denominator}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+    )
+    tmp.replace(dst)
+    after = probe_video_timing(dst)
+    log_video("Boomerang", dst)
+    return {
+        "fps": fps,
+        "frames_before": frames,
+        "forward_frames": forward,
+        "frames_after": int(after["frames"]),
         "duration_after": float(after["duration"]),
     }
 

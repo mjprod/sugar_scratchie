@@ -127,9 +127,25 @@ type VideoFlowState = {
   complete: boolean;
   mesh_compare?: { path: string; tracker: string; active: boolean }[];
   compress_report?: CompressReport | null;
+  boomerang?: BoomerangReport | null;
   timings?: FlowTimings | null;
   recovered_approvals?: boolean;
 };
+
+type BoomerangReport = {
+  seconds: number;
+  fps: number;
+  forward_frames: number;
+  frames_before: number;
+  frames_after: number;
+  duration_after: number;
+  mesh_mirrored: boolean;
+  applied_at: number;
+};
+
+const BOOMERANG_DEFAULT_SECONDS = 5;
+const BOOMERANG_MIN_SECONDS = 1;
+const BOOMERANG_MAX_SECONDS = 30;
 
 function formatTimingDateTime(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleString(undefined, {
@@ -489,6 +505,105 @@ function TrimFramesPanel({
           Apply a trim (or Keep as-is), preview the clip, then approve to unlock Video edit.
         </Text>
       )}
+    </Flex>
+  );
+}
+
+function BoomerangPanel({
+  cardId,
+  cardLabel,
+  report,
+  busy,
+  onBusy,
+  onError,
+  onState,
+  onClipsChanged,
+}: {
+  cardId: string;
+  cardLabel: string;
+  report: BoomerangReport | null;
+  busy: boolean;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string) => void;
+  onState: (state: VideoFlowState) => void;
+  onClipsChanged: () => void;
+}) {
+  const [seconds, setSeconds] = useState(String(report?.seconds ?? BOOMERANG_DEFAULT_SECONDS));
+  const parsedSeconds = Number(seconds);
+  const secondsValid =
+    Number.isFinite(parsedSeconds) &&
+    parsedSeconds >= BOOMERANG_MIN_SECONDS &&
+    parsedSeconds <= BOOMERANG_MAX_SECONDS;
+  const disabled = busy || !cardId || !cardLabel;
+
+  async function post(path: string, body: Record<string, unknown>) {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/${path}`,
+        { method: "POST", body: JSON.stringify({ card_label: cardLabel, ...body }) },
+      );
+      onState(next);
+      onClipsChanged();
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  return (
+    <Flex direction="column" gap="3">
+      <Heading size="3">Boomerang</Heading>
+      <Text color="gray" size="2">
+        Plays the first N seconds forward, then the same frames backwards, and re-exports both
+        clips as MP4. The mesh is mirrored in time, so symbol points and the scratch mask stay.
+      </Text>
+      <Flex align="end" gap="3" wrap="wrap">
+        <Field label="Forward seconds">
+          <TextField.Root
+            type="number"
+            min={BOOMERANG_MIN_SECONDS}
+            max={BOOMERANG_MAX_SECONDS}
+            step={0.5}
+            value={seconds}
+            onChange={(event) => setSeconds(event.currentTarget.value)}
+          />
+        </Field>
+        <Button
+          disabled={disabled || !secondsValid}
+          type="button"
+          onClick={() => void post("boomerang", { seconds: parsedSeconds })}
+        >
+          {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
+          {report ? "Re-make boomerang" : "Make boomerang"}
+        </Button>
+        {report ? (
+          <Button
+            disabled={disabled}
+            type="button"
+            variant="outline"
+            onClick={() => void post("boomerang/reset", {})}
+          >
+            <X {...iconProps} />
+            Undo boomerang
+          </Button>
+        ) : null}
+      </Flex>
+      {report ? (
+        <Text color="gray" size="2">
+          Boomerang: first {(report.forward_frames / report.fps).toFixed(1)}s forward + reverse,{" "}
+          {report.duration_after.toFixed(1)}s total ({report.frames_after} frames)
+          {report.mesh_mirrored ? ", mesh mirrored" : ""}.
+        </Text>
+      ) : null}
+      <Callout.Root color="amber">
+        <Callout.Text size="2">
+          Making or undoing a boomerang replaces the published clips, so run{" "}
+          <strong>Finalize</strong> again afterwards.
+        </Callout.Text>
+      </Callout.Root>
     </Flex>
   );
 }
@@ -2295,6 +2410,7 @@ export function RunMode(props: RunModeProps) {
   const [manualBackground, setManualBackground] = useState("");
   const [manualForeground, setManualForeground] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [cardMediaRevision, setCardMediaRevision] = useState(0);
   const [manualDress, setManualDress] = useState("");
   const [showFaceSwapPrompt, setShowFaceSwapPrompt] = useState(false);
   const [showMeshAdvanced, setShowMeshAdvanced] = useState(false);
@@ -3624,9 +3740,22 @@ export function RunMode(props: RunModeProps) {
               ) : null}
             </Flex>
             {cardApproved && cardArtifactsReady ? (
-              <Text color="gray" size="2">
-                Card already published. Re-importing replaces both videos and keeps mesh ready.
-              </Text>
+              <>
+                <Text color="gray" size="2">
+                  Card already published. Re-importing replaces both videos and keeps mesh ready.
+                </Text>
+                <Separator size="4" />
+                <BoomerangPanel
+                  cardId={cardId.trim()}
+                  cardLabel={cardLabel.trim()}
+                  report={flowState?.boomerang ?? null}
+                  busy={importBusy || jobBusy}
+                  onBusy={setImportBusy}
+                  onError={onError}
+                  onState={setFlowState}
+                  onClipsChanged={() => setCardMediaRevision(Date.now())}
+                />
+              </>
             ) : cardApproved && !cardArtifactsReady ? (
               <Callout.Root color="amber">
                 <Callout.Text>
@@ -3842,10 +3971,11 @@ export function RunMode(props: RunModeProps) {
                   </Text>
                 ) : (
                   <MediaPreview
-                    key={artifact}
+                    key={`${artifact}:${cardMediaRevision}`}
                     label={artifact.split("/").pop() ?? "Result"}
                     type="video"
                     value={artifact}
+                    cacheBust={cardMediaRevision || flowState?.boomerang?.applied_at}
                   />
                 ),
               )}
