@@ -172,23 +172,26 @@ def _player_with_history(packs: int) -> TestClient:
 
     client = TestClient(app)
     client.__enter__()
-    register_and_login(client)
-    assert client.post("/api/me/welcome/claim").status_code == 200
-    _buy_diamonds(client)
-    for _ in range(packs):
-        bought = _buy_pack(client)
-        assert bought.status_code == 200, bought.text
-        _open_and_reveal_all(client, bought.json()["instances"][0]["instanceId"])
+    try:
+        register_and_login(client)
+        assert client.post("/api/me/welcome/claim").status_code == 200
+        _buy_diamonds(client)
+        for _ in range(packs):
+            bought = _buy_pack(client)
+            assert bought.status_code == 200, bought.text
+            _open_and_reveal_all(client, bought.json()["instances"][0]["instanceId"])
+    except BaseException:
+        client.__exit__(None, None, None)
+        raise
     return client
 
 
 @pytest.fixture(scope="module")
 def players() -> Generator[dict[str, TestClient], None, None]:
-    clients = {
-        "small": _player_with_history(SMALL_HISTORY_PACKS),
-        "large": _player_with_history(LARGE_HISTORY_PACKS),
-    }
+    clients: dict[str, TestClient] = {}
     try:
+        clients["small"] = _player_with_history(SMALL_HISTORY_PACKS)
+        clients["large"] = _player_with_history(LARGE_HISTORY_PACKS)
         yield clients
     finally:
         for client in clients.values():

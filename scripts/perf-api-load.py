@@ -280,10 +280,26 @@ class VirtualUser:
         await self.client.aclose()
 
 
+async def fetch_json(client: httpx.AsyncClient, path: str) -> dict[str, object]:
+    try:
+        resp = await client.get(path)
+    except httpx.HTTPError as exc:
+        raise SystemExit(f"{path} request failed ({exc!r}) — is the API running at {client.base_url}?") from exc
+    if resp.status_code != 200:
+        raise SystemExit(f"{path} returned {resp.status_code}: {resp.text[:500]}")
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise SystemExit(f"{path} returned non-JSON body: {resp.text[:500]}") from exc
+    if not isinstance(body, dict):
+        raise SystemExit(f"{path} returned JSON {type(body).__name__}, expected object: {resp.text[:500]}")
+    return body
+
+
 async def discover_catalog(base: str) -> Catalog:
     async with httpx.AsyncClient(base_url=base, timeout=REQUEST_TIMEOUT_S) as client:
-        models = (await client.get("/api/models")).json().get("models", [])
-        packs = [p for p in (await client.get("/api/packs")).json().get("packs", []) if p.get("available", True)]
+        models = (await fetch_json(client, "/api/models")).get("models", [])
+        packs = [p for p in (await fetch_json(client, "/api/packs")).get("packs", []) if p.get("available", True)]
     if not packs:
         raise SystemExit("No available packs in /api/packs — run ./scripts/manage.sh reset-db to seed.")
     creator_id = models[0]["id"] if models else None
