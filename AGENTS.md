@@ -23,6 +23,7 @@ npm run dev:all     # both
 npm run build       # tsc then vite build (operator app)
 npm run test:api    # pytest tests/ (needs TEST_DATABASE_URL)
 npm run test        # build + test:api — what CI runs
+npm run perf:api    # load test against the running API (--users/--duration; report in .tmp/perf/)
 ```
 
 There is no linter for the operator app. `npm run build` (strict `tsc`) plus `npm run test:api` is the correctness gate; run both after non-trivial edits. Postgres runs from `docker-compose.yml` on `:5433`.
@@ -67,3 +68,4 @@ Other knobs: `REF_IMAGE`, `FPS`, `GRID_COLS`/`GRID_ROWS`, `SMOOTH_METHOD` (`savg
 - Tunable numbers are named `const`s at the top of the file; adjust those rather than inlining literals.
 - Pure geometry/render helpers go in `meshGeometry.ts` / `glRenderer.ts` or standalone helpers, not inside components.
 - Backend schema changes need an Alembic migration in `backend/db/migrations/versions/`, and an API test in `tests/` when behavior changes.
+- `tests/test_perf_budgets.py` pins the SQL query count of hot player endpoints and fails on N+1 growth. If a change genuinely needs another query, raise that budget in the same PR.
