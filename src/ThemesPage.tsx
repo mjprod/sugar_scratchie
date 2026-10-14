@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Home,
   LoaderCircle,
+  Music2,
   Pencil,
   Plus,
   Tags,
@@ -23,13 +24,17 @@ import {
   Text,
   TextField,
 } from "@radix-ui/themes";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTheme,
+  deleteDefaultBgm,
   deleteTheme,
-  fetchThemes,
+  deleteThemeBgm,
+  fetchThemeCatalog,
   reorderThemes,
   updateTheme,
+  uploadDefaultBgm,
+  uploadThemeBgm,
   type ThemeInfo,
 } from "./shared/themes";
 import { labelFromProjectId, PROJECT_ID_PATTERN, slugifyProjectId } from "./videoFlow/projects";
@@ -232,8 +237,36 @@ function ThemeColorChip({
   );
 }
 
+function LoopingPreview({ src, maxWidth }: { src: string; maxWidth: number }) {
+  return (
+    <Flex align="center" gap="2" wrap="wrap">
+      <audio
+        controls
+        loop
+        preload="none"
+        src={src}
+        style={{ height: 36, width: maxWidth, maxWidth: "100%" }}
+      />
+      <Badge color="green" size="1" variant="soft">
+        Looping
+      </Badge>
+    </Flex>
+  );
+}
+
+function trackName(url: string | null | undefined): string {
+  if (!url) return "";
+  const base = url.split("?")[0]?.split("/").pop() || "track.mp3";
+  try {
+    return decodeURIComponent(base);
+  } catch {
+    return base;
+  }
+}
+
 export function ThemesPage() {
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
+  const [defaultBgm, setDefaultBgm] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [newId, setNewId] = useState("");
@@ -250,10 +283,14 @@ export function ThemesPage() {
   const [editingLight1, setEditingLight1] = useState("");
   const [editingLight2, setEditingLight2] = useState("");
   const [showEditColors, setShowEditColors] = useState(false);
+  const defaultBgmInputRef = useRef<HTMLInputElement>(null);
+  const themeBgmInputRef = useRef<HTMLInputElement>(null);
+  const [themeBgmTargetId, setThemeBgmTargetId] = useState("");
 
   const refresh = useCallback(async () => {
-    const next = await fetchThemes();
-    setThemes(next);
+    const next = await fetchThemeCatalog();
+    setThemes(next.themes);
+    setDefaultBgm(next.defaultBgm);
   }, []);
 
   useEffect(() => {
@@ -338,6 +375,62 @@ export function ThemesPage() {
     }
   }
 
+  async function handleDefaultBgmUpload(file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      const url = await uploadDefaultBgm(file);
+      setDefaultBgm(url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleClearDefaultBgm() {
+    if (!window.confirm("Remove the default background music?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await deleteDefaultBgm();
+      setDefaultBgm(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleThemeBgmUpload(themeId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await uploadThemeBgm(themeId, file);
+      setThemes((current) => current.map((theme) => (theme.id === updated.id ? updated : theme)));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleClearThemeBgm(theme: ThemeInfo) {
+    if (!window.confirm(`Remove the music override for “${theme.label}”? It will use the default track.`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await deleteThemeBgm(theme.id);
+      setThemes((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleMove(themeId: string, direction: -1 | 1) {
     const index = themes.findIndex((theme) => theme.id === themeId);
     const nextIndex = index + direction;
@@ -370,7 +463,8 @@ export function ThemesPage() {
               <Heading size="7">Themes</Heading>
               <Text color="gray" size="2">
                 Categories for motion cards and photo scratch. Pick one in Video Flow Setup.
-                Upload intro videos on the model page under each theme header.
+                Upload intro videos on the model page under each theme header. Set the game’s
+                default music here, and optionally a track that replaces it for one theme.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -478,6 +572,69 @@ export function ThemesPage() {
           </Card>
 
           <Card>
+            <Flex align="center" justify="between" gap="3" wrap="wrap" mb="3">
+              <Box>
+                <Heading as="h2" size="4">
+                  Default music
+                </Heading>
+                <Text color="gray" size="2">
+                  Plays for every theme that does not have its own track. Seeded from
+                  magnific-nuestra-madre_01.mp3.
+                </Text>
+              </Box>
+              <Flex gap="2" wrap="wrap">
+                <Button disabled={busy} onClick={() => defaultBgmInputRef.current?.click()}>
+                  <Music2 {...iconProps} />
+                  {defaultBgm ? "Replace" : "Upload"}
+                </Button>
+                <Button
+                  color="red"
+                  disabled={busy || !defaultBgm}
+                  variant="soft"
+                  onClick={() => void handleClearDefaultBgm()}
+                >
+                  Clear
+                </Button>
+              </Flex>
+            </Flex>
+            {defaultBgm ? (
+              <Flex align="center" gap="3" wrap="wrap">
+                <Badge color="green" variant="soft">
+                  {trackName(defaultBgm)}
+                </Badge>
+                <LoopingPreview maxWidth={320} src={defaultBgm} />
+              </Flex>
+            ) : (
+              <Text color="gray" size="2">
+                No default track. The game stays silent until you upload one or a theme has its own.
+              </Text>
+            )}
+            <input
+              ref={defaultBgmInputRef}
+              accept="audio/mpeg,.mp3"
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void handleDefaultBgmUpload(file);
+              }}
+            />
+            <input
+              ref={themeBgmInputRef}
+              accept="audio/mpeg,.mp3"
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                const themeId = themeBgmTargetId;
+                event.currentTarget.value = "";
+                if (file && themeId) void handleThemeBgmUpload(themeId, file);
+              }}
+            />
+          </Card>
+
+          <Card>
             <Heading as="h2" mb="3" size="4">
               All themes
             </Heading>
@@ -576,6 +733,11 @@ export function ThemesPage() {
                                 intro
                               </Badge>
                             ) : null}
+                            {theme.bgm?.trim() ? (
+                              <Badge color="green" size="1" variant="soft">
+                                music
+                              </Badge>
+                            ) : null}
                           </Flex>
                           <Flex align="center" gap="4" wrap="wrap">
                             <ThemeColorChip
@@ -589,6 +751,45 @@ export function ThemesPage() {
                               end={theme.cardLightColor2}
                             />
                           </Flex>
+                        </Flex>
+                      )}
+                      {editing ? null : (
+                        <Flex align="center" gap="2" mt="2" wrap="wrap">
+                          {theme.bgm?.trim() ? (
+                            <>
+                              <Text color="gray" size="1">
+                                {trackName(theme.bgm)}
+                              </Text>
+                              <LoopingPreview maxWidth={240} src={theme.bgm} />
+                            </>
+                          ) : (
+                            <Text color="gray" size="1">
+                              Uses default
+                            </Text>
+                          )}
+                          <Button
+                            disabled={busy}
+                            size="1"
+                            variant="soft"
+                            onClick={() => {
+                              setThemeBgmTargetId(theme.id);
+                              themeBgmInputRef.current?.click();
+                            }}
+                          >
+                            <Music2 size={14} strokeWidth={2} />
+                            {theme.bgm?.trim() ? "Replace music" : "Add music"}
+                          </Button>
+                          {theme.bgm?.trim() ? (
+                            <Button
+                              color="red"
+                              disabled={busy}
+                              size="1"
+                              variant="soft"
+                              onClick={() => void handleClearThemeBgm(theme)}
+                            >
+                              Clear
+                            </Button>
+                          ) : null}
                         </Flex>
                       )}
                     </Box>
