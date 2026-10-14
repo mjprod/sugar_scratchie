@@ -214,7 +214,7 @@ fun SessionScreen(
                         ),
             )
         }
-        val problem = playbackError ?: error?.takeUnless { it.contains("scratch hand limit") }
+        val problem = playbackError ?: error
         if (!problem.isNullOrBlank()) {
             Text(
                 problem,
