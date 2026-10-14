@@ -31,6 +31,9 @@ _THEME_COLOR_COLUMNS = {
 
 THEME_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 INTRO_EXTENSIONS = {".mp4", ".webm"}
+BGM_EXTENSIONS = {".mp3"}
+# Under /themes/ so the player media proxy (already used for intros) can load it.
+DEFAULT_BGM_REL = "themes/_default/bgm.mp3"
 
 DEFAULT_THEMES: list[tuple[str, str]] = [
     ("police", "Police"),
@@ -49,6 +52,8 @@ class ThemeInfo(BaseModel):
     # One-time intro clip played in-game before the player's first scratch on
     # any motion card that belongs to this theme.
     intro: str | None = None
+    # Optional loop that replaces the game-wide default while this theme's card is on stage.
+    bgm: str | None = None
     cardOverlayColorStart: str | None = None
     cardOverlayColorEnd: str | None = None
     cardLightColor1: str | None = None
@@ -98,6 +103,24 @@ def safe_theme_id(value: str) -> str:
     return slug
 
 
+def default_bgm_path(public_dir: Path) -> Path:
+    return public_dir / DEFAULT_BGM_REL
+
+
+def find_default_bgm(public_dir: Path) -> str | None:
+    path = default_bgm_path(public_dir)
+    if not path.is_file():
+        return None
+    return versioned_public_url(path, DEFAULT_BGM_REL)
+
+
+def find_theme_bgm(themes_dir: Path, theme_id: str) -> str | None:
+    candidate = themes_dir / theme_id / "bgm.mp3"
+    if not candidate.is_file():
+        return None
+    return versioned_public_url(candidate, f"themes/{theme_id}/bgm.mp3")
+
+
 def find_theme_intro(themes_dir: Path, theme_id: str) -> str | None:
     theme_dir = themes_dir / theme_id
     if not theme_dir.is_dir():
@@ -124,6 +147,7 @@ def _row_to_info(row: Theme, themes_dir: Path) -> ThemeInfo:
         sort_order=row.sort_order,
         created_at=_created_at_unix(row.created_at),
         intro=find_theme_intro(themes_dir, row.id),
+        bgm=find_theme_bgm(themes_dir, row.id),
         cardOverlayColorStart=row.card_overlay_color_start,
         cardOverlayColorEnd=row.card_overlay_color_end,
         cardLightColor1=row.card_light_color_1,
@@ -366,6 +390,58 @@ async def upload_theme_intro(
             old.unlink()
     target = theme_dir / f"intro{ext}"
     target.write_bytes(data)
+    return get_theme(db, themes_dir, theme.id)
+
+
+async def _read_mp3(upload: UploadFile) -> bytes:
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in BGM_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Background music must be an MP3")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded background music is empty")
+    return data
+
+
+async def upload_default_bgm(public_dir: Path, upload: UploadFile) -> str:
+    data = await _read_mp3(upload)
+    path = default_bgm_path(public_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    url = find_default_bgm(public_dir)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to store default background music")
+    return url
+
+
+def delete_default_bgm(public_dir: Path) -> None:
+    path = default_bgm_path(public_dir)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Default background music not found")
+    path.unlink()
+
+
+async def upload_theme_bgm(
+    db: Session,
+    themes_dir: Path,
+    theme_id: str,
+    upload: UploadFile,
+) -> ThemeInfo:
+    theme = get_theme(db, themes_dir, theme_id)
+    data = await _read_mp3(upload)
+    theme_dir = themes_dir / theme.id
+    theme_dir.mkdir(parents=True, exist_ok=True)
+    (theme_dir / "bgm.mp3").write_bytes(data)
+    return get_theme(db, themes_dir, theme.id)
+
+
+def delete_theme_bgm(db: Session, themes_dir: Path, theme_id: str) -> ThemeInfo:
+    theme = get_theme(db, themes_dir, theme_id)
+    path = themes_dir / theme.id / "bgm.mp3"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Background music not found for theme: {theme.id}")
+    path.unlink()
     return get_theme(db, themes_dir, theme.id)
 
 

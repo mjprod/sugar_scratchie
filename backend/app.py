@@ -108,12 +108,17 @@ from backend.themes_store import (
     ReorderThemesRequest,
     UpdateThemeRequest,
     create_theme,
+    delete_default_bgm,
     delete_theme,
+    delete_theme_bgm,
     delete_theme_intro,
     ensure_themes_bootstrapped,
+    find_default_bgm,
     list_themes,
     reorder_themes,
     update_theme,
+    upload_default_bgm,
+    upload_theme_bgm,
     upload_theme_intro,
 )
 from backend.photo_scratch_store import (
@@ -1415,7 +1420,10 @@ def get_collection(model: str = "", theme: str = "") -> dict:
 @app.get("/api/themes")
 def get_themes(db: Annotated[Session, Depends(get_session)]) -> dict:
     themes = list_themes(db, THEMES_DIR)
-    return {"themes": [theme.dict() for theme in themes]}
+    return {
+        "themes": [theme.dict() for theme in themes],
+        "default_bgm": find_default_bgm(PUBLIC),
+    }
 
 
 @app.post("/api/themes")
@@ -1471,6 +1479,37 @@ def remove_theme_intro(
     db: Annotated[Session, Depends(get_session)],
 ) -> dict:
     theme = delete_theme_intro(db, THEMES_DIR, theme_id)
+    return theme.dict()
+
+
+@app.post("/api/bgm/default")
+async def post_default_bgm(file: UploadFile = File(...)) -> dict:
+    url = await upload_default_bgm(PUBLIC, file)
+    return {"default_bgm": url}
+
+
+@app.delete("/api/bgm/default")
+def remove_default_bgm() -> dict:
+    delete_default_bgm(PUBLIC)
+    return {"ok": True, "default_bgm": None}
+
+
+@app.post("/api/themes/{theme_id}/bgm")
+async def post_theme_bgm(
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    theme = await upload_theme_bgm(db, THEMES_DIR, theme_id, file)
+    return theme.dict()
+
+
+@app.delete("/api/themes/{theme_id}/bgm")
+def remove_theme_bgm(
+    theme_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    theme = delete_theme_bgm(db, THEMES_DIR, theme_id)
     return theme.dict()
 
 
