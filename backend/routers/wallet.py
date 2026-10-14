@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/me/wallet", tags=["wallet"])
 
 @router.get("")
 def get_wallet(db: Annotated[Session, Depends(get_session)], user: Annotated[User, Depends(current_user)]):
-    wallet = ensure_wallet(db, user.id)
+    wallet = ensure_wallet(db, user.id, for_update=False)
     return {"diamonds": wallet.diamonds, "coins": wallet.coins}
 
 

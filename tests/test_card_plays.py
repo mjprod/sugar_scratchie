@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
+from threading import Thread
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend.auth.sessions import COOKIE_NAME, LAST_SEEN_TOUCH_SECONDS, get_user_from_token
+from backend.db.card_plays import CardTerms, register_play
 from backend.db.engine import get_engine
-from backend.db.models import MotionCard, PhotoScratchCard
-from backend.db.wallet import WELCOME_COINS, WELCOME_DIAMONDS
+from backend.db.models import MotionCard, PhotoScratchCard, User
+from backend.db.wallet import WELCOME_COINS, WELCOME_DIAMONDS, ensure_wallet
+from backend.routers.rewards import ScratchCoinsBody, claim_scratch_coins
 from tests.conftest import register_and_login
 
 
@@ -193,3 +200,136 @@ def test_unknown_card_ids_do_not_mint_coins(client):
 def test_played_list_requires_auth(client):
     assert client.get("/api/me/cards/played").status_code == 401
     assert _play(client, "motion", "anything").status_code == 401
+
+
+def _wait_for_wallet_waiter(db: Session, box: dict, thread: Thread) -> int:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if not thread.is_alive() and "result" in box:
+            raise AssertionError(f"work finished without waiting on the wallet: {box['result']}")
+        if "error" in box and not thread.is_alive():
+            raise AssertionError(f"work failed before waiting on the wallet: {box['error']}")
+        pid = db.execute(
+            text(
+                """
+                SELECT pid
+                FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND wait_event_type = 'Lock'
+                  AND query ILIKE '%wallets%'
+                LIMIT 1
+                """
+            )
+        ).scalar()
+        if pid is not None:
+            return int(pid)
+        time.sleep(0.02)
+    raise AssertionError("timed out waiting for a wallet lock")
+
+
+def _holds_granted_tuple_lock(db: Session, pid: int, relation: str) -> bool:
+    return (
+        db.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_locks
+                WHERE pid = :pid
+                  AND relation = CAST(:relation AS regclass)
+                  AND locktype = 'tuple'
+                  AND granted
+                """
+            ),
+            {"pid": pid, "relation": relation},
+        ).first()
+        is not None
+    )
+
+
+def _run_while_wallet_held(user_id: uuid.UUID, relation: str, work):
+    """Hold the wallet lock and assert `work` blocks on it before locking `relation`."""
+    holder = Session(get_engine())
+    thread: Thread | None = None
+    box: dict = {}
+
+    def target() -> None:
+        session = Session(get_engine())
+        try:
+            box["result"] = work(session)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            box["error"] = exc
+        finally:
+            session.close()
+
+    try:
+        ensure_wallet(holder, user_id)
+        thread = Thread(target=target)
+        thread.start()
+        pid = _wait_for_wallet_waiter(holder, box, thread)
+        assert not _holds_granted_tuple_lock(holder, pid, relation)
+    finally:
+        holder.rollback()
+        holder.close()
+        if thread is not None:
+            thread.join(timeout=5)
+    assert thread is not None and not thread.is_alive()
+    assert "error" not in box, box.get("error")
+    return box["result"]
+
+
+def test_replay_locks_wallet_before_played_row(client):
+    _, user = register_and_login(client)
+    user_id = uuid.UUID(user["id"])
+    motion_id, _photo_id = _create_cards(photo_price=0)
+    assert _play(client, "motion", motion_id).status_code == 200
+
+    def replay(session: Session):
+        result = register_play(session, user_id, "motion", motion_id, CardTerms(price=0))
+        return result.charged, result.row.play_count
+
+    charged, play_count = _run_while_wallet_held(user_id, "user_cards_played", replay)
+    assert charged == 0
+    assert play_count == 2
+
+
+def test_scratch_claim_locks_wallet_before_hand(client):
+    _, user = register_and_login(client)
+    user_id = uuid.UUID(user["id"])
+    motion_id, _photo_id = _create_cards(photo_price=0)
+    assert _play(client, "motion", motion_id).status_code == 200
+    hand_id = _start_hand(client, motion_id)["handId"]
+
+    def claim(session: Session):
+        row = session.get(User, user_id)
+        assert row is not None
+        return claim_scratch_coins(ScratchCoinsBody(handId=hand_id, milestone=1), session, row)
+
+    result = _run_while_wallet_held(user_id, "scratch_coin_hands", claim)
+    assert result["ok"] is True
+    assert result["coins"] > 0
+
+
+def test_auth_lookup_does_not_keep_user_row_dirty(client):
+    _, user = register_and_login(client)
+    user_id = uuid.UUID(user["id"])
+    token = client.cookies.get(COOKIE_NAME)
+    assert token
+    stale = datetime.now(timezone.utc) - timedelta(seconds=LAST_SEEN_TOUCH_SECONDS + 30)
+    with Session(get_engine()) as db:
+        row = db.get(User, user_id)
+        assert row is not None
+        row.last_seen_at = stale
+        db.commit()
+
+    with Session(get_engine()) as db:
+        loaded = get_user_from_token(db, token)
+        assert loaded is not None
+        assert loaded not in db.dirty
+        db.commit()
+
+    with Session(get_engine()) as db:
+        seen = db.get(User, user_id)
+        assert seen is not None and seen.last_seen_at is not None
+        assert seen.last_seen_at > stale + timedelta(seconds=LAST_SEEN_TOUCH_SECONDS)

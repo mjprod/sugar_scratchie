@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -10,20 +10,46 @@ from backend.db.models import Wallet, WalletTransaction, utcnow
 
 WELCOME_DIAMONDS = 3
 WELCOME_COINS = 120
+# session.info key. Session.get(with_for_update=True) always emits SQL, so a
+# second ensure_wallet in the same transaction would lock the row again.
+_LOCKED_WALLETS = "locked_wallet_user_ids"
+
+
+def _drop_wallet_lock_flag(session: Session) -> None:
+    # Commit and rollback both release the row lock. A later call must lock again.
+    session.info.pop(_LOCKED_WALLETS, None)
+
+
+event.listen(Session, "after_commit", _drop_wallet_lock_flag)
+event.listen(Session, "after_rollback", _drop_wallet_lock_flag)
 
 
 class InsufficientFunds(Exception):
     pass
 
 
-def ensure_wallet(session: Session, user_id: uuid.UUID) -> Wallet:
-    wallet = session.get(Wallet, user_id, with_for_update=True)
+def ensure_wallet(session: Session, user_id: uuid.UUID, *, for_update: bool = True) -> Wallet:
+    """Return the user's wallet, creating it when missing.
+
+    Callers that also lock ``user_cards_played`` or ``scratch_coin_hands`` must
+    call this first. A later call in the same transaction reuses that lock
+    instead of emitting another ``FOR UPDATE`` after those rows are held.
+    Balance reads pass ``for_update=False``.
+    """
+    locked: set[uuid.UUID] = session.info.setdefault(_LOCKED_WALLETS, set())
+    if for_update and user_id in locked:
+        wallet = session.get(Wallet, user_id)
+        if wallet is not None:
+            return wallet
+    wallet = session.get(Wallet, user_id, with_for_update=for_update)
     if wallet is None:
         wallet = Wallet(user_id=user_id, diamonds=0, coins=0)
         session.add(wallet)
         session.flush()
-        wallet = session.get(Wallet, user_id, with_for_update=True)
+        wallet = session.get(Wallet, user_id, with_for_update=for_update)
         assert wallet is not None
+    if for_update:
+        locked.add(user_id)
     return wallet
 
 

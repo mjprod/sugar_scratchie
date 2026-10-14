@@ -3,11 +3,12 @@ from __future__ import annotations
 import shutil
 import uuid
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
 from backend.services.ai_provider import normalize_dress_video_model
-from backend.services.video_flow import WORK_DIR, work_dir, write_state
+from backend.services.video_flow import WORK_DIR, _resolve_photo_scratch_media, work_dir, write_state
 
 
 @pytest.fixture
@@ -32,6 +33,20 @@ def card_id() -> Generator[str, None, None]:
 )
 def test_normalize_dress_video_model(raw: str | None, expected: str):
     assert normalize_dress_video_model(raw) == expected
+
+
+def test_resolve_photo_scratch_media_strips_cache_bust(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import backend.services.video_flow as video_flow
+
+    image = tmp_path / "public" / "cards" / "demo" / "photo-scratch" / "pending" / "slot_01_background.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"jpg")
+    monkeypatch.setattr(video_flow, "ROOT", tmp_path)
+
+    resolved = _resolve_photo_scratch_media(
+        "/cards/demo/photo-scratch/pending/slot_01_background.jpg?v=1791956870"
+    )
+    assert resolved == image
 
 
 def test_import_dress_requires_operator(client, card_id):

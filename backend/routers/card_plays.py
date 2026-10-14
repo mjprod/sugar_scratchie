@@ -10,7 +10,7 @@ from backend.auth.sessions import current_user
 from backend.db.card_plays import FreePlayLocked, card_terms, is_free_playable, owns_from_pack, register_play
 from backend.db.engine import get_session
 from backend.db.models import User, UserCardPlayed
-from backend.db.wallet import InsufficientFunds, ensure_wallet
+from backend.db.wallet import InsufficientFunds
 
 router = APIRouter(prefix="/api/me/cards", tags=["card-plays"])
 
@@ -62,7 +62,6 @@ def play_card(
         raise HTTPException(status_code=400, detail="insufficient")
     except FreePlayLocked:
         raise HTTPException(status_code=403, detail="free_play_locked")
-    wallet = ensure_wallet(db, user.id)
     return {
         "firstPlay": result.first_play,
         # Rewards stay on until the purchased play's scratch hand has been issued.
@@ -70,5 +69,5 @@ def play_card(
         "pricePaid": result.charged,
         "freePlayable": is_free_playable(result.row, owned=owned, price=terms.price),
         "played": _played_public(result.row),
-        "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
+        "wallet": {"diamonds": result.diamonds, "coins": result.coins},
     }

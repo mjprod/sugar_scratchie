@@ -3,19 +3,23 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Cookie, Depends, HTTPException, Request, Response
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.db.engine import get_session
+from backend.db.engine import get_engine, get_session
 from backend.db.models import Session as AuthSession
 from backend.db.models import User, utcnow
 
 COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "sugar_session")
 SESSION_DAYS = 30
 PASSWORD_MIN_LENGTH = 8
+# How often an authenticated request rewrites users.last_seen_at.
+LAST_SEEN_TOUCH_SECONDS = 60
 
 
 def _cookie_secure() -> bool:
@@ -85,6 +89,30 @@ def revoke_session(db: Session, token: str | None) -> None:
         row.revoked_at = utcnow()
 
 
+def touch_last_seen(user_id: uuid.UUID) -> None:
+    """Bump ``users.last_seen_at`` in its own committed transaction.
+
+    Doing this on the request session dirties the user row, and the flush holds
+    that lock until the response commits. Plays and scratch claims then deadlock
+    with each other, and every other request for that user waits on the same row.
+    """
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE users
+                SET last_seen_at = now()
+                WHERE id = :user_id
+                  AND (
+                    last_seen_at IS NULL
+                    OR last_seen_at < now() - (:seconds * interval '1 second')
+                  )
+                """
+            ),
+            {"user_id": user_id, "seconds": LAST_SEEN_TOUCH_SECONDS},
+        )
+
+
 def get_user_from_token(db: Session, token: str | None) -> User | None:
     if not token:
         return None
@@ -94,7 +122,7 @@ def get_user_from_token(db: Session, token: str | None) -> User | None:
     user = db.get(User, row.user_id)
     if user is None or user.status != "active":
         return None
-    user.last_seen_at = utcnow()
+    touch_last_seen(user.id)
     return user
 
 
