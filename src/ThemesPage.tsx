@@ -285,7 +285,7 @@ export function ThemesPage() {
   const [showEditColors, setShowEditColors] = useState(false);
   const defaultBgmInputRef = useRef<HTMLInputElement>(null);
   const themeBgmInputRef = useRef<HTMLInputElement>(null);
-  const [themeBgmTargetId, setThemeBgmTargetId] = useState("");
+  const themeBgmTargetIdRef = useRef("");
 
   const refresh = useCallback(async () => {
     const next = await fetchThemeCatalog();
@@ -627,7 +627,8 @@ export function ThemesPage() {
               type="file"
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0];
-                const themeId = themeBgmTargetId;
+                const themeId = themeBgmTargetIdRef.current;
+                themeBgmTargetIdRef.current = "";
                 event.currentTarget.value = "";
                 if (file && themeId) void handleThemeBgmUpload(themeId, file);
               }}
@@ -772,7 +773,7 @@ export function ThemesPage() {
                             size="1"
                             variant="soft"
                             onClick={() => {
-                              setThemeBgmTargetId(theme.id);
+                              themeBgmTargetIdRef.current = theme.id;
                               themeBgmInputRef.current?.click();
                             }}
                           >
