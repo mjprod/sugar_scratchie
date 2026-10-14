@@ -285,7 +285,7 @@ export function ThemesPage() {
   const [showEditColors, setShowEditColors] = useState(false);
   const defaultBgmInputRef = useRef<HTMLInputElement>(null);
   const themeBgmInputRef = useRef<HTMLInputElement>(null);
-  const [themeBgmTargetId, setThemeBgmTargetId] = useState("");
+  const themeBgmTargetIdRef = useRef<string>("");
 
   const refresh = useCallback(async () => {
     const next = await fetchThemeCatalog();
