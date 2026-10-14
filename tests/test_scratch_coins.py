@@ -96,15 +96,13 @@ def test_scratch_coins_amount_ignored_out_of_range(client):
     assert 80 <= response.json()["coins"] <= 100
 
 
-def test_scratch_hand_rate_limit(client, monkeypatch):
+def test_scratch_hands_are_not_daily_limited(client):
     register_and_login(client)
-    monkeypatch.setattr("backend.routers.rewards.SCRATCH_HANDS_PER_DAY", 2)
-
-    assert client.post("/api/rewards/scratch/hands", json={}).status_code == 200
-    assert client.post("/api/rewards/scratch/hands", json={}).status_code == 200
-    limited = client.post("/api/rewards/scratch/hands", json={})
-    assert limited.status_code == 429
-
+    for _ in range(30):
+        response = client.post("/api/rewards/scratch/hands", json={})
+        assert response.status_code == 200, response.text
+        assert response.json()["currency"] == "coins"
+        assert "handsRemainingToday" not in response.json()
 
 def test_scratch_coins_requires_auth(client):
     response = client.post(

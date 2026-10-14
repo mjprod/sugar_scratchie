@@ -55,8 +55,6 @@ data class SmokeUiState(
     val chromaKey: Boolean = true,
     val symbolCompositions: List<LottieComposition> = emptyList(),
     val handId: String? = null,
-    val handsRemainingToday: Int? = null,
-    val rewardHandDeclined: Boolean = false,
     val lastClaimMessage: String? = null,
 )
 
@@ -180,7 +178,7 @@ class SmokeViewModel(
 
     fun startHand() {
         val current = _state.value
-        if (current.rewardHandDeclined || current.handId != null || current.loading) return
+        if (current.handId != null || current.loading) return
         val card = current.card ?: return
         val cardId = card.id
         viewModelScope.launch {
@@ -198,32 +196,21 @@ class SmokeViewModel(
                             state.copy(
                                 loading = false,
                                 handId = hand.handId,
-                                handsRemainingToday = hand.handsRemainingToday,
                                 lastClaimMessage = "Hand started (${hand.milestonesRemaining} milestones left)",
                             )
                     }
                 }
             } catch (e: Exception) {
                 val message = e.message.orEmpty()
-                if (message.contains("scratch hand limit")) {
-                    _state.update { state ->
-                        when {
-                            state.card == null -> state
-                            state.card?.id != cardId -> state.copy(loading = false)
-                            else -> state.copy(loading = false, error = null, rewardHandDeclined = true)
-                        }
-                    }
-                } else {
-                    _state.update { state ->
-                        when {
-                            state.card == null -> state
-                            state.card?.id != cardId -> state.copy(loading = false)
-                            else ->
-                                state.copy(
-                                    loading = false,
-                                    error = message.ifBlank { "Could not start hand" },
-                                )
-                        }
+                _state.update { state ->
+                    when {
+                        state.card == null -> state
+                        state.card?.id != cardId -> state.copy(loading = false)
+                        else ->
+                            state.copy(
+                                loading = false,
+                                error = message.ifBlank { "Could not start hand" },
+                            )
                     }
                 }
             }

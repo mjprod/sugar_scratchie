@@ -65,7 +65,6 @@ data class ScratchHandRequest(
 data class ScratchHandResponse(
     val handId: String,
     val milestonesRemaining: Int = 0,
-    val handsRemainingToday: Int = 0,
 )
 
 @Serializable

@@ -43,8 +43,6 @@ SCRATCH_MILESTONE_MAX = 10
 # and 100% of its share of max_win, and the hand never exceeds max_win.
 DIAMOND_MILESTONE_MIN_FRACTION = 0.8
 DIAMOND_PAYOUT_TIERS = ("premium", "ultra")
-# Economic bound: inventing hands cannot mint forever.
-SCRATCH_HANDS_PER_DAY = 24
 
 
 class RedeemBody(BaseModel):
@@ -90,14 +88,6 @@ def _claimed_list(hand: ScratchCoinHand) -> list[int]:
         if 1 <= value <= SCRATCH_MILESTONE_MAX:
             out.append(value)
     return out
-
-
-def _hands_started_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
-    return (
-        db.query(ScratchCoinHand)
-        .filter(ScratchCoinHand.user_id == user_id, ScratchCoinHand.created_at >= since)
-        .count()
-    )
 
 
 def _wallet_payload(db: Session, user_id: uuid.UUID) -> dict:
@@ -152,15 +142,11 @@ def start_scratch_hand(
     db: Annotated[Session, Depends(get_session)],
     user: Annotated[User, Depends(current_user)],
 ):
-    """Issue a scratch hand id. Required before claiming milestone coins."""
-    since = utcnow() - timedelta(days=1)
-    started = _hands_started_since(db, user.id, since)
-    if started >= SCRATCH_HANDS_PER_DAY:
-        raise HTTPException(
-            status_code=429,
-            detail=f"scratch hand limit ({SCRATCH_HANDS_PER_DAY}/day) reached",
-        )
+    """Issue a scratch hand id. Required before claiming milestone rewards.
 
+    Scratch hands are not daily-capped. Diamond hands are bounded by the card's
+    max_win. Coin hands mint only for a catalog card, and only on its rewarded play.
+    """
     card_id = (body.cardId or "").strip() or None
     hand = ScratchCoinHand(
         user_id=user.id,
@@ -172,20 +158,21 @@ def start_scratch_hand(
     db.flush()
     if card_id is not None and not body.freePlay:
         kind = card_kind_for_id(card_id)
-        # Cards outside the catalog (pack / lab ids) are treated as free.
-        terms = card_terms(db, kind, card_id) or CardTerms(price=0)
-        hand.rewards_enabled = _bind_rewarded_hand(db, user.id, kind, card_id, terms, hand.id)
-        if hand.rewards_enabled and terms.tier in DIAMOND_PAYOUT_TIERS and terms.max_win > 0:
-            hand.currency = "diamonds"
-            hand.payout_cap = terms.max_win
-        db.flush()
+        # Only a catalog card can mint. Unknown ids stay practice-only: a free
+        # CardTerms fallback would issue a coins hand for every new id.
+        terms = card_terms(db, kind, card_id)
+        if terms is not None:
+            hand.rewards_enabled = _bind_rewarded_hand(db, user.id, kind, card_id, terms, hand.id)
+            if hand.rewards_enabled and terms.tier in DIAMOND_PAYOUT_TIERS and terms.max_win > 0:
+                hand.currency = "diamonds"
+                hand.payout_cap = terms.max_win
+            db.flush()
     return {
         "handId": str(hand.id),
         "rewardsEnabled": hand.rewards_enabled,
         "currency": hand.currency,
         "maxWin": hand.payout_cap,
         "milestonesRemaining": SCRATCH_MILESTONE_MAX if hand.rewards_enabled else 0,
-        "handsRemainingToday": max(0, SCRATCH_HANDS_PER_DAY - started - 1),
     }
 
 

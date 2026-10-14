@@ -186,6 +186,18 @@ def test_premium_unlock_replay_and_diamond_payout_cap(client):
     assert _hand(client, ids["premium"])["rewardsEnabled"] is True
 
 
+def test_diamond_hands_are_not_daily_limited(client):
+    _, user = register_and_login(client)
+    _grant(user["id"])
+    ids = _creator_with_cards()
+
+    for _ in range(30):
+        assert _play(client, "motion", ids["premium"]).status_code == 200
+        hand = _hand(client, ids["premium"])
+        assert hand["currency"] == "diamonds"
+        assert hand["rewardsEnabled"] is True
+
+
 def test_ultra_payout_never_exceeds_small_max_win(client):
     _, user = register_and_login(client)
     _grant(user["id"])
