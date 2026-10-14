@@ -166,6 +166,30 @@ def test_cardless_hand_mints_nothing(client):
     assert _claim(client, response.json()["handId"])["coins"] == 0
 
 
+def test_unknown_card_ids_do_not_mint_coins(client):
+    """Forged ids must not become free cards. Each one used to mint a coins hand,
+    and those coins exchange 1:1 for diamonds at the x100 store rate.
+    """
+    register_and_login(client)
+    before = client.get("/api/me/wallet").json()
+
+    for _ in range(3):
+        hand = _start_hand(client, f"forged-{uuid.uuid4().hex}")
+        assert hand["rewardsEnabled"] is False
+        assert hand["currency"] == "coins"
+        assert hand["milestonesRemaining"] == 0
+        claim = _claim(client, hand["handId"])
+        assert claim["coins"] == 0
+        assert claim["practice"] is True
+
+    photo = _start_hand(client, f"forged-{uuid.uuid4().hex[:8]}_slot_01")
+    assert photo["rewardsEnabled"] is False
+    assert _claim(client, photo["handId"])["coins"] == 0
+
+    assert client.get("/api/me/wallet").json() == before
+    assert client.get("/api/me/cards/played").json()["played"] == []
+
+
 def test_played_list_requires_auth(client):
     assert client.get("/api/me/cards/played").status_code == 401
     assert _play(client, "motion", "anything").status_code == 401

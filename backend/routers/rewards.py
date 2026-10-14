@@ -144,7 +144,8 @@ def start_scratch_hand(
 ):
     """Issue a scratch hand id. Required before claiming milestone rewards.
 
-    Scratch hands are not daily-capped. Each diamond hand is still bounded by max_win.
+    Scratch hands are not daily-capped. Diamond hands are bounded by the card's
+    max_win. Coin hands mint only for a catalog card, and only on its rewarded play.
     """
     card_id = (body.cardId or "").strip() or None
     hand = ScratchCoinHand(
@@ -157,13 +158,15 @@ def start_scratch_hand(
     db.flush()
     if card_id is not None and not body.freePlay:
         kind = card_kind_for_id(card_id)
-        # Cards outside the catalog (pack / lab ids) are treated as free.
-        terms = card_terms(db, kind, card_id) or CardTerms(price=0)
-        hand.rewards_enabled = _bind_rewarded_hand(db, user.id, kind, card_id, terms, hand.id)
-        if hand.rewards_enabled and terms.tier in DIAMOND_PAYOUT_TIERS and terms.max_win > 0:
-            hand.currency = "diamonds"
-            hand.payout_cap = terms.max_win
-        db.flush()
+        # Only a catalog card can mint. Unknown ids stay practice-only: a free
+        # CardTerms fallback would issue a coins hand for every new id.
+        terms = card_terms(db, kind, card_id)
+        if terms is not None:
+            hand.rewards_enabled = _bind_rewarded_hand(db, user.id, kind, card_id, terms, hand.id)
+            if hand.rewards_enabled and terms.tier in DIAMOND_PAYOUT_TIERS and terms.max_win > 0:
+                hand.currency = "diamonds"
+                hand.payout_cap = terms.max_win
+            db.flush()
     return {
         "handId": str(hand.id),
         "rewardsEnabled": hand.rewards_enabled,
