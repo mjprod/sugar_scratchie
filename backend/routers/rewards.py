@@ -43,8 +43,6 @@ SCRATCH_MILESTONE_MAX = 10
 # and 100% of its share of max_win, and the hand never exceeds max_win.
 DIAMOND_MILESTONE_MIN_FRACTION = 0.8
 DIAMOND_PAYOUT_TIERS = ("premium", "ultra")
-# Economic bound: inventing hands cannot mint forever.
-SCRATCH_HANDS_PER_DAY = 24
 
 
 class RedeemBody(BaseModel):
@@ -90,14 +88,6 @@ def _claimed_list(hand: ScratchCoinHand) -> list[int]:
         if 1 <= value <= SCRATCH_MILESTONE_MAX:
             out.append(value)
     return out
-
-
-def _hands_started_since(db: Session, user_id: uuid.UUID, since: datetime) -> int:
-    return (
-        db.query(ScratchCoinHand)
-        .filter(ScratchCoinHand.user_id == user_id, ScratchCoinHand.created_at >= since)
-        .count()
-    )
 
 
 def _wallet_payload(db: Session, user_id: uuid.UUID) -> dict:
@@ -152,15 +142,10 @@ def start_scratch_hand(
     db: Annotated[Session, Depends(get_session)],
     user: Annotated[User, Depends(current_user)],
 ):
-    """Issue a scratch hand id. Required before claiming milestone coins."""
-    since = utcnow() - timedelta(days=1)
-    started = _hands_started_since(db, user.id, since)
-    if started >= SCRATCH_HANDS_PER_DAY:
-        raise HTTPException(
-            status_code=429,
-            detail=f"scratch hand limit ({SCRATCH_HANDS_PER_DAY}/day) reached",
-        )
+    """Issue a scratch hand id. Required before claiming milestone rewards.
 
+    Scratch hands are not daily-capped. Each diamond hand is still bounded by max_win.
+    """
     card_id = (body.cardId or "").strip() or None
     hand = ScratchCoinHand(
         user_id=user.id,
@@ -185,7 +170,6 @@ def start_scratch_hand(
         "currency": hand.currency,
         "maxWin": hand.payout_cap,
         "milestonesRemaining": SCRATCH_MILESTONE_MAX if hand.rewards_enabled else 0,
-        "handsRemainingToday": max(0, SCRATCH_HANDS_PER_DAY - started - 1),
     }
 
 
