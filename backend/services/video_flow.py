@@ -1403,10 +1403,15 @@ def _face_lock_photo_scratch_layer(
 
 
 def _resolve_photo_scratch_media(src: str) -> Path:
-    """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
+    """Map a public URL like /cards/id/photo-scratch/... to a filesystem path.
+
+    Stored slot URLs carry a ``?v=`` cache-bust. That suffix is not part of the filename.
+    """
     from urllib.parse import unquote
 
-    trimmed = unquote(src.strip()).lstrip("/")
+    from backend.cards import strip_media_query
+
+    trimmed = unquote(strip_media_query(src)).lstrip("/")
     if trimmed.startswith("public/"):
         trimmed = trimmed.removeprefix("public/")
     path = ROOT / "public" / trimmed
@@ -1541,6 +1546,7 @@ def run_generate_photo_scratch_layer(
                 )
 
     written: list[str] = []
+    failures: list[str] = []
 
     girl_path: Path | None = None
     face_path: Path | None = None
@@ -1708,14 +1714,17 @@ def run_generate_photo_scratch_layer(
             print(f"Photo-scratch {layer_type} written: {out.name}")
         except Exception as exc:
             print(f"Photo-scratch {layer_type} {slot.id} failed: {exc}")
+            failures.append(f"{slot.id}: {exc}")
             if target_slot:
                 raise
 
     if not written:
-        raise RuntimeError(
-            f"No {layer_type} images were generated."
-            + (" For tops, approve the bikini on that card first." if layer_type == "clothes" else "")
-        )
+        detail = f"No {layer_type} images were generated."
+        if layer_type == "clothes":
+            detail += " For tops, approve the bikini on that card first."
+        if failures:
+            detail += " " + "; ".join(failures)
+        raise RuntimeError(detail)
 
     # One-by-one: auto-approve so the slot fills immediately (no batch review needed).
     if target_slot:

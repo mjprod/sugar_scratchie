@@ -148,6 +148,9 @@ def start_scratch_hand(
     max_win. Coin hands mint only for a catalog card, and only on its rewarded play.
     """
     card_id = (body.cardId or "").strip() or None
+    # Before the hand insert. _bind_rewarded_hand locks the played row next,
+    # and claims lock wallet then hand.
+    ensure_wallet(db, user.id)
     hand = ScratchCoinHand(
         user_id=user.id,
         card_id=card_id,
@@ -185,6 +188,9 @@ def _bind_rewarded_hand(
     hand_id: uuid.UUID,
 ) -> bool:
     """True when this hand is the card's rewarded play; other hands are free play."""
+    # Wallet before the played row, matching register_play. The hand insert in
+    # the caller already happened; claims lock wallet then hand, never the reverse.
+    ensure_wallet(db, user_id)
     row = get_played(db, user_id, kind, card_id, lock=True)
     if row is None:
         owned = owns_from_pack(db, user_id, kind, card_id)
@@ -218,6 +224,9 @@ def claim_scratch_coins(
     user: Annotated[User, Depends(current_user)],
 ):
     hand_uuid = _parse_hand_id(body.handId)
+    # Wallet before the hand. Plays lock the wallet before user_cards_played;
+    # locking the hand first cycles with a play that already holds the wallet.
+    ensure_wallet(db, user.id)
     hand = (
         db.query(ScratchCoinHand)
         .filter(ScratchCoinHand.id == hand_uuid)

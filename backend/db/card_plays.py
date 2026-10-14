@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backend.db.models import MotionCard, PhotoScratchCard, UserCard, UserCardPlayed, utcnow
-from backend.db.wallet import apply_delta
+from backend.db.wallet import apply_delta, ensure_wallet
 
 CARD_KINDS = ("motion", "photo")
 PHOTO_CARD_ID_RE = re.compile(r"_slot_\d{2}$")
@@ -80,6 +80,8 @@ class PlayResult:
     row: UserCardPlayed
     first_play: bool
     charged: int = 0
+    diamonds: int = 0
+    coins: int = 0
 
 
 def register_play(
@@ -102,7 +104,14 @@ def register_play(
       free-playable.
 
     Raises `InsufficientFunds` before any row is written when the user cannot pay.
+
+    Locks the wallet before ``user_cards_played``. Scratch claims lock the
+    wallet before the hand row. Taking those locks in the other order deadlocks
+    when a play and a claim for the same user run together.
     """
+    wallet = ensure_wallet(db, user_id)
+    diamonds = wallet.diamonds
+    coins = wallet.coins
     existing = get_played(db, user_id, kind, card_id, lock=True)
     if free_play:
         if not is_free_playable(existing, owned=owned, price=terms.price):
@@ -111,7 +120,7 @@ def register_play(
         existing.play_count += 1
         existing.last_played_at = utcnow()
         db.flush()
-        return PlayResult(existing, first_play=False)
+        return PlayResult(existing, first_play=False, diamonds=diamonds, coins=coins)
 
     if existing is not None:
         charged = 0
@@ -128,10 +137,12 @@ def register_play(
             )
             existing.rewarded_hand_id = None
             charged = terms.replay_price
+            diamonds = wallet.diamonds
+            coins = wallet.coins
         existing.play_count += 1
         existing.last_played_at = utcnow()
         db.flush()
-        return PlayResult(existing, first_play=False, charged=charged)
+        return PlayResult(existing, first_play=False, charged=charged, diamonds=diamonds, coins=coins)
 
     price = 0 if owned else terms.price
     if price > 0:
@@ -145,6 +156,8 @@ def register_play(
             ref_type=f"{kind}_card",
             ref_id=card_id,
         )
+        diamonds = wallet.diamonds
+        coins = wallet.coins
     stmt = (
         pg_insert(UserCardPlayed)
         .values(
@@ -162,4 +175,10 @@ def register_play(
     row = get_played(db, user_id, kind, card_id, lock=True)
     assert row is not None
     first_play = inserted is not None
-    return PlayResult(row, first_play=first_play, charged=price if first_play else 0)
+    return PlayResult(
+        row,
+        first_play=first_play,
+        charged=price if first_play else 0,
+        diamonds=diamonds,
+        coins=coins,
+    )
