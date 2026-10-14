@@ -46,7 +46,7 @@ def ensure_wallet(session: Session, user_id: uuid.UUID, *, for_update: bool = Tr
         wallet = Wallet(user_id=user_id, diamonds=0, coins=0)
         session.add(wallet)
         session.flush()
-        wallet = session.get(Wallet, user_id, with_for_update=True)
+        wallet = session.get(Wallet, user_id, with_for_update=for_update)
         assert wallet is not None
     if for_update:
         locked.add(user_id)
