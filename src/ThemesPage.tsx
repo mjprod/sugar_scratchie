@@ -285,7 +285,8 @@ export function ThemesPage() {
   const [showEditColors, setShowEditColors] = useState(false);
   const defaultBgmInputRef = useRef<HTMLInputElement>(null);
   const themeBgmInputRef = useRef<HTMLInputElement>(null);
-  const themeBgmTargetIdRef = useRef("");
+  const themeBgmTargetIdRef = useRef<string>("");
+
 
   const refresh = useCallback(async () => {
     const next = await fetchThemeCatalog();
@@ -578,8 +579,7 @@ export function ThemesPage() {
                   Default music
                 </Heading>
                 <Text color="gray" size="2">
-                  Plays for every theme that does not have its own track. Seeded from
-                  magnific-nuestra-madre_01.mp3.
+                  Plays for every theme that does not have its own track.
                 </Text>
               </Box>
               <Flex gap="2" wrap="wrap">
