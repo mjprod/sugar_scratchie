@@ -2865,7 +2865,7 @@ export function RunMode(props: RunModeProps) {
 
   const setupBackgroundStatus = flowState?.steps.background?.status;
   const canRemakeBackgroundFromSetup = Boolean(
-    cardId.trim() && cardLabel.trim() && image && canUseBackgroundVideo && stepApiReady && !jobBusy,
+    cardId.trim() && cardLabel.trim() && image && canUseBackgroundVideo && !jobBusy,
   );
 
   const canImportManualClips = Boolean(
