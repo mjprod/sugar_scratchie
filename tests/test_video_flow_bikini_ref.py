@@ -81,6 +81,8 @@ def test_bikini_prompt_numbers_references_in_send_order():
     assert "reference 4 = FACE" in full
     assert "swimsuit from reference 3" in full
     assert "flattering Cowgirl bikini" not in full
+    assert "Keep hair colour, skin tone, and body proportions exactly from reference 2." in full
+    assert "Keep face, hair colour" not in full
 
     no_bg = photo_scratch_bikini_prompt("Cowgirl", with_bikini=True)
     assert "reference 2 = BIKINI" in no_bg
@@ -94,7 +96,8 @@ def test_bikini_prompt_numbers_references_in_send_order():
     assert "reference 3 = FACE" in no_bg_face
     assert "swimsuit from reference 2" in no_bg_face
     assert "LAST reference image" in no_bg_face
-    assert "from reference 1" in no_bg_face
+    assert "Keep identity, hair, skin tone, and body proportions from reference 1." in no_bg_face
+    assert "Keep face, identity" not in no_bg_face
     assert "Do not invent a different woman" in no_bg_face
     assert "Reference 1 = WOMAN, reference 2 = BIKINI." not in no_bg_face
 
@@ -103,7 +106,8 @@ def test_bikini_prompt_numbers_references_in_send_order():
     assert "reference 1 = WOMAN" in face_only
     assert "reference 2 = FACE" in face_only
     assert "LAST reference image" in face_only
-    assert "from reference 1" in face_only
+    assert "Keep identity, hair, skin tone, and body proportions from reference 1." in face_only
+    assert "Keep face, identity" not in face_only
     assert "flattering Cowgirl bikini" in face_only
     assert "Do not invent a different woman" in face_only
 

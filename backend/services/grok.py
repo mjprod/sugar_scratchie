@@ -844,6 +844,11 @@ def photo_scratch_bikini_prompt(
         if with_face:
             parts.append(f"reference {len(parts) + 1} = FACE (her exact face)")
         refs = f"{_REF_WORDS[len(parts)]} references: {', '.join(parts)}. "
+        kept = (
+            "hair colour, skin tone, and body proportions"
+            if with_face
+            else "face, hair colour, skin tone, and body proportions"
+        )
         return (
             f"{refs}"
             f"Place the woman from reference 2 standing naturally INSIDE the scene from reference 1. "
@@ -856,7 +861,7 @@ def photo_scratch_bikini_prompt(
             f"(4) Pose: {pose}. "
             f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
             f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
-            f"(7) Keep face, hair colour, skin tone, and body proportions exactly from reference 2. "
+            f"(7) Keep {kept} exactly from reference 2. "
             f"{face_clause}"
             f"(8) Do not invent a different woman. Photorealistic."
         )
@@ -870,7 +875,7 @@ def photo_scratch_bikini_prompt(
                 f"reference 3 = FACE (her exact face). "
                 f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
                 f"{swimsuit} "
-                f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
+                f"Keep identity, hair, skin tone, and body proportions from reference 1. "
                 f"{face_clause}"
                 f"Clean studio backdrop (no busy scene). "
                 f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
@@ -890,7 +895,7 @@ def photo_scratch_bikini_prompt(
             f"reference 2 = FACE (her exact face). "
             f"Using this exact same woman from reference 1, change her outfit to a "
             f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
-            f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
+            f"Keep identity, hair, skin tone, and body proportions from reference 1. "
             f"{face_clause}"
             f"Clean studio backdrop (no busy scene). "
             f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
