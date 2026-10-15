@@ -607,12 +607,27 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         rel_path.unlink(missing_ok=True)
         request_id_sidecar(rel_path).unlink(missing_ok=True)
 
-    if step == "trim" and output_video_ready(paths["background_source"]):
-        # Restore the pristine Grok clip so dress always sees the untrimmed source after reject.
-        shutil.copy2(paths["background_source"], paths["background_raw"])
+    if step == "background":
+        # Drop boomerang originals with the bikini clip. A later trim clear must
+        # not copy them back over a background that was just rejected.
+        _clear_boomerang_backups(work, card_id)
+
+    if step == "trim":
+        if output_video_ready(paths["background_source"]):
+            # Restore the pristine Grok clip so dress always sees the untrimmed source after reject.
+            shutil.copy2(paths["background_source"], paths["background_raw"])
+        else:
+            # Source was cleaned up after publish. The pre-boomerang backup is the
+            # original edit — put it back before this reject deletes that backup.
+            _restore_boomerang_clip(
+                paths["background_raw"],
+                paths["background_pre_boomerang"],
+                (read_boomerang_report(work) or {}).get("background_bytes"),
+            )
 
     if step == "boomerang":
-        _restore_boomerang_clips_if_current(work)
+        # Clips were restored before this reject deleted upstream files.
+        # Restoring again would put the dress clip back after dress clear removed it.
         _clear_boomerang_backups(work, card_id)
 
     if step == "card":
@@ -716,7 +731,12 @@ def reject_flow_step(card_id: str, step: VideoFlowStep) -> dict:
         return reset_boomerang_step(card_id, card_label="")
     work = work_dir(card_id)
     state = read_state(work)
-    for downstream in downstream_steps(step):
+    affected = downstream_steps(step)
+    # Work-dir clips are often deleted after publish. Put the originals back
+    # before dress/trim clears remove files and the boomerang backups.
+    if step != "background" and "boomerang" in affected:
+        _restore_boomerang_clips_if_current(work)
+    for downstream in affected:
         if downstream in state["approved"]:
             state["approved"].remove(downstream)
         clear_step_outputs(work, card_id, downstream)
@@ -876,14 +896,8 @@ def import_manual_clips(
 
 
 def _ensure_dress_input_clip(work: Path, card_id: str, paths: dict[str, Path]) -> None:
-    if not output_video_ready(paths["background_raw"]):
-        # Work-dir raw is often cleaned up after publish; restore from the card.
-        card_bg = CARDS_DIR / card_id / "background.mp4"
-        if output_video_ready(card_bg):
-            shutil.copy2(card_bg, paths["background_raw"])
-            print(f"Restored background clip from published card: {card_bg}")
-        else:
-            raise RuntimeError("Background clip missing — run the bikini step first.")
+    # card_id matches the work directory name; source fill reads that path.
+    del card_id
     _ensure_background_source(work, paths)
 
 
@@ -1996,9 +2010,15 @@ def _ensure_background_source(work: Path, paths: dict[str, Path] | None = None) 
     raw = paths["background_raw"]
     source = paths["background_source"]
     if not output_video_ready(raw):
+        backup = paths["background_pre_boomerang"]
         card_bg = CARDS_DIR / work.name / "background.mp4"
-        if output_video_ready(card_bg):
+        if output_video_ready(backup):
+            # The published card is the boomerang cut. Prefer the original edit.
+            shutil.copy2(backup, raw)
+            print(f"Restored background clip from pre-boomerang backup: {backup.name}")
+        elif output_video_ready(card_bg):
             shutil.copy2(card_bg, raw)
+            print(f"Restored background clip from published card: {card_bg}")
         else:
             raise RuntimeError("Background clip missing — run the bikini step first.")
     if not output_video_ready(source):
@@ -2210,25 +2230,37 @@ def _clip_matches_report(path: Path, expected: object) -> bool:
     return isinstance(expected, int) and path.is_file() and path.stat().st_size == expected
 
 
-def _restore_boomerang_clips_if_current(work: Path) -> None:
-    """Put work-dir clips back when they are still the boomerang cut.
+def _restore_boomerang_clip(live: Path, backup: Path, expected: object) -> None:
+    """Copy a pre-boomerang original over a live clip that is still the boomerang cut.
 
-    Upstream rejects delete the dress clip first. Only a file that still matches
-    the report is restored, so a trim reset is not overwritten by the backup.
+    A missing work-dir file counts. After publish those clips are often deleted,
+    and the published card video is the boomerang — dropping the backup would
+    make the next dress run reload that cut as the bikini source. A live file
+    that already differs (trim restored the Grok source) is left alone.
     """
+    if not backup.is_file():
+        return
+    if live.is_file() and not _clip_matches_report(live, expected):
+        return
+    shutil.copy2(backup, live)
+
+
+def _restore_boomerang_clips_if_current(work: Path) -> None:
+    """Put work-dir clips back when they are missing or still the boomerang cut."""
     report = read_boomerang_report(work)
     if not report or report.get("skipped"):
         return
     paths = _paths(work)
-    bg_backup = paths["background_pre_boomerang"]
-    fg_backup = paths["foreground_pre_boomerang"]
-    if _clip_matches_report(paths["background_raw"], report.get("background_bytes")) and bg_backup.is_file():
-        shutil.copy2(bg_backup, paths["background_raw"])
-    if (
-        _clip_matches_report(paths["foreground_dressed"], report.get("foreground_bytes"))
-        and fg_backup.is_file()
-    ):
-        shutil.copy2(fg_backup, paths["foreground_dressed"])
+    _restore_boomerang_clip(
+        paths["background_raw"],
+        paths["background_pre_boomerang"],
+        report.get("background_bytes"),
+    )
+    _restore_boomerang_clip(
+        paths["foreground_dressed"],
+        paths["foreground_pre_boomerang"],
+        report.get("foreground_bytes"),
+    )
 
 
 def _skipped_boomerang_report() -> dict:
@@ -2255,6 +2287,20 @@ def _require_boomerang_unlocked(card_id: str) -> tuple[Path, dict]:
     return work, state
 
 
+def _boomerang_cut_still_present(work: Path, card_id: str, report: dict) -> bool:
+    """True when a work-dir or published clip is still the boomerang output."""
+    if not report or report.get("skipped"):
+        return False
+    paths = _paths(work)
+    candidates = (
+        (paths["background_raw"], report.get("background_bytes")),
+        (paths["foreground_dressed"], report.get("foreground_bytes")),
+        (CARDS_DIR / card_id / "background.mp4", report.get("background_bytes")),
+        (CARDS_DIR / card_id / "foreground.mp4", report.get("foreground_bytes")),
+    )
+    return any(_clip_matches_report(path, expected) for path, expected in candidates)
+
+
 def _undo_boomerang_media(card_id: str, *, card_label: str) -> None:
     """Restore pre-boomerang clips. Republish and restore meshes when the card exists."""
     work = work_dir(card_id)
@@ -2262,7 +2308,13 @@ def _undo_boomerang_media(card_id: str, *, card_label: str) -> None:
     paths = _paths(work)
     bg_pristine = paths["background_pre_boomerang"]
     fg_pristine = paths["foreground_pre_boomerang"]
+    report = read_boomerang_report(work) or {}
     if not (output_video_ready(bg_pristine) and output_video_ready(fg_pristine)):
+        if _boomerang_cut_still_present(work, card_id, report):
+            raise RuntimeError(
+                "Pre-boomerang clips are missing, so this boomerang cannot be undone."
+            )
+        # Stale report: the reversed cut is no longer on disk.
         _clear_boomerang_backups(work, card_id)
         return
     shutil.copy2(bg_pristine, paths["background_raw"])
@@ -2395,12 +2447,13 @@ def apply_boomerang_step(
 def skip_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
     """Keep the Video edit clips unchanged so Create card can run."""
     work, _state = _require_boomerang_unlocked(card_id)
-    record_step_started(work, "boomerang")
     report = read_boomerang_report(work)
     if report and not report.get("skipped"):
+        # Restore first. A missing backup must not be recorded as keep-as-is.
         _undo_boomerang_media(card_id, card_label=card_label)
     else:
         _clear_boomerang_backups(work, card_id)
+    record_step_started(work, "boomerang")
     _write_boomerang_report(work, _skipped_boomerang_report())
     _drop_boomerang_approval_before_card(work)
     record_step_finished(work, "boomerang")
@@ -2415,14 +2468,6 @@ def reset_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
     if not report:
         raise RuntimeError("No boomerang to undo for this card.")
     if report.get("skipped"):
-        _clear_boomerang_backups(work, card_id)
-        _drop_boomerang_approval_before_card(work)
-        return flow_state(card_id)
-    paths = _paths(work)
-    if not (
-        output_video_ready(paths["background_pre_boomerang"])
-        and output_video_ready(paths["foreground_pre_boomerang"])
-    ):
         _clear_boomerang_backups(work, card_id)
         _drop_boomerang_approval_before_card(work)
         return flow_state(card_id)
