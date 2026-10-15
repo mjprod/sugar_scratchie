@@ -445,8 +445,8 @@ def enabled_ids(role: str) -> set[str] | None:
     if session is None:
         return None
     try:
-        total = session.scalar(select(func.count()).select_from(GenerationModel))
-        if not total:
+        any_row = session.scalar(select(GenerationModel.id).limit(1))
+        if any_row is None:
             return None
         rows = session.scalars(
             select(GenerationModel.id).where(
