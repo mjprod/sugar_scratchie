@@ -182,6 +182,53 @@ class Theme(Base):
     card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class GenerationModel(Base):
+    """Operator catalog of Video Flow image and video models (provider endpoints, not weights)."""
+
+    __tablename__ = "generation_models"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('source_image','background_video','dress_video')",
+            name="generation_models_role_chk",
+        ),
+        CheckConstraint(
+            "provider IN ('xai','wavespeed')",
+            name="generation_models_provider_chk",
+        ),
+        CheckConstraint(
+            "adapter IN ("
+            "'grok_image','seedream_image','grok_i2v','wan_spicy_i2v',"
+            "'grok_video_edit','prompt_video_edit','reference_video_edit'"
+            ")",
+            name="generation_models_adapter_chk",
+        ),
+        CheckConstraint(
+            "variant IN ('','wan30','seedance')",
+            name="generation_models_variant_chk",
+        ),
+        Index("generation_models_role_sort_idx", "role", "sort_order"),
+        Index(
+            "generation_models_label_role_uq",
+            "role",
+            text("lower(label)"),
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    role: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    adapter: Mapped[str] = mapped_column(Text, nullable=False)
+    endpoint_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reference_token: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    variant: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class Creator(Base):
     """Admin catalog of creators / models (metadata only; avatars/flags/videos stay on disk)."""
 

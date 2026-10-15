@@ -7,14 +7,10 @@ from typing import Literal
 from backend.services import grok, wavespeed
 
 AiProvider = Literal["xai", "wavespeed"]
-SourceImageModel = Literal["grok-imagine", "seedream-v5-lite"]
-BackgroundVideoModel = Literal["grok-imagine", "wan-2.2-spicy"]
-DressVideoModel = Literal[
-    "grok-imagine",
-    "wan-2.2-video-edit",
-    "wan-3.0-video-edit",
-    "seedance-2.0-video-edit",
-]
+# Catalog ids. Built-ins are grok-imagine / seedream-v5-lite; operators can add more.
+SourceImageModel = str
+BackgroundVideoModel = str
+DressVideoModel = str
 # How each WaveSpeed edit model expects the prompt to bind the first reference image.
 DRESS_REFERENCE_TOKENS: dict[str, str] = {
     "wan-3.0-video-edit": "Image 1",
@@ -29,45 +25,59 @@ def normalize_provider(provider: str | None) -> AiProvider:
     return "xai"
 
 
+def _accept(role: str, model_id: str | None, *, default: str) -> str:
+    from backend.generation_models_store import accept_model_id
+
+    return accept_model_id(role, model_id, default=default)
+
+
+def _spec(role: str, model_id: str):
+    from backend.generation_models_store import resolve_spec
+
+    return resolve_spec(role, model_id)
+
+
 def normalize_source_image_model(
     image_model: str | None,
     *,
     provider: str | None = None,
 ) -> SourceImageModel:
-    if image_model in ("seedream-v5-lite", "seedream-v5.0-lite") or provider in (
-        "seedream-v5-lite",
-        "seedream-v5.0-lite",
-    ):
-        return "seedream-v5-lite"
-    return "grok-imagine"
+    raw = (image_model or "").strip()
+    # Old drafts stored Seedream on ai_provider and left the image model blank or on Grok.
+    if provider in ("seedream-v5-lite", "seedream-v5.0-lite") and raw in ("", "grok-imagine"):
+        raw = "seedream-v5-lite"
+    # Alias mapping and disabled/deleted rows both live in accept_model_id.
+    return _accept("source_image", raw, default="grok-imagine")
 
 
 def normalize_background_video_model(model: str | None) -> BackgroundVideoModel:
-    if model in ("wan-2.2-spicy", "wan-2.2-spicy/image-to-video"):
-        return "wan-2.2-spicy"
-    return "grok-imagine"
+    return _accept("background_video", model, default="grok-imagine")
 
 
 def normalize_dress_video_model(model: str | None) -> DressVideoModel:
-    if model in ("grok-imagine", "grok-imagine-video"):
-        return "grok-imagine"
-    if model in ("wan-3.0-video-edit", "alibaba/wan-3.0/video-edit"):
-        return "wan-3.0-video-edit"
-    if model in ("seedance-2.0-video-edit", "bytedance/seedance-2.0/video-edit"):
-        return "seedance-2.0-video-edit"
-    return "wan-2.2-video-edit"
+    return _accept("dress_video", model, default="wan-2.2-video-edit")
 
 
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
+    # The image-model dropdown is hidden for x.ai, so a leftover Seedream id
+    # (the Video Flow default) must not send stills to WaveSpeed.
     if provider == "xai":
         return "xai"
-    if image_model == "seedream-v5-lite":
+    if _spec("source_image", image_model).adapter == "seedream_image":
         return "seedream-v5-lite"
     return "wavespeed"
 
 
 def xai_key_available() -> bool:
     return bool(os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY"))
+
+
+def _stored_xai_model(role: str, model_id: str) -> str:
+    """Catalog id for an x.ai row. Empty means the env default still runs."""
+    path = (_spec(role, model_id).endpoint_path or "").strip()
+    if not path or path.startswith("/"):
+        return ""
+    return path
 
 
 def is_moderation_error(exc: Exception) -> bool:
@@ -119,6 +129,16 @@ def generate_portrait_image(
             out=out,
             face_image=face_image,
             aspect_ratio=aspect_ratio,
+            endpoint=_spec("source_image", image_model).endpoint_path,
+        )
+    stored = _stored_xai_model("source_image", image_model)
+    if route == "xai" and stored:
+        return grok.generate_portrait_image(
+            prompt=prompt,
+            out=out,
+            face_image=face_image,
+            aspect_ratio=aspect_ratio,
+            model=stored,
         )
     return _with_xai_fallback(
         "portrait generation",
@@ -150,6 +170,17 @@ def swap_face_on_image(
             out=out,
             prompt=prompt,
             aspect_ratio=aspect_ratio,
+            endpoint=_spec("source_image", image_model).endpoint_path,
+        )
+    stored = _stored_xai_model("source_image", image_model)
+    if route == "xai" and stored:
+        return grok.swap_face_on_image(
+            base_image=base_image,
+            face_image=face_image,
+            out=out,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            model=stored,
         )
     return _with_xai_fallback(
         "face swap",
@@ -181,6 +212,16 @@ def edit_image_scenery(
             theme=theme,
             out=out,
             aspect_ratio=aspect_ratio,
+            endpoint=_spec("source_image", image_model).endpoint_path,
+        )
+    stored = _stored_xai_model("source_image", image_model)
+    if route == "xai" and stored:
+        return grok.edit_image_scenery(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+            model=stored,
         )
     return _with_xai_fallback(
         "scenery edit",
@@ -225,6 +266,7 @@ def edit_clothes_layer(
             out=out,
             source_image=source_image,
             aspect_ratio=aspect_ratio,
+            model=_stored_xai_model("source_image", image_model) or None,
         )
     return wavespeed.edit_clothes_layer_kontext(
         prompt=prompt,
@@ -272,7 +314,7 @@ def edit_photo_scratch_layer(
             "enable_sync_mode": False,
         }
         wavespeed.run_image_task(
-            wavespeed.SEEDREAM_EDIT_PATH,
+            wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
             payload,
             out,
             label="seedream photo-scratch edit",
@@ -295,6 +337,7 @@ def edit_photo_scratch_layer(
             background_image=background_image,
             face_image=face_image,
             aspect_ratio=aspect_ratio,
+            model=_stored_xai_model("source_image", image_model) or None,
         )
 
     # WaveSpeed single-image edit (outfit change only — no background plate).
@@ -331,20 +374,25 @@ def image_to_video(
     elif enhance_motion_prompt and not xai_key_available():
         print("Motion prompt enhancement skipped — XAI_API_KEY not set; using locked-camera prompt as written.")
 
-    if background_video_model == "wan-2.2-spicy":
+    spec = _spec("background_video", background_video_model)
+    if spec.adapter == "wan_spicy_i2v":
         wavespeed.image_to_video_wan_spicy(
             image=image,
             prompt=final_prompt,
             out=out,
             resolution=resolution or "720p",
+            path=spec.endpoint_path,
+            label=spec.label,
         )
         return
+    stored = (spec.endpoint_path or "").strip()
+    grok_model = stored if stored and not stored.startswith("/") else model
     # Already enhanced above when possible; avoid a second chat pass in grok.image_to_video.
     grok.image_to_video(
         image=image,
         prompt=final_prompt,
         out=out,
-        model=model,
+        model=grok_model,
         resolution=resolution,
         image_field=image_field,
         endpoint=endpoint,
@@ -368,9 +416,11 @@ def edit_video(
     reference_field: str = "image",
     dress_video_model: DressVideoModel = "wan-2.2-video-edit",
 ) -> None:
-    native_reference_token = DRESS_REFERENCE_TOKENS.get(dress_video_model)
-    if native_reference_token:
+    spec = _spec("dress_video", dress_video_model)
+    native_reference_token = spec.reference_token or DRESS_REFERENCE_TOKENS.get(dress_video_model)
+    if spec.adapter == "reference_video_edit":
         # These models take the reference image directly — no Grok captioning needed.
+        token = native_reference_token or "Image 1"
         final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""
         if enhance and xai_key_available():
@@ -382,14 +432,14 @@ def edit_video(
         if reference_str:
             final_prompt = (
                 f"{final_prompt.rstrip()}\n\n"
-                f"CRITICAL — dress her in the exact outfit shown in {native_reference_token} "
+                f"CRITICAL — dress her in the exact outfit shown in {token} "
                 "(shape, color, cut, accessories, emissive glow/shine). "
                 "Keep her face, body, pose, motion, framing, and background unchanged."
             )
         edit_fn = (
-            wavespeed.edit_video_wan30
-            if dress_video_model == "wan-3.0-video-edit"
-            else wavespeed.edit_video_seedance2
+            wavespeed.edit_video_seedance2
+            if spec.variant == "seedance"
+            else wavespeed.edit_video_wan30
         )
         edit_fn(
             video=video,
@@ -397,9 +447,11 @@ def edit_video(
             out=out,
             resolution=resolution or "720p",
             reference_image=reference_str or None,
+            path=spec.endpoint_path,
+            label=spec.label,
         )
         return
-    if dress_video_model == "wan-2.2-video-edit":
+    if spec.adapter == "prompt_video_edit":
         final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""
         caption = ""
@@ -429,13 +481,17 @@ def edit_video(
             out=out,
             resolution=resolution or "720p",
             reference_image=None,
+            path=spec.endpoint_path,
+            label=spec.label,
         )
         return
+    stored = (spec.endpoint_path or "").strip()
+    grok_model = stored if stored and not stored.startswith("/") else model
     grok.edit_video(
         video=video,
         prompt=prompt,
         out=out,
-        model=model,
+        model=grok_model,
         resolution=resolution,
         video_field=video_field,
         enhance=enhance,

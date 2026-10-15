@@ -254,12 +254,22 @@ def aspect_ratio_to_seedream_size(aspect_ratio: str) -> str:
     return mapping.get(aspect_ratio.strip(), "1440*2560")
 
 
+def seedream_paths(endpoint: str | None) -> tuple[str, str]:
+    """Split a catalog path into text-to-image and ``/edit`` endpoints."""
+    path = (endpoint or "").strip() or SEEDREAM_T2I_PATH
+    if path.endswith("/edit"):
+        base = path[: -len("/edit")] or SEEDREAM_T2I_PATH
+        return base, path
+    return path, f"{path}/edit"
+
+
 def generate_portrait_image_seedream(
     *,
     prompt: str,
     out: Path,
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    endpoint: str | None = None,
 ) -> Path:
     text = prompt.strip() or DEFAULT_PORTRAIT_PROMPT
     size = aspect_ratio_to_seedream_size(aspect_ratio)
@@ -278,7 +288,8 @@ def generate_portrait_image_seedream(
             "enable_base64_output": False,
             "enable_sync_mode": False,
         }
-        run_image_task(SEEDREAM_EDIT_PATH, payload, out, label="seedream portrait edit")
+        _, edit_path = seedream_paths(endpoint)
+        run_image_task(edit_path, payload, out, label="seedream portrait edit")
     else:
         payload = {
             "prompt": text,
@@ -287,7 +298,8 @@ def generate_portrait_image_seedream(
             "enable_base64_output": False,
             "enable_sync_mode": False,
         }
-        run_image_task(SEEDREAM_T2I_PATH, payload, out, label="seedream portrait generation")
+        t2i_path, _ = seedream_paths(endpoint)
+        run_image_task(t2i_path, payload, out, label="seedream portrait generation")
     return out
 
 
@@ -332,6 +344,7 @@ def swap_face_on_image_seedream(
     out: Path,
     prompt: str | None = None,
     aspect_ratio: str = "9:16",
+    endpoint: str | None = None,
 ) -> Path:
     final_prompt = prompt.strip() if prompt and prompt.strip() else SEEDREAM_FACE_SWAP_PROMPT
     payload = {
@@ -345,7 +358,8 @@ def swap_face_on_image_seedream(
         "enable_base64_output": False,
         "enable_sync_mode": False,
     }
-    run_image_task(SEEDREAM_EDIT_PATH, payload, out, label="seedream face swap")
+    _, edit_path = seedream_paths(endpoint)
+    run_image_task(edit_path, payload, out, label="seedream face swap")
     return out
 
 
@@ -355,6 +369,7 @@ def edit_image_scenery_seedream(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    endpoint: str | None = None,
 ) -> Path:
     from backend.services.grok import scenery_edit_prompt
 
@@ -366,7 +381,8 @@ def edit_image_scenery_seedream(
         "enable_base64_output": False,
         "enable_sync_mode": False,
     }
-    run_image_task(SEEDREAM_EDIT_PATH, payload, out, label="seedream scenery edit")
+    _, edit_path = seedream_paths(endpoint)
+    run_image_task(edit_path, payload, out, label="seedream scenery edit")
     return out
 
 
@@ -488,6 +504,8 @@ def image_to_video_wan_spicy(
     out: Path,
     resolution: str = "720p",
     duration: int = 5,
+    path: str | None = None,
+    label: str = "wan-2.2-spicy image-to-video",
 ) -> None:
     res = resolution if resolution in ("480p", "720p") else "720p"
     dur = 8 if duration == 8 else 5
@@ -499,12 +517,12 @@ def image_to_video_wan_spicy(
         "seed": -1,
     }
     request_id = submit_video_job(
-        path=WAN_SPICY_I2V_PATH,
+        path=(path or "").strip() or WAN_SPICY_I2V_PATH,
         payload=payload,
         out=out,
-        label="wan-2.2-spicy image-to-video",
+        label=label,
     )
-    finish_video_job(request_id, out, label="wan-2.2-spicy image-to-video")
+    finish_video_job(request_id, out, label=label)
 
 
 def _edit_input_video_url(
@@ -530,6 +548,8 @@ def edit_video_wan22(
     out: Path,
     resolution: str = "720p",
     reference_image: str | Path | None = None,
+    path: str | None = None,
+    label: str = "wan-2.2 video edit",
 ) -> None:
     video_url = _edit_input_video_url(
         video,
@@ -551,12 +571,12 @@ def edit_video_wan22(
         "seed": -1,
     }
     request_id = submit_video_job(
-        path=WAN_VIDEO_EDIT_PATH,
+        path=(path or "").strip() or WAN_VIDEO_EDIT_PATH,
         payload=payload,
         out=out,
-        label="wan-2.2 video edit",
+        label=label,
     )
-    finish_video_job(request_id, out, label="wan-2.2 video edit")
+    finish_video_job(request_id, out, label=label)
 
 
 def _reference_image_urls(reference_image: str | Path | None) -> list[str]:
@@ -573,6 +593,8 @@ def edit_video_wan30(
     out: Path,
     resolution: str = "720p",
     reference_image: str | Path | None = None,
+    path: str | None = None,
+    label: str = "wan-3.0 video edit",
 ) -> None:
     """Alibaba WAN 3.0 video edit. The prompt refers to the reference as ``Image 1``."""
     res = resolution if resolution in ("480p", "720p", "1080p") else "720p"
@@ -593,9 +615,8 @@ def edit_video_wan30(
     references = _reference_image_urls(reference_image)
     if references:
         payload["reference_images"] = references
-    label = "wan-3.0 video edit"
     request_id = submit_video_job(
-        path=WAN30_VIDEO_EDIT_PATH,
+        path=(path or "").strip() or WAN30_VIDEO_EDIT_PATH,
         payload=payload,
         out=out,
         label=label,
@@ -610,6 +631,8 @@ def edit_video_seedance2(
     out: Path,
     resolution: str = "720p",
     reference_image: str | Path | None = None,
+    path: str | None = None,
+    label: str = "seedance-2.0 video edit",
 ) -> None:
     """ByteDance Seedance 2.0 video edit. The prompt refers to the reference as ``@Image 1``."""
     res = resolution if resolution in ("480p", "720p", "1080p", "4k") else "720p"
@@ -628,9 +651,8 @@ def edit_video_seedance2(
     references = _reference_image_urls(reference_image)
     if references:
         payload["reference_images"] = references
-    label = "seedance-2.0 video edit"
     request_id = submit_video_job(
-        path=SEEDANCE2_VIDEO_EDIT_PATH,
+        path=(path or "").strip() or SEEDANCE2_VIDEO_EDIT_PATH,
         payload=payload,
         out=out,
         label=label,
