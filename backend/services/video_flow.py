@@ -110,13 +110,6 @@ STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
 
 REVIEW_STEPS = frozenset({"background", "trim", "dress"})
 
-DRESS_VIDEO_MODEL_LABELS: dict[str, str] = {
-    "grok-imagine": "x.ai Grok Imagine (scans the bikini input video for moderation)",
-    "wan-2.2-video-edit": "WaveSpeed WAN 2.2 Video Edit",
-    "wan-3.0-video-edit": "WaveSpeed Alibaba WAN 3.0 Video Edit",
-    "seedance-2.0-video-edit": "WaveSpeed ByteDance Seedance 2.0 Video Edit",
-}
-
 STEP_LABELS: dict[VideoFlowStep, str] = {
     "background": "Background bikini (image to video)",
     "trim": "Fix frames (delete white frames)",
@@ -2369,10 +2362,9 @@ def run_video_flow_step(
                 out=scenery_still,
             )
             i2v_image = scenery_still
-        if bg_video_model == "wan-2.2-spicy":
-            print("Background video: WaveSpeed WAN 2.2 Spicy (image-to-video)")
-        else:
-            print("Background video: x.ai Grok Imagine")
+        from backend.generation_models_store import model_label
+
+        print(f"Background video: {model_label('background_video', bg_video_model)}")
         print("Motion prompt uses locked-camera framing (enhance when XAI_API_KEY is set).")
         image_to_video(
             provider=ai_provider,
@@ -2395,13 +2387,15 @@ def run_video_flow_step(
     elif step == "dress":
         _ensure_dress_input_clip(work, card_id, paths)
         print("Dress edit uses the approved (trimmed) background clip as input.")
-        print(f"Dress video: {DRESS_VIDEO_MODEL_LABELS[dress_model]}")
+        from backend.generation_models_store import model_label, resolve_spec
+
+        print(f"Dress video: {model_label('dress_video', dress_model)}")
         reference = (dress_reference_image or "").strip()
         if reference:
-            if dress_model == "wan-2.2-video-edit":
+            if resolve_spec("dress_video", dress_model).adapter == "prompt_video_edit":
                 print(
                     f"Dress reference image on disk ({reference}) — "
-                    "describe the outfit in the prompt; WAN edit is prompt-only."
+                    "describe the outfit in the prompt; this edit model is prompt-only."
                 )
             else:
                 print(f"Using dress reference image: {reference}")

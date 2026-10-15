@@ -53,7 +53,13 @@ import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
-import { DRESS_VIDEO_MODELS, dressModelTakesReferenceImage, isStockPortraitPrompt, isWavespeedDressVideoModel, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
+import { dressModelTakesReferenceImage, isStockPortraitPrompt, isWavespeedDressVideoModel, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
+import {
+  findGenerationModel,
+  GenerationModelSelect,
+  modelsForRole,
+  useGenerationCatalog,
+} from "../shared/generationModels";
 
 function ThemeSelect({
   themes,
@@ -675,7 +681,15 @@ function SourceImageProviderFields({
   onSourceImageModelChange: (value: SourceImageModel) => void;
   onBackgroundVideoModelChange: (value: BackgroundVideoModel) => void;
 }) {
-  const pipelineModel = wavespeedPipelineModelValue(sourceImageModel, backgroundVideoModel);
+  const { models } = useGenerationCatalog();
+  const spicyIds = modelsForRole(models, "background_video")
+    .filter((model) => model.adapter === "wan_spicy_i2v")
+    .map((model) => model.id);
+  const pipelineModel = wavespeedPipelineModelValue(sourceImageModel, backgroundVideoModel, spicyIds);
+  const imageChoices = [
+    ...modelsForRole(models, "source_image"),
+    ...modelsForRole(models, "background_video").filter((model) => model.adapter === "wan_spicy_i2v"),
+  ];
 
   return (
     <>
@@ -693,19 +707,24 @@ function SourceImageProviderFields({
           <Select.Root
             value={pipelineModel}
             onValueChange={(value) => {
-              if (value === "wan-2.2-spicy") {
-                onBackgroundVideoModelChange("wan-2.2-spicy");
+              if (spicyIds.includes(value)) {
+                onBackgroundVideoModelChange(value);
                 return;
               }
-              onSourceImageModelChange(value as SourceImageModel);
+              onSourceImageModelChange(value);
               onBackgroundVideoModelChange("grok-imagine");
             }}
           >
             <Select.Trigger />
             <Select.Content>
-              <Select.Item value="grok-imagine">Grok Imagine</Select.Item>
-              <Select.Item value="seedream-v5-lite">Seedream v5.0 Lite</Select.Item>
-              <Select.Item value="wan-2.2-spicy">WAN 2.2 Spicy (Step 1 video)</Select.Item>
+              {imageChoices.map((model) => (
+                <Select.Item key={`${model.role}:${model.id}`} value={model.id}>
+                  {model.adapter === "wan_spicy_i2v" ? `${model.label} (Step 1 video)` : model.label}
+                </Select.Item>
+              ))}
+              {pipelineModel && !imageChoices.some((model) => model.id === pipelineModel) ? (
+                <Select.Item value={pipelineModel}>{pipelineModel} (not in catalog)</Select.Item>
+              ) : null}
             </Select.Content>
           </Select.Root>
         </Field>
@@ -714,13 +733,13 @@ function SourceImageProviderFields({
           Seedream v5.0 Lite and WAN 2.2 Spicy are available under the WaveSpeed provider.
         </Text>
       )}
-      {aiProvider === "wavespeed" && backgroundVideoModel === "wan-2.2-spicy" ? (
+      {aiProvider === "wavespeed" && spicyIds.includes(backgroundVideoModel) ? (
         <Callout.Root color="blue">
-          <Callout.Text>
-            WAN 2.2 Spicy animates your source portrait on <strong>Step 1 (image to video)</strong> via
-            WaveSpeed — not for still portraits. Use Grok Imagine or Seedream above to generate the source
-            image first.
-          </Callout.Text>
+            <Callout.Text>
+              This model animates your source portrait on <strong>Step 1 (image to video)</strong> via
+              WaveSpeed — not for still portraits. Use an image model above to generate the source
+              image first.
+            </Callout.Text>
         </Callout.Root>
       ) : null}
     </>
@@ -1430,6 +1449,7 @@ function CardPhotosPanel({
   sourceImageModel?: string;
   onError: (message: string) => void;
 }) {
+  const { models } = useGenerationCatalog();
   const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [panelError, setPanelError] = useState("");
@@ -2060,19 +2080,15 @@ function CardPhotosPanel({
             <Text as="div" size="1" weight="medium" mb="1">
               Image model
             </Text>
-            <Select.Root
+            <GenerationModelSelect
+              role="source_image"
               value={psImageModel}
+              models={models}
               onValueChange={(value) => {
                 setPsProviderTouched(true);
-                setPsImageModel(value as SourceImageModel);
+                setPsImageModel(value);
               }}
-            >
-              <Select.Trigger />
-              <Select.Content>
-                <Select.Item value="grok-imagine">Grok Imagine</Select.Item>
-                <Select.Item value="seedream-v5-lite">Seedream v5.0 Lite</Select.Item>
-              </Select.Content>
-            </Select.Root>
+            />
           </Box>
         ) : null}
         <Text color="gray" size="1" style={{ maxWidth: 400 }}>
@@ -2344,6 +2360,7 @@ function CardPhotosPanel({
 }
 
 export function RunMode(props: RunModeProps) {
+  const { models } = useGenerationCatalog();
   const {
     flow,
     jobs,
@@ -2687,15 +2704,24 @@ export function RunMode(props: RunModeProps) {
           : null;
   const actionStepState = actionStep ? flowState?.steps[actionStep] : undefined;
   const actionPreviewArtifacts = actionStepState?.artifacts ?? [];
+  const backgroundModel = findGenerationModel(models, "background_video", backgroundVideoModel);
+  const dressModel = findGenerationModel(models, "dress_video", dressVideoModel);
+  const backgroundOnWavespeed = backgroundModel
+    ? backgroundModel.provider === "wavespeed"
+    : backgroundVideoModel === "wan-2.2-spicy";
+  const dressOnWavespeed = dressModel
+    ? dressModel.provider === "wavespeed"
+    : isWavespeedDressVideoModel(dressVideoModel);
+  const dressTakesReference = dressModel
+    ? dressModel.takes_reference_image
+    : dressModelTakesReferenceImage(dressVideoModel);
   const actionNeedsGrok =
-    (actionStep === "dress" && dressVideoModel === "grok-imagine") ||
-    (actionStep === "background" && backgroundVideoModel === "grok-imagine");
-  const dressOnWavespeed = isWavespeedDressVideoModel(dressVideoModel);
+    (actionStep === "dress" && !dressOnWavespeed) ||
+    (actionStep === "background" && !backgroundOnWavespeed);
   const actionNeedsWavespeed =
     (actionStep === "dress" && dressOnWavespeed) ||
-    (actionStep === "background" && backgroundVideoModel === "wan-2.2-spicy");
-  const canUseBackgroundVideo =
-    backgroundVideoModel === "wan-2.2-spicy" ? canUseWavespeed : canUseGrok;
+    (actionStep === "background" && backgroundOnWavespeed);
+  const canUseBackgroundVideo = backgroundOnWavespeed ? canUseWavespeed : canUseGrok;
   const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
   const actionIsInteractive = actionStep === "symbols" || actionStep === "trim";
 
@@ -3463,16 +3489,12 @@ export function RunMode(props: RunModeProps) {
               </Callout.Root>
             ) : null}
             <Field label="Step 1 video model">
-              <Select.Root
+              <GenerationModelSelect
+                role="background_video"
                 value={backgroundVideoModel}
-                onValueChange={(value) => onBackgroundVideoModelChange(value as BackgroundVideoModel)}
-              >
-                <Select.Trigger />
-                <Select.Content>
-                  <Select.Item value="grok-imagine">x.ai Grok Imagine</Select.Item>
-                  <Select.Item value="wan-2.2-spicy">WaveSpeed WAN 2.2 Spicy</Select.Item>
-                </Select.Content>
-              </Select.Root>
+                models={models}
+                onValueChange={onBackgroundVideoModelChange}
+              />
             </Field>
             <Field label="Video resolution">
               <Select.Root
@@ -3483,7 +3505,7 @@ export function RunMode(props: RunModeProps) {
                 <Select.Content>
                   <Select.Item value="720p">720p</Select.Item>
                   <Select.Item value="480p">480p</Select.Item>
-                  {backgroundVideoModel === "grok-imagine" ? (
+                  {!backgroundOnWavespeed ? (
                     <Select.Item value="default">Default</Select.Item>
                   ) : null}
                 </Select.Content>
@@ -3526,20 +3548,16 @@ export function RunMode(props: RunModeProps) {
               </Callout.Text>
             </Callout.Root>
             <Field label="Step 3 video model">
-              <Select.Root
+              <GenerationModelSelect
+                role="dress_video"
                 value={dressVideoModel}
-                onValueChange={(value) => onDressVideoModelChange(value as DressVideoModel)}
-              >
-                <Select.Trigger />
-                <Select.Content>
-                  {DRESS_VIDEO_MODELS.map((entry) => (
-                    <Select.Item key={entry.id} value={entry.id}>
-                      {entry.label}
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Root>
+                models={models}
+                onValueChange={onDressVideoModelChange}
+              />
             </Field>
+            <Text color="gray" size="1">
+              <a href="/dashboard/ai-models">Manage AI models</a> to rename one or add a provider model.
+            </Text>
             {!canUseDressVideo ? (
               <Text color="gray" size="2">
                 {dressOnWavespeed
@@ -3559,8 +3577,8 @@ export function RunMode(props: RunModeProps) {
             </Button>
             <Field
               label={
-                dressModelTakesReferenceImage(dressVideoModel)
-                  ? "Dress reference image (optional — sent to the model as Image 1)"
+                dressTakesReference
+                  ? `Dress reference image (optional — sent to the model as ${dressModel?.reference_token || "Image 1"})`
                   : "Dress reference image (optional — captioned into prompt for WAN 2.2 & Grok)"
               }
             >

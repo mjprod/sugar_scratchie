@@ -10,6 +10,7 @@ import { OperatorGate } from "./OperatorGate";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
 import { ThemesPage } from "./ThemesPage";
+import { AiModelsPage } from "./AiModelsPage";
 import { SymbolsPage } from "./SymbolsPage";
 import { UsersPage } from "./UsersPage";
 import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
@@ -62,6 +63,7 @@ function withOperatorGate(Page: React.ComponentType): React.ComponentType {
 const GatedDashboard = withOperatorGate(Dashboard);
 const GatedModelsPage = withOperatorGate(ModelsPage);
 const GatedThemesPage = withOperatorGate(ThemesPage);
+const GatedAiModelsPage = withOperatorGate(AiModelsPage);
 const GatedUsersPage = withOperatorGate(UsersPage);
 const GatedSymbolsPage = withOperatorGate(SymbolsPage);
 const GatedPictureFlowPage = withOperatorGate(PictureFlowPage);
@@ -77,6 +79,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/themes") return GatedThemesPage;
+  if (path === "/dashboard/ai-models") return GatedAiModelsPage;
   if (path === "/dashboard/users") return GatedUsersPage;
   if (path === "/symbols" || path === "/dashboard/symbols") return GatedSymbolsPage;
   if (path === "/dashboard/video-flow" || path === "/video-flow") return GatedVideoFlowHubPage;

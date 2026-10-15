@@ -17,15 +17,23 @@ export type SourceImageMode = "upload" | "prompt" | "face_swap";
 
 export type AiProvider = "xai" | "wavespeed";
 
-export type SourceImageModel = "grok-imagine" | "seedream-v5-lite";
+export type SourceImageModel = string;
 
-export type BackgroundVideoModel = "grok-imagine" | "wan-2.2-spicy";
+export type BackgroundVideoModel = string;
 
-export type DressVideoModel =
-  | "grok-imagine"
-  | "wan-2.2-video-edit"
-  | "wan-3.0-video-edit"
-  | "seedance-2.0-video-edit";
+export type DressVideoModel = string;
+
+const GENERATION_MODEL_ID = /^[a-z][a-z0-9._-]{0,63}$/;
+
+export const SOURCE_IMAGE_MODELS: { id: string; label: string; wavespeed: boolean }[] = [
+  { id: "grok-imagine", label: "Grok Imagine", wavespeed: false },
+  { id: "seedream-v5-lite", label: "Seedream v5.0 Lite", wavespeed: true },
+];
+
+export const BACKGROUND_VIDEO_MODELS: { id: string; label: string; wavespeed: boolean }[] = [
+  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
+  { id: "wan-2.2-spicy", label: "WaveSpeed WAN 2.2 Spicy", wavespeed: true },
+];
 
 export const DRESS_VIDEO_MODELS: { id: DressVideoModel; label: string; wavespeed: boolean }[] = [
   { id: "seedance-2.0-video-edit", label: "WaveSpeed ByteDance Seedance 2.0 Video Edit", wavespeed: true },
@@ -48,19 +56,32 @@ export function dressModelTakesReferenceImage(model: DressVideoModel): boolean {
 }
 
 export function parseBackgroundVideoModel(value: unknown): BackgroundVideoModel {
-  return value === "wan-2.2-spicy" ? "wan-2.2-spicy" : "grok-imagine";
+  if (value === "wan-2.2-spicy" || value === "wan-2.2-spicy/image-to-video") return "wan-2.2-spicy";
+  if (typeof value === "string" && GENERATION_MODEL_ID.test(value)) return value;
+  return "grok-imagine";
 }
 
+const DRESS_MODEL_ALIASES: Record<string, string> = {
+  "grok-imagine-video": "grok-imagine",
+  "alibaba/wan-3.0/video-edit": "wan-3.0-video-edit",
+  "bytedance/seedance-2.0/video-edit": "seedance-2.0-video-edit",
+};
+
 export function parseDressVideoModel(value: unknown): DressVideoModel {
-  const match = DRESS_VIDEO_MODELS.find((entry) => entry.id === value);
-  return match ? match.id : DEFAULT_DRESS_VIDEO_MODEL;
+  if (typeof value !== "string") return DEFAULT_DRESS_VIDEO_MODEL;
+  const aliased = DRESS_MODEL_ALIASES[value] ?? value;
+  if (DRESS_VIDEO_MODELS.some((entry) => entry.id === aliased) || GENERATION_MODEL_ID.test(aliased)) {
+    return aliased;
+  }
+  return DEFAULT_DRESS_VIDEO_MODEL;
 }
 
 export function wavespeedPipelineModelValue(
   sourceImageModel: SourceImageModel,
   backgroundVideoModel: BackgroundVideoModel,
+  spicyIds: readonly string[] = ["wan-2.2-spicy"],
 ): string {
-  if (backgroundVideoModel === "wan-2.2-spicy") return "wan-2.2-spicy";
+  if (spicyIds.includes(backgroundVideoModel)) return backgroundVideoModel;
   return sourceImageModel;
 }
 
@@ -69,9 +90,13 @@ export function parseAiProvider(value: unknown): AiProvider {
 }
 
 export function parseSourceImageModel(value: unknown, legacyProvider?: unknown): SourceImageModel {
-  if (value === "seedream-v5-lite" || value === "seedream-v5.0-lite" || legacyProvider === "seedream-v5-lite" || legacyProvider === "seedream-v5.0-lite") {
-    return "seedream-v5-lite";
+  const legacySeedream =
+    legacyProvider === "seedream-v5-lite" || legacyProvider === "seedream-v5.0-lite";
+  if (value === "seedream-v5-lite" || value === "seedream-v5.0-lite") return "seedream-v5-lite";
+  if (typeof value === "string" && value !== "grok-imagine" && GENERATION_MODEL_ID.test(value)) {
+    return value;
   }
+  if (legacySeedream) return "seedream-v5-lite";
   return "grok-imagine";
 }
 

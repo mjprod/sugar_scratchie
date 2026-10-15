@@ -180,6 +180,11 @@ def image_generation_model() -> str:
     return os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
 
 
+def chosen_image_model(model: str | None = None) -> str:
+    chosen = (model or "").strip()
+    return chosen or image_generation_model()
+
+
 def run_media_command(cmd: list[str]) -> bytes:
     result = subprocess.run(cmd, check=False, capture_output=True)
     if result.returncode != 0:
@@ -569,9 +574,9 @@ def _save_image_response(result: dict, out: Path) -> None:
     raise RuntimeError(f"No image url or b64_json in response:\n{json.dumps(result, indent=2)}")
 
 
-def _generate_image(*, prompt: str, aspect_ratio: str, key: str) -> dict:
+def _generate_image(*, prompt: str, aspect_ratio: str, key: str, model: str | None = None) -> dict:
     payload = {
-        "model": image_generation_model(),
+        "model": chosen_image_model(model),
         "prompt": prompt,
         "aspect_ratio": aspect_ratio,
         "response_format": "b64_json",
@@ -589,9 +594,10 @@ def _edit_image(
     key: str,
     images: list[str | Path] | None = None,
     image: str | Path | None = None,
+    model: str | None = None,
 ) -> dict:
     payload: dict = {
-        "model": image_generation_model(),
+        "model": chosen_image_model(model),
         "prompt": prompt,
         "aspect_ratio": aspect_ratio,
         "response_format": "b64_json",
@@ -614,6 +620,7 @@ def generate_portrait_image(
     out: Path,
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    model: str | None = None,
 ) -> Path:
     key = api_key()
     text = prompt.strip() or DEFAULT_PORTRAIT_PROMPT
@@ -627,9 +634,10 @@ def generate_portrait_image(
             aspect_ratio=aspect_ratio,
             key=key,
             image=face_image,
+            model=model,
         )
     else:
-        result = _generate_image(prompt=text, aspect_ratio=aspect_ratio, key=key)
+        result = _generate_image(prompt=text, aspect_ratio=aspect_ratio, key=key, model=model)
     _save_image_response(result, out)
     return out
 
@@ -677,12 +685,13 @@ def edit_image_scenery(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    model: str | None = None,
 ) -> Path:
     """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
     key = api_key()
     text = scenery_edit_prompt(theme)
     print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}) ...")
-    result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image)
+    result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image, model=model)
     _save_image_response(result, out)
     return out
 
@@ -885,6 +894,7 @@ def edit_photo_scratch_layer(
     background_image: str | Path | None = None,
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    model: str | None = None,
 ) -> Path:
     """Image-edit the Flow source girl (optionally onto a background) for a photo-scratch layer.
 
@@ -910,6 +920,7 @@ def edit_photo_scratch_layer(
             aspect_ratio=aspect_ratio,
             key=key,
             images=images,
+            model=model,
         )
     else:
         print("Editing photo-scratch layer (1 ref: woman) ...")
@@ -918,6 +929,7 @@ def edit_photo_scratch_layer(
             aspect_ratio=aspect_ratio,
             key=key,
             image=source_image,
+            model=model,
         )
     _save_image_response(result, out)
     return out
@@ -930,6 +942,7 @@ def swap_face_on_image(
     out: Path,
     prompt: str | None = None,
     aspect_ratio: str = "9:16",
+    model: str | None = None,
 ) -> Path:
     key = api_key()
     final_prompt = (
@@ -942,6 +955,7 @@ def swap_face_on_image(
         aspect_ratio=aspect_ratio,
         key=key,
         images=[base_image, face_image],
+        model=model,
     )
     _save_image_response(result, out)
     return out

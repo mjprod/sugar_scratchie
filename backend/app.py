@@ -121,6 +121,20 @@ from backend.themes_store import (
     upload_theme_bgm,
     upload_theme_intro,
 )
+from backend.generation_models_store import (
+    CheckProviderModelRequest,
+    CreateGenerationModelRequest,
+    LookupProviderModelsRequest,
+    UpdateGenerationModelRequest,
+    adapter_payloads,
+    check_provider_model,
+    create_generation_model,
+    delete_generation_model,
+    ensure_generation_models_bootstrapped,
+    list_generation_models,
+    lookup_provider_models,
+    update_generation_model,
+)
 from backend.photo_scratch_store import (
     ensure_photo_scratch_bootstrapped,
     list_photo_scratch_cards,
@@ -532,6 +546,7 @@ def ensure_indexes() -> None:
     session = db_engine.SessionLocal()
     try:
         ensure_themes_bootstrapped(session, THEMES_DIR)
+        ensure_generation_models_bootstrapped(session)
         ensure_models_bootstrapped(session, MODELS_DIR)
         ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
         ensure_symbols_bootstrapped(session, LOTTIES_DIR)
@@ -1511,6 +1526,58 @@ def remove_theme_bgm(
 ) -> dict:
     theme = delete_theme_bgm(db, THEMES_DIR, theme_id)
     return theme.dict()
+
+
+@app.get("/api/generation-models")
+def get_generation_models(
+    db: Annotated[Session, Depends(get_session)],
+    role: str | None = None,
+) -> dict:
+    models = list_generation_models(db, role=role)
+    return {
+        "models": [model.dict() for model in models],
+        "adapters": [adapter.dict() for adapter in adapter_payloads()],
+    }
+
+
+@app.post("/api/generation-models")
+def post_generation_model(
+    request: CreateGenerationModelRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = create_generation_model(db, request)
+    return model.dict()
+
+
+@app.post("/api/generation-models/lookup")
+def post_generation_model_lookup(request: LookupProviderModelsRequest) -> dict:
+    return {"models": lookup_provider_models(request)}
+
+
+@app.post("/api/generation-models/check")
+def post_generation_model_check(request: CheckProviderModelRequest) -> dict:
+    return check_provider_model(request)
+
+
+@app.put("/api/generation-models/{role}/{model_id}")
+def put_generation_model(
+    role: str,
+    model_id: str,
+    request: UpdateGenerationModelRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    model = update_generation_model(db, role, model_id, request)
+    return model.dict()
+
+
+@app.delete("/api/generation-models/{role}/{model_id}")
+def remove_generation_model(
+    role: str,
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    delete_generation_model(db, role, model_id)
+    return {"ok": True, "id": model_id, "role": role}
 
 
 @app.get("/api/symbol-groups")
