@@ -240,7 +240,7 @@ def _count(db: Session) -> int:
 
 
 def ensure_generation_models_bootstrapped(db: Session) -> None:
-    """Insert the built-in models once. Later deletes stay deleted."""
+    """Insert the built-in models when the table is empty."""
     if _count(db) > 0:
         return
     for spec in BUILTINS:
