@@ -222,6 +222,7 @@ export async function createMotionCardDraft(
       source_mode: "upload",
       source_prompt: "",
       face_image: "",
+      bikini_image: "",
       base_image: "",
     }),
   });

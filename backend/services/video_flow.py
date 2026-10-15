@@ -36,7 +36,10 @@ from backend.services.grok import (
     PHOTO_SCRATCH_POSE_VARIATIONS,
     PHOTO_SCRATCH_SCENE_VARIATIONS,
     photo_scratch_background_prompt,
+    motion_source_bikini_prompt,
+    motion_source_style_prompt,
     photo_scratch_bikini_prompt,
+    photo_scratch_bikini_ref_clause,
     photo_scratch_clothes_prompt,
     photo_scratch_custom_locks_source_pose,
     photo_scratch_face_ref_clause,
@@ -68,6 +71,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CARDS_DIR = ROOT / "public" / "cards"
 MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
+STEP1_STYLE_MODEL = "seedream-v5-lite"
 
 VideoFlowStep = Literal[
     "background",
@@ -552,6 +556,9 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
             paths["trim_report"],
             work / "background-raw-grok-compatible.mp4",
             paths["scenery_source"],
+            paths["styled_source"],
+            paths["styled_bikini"],
+            paths["styled_face"],
         ],
         "trim": [paths["trim_report"]],
         "dress": [paths["foreground_dressed"]],
@@ -1112,10 +1119,11 @@ def save_flow_draft(
     tracker: str,
     write_webm: bool,
     dress_reference_image: str = "",
-    source_mode: str = "upload",
-    source_prompt: str = "",
-    face_image: str = "",
-    base_image: str = "",
+    source_mode: str | None = None,
+    source_prompt: str | None = None,
+    face_image: str | None = None,
+    bikini_image: str | None = None,
+    base_image: str | None = None,
     mesh_tune: dict | None = None,
     ai_provider: str = "xai",
     source_image_model: str = "grok-imagine",
@@ -1128,6 +1136,11 @@ def save_flow_draft(
     work = work_dir(card_id)
     existing = read_flow_draft(card_id) or {}
     saved_theme = (theme or "").strip() or str(existing.get("theme") or "").strip()
+
+    # Step runs re-save without Setup fields — keep what the operator picked.
+    def setup_field(value: str | None, key: str, default: str = "") -> str:
+        return value if value is not None else str(existing.get(key) or default)
+
     draft = {
         "image": str(image),
         "theme": saved_theme,
@@ -1147,10 +1160,11 @@ def save_flow_draft(
         "tracker": tracker,
         "write_webm": write_webm,
         "compress_preset": normalize_compress_preset(compress_preset),
-        "source_mode": source_mode,
-        "source_prompt": source_prompt,
-        "face_image": face_image,
-        "base_image": base_image,
+        "source_mode": setup_field(source_mode, "source_mode", "upload"),
+        "source_prompt": setup_field(source_prompt, "source_prompt"),
+        "face_image": setup_field(face_image, "face_image"),
+        "bikini_image": setup_field(bikini_image, "bikini_image"),
+        "base_image": setup_field(base_image, "base_image"),
         "mesh_tune": mesh_tune_from_dict(mesh_tune).model_dump(),
         "ai_provider": normalize_provider(ai_provider),
         "source_image_model": normalize_source_image_model(
@@ -1253,14 +1267,29 @@ def _source_image_newer_than_background(
     background = paths["background_raw"]
     if not output_video_ready(background):
         return False
-    source = _resolve_image_path(image)
-    if not source.exists():
-        return False
-    return source.stat().st_mtime > background.stat().st_mtime
+    draft = read_flow_draft(work.name) or {}
+    inputs = [_resolve_image_path(image)] + [
+        ref
+        for ref in (
+            _optional_draft_image(draft, "face_image", "Face reference"),
+            _optional_draft_image(draft, "bikini_image", "Bikini model"),
+        )
+        if ref is not None
+    ]
+    built_at = background.stat().st_mtime
+    return any(path.exists() and path.stat().st_mtime > built_at for path in inputs)
 
 
 def _clear_background_clip(paths: dict[str, Path]) -> None:
-    for key in ("background_raw", "background_source", "scenery_source", "trim_report"):
+    for key in (
+        "background_raw",
+        "background_source",
+        "scenery_source",
+        "styled_source",
+        "styled_bikini",
+        "styled_face",
+        "trim_report",
+    ):
         path = paths[key]
         path.unlink(missing_ok=True)
         request_id_sidecar(path).unlink(missing_ok=True)
@@ -1413,6 +1442,46 @@ def _resolve_photo_scratch_media(src: str) -> Path:
     return path
 
 
+def _run_step1_style_edit(label: str, xai_model: str, run) -> None:
+    """Step-1 still edits: Seedream on WaveSpeed first (follows refs, lighter moderation),
+    then x.ai. Raises with a Setup hint when every route fails."""
+    routes: list[tuple[str, str]] = []
+    seedream = normalize_source_image_model(STEP1_STYLE_MODEL)
+    if os.environ.get("WAVESPEED_API_KEY") and seedream == STEP1_STYLE_MODEL:
+        routes.append(("wavespeed", seedream))
+    if xai_key_available():
+        routes.append(("xai", xai_model))
+    if not routes:
+        raise RuntimeError(f"Step 1 {label} needs WAVESPEED_API_KEY or XAI_API_KEY.")
+    errors: list[str] = []
+    for provider, model in routes:
+        print(f"Step 1 {label} via {provider} ({model}) ...")
+        try:
+            run(provider, model)
+            return
+        except RuntimeError as exc:
+            print(f"Step 1 {label} via {provider} failed: {exc}")
+            errors.append(f"{provider}: {exc}")
+    raise RuntimeError(
+        f"Step 1 {label} failed ({'; '.join(errors)}). Try a different photo in Setup, "
+        "or clear it to animate the source as-is."
+    )
+
+
+def _optional_draft_image(draft: dict, key: str, label: str) -> Path | None:
+    """Local workspace file from a Setup draft field; URLs and missing files are skipped."""
+    raw = str(draft.get(key) or "").strip()
+    if not raw or raw.startswith(("http://", "https://")):
+        return None
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = ROOT / candidate
+    if candidate.is_file():
+        return candidate
+    print(f"{label} not found, skipping: {raw}")
+    return None
+
+
 def _caption_clothes_ref(ref: str, cache: dict[str, str]) -> str:
     """Caption a slot's clothes reference via Grok vision; "" when unavailable or failed."""
     ref = ref.strip()
@@ -1543,6 +1612,7 @@ def run_generate_photo_scratch_layer(
 
     girl_path: Path | None = None
     face_path: Path | None = None
+    bikini_path: Path | None = None
     if layer_type in ("bikini", "clothes"):
         draft = read_flow_draft(card_id) or {}
         raw_source = (source_image or "").strip()
@@ -1561,15 +1631,9 @@ def run_generate_photo_scratch_layer(
         if not girl_path.is_file():
             raise RuntimeError(f"Source image not found: {raw_source}")
         # Optional Setup face reference — pins her identity across regenerations.
-        raw_face = str(draft.get("face_image") or "").strip()
-        if raw_face and not raw_face.startswith(("http://", "https://")):
-            candidate = Path(raw_face)
-            if not candidate.is_absolute():
-                candidate = ROOT / candidate
-            if candidate.is_file():
-                face_path = candidate
-            else:
-                print(f"Face reference not found, skipping: {raw_face}")
+        face_path = _optional_draft_image(draft, "face_image", "Face reference")
+        if layer_type == "bikini":
+            bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
 
     if layer_type == "clothes":
         if target_slot:
@@ -1605,18 +1669,39 @@ def run_generate_photo_scratch_layer(
                 )
                 with_bg = bg_path is not None
                 with_face = face_path is not None
+                with_bikini = bikini_path is not None
+                bikini_caption = (
+                    _caption_clothes_ref(str(bikini_path), clothes_captions) if with_bikini else ""
+                )
+                bikini_clause = (
+                    photo_scratch_bikini_ref_clause(3 if with_bg else 2, bikini_caption)
+                    if with_bikini
+                    else ""
+                )
                 if with_bg and (not custom or photo_scratch_custom_locks_source_pose(custom)):
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=True, with_face=with_face
+                        theme_str,
+                        pose_hint,
+                        with_background=True,
+                        with_face=with_face,
+                        with_bikini=with_bikini,
+                        bikini_caption=bikini_caption,
                     )
                 elif with_bg:
                     patched = photo_scratch_prompt_with_background(
                         custom, has_background=True, pose=pose_hint
                     )
+                    if patched and bikini_clause:
+                        patched = f"{patched} {bikini_clause}"
                     if patched and with_face:
                         patched = f"{patched} {photo_scratch_face_ref_clause()}"
                     final_prompt = patched or photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=True, with_face=with_face
+                        theme_str,
+                        pose_hint,
+                        with_background=True,
+                        with_face=with_face,
+                        with_bikini=with_bikini,
+                        bikini_caption=bikini_caption,
                     )
                 elif custom and (
                     "reference 1" in custom.lower()
@@ -1624,18 +1709,32 @@ def run_generate_photo_scratch_layer(
                     or "environment" in custom.lower()
                 ):
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=False, with_face=with_face
+                        theme_str,
+                        pose_hint,
+                        with_background=False,
+                        with_face=with_face,
+                        with_bikini=with_bikini,
+                        bikini_caption=bikini_caption,
                     )
                 elif custom and not photo_scratch_custom_locks_source_pose(custom):
                     final_prompt = f"{custom} Pose and framing for this card: {pose_hint}."
+                    if bikini_clause:
+                        final_prompt = f"{final_prompt} {bikini_clause}"
                     if with_face:
                         final_prompt = f"{final_prompt} {photo_scratch_face_ref_clause()}"
                 else:
                     final_prompt = photo_scratch_bikini_prompt(
-                        theme_str, pose_hint, with_background=False, with_face=with_face
+                        theme_str,
+                        pose_hint,
+                        with_background=False,
+                        with_face=with_face,
+                        with_bikini=with_bikini,
+                        bikini_caption=bikini_caption,
                     )
-                if with_bg or with_face:
+                if with_bg or with_face or with_bikini:
                     refs = "environment+woman" if with_bg else "woman"
+                    if with_bikini:
+                        refs += "+bikini"
                     if with_face:
                         refs += "+face"
                     print(
@@ -1650,6 +1749,7 @@ def run_generate_photo_scratch_layer(
                     source_image=girl_path,
                     background_image=bg_path,
                     face_image=face_path,
+                    bikini_image=bikini_path,
                     aspect_ratio="9:16",
                 )
                 if face_path is not None:
@@ -1839,6 +1939,9 @@ def _paths(work: Path) -> dict[str, Path]:
         "background_raw": work / "background-raw.mp4",
         "background_source": work / "background-source.mp4",
         "scenery_source": work / "scenery-source.png",
+        "styled_source": work / "styled-source.png",
+        "styled_bikini": work / "styled-bikini.png",
+        "styled_face": work / "styled-face.png",
         "trim_report": work / "trim-report.json",
         "foreground_dressed": work / "foreground-dressed.mp4",
         "background_pre_boomerang": work / "background-pre-boomerang.mp4",
@@ -2337,19 +2440,66 @@ def run_video_flow_step(
         if _source_image_newer_than_background(work, paths, image):
             _clear_background_clip(paths)
         motion_prompt = normalize_background_motion_prompt(background_motion_prompt)
-        theme_text = (theme or "").strip() or str(
-            (read_flow_draft(card_id) or {}).get("theme") or ""
-        ).strip()
+        draft = read_flow_draft(card_id) or {}
+        theme_text = (theme or "").strip() or str(draft.get("theme") or "").strip()
+        source_model = normalize_source_image_model(
+            str(draft.get("source_image_model") or "grok-imagine"),
+            provider=str(draft.get("ai_provider") or ai_provider),
+        )
         i2v_image: str | Path = image
+        face_path = _optional_draft_image(draft, "face_image", "Face reference")
+        bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
+        if bikini_path is not None:
+            bikini_still = paths["styled_bikini"]
+            bikini_caption = _caption_clothes_ref(str(bikini_path), {})
+            source_still = i2v_image
+
+            def dress_bikini(provider: str, model: str) -> None:
+                # Seedream follows the bikini photo + caption; x.ai keeps the old top's
+                # shape with two refs (and trips moderation), so it gets the caption only.
+                caption_only = provider == "xai" and bool(bikini_caption)
+                edit_photo_scratch_layer(
+                    provider=provider,
+                    image_model=model,
+                    prompt=(
+                        motion_source_bikini_prompt(bikini_caption)
+                        if caption_only
+                        else motion_source_style_prompt(
+                            with_bikini=True, with_face=False, bikini_caption=bikini_caption
+                        )
+                    ),
+                    out=bikini_still,
+                    source_image=source_still,
+                    bikini_image=None if caption_only else bikini_path,
+                    aspect_ratio="9:16",
+                )
+
+            _run_step1_style_edit("bikini dress-up", source_model, dress_bikini)
+            i2v_image = bikini_still
+        if face_path is not None:
+            face_still = paths["styled_face"]
+            face_base = i2v_image
+
+            def swap_face(provider: str, model: str) -> None:
+                swap_face_on_image(
+                    provider=provider,
+                    image_model=model,
+                    base_image=face_base,
+                    face_image=face_path,
+                    out=face_still,
+                    prompt=None,
+                    aspect_ratio="9:16",
+                )
+
+            _run_step1_style_edit("face swap", source_model, swap_face)
+            i2v_image = face_still
+        if i2v_image != image:
+            shutil.copy2(i2v_image, paths["styled_source"])
+            i2v_image = paths["styled_source"]
         if theme_text:
             # Image-to-video keeps busy source backdrops (city balcony, etc.). Bake the
             # themed scenery into a still first, then animate that frame.
             scenery_still = paths["scenery_source"]
-            draft = read_flow_draft(card_id) or {}
-            source_model = normalize_source_image_model(
-                str(draft.get("source_image_model") or "grok-imagine"),
-                provider=str(draft.get("ai_provider") or ai_provider),
-            )
             print(
                 f"Theme scenery bake ({theme_text}) via {source_model} "
                 "before image-to-video — I2V alone rarely replaces outdoor/city BGs."
@@ -2357,7 +2507,7 @@ def run_video_flow_step(
             edit_image_scenery(
                 provider=ai_provider,
                 image_model=source_model,
-                image=image,
+                image=i2v_image,
                 theme=theme_text,
                 out=scenery_still,
             )
