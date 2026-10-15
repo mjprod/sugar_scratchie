@@ -679,6 +679,51 @@ def scenery_edit_prompt(theme: str) -> str:
     )
 
 
+def motion_source_bikini_prompt(caption: str) -> str:
+    """Single-image outfit edit for the step-1 still, driven by the bikini model's caption.
+
+    Text-only beats sending the bikini photo as a second reference: multi-image edits keep
+    the original top's shape, and the image pair trips x.ai moderation more often.
+    """
+    return (
+        f"Change only her swimsuit. Dress her in this bikini: {caption.strip()} "
+        f"Both the top and the bottoms must match that description in style and shape, "
+        f"replacing her current top and bottoms entirely. Keep her face, hair, pose, arm, hand "
+        f"and leg positions, body shape and proportions, background, lighting, camera framing, "
+        f"crop, and subject scale identical. Do not crop, zoom, or reframe. Photorealistic."
+    )
+
+
+def motion_source_style_prompt(
+    *, with_bikini: bool, with_face: bool, bikini_caption: str = ""
+) -> str:
+    """Step 1 prep: dress the Setup source in the bikini model's swimsuit and/or her face ref.
+
+    Pose and framing must not move — the result is animated by image-to-video.
+    Reference order matches `edit_photo_scratch_layer`: woman, bikini, face.
+    """
+    parts = ["reference 1 = WOMAN (pose, body, framing, background)"]
+    if with_bikini:
+        parts.append("reference 2 = BIKINI (the swimsuit to dress her in)")
+    if with_face:
+        parts.append(f"reference {len(parts) + 1} = FACE (her exact face)")
+    refs = f"{_REF_WORDS.get(len(parts), str(len(parts)))} references: {', '.join(parts)}. "
+    swimsuit = (
+        f"{photo_scratch_bikini_ref_clause(2, bikini_caption)} "
+        if with_bikini
+        else "Keep her swimsuit exactly as in reference 1. "
+    )
+    return (
+        f"{refs}"
+        f"Edit the woman in reference 1. Keep EXACTLY: her pose, arm, hand and leg positions, "
+        f"body shape and proportions, camera framing, crop, subject scale, background, and lighting. "
+        f"Do not crop, zoom, or reframe. "
+        f"{swimsuit}"
+        f"{photo_scratch_face_ref_clause() if with_face else ''}"
+        f"Photorealistic, 9:16. Do not invent a different woman."
+    )
+
+
 def edit_image_scenery(
     *,
     image: str | Path,
@@ -745,24 +790,64 @@ def photo_scratch_face_ref_clause() -> str:
     )
 
 
+def photo_scratch_bikini_ref_clause(ref_num: int, caption: str = "") -> str:
+    """Swimsuit clause when a dedicated bikini model photo is attached as reference `ref_num`.
+
+    `caption` (a vision description of that swimsuit) is spelled out because image edits
+    tend to keep the original top's shape when the reference is only an image.
+    """
+    caption = (caption or "").strip()
+    described = f" That swimsuit is: {caption}" if caption else ""
+    return (
+        f"Completely remove her original swimsuit/underwear — no trace of its cups, underwire, "
+        f"ruffles, straps, or print may remain. "
+        f"She wears EXACTLY the bikini/swimsuit from reference {ref_num}: same top style and "
+        f"shape, cut, coverage, colours, pattern, straps, ties, and trims.{described} "
+        f"Take only the swimsuit from reference {ref_num} — "
+        f"not that model's face, hair, body, pose, or background."
+    )
+
+
+_REF_WORDS = {2: "Two", 3: "Three", 4: "Four"}
+
+
 def photo_scratch_bikini_prompt(
     theme: str,
     variation: str = "",
     *,
     with_background: bool = False,
     with_face: bool = False,
+    with_bikini: bool = False,
+    bikini_caption: str = "",
 ) -> str:
-    """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene."""
+    """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene.
+
+    Reference order matches `edit_photo_scratch_layer`: environment, woman, bikini, face.
+    """
     scenery = (theme or "").strip() or "stylish"
     pose = (variation or "").strip() or PHOTO_SCRATCH_POSE_VARIATIONS[0]
     face_clause = photo_scratch_face_ref_clause() if with_face else ""
+    woman_ref = 2 if with_background else 1
+    bikini_ref = woman_ref + 1
+    swimsuit = (
+        photo_scratch_bikini_ref_clause(bikini_ref, bikini_caption)
+        if with_bikini
+        else f"She wears a flattering {scenery} bikini/swimwear."
+    )
     if with_background:
-        refs = (
-            "Three references: reference 1 = ENVIRONMENT (the full room/scene), "
-            "reference 2 = WOMAN (her body), reference 3 = FACE (her exact face). "
+        parts = ["reference 1 = ENVIRONMENT (the full room/scene)"]
+        parts.append(
+            "reference 2 = WOMAN (her body)" if with_face else "reference 2 = WOMAN (her face and body only)"
+        )
+        if with_bikini:
+            parts.append(f"reference {bikini_ref} = BIKINI (the swimsuit to dress her in)")
+        if with_face:
+            parts.append(f"reference {len(parts) + 1} = FACE (her exact face)")
+        refs = f"{_REF_WORDS[len(parts)]} references: {', '.join(parts)}. "
+        kept = (
+            "hair colour, skin tone, and body proportions"
             if with_face
-            else "Two references: reference 1 = ENVIRONMENT (the full room/scene), "
-            "reference 2 = WOMAN (her face and body only). "
+            else "face, hair colour, skin tone, and body proportions"
         )
         return (
             f"{refs}"
@@ -772,19 +857,53 @@ def photo_scratch_bikini_prompt(
             f"(2) Full body from head to toe clearly visible. She must fill the 9:16 frame — "
             f"head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
             f"Do NOT zoom out or leave large empty space above/below her. "
-            f"(3) She wears a flattering {scenery} bikini/swimwear. "
+            f"(3) {swimsuit} "
             f"(4) Pose: {pose}. "
             f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
             f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
-            f"(7) Keep face, hair colour, skin tone, and body proportions exactly from reference 2. "
+            f"(7) Keep {kept} exactly from reference 2. "
             f"{face_clause}"
             f"(8) Do not invent a different woman. Photorealistic."
+        )
+    if with_bikini:
+        # Face is attached last (woman, bikini, face). Name it or the face clause
+        # points at an image this prompt never introduces.
+        if with_face:
+            return (
+                f"Three references: reference 1 = WOMAN (her body), "
+                f"reference 2 = BIKINI (the swimsuit to dress her in), "
+                f"reference 3 = FACE (her exact face). "
+                f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
+                f"{swimsuit} "
+                f"Keep identity, hair, skin tone, and body proportions from reference 1. "
+                f"{face_clause}"
+                f"Clean studio backdrop (no busy scene). "
+                f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+            )
+        return (
+            f"Reference 1 = WOMAN, reference 2 = BIKINI. "
+            f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
+            f"{swimsuit} "
+            f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
+            f"Clean studio backdrop (no busy scene). "
+            f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+        )
+    if with_face:
+        # No bikini photo: images are woman, then face. Name both.
+        return (
+            f"Two references: reference 1 = WOMAN (her body), "
+            f"reference 2 = FACE (her exact face). "
+            f"Using this exact same woman from reference 1, change her outfit to a "
+            f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
+            f"Keep identity, hair, skin tone, and body proportions from reference 1. "
+            f"{face_clause}"
+            f"Clean studio backdrop (no busy scene). "
+            f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
         )
     return (
         f"Using this exact same woman from the reference image, change her outfit to a "
         f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
         f"Keep face, identity, hair, skin tone, and body proportions. "
-        f"{face_clause}"
         f"Clean studio backdrop (no busy scene). "
         f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
     )
@@ -893,14 +1012,15 @@ def edit_photo_scratch_layer(
     source_image: str | Path,
     background_image: str | Path | None = None,
     face_image: str | Path | None = None,
+    bikini_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
     model: str | None = None,
 ) -> Path:
     """Image-edit the Flow source girl (optionally onto a background) for a photo-scratch layer.
 
-    Reference order: ENVIRONMENT first (if any), then WOMAN, then FACE last (if any) —
-    models attend to the scene instead of cloning the source wall, and the face ref
-    pins her identity across regenerations.
+    Reference order: ENVIRONMENT first (if any), then WOMAN, then BIKINI (if any), then
+    FACE last (if any) — models attend to the scene instead of cloning the source wall,
+    and the face ref pins her identity across regenerations.
     """
     key = api_key()
     images: list[str | Path] = []
@@ -910,6 +1030,9 @@ def edit_photo_scratch_layer(
         labels.append("environment")
     images.append(source_image)
     labels.append("woman")
+    if bikini_image is not None:
+        images.append(bikini_image)
+        labels.append("bikini")
     if face_image is not None:
         images.append(face_image)
         labels.append("face")

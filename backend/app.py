@@ -336,6 +336,7 @@ class VideoFlowRequest(BaseModel):
     source_mode: Literal["upload", "prompt", "face_swap"] = "upload"
     source_prompt: str = ""
     face_image: str = ""
+    bikini_image: str = ""
     base_image: str = ""
     provider: AiProvider = "xai"
     image_model: SourceImageModel = "grok-imagine"
@@ -1947,10 +1948,11 @@ def video_flow_draft_kwargs(request: VideoFlowRequest, *, image: Path | str) -> 
         "tracker": request.tracker,
         "write_webm": request.write_webm,
         "compress_preset": request.compress_preset,
-        "source_mode": request.source_mode,
-        "source_prompt": request.source_prompt,
-        "face_image": request.face_image,
-        "base_image": request.base_image,
+        "source_mode": request.source_mode if "source_mode" in request.model_fields_set else None,
+        "source_prompt": request.source_prompt if "source_prompt" in request.model_fields_set else None,
+        "face_image": request.face_image if "face_image" in request.model_fields_set else None,
+        "bikini_image": request.bikini_image if "bikini_image" in request.model_fields_set else None,
+        "base_image": request.base_image if "base_image" in request.model_fields_set else None,
         "mesh_tune": request.mesh_tune.model_dump(),
         "ai_provider": request.provider,
         "source_image_model": request.image_model,

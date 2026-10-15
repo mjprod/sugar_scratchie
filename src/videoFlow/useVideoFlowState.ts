@@ -98,6 +98,7 @@ function draftPayload(
     source_mode: draft.sourceMode,
     source_prompt: draft.sourcePrompt,
     face_image: draft.faceImage,
+    bikini_image: draft.bikiniImage,
     base_image: draft.baseImage,
     provider: draft.aiProvider,
     image_model: draft.sourceImageModel,
@@ -176,6 +177,7 @@ export function useVideoFlowState() {
     return isStockPortraitPrompt(saved) ? DEFAULT_PORTRAIT_PROMPT : saved;
   });
   const [faceImage, setFaceImage] = useState(storedDraft?.faceImage ?? "");
+  const [bikiniImage, setBikiniImage] = useState(storedDraft?.bikiniImage ?? "");
   const [baseImage, setBaseImage] = useState(storedDraft?.baseImage ?? "");
   const [aiProvider, setAiProvider] = useState<AiProvider>(
     storedDraft?.aiProvider ?? DEFAULT_SOURCE_IMAGE_PROVIDER,
@@ -246,6 +248,9 @@ export function useVideoFlowState() {
     const serverFace = (draft.faceImage ?? "").trim();
     const localFace = sameCard ? (local.faceImage ?? "").trim() : "";
     const faceToApply = serverFace || localFace;
+    const serverBikini = (draft.bikiniImage ?? "").trim();
+    const localBikini = sameCard ? (local.bikiniImage ?? "").trim() : "";
+    const bikiniToApply = serverBikini || localBikini;
     const serverBase = (draft.baseImage ?? "").trim();
     const localBase = sameCard ? (local.baseImage ?? "").trim() : "";
     const baseToApply = serverBase || localBase;
@@ -302,6 +307,7 @@ export function useVideoFlowState() {
       isStockPortraitPrompt(draft.sourcePrompt) ? DEFAULT_PORTRAIT_PROMPT : draft.sourcePrompt || DEFAULT_PORTRAIT_PROMPT,
     );
     setFaceImage(faceToApply);
+    setBikiniImage(bikiniToApply);
     setBaseImage(baseToApply);
     setAiProvider(draft.aiProvider);
     setSourceImageModel(draft.sourceImageModel);
@@ -316,6 +322,7 @@ export function useVideoFlowState() {
       dressPrompt: dress,
       dressReferenceImage: dressRefToApply,
       faceImage: faceToApply,
+      bikiniImage: bikiniToApply,
       baseImage: baseToApply,
     });
     writeActiveProjectId(draft.cardId);
@@ -409,6 +416,7 @@ export function useVideoFlowState() {
         sourceMode: "upload",
         sourcePrompt: DEFAULT_PORTRAIT_PROMPT,
         faceImage: "",
+        bikiniImage: "",
         baseImage: "",
         aiProvider: DEFAULT_SOURCE_IMAGE_PROVIDER,
         sourceImageModel: DEFAULT_SOURCE_IMAGE_MODEL,
@@ -506,6 +514,7 @@ export function useVideoFlowState() {
       sourceMode,
       sourcePrompt,
       faceImage,
+      bikiniImage,
       baseImage,
       aiProvider,
       sourceImageModel,
@@ -556,6 +565,7 @@ export function useVideoFlowState() {
     sourceMode,
     sourcePrompt,
     faceImage,
+    bikiniImage,
     baseImage,
     aiProvider,
     sourceImageModel,
@@ -674,6 +684,8 @@ export function useVideoFlowState() {
     setSourcePrompt,
     faceImage,
     setFaceImage,
+    bikiniImage,
+    setBikiniImage,
     baseImage,
     setBaseImage,
     aiProvider,

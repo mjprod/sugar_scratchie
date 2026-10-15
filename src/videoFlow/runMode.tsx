@@ -944,6 +944,7 @@ type RunModeProps = {
   sourceMode: SourceImageMode;
   sourcePrompt: string;
   faceImage: string;
+  bikiniImage: string;
   baseImage: string;
   onImageChange: (value: string) => void;
   onThemeChange: (value: string) => void;
@@ -961,6 +962,7 @@ type RunModeProps = {
   onSourceModeChange: (value: SourceImageMode) => void;
   onSourcePromptChange: (value: string) => void;
   onFaceImageChange: (value: string) => void;
+  onBikiniImageChange: (value: string) => void;
   onBaseImageChange: (value: string) => void;
   onAiProviderChange: (value: AiProvider) => void;
   onSourceImageModelChange: (value: SourceImageModel) => void;
@@ -2388,6 +2390,7 @@ export function RunMode(props: RunModeProps) {
     sourceMode,
     sourcePrompt,
     faceImage,
+    bikiniImage,
     baseImage,
     onImageChange,
     onThemeChange,
@@ -2405,6 +2408,7 @@ export function RunMode(props: RunModeProps) {
     onSourceModeChange,
     onSourcePromptChange,
     onFaceImageChange,
+    onBikiniImageChange,
     onBaseImageChange,
     onAiProviderChange,
     onSourceImageModelChange,
@@ -2776,6 +2780,7 @@ export function RunMode(props: RunModeProps) {
     source_mode: sourceMode,
     source_prompt: sourcePrompt,
     face_image: faceImage,
+    bikini_image: bikiniImage,
     base_image: baseImage,
     provider: aiProvider,
     image_model: sourceImageModel,
@@ -2856,6 +2861,11 @@ export function RunMode(props: RunModeProps) {
       stepApiReady &&
       actionStatus === "approved" &&
       !jobBusy,
+  );
+
+  const setupBackgroundStatus = flowState?.steps.background?.status;
+  const canRemakeBackgroundFromSetup = Boolean(
+    cardId.trim() && cardLabel.trim() && image && canUseBackgroundVideo && !jobBusy,
   );
 
   const canImportManualClips = Boolean(
@@ -3418,6 +3428,27 @@ export function RunMode(props: RunModeProps) {
               </Box>
             </Tabs.Root>
 
+            <Field label="Bikini model (optional — dress her in this swimsuit)">
+              <Flex direction="column" gap="1">
+                <FilePathPicker
+                  accept="image/*"
+                  placeholder="Pick a bikini photo or paste a path/URL"
+                  preview="image"
+                  previewLabel="Bikini model"
+                  previewSize="compact"
+                  previewZoomable
+                  value={bikiniImage}
+                  onChange={onBikiniImageChange}
+                  onError={onError}
+                />
+                <Text color="gray" size="1">
+                  If the source photo is already the bikini you want, leave this empty. Otherwise
+                  step 1 dresses her in this swimsuit before the video, and photo-scratch bikinis
+                  use it too.
+                </Text>
+              </Flex>
+            </Field>
+
             <Field label="Her face — identity reference (used by all AI generations)">
               <Flex direction="column" gap="1">
                 <FilePathPicker
@@ -3432,11 +3463,31 @@ export function RunMode(props: RunModeProps) {
                   onError={onError}
                 />
                 <Text color="gray" size="1">
-                  Every photo-scratch generation sends this photo as a face reference and
-                  face-locks the result, so her face stays the same across all cards and slots.
+                  Step 1 and every photo-scratch generation send this photo as a face reference
+                  and face-lock the result, so her face stays the same across all cards and slots.
                 </Text>
               </Flex>
             </Field>
+
+            {setupBackgroundStatus === "approved" || setupBackgroundStatus === "review" ? (
+              <Callout.Root color="blue">
+                <Flex align="center" gap="3" wrap="wrap">
+                  <Callout.Text>
+                    Step 1 already ran. After changing the source, bikini model, or face, remake it
+                    so the video uses them. Steps after it will need to run again.
+                  </Callout.Text>
+                  <Button
+                    disabled={!canRemakeBackgroundFromSetup}
+                    size="1"
+                    type="button"
+                    onClick={() => void runStep("background", true)}
+                  >
+                    <RotateCcw {...iconProps} />
+                    Remake Image to video
+                  </Button>
+                </Flex>
+              </Callout.Root>
+            ) : null}
 
             <Grid columns={{ initial: "1", md: "2" }} gap="3">
               <Field label="Card id (work folder)">

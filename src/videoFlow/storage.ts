@@ -153,6 +153,7 @@ export type StoredVideoFlowDraft = {
   sourceMode: SourceImageMode;
   sourcePrompt: string;
   faceImage: string;
+  bikiniImage: string;
   baseImage: string;
   aiProvider: AiProvider;
   sourceImageModel: SourceImageModel;
@@ -194,6 +195,7 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
         ? DEFAULT_PORTRAIT_PROMPT
         : (parsed.sourcePrompt ?? DEFAULT_PORTRAIT_PROMPT),
       faceImage: parsed.faceImage ?? "",
+      bikiniImage: parsed.bikiniImage ?? "",
       baseImage: parsed.baseImage ?? "",
       aiProvider: parseAiProvider(parsed.aiProvider),
       sourceImageModel: parseSourceImageModel(parsed.sourceImageModel, parsed.aiProvider),
@@ -266,6 +268,7 @@ export function storedDraftFromApi(draft?: {
   source_mode?: string;
   source_prompt?: string;
   face_image?: string;
+  bikini_image?: string;
   base_image?: string;
   mesh_tune?: unknown;
   ai_provider?: string;
@@ -297,6 +300,7 @@ export function storedDraftFromApi(draft?: {
         : "upload",
     sourcePrompt: draft.source_prompt ?? "",
     faceImage: draft.face_image ?? "",
+    bikiniImage: draft.bikini_image ?? "",
     baseImage: draft.base_image ?? "",
     aiProvider: parseAiProvider(draft.ai_provider),
     sourceImageModel: parseSourceImageModel(draft.source_image_model, draft.ai_provider),

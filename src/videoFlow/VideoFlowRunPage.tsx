@@ -46,6 +46,8 @@ export function VideoFlowRunPage() {
     setSourcePrompt,
     faceImage,
     setFaceImage,
+    bikiniImage,
+    setBikiniImage,
     baseImage,
     setBaseImage,
     aiProvider,
@@ -125,6 +127,7 @@ export function VideoFlowRunPage() {
             sourceMode={sourceMode}
             sourcePrompt={sourcePrompt}
             faceImage={faceImage}
+            bikiniImage={bikiniImage}
             baseImage={baseImage}
             onImageChange={setImage}
             onThemeChange={updateTheme}
@@ -142,6 +145,7 @@ export function VideoFlowRunPage() {
             onSourceModeChange={setSourceMode}
             onSourcePromptChange={setSourcePrompt}
             onFaceImageChange={setFaceImage}
+            onBikiniImageChange={setBikiniImage}
             onBaseImageChange={setBaseImage}
             onAiProviderChange={setAiProvider}
             onSourceImageModelChange={setSourceImageModel}

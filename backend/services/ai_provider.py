@@ -285,6 +285,7 @@ def edit_photo_scratch_layer(
     source_image: str | Path,
     background_image: str | Path | None = None,
     face_image: str | Path | None = None,
+    bikini_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
 ) -> Path:
     """Keep the Flow source girl's identity while building bikini/clothes photo-scratch layers.
@@ -295,14 +296,18 @@ def edit_photo_scratch_layer(
     back to x.ai moderation.
     """
     route = source_image_route(provider, image_model)
-    needs_multi = background_image is not None or face_image is not None
+    needs_multi = (
+        background_image is not None or face_image is not None or bikini_image is not None
+    )
 
     def _seedream_edit() -> Path:
-        # Environment first, woman second, face last — matches photo_scratch bikini prompts.
+        # Environment, woman, bikini, face last — matches photo_scratch bikini prompts.
         images: list[str | Path] = []
         if background_image is not None:
             images.append(background_image)
         images.append(source_image)
+        if bikini_image is not None:
+            images.append(bikini_image)
         if face_image is not None:
             images.append(face_image)
         payload = {
@@ -336,6 +341,7 @@ def edit_photo_scratch_layer(
             source_image=source_image,
             background_image=background_image,
             face_image=face_image,
+            bikini_image=bikini_image,
             aspect_ratio=aspect_ratio,
             model=_stored_xai_model("source_image", image_model) or None,
         )
