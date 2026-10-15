@@ -861,10 +861,35 @@ def photo_scratch_bikini_prompt(
             f"(8) Do not invent a different woman. Photorealistic."
         )
     if with_bikini:
+        # Face is attached last (woman, bikini, face). Name it or the face clause
+        # points at an image this prompt never introduces.
+        if with_face:
+            return (
+                f"Three references: reference 1 = WOMAN (her body), "
+                f"reference 2 = BIKINI (the swimsuit to dress her in), "
+                f"reference 3 = FACE (her exact face). "
+                f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
+                f"{swimsuit} "
+                f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
+                f"{face_clause}"
+                f"Clean studio backdrop (no busy scene). "
+                f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+            )
         return (
             f"Reference 1 = WOMAN, reference 2 = BIKINI. "
             f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
             f"{swimsuit} "
+            f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
+            f"Clean studio backdrop (no busy scene). "
+            f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+        )
+    if with_face:
+        # No bikini photo: images are woman, then face. Name both.
+        return (
+            f"Two references: reference 1 = WOMAN (her body), "
+            f"reference 2 = FACE (her exact face). "
+            f"Using this exact same woman from reference 1, change her outfit to a "
+            f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
             f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
             f"{face_clause}"
             f"Clean studio backdrop (no busy scene). "
@@ -874,7 +899,6 @@ def photo_scratch_bikini_prompt(
         f"Using this exact same woman from the reference image, change her outfit to a "
         f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
         f"Keep face, identity, hair, skin tone, and body proportions. "
-        f"{face_clause}"
         f"Clean studio backdrop (no busy scene). "
         f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
     )

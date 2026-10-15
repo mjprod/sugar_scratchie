@@ -85,6 +85,27 @@ def test_bikini_prompt_numbers_references_in_send_order():
     no_bg = photo_scratch_bikini_prompt("Cowgirl", with_bikini=True)
     assert "reference 2 = BIKINI" in no_bg
     assert "swimsuit from reference 2" in no_bg
+    assert "FACE" not in no_bg
+
+    no_bg_face = photo_scratch_bikini_prompt("Cowgirl", with_bikini=True, with_face=True)
+    assert "Three references" in no_bg_face
+    assert "reference 1 = WOMAN" in no_bg_face
+    assert "reference 2 = BIKINI" in no_bg_face
+    assert "reference 3 = FACE" in no_bg_face
+    assert "swimsuit from reference 2" in no_bg_face
+    assert "LAST reference image" in no_bg_face
+    assert "from reference 1" in no_bg_face
+    assert "Do not invent a different woman" in no_bg_face
+    assert "Reference 1 = WOMAN, reference 2 = BIKINI." not in no_bg_face
+
+    face_only = photo_scratch_bikini_prompt("Cowgirl", with_face=True)
+    assert "Two references" in face_only
+    assert "reference 1 = WOMAN" in face_only
+    assert "reference 2 = FACE" in face_only
+    assert "LAST reference image" in face_only
+    assert "from reference 1" in face_only
+    assert "flattering Cowgirl bikini" in face_only
+    assert "Do not invent a different woman" in face_only
 
     unchanged = photo_scratch_bikini_prompt("Cowgirl", with_background=True, with_face=True)
     assert "Three references" in unchanged
