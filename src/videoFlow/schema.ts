@@ -3,6 +3,7 @@ export type FlowNodeId =
   | "background"
   | "trim"
   | "dress"
+  | "boomerang"
   | "compress"
   | "card"
   | "mesh"
@@ -15,6 +16,7 @@ export type VideoFlowStepKey =
   | "background"
   | "trim"
   | "dress"
+  | "boomerang"
   | "compress"
   | "card"
   | "mesh"
@@ -213,11 +215,11 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Bikini background from the source image, fix white edge frames, then a dress edit on the same frames. Card and mesh run automatically; place symbol points, then compress.",
+    "Bikini background from the source image, fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
   version: 1,
-  pipeline: ["background", "trim", "dress", "card", "mesh", "symbols", "compress"],
-  reviewSteps: ["background", "trim", "dress"],
-  canvas: { width: 1280, height: 200 },
+  pipeline: ["background", "trim", "dress", "boomerang", "card", "mesh", "symbols", "compress"],
+  reviewSteps: ["background", "trim", "dress", "boomerang"],
+  canvas: { width: 1820, height: 200 },
   nodes: [
     {
       id: "source",
@@ -269,12 +271,28 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "video", label: "video" }],
     },
     {
+      id: "boomerang",
+      kind: "process",
+      title: "Boomerang",
+      subtitle: "Forward + reverse",
+      description:
+        "Play the first N seconds of both clips forward, then the same frames backwards — or keep them as-is",
+      x: 700,
+      y: 56,
+      step: "boomerang",
+      inputs: [
+        { id: "background", label: "background" },
+        { id: "foreground", label: "foreground" },
+      ],
+      outputs: [{ id: "clips", label: "clips" }],
+    },
+    {
       id: "card",
       kind: "process",
       title: "Create card",
       subtitle: "public/cards/",
-      description: "Publish raw clips under public/cards/<id>/, or import both videos by hand",
-      x: 700,
+      description: "Publish the boomerang (or original) clips under public/cards/<id>/, or import both videos by hand",
+      x: 880,
       y: 56,
       step: "card",
       inputs: [
@@ -289,7 +307,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Generate mesh",
       subtitle: "Garment tracking",
       description: "Track the foreground for garment-local scratching",
-      x: 880,
+      x: 1060,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -301,7 +319,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Place symbols",
       subtitle: "12 mesh points",
       description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 1000,
+      x: 1240,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -313,7 +331,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Finalize",
       subtitle: "390∶672 delivery",
       description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
-      x: 1160,
+      x: 1420,
       y: 56,
       step: "compress",
       inputs: [
@@ -328,7 +346,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow output",
       subtitle: "Scratch card",
       description: "Playable card in the scratch prototype",
-      x: 1280,
+      x: 1600,
       y: 56,
       step: null,
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -339,13 +357,14 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     { from: "source", to: "background" },
     { from: "background", to: "trim" },
     { from: "trim", to: "dress" },
-    { from: "trim", to: "card" },
-    { from: "dress", to: "card" },
+    { from: "trim", to: "boomerang" },
+    { from: "dress", to: "boomerang" },
+    { from: "boomerang", to: "card" },
     { from: "card", to: "mesh" },
     { from: "mesh", to: "symbols" },
     { from: "symbols", to: "compress" },
     { from: "card", to: "compress" },
-    { from: "dress", to: "compress" },
+    { from: "boomerang", to: "compress" },
     { from: "mesh", to: "output" },
   ],
   defaults: {
@@ -364,6 +383,7 @@ const STEP_IDS = new Set<VideoFlowStepKey>([
   "background",
   "trim",
   "dress",
+  "boomerang",
   "card",
   "mesh",
   "symbols",
@@ -374,6 +394,7 @@ const NODE_IDS = new Set<FlowNodeId>([
   "background",
   "trim",
   "dress",
+  "boomerang",
   "compress",
   "card",
   "mesh",
@@ -411,6 +432,19 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     }
     if (!reviewSteps.includes("trim")) {
       reviewSteps = [...reviewSteps, "trim"];
+    }
+    changed = true;
+  }
+
+  if (!pipeline.includes("boomerang") && pipeline.includes("dress")) {
+    const dressIndex = pipeline.indexOf("dress");
+    pipeline.splice(dressIndex + 1, 0, "boomerang");
+    if (!nodes.some((node) => node?.id === "boomerang")) {
+      const boomerangNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "boomerang");
+      if (boomerangNode) nodes.push(boomerangNode);
+    }
+    if (!reviewSteps.includes("boomerang")) {
+      reviewSteps = [...reviewSteps, "boomerang"];
     }
     changed = true;
   }

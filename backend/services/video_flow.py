@@ -77,6 +77,7 @@ VideoFlowStep = Literal[
     "background",
     "trim",
     "dress",
+    "boomerang",
     "card",
     "mesh",
     "symbols",
@@ -91,11 +92,12 @@ MESH_TRACKERS: tuple[MeshTracker, MeshTracker, MeshTracker] = (
     "blend",
 )
 
-# Bikini background → drop white edge frames → dress edit → publish + track → compress.
+# Bikini background → drop white frames → dress edit → boomerang → publish + track → compress.
 STEP_ORDER: list[VideoFlowStep] = [
     "background",
     "trim",
     "dress",
+    "boomerang",
     "card",
     "mesh",
     "symbols",
@@ -106,18 +108,20 @@ STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
     "background": [],
     "trim": ["background"],
     "dress": ["trim"],
-    "card": ["background", "dress"],
+    "boomerang": ["dress"],
+    "card": ["boomerang"],
     "mesh": ["card"],
     "symbols": ["mesh"],
     "compress": ["symbols"],
 }
 
-REVIEW_STEPS = frozenset({"background", "trim", "dress"})
+REVIEW_STEPS = frozenset({"background", "trim", "dress", "boomerang"})
 
 STEP_LABELS: dict[VideoFlowStep, str] = {
     "background": "Background bikini (image to video)",
     "trim": "Fix frames (delete white frames)",
     "dress": "Foreground dress-up (video edit)",
+    "boomerang": "Boomerang (forward + reverse)",
     "card": "Create card",
     "mesh": "Generate mesh",
     "symbols": "Place symbol points",
@@ -335,7 +339,7 @@ def normalize_state(state: dict) -> dict:
     """Drop stale approvals from older pipeline versions or skipped dependencies."""
     raw = [step for step in state["approved"] if step in STEP_ORDER]
     # Pre-trim pipelines approved dress without a fix-frames step — backfill it.
-    later = {"dress", "card", "mesh", "symbols", "compress"}
+    later = {"dress", "boomerang", "card", "mesh", "symbols", "compress"}
     if (
         "background" in raw
         and "trim" not in raw
@@ -343,6 +347,15 @@ def normalize_state(state: dict) -> dict:
     ):
         insert_at = raw.index("background") + 1
         raw = [*raw[:insert_at], "trim", *raw[insert_at:]]
+    # Cards created before boomerang was its own step — keep Create card unlocked.
+    after_boomerang = {"card", "mesh", "symbols", "compress"}
+    if (
+        "dress" in raw
+        and "boomerang" not in raw
+        and any(step in after_boomerang for step in raw)
+    ):
+        insert_at = raw.index("dress") + 1
+        raw = [*raw[:insert_at], "boomerang", *raw[insert_at:]]
     approved: list[VideoFlowStep] = []
     for step in STEP_ORDER:
         if step not in raw:
@@ -408,10 +421,12 @@ def artifact_paths(
     trim_preview = ""
     if trim_report.exists() and background_preview:
         trim_preview = background_preview
+    boomerang_clips = [background_preview, dress_preview] if background_preview and dress_preview else []
     return {
         "background": [background_preview],
         "trim": [trim_preview],
         "dress": [dress_preview],
+        "boomerang": boomerang_clips,
         "card": [
             str(card_bg.relative_to(ROOT)) if video_ok(card_bg) else "",
             str(card_fg.relative_to(ROOT)) if video_ok(card_fg) else "",
@@ -469,6 +484,21 @@ def step_artifact_ready(
         background_clip = _work_background_clip(work)
         video_ok = output_video_ready if probe_videos else video_file_present
         return bool(report.exists() and background_clip and video_ok(background_clip))
+    if step == "boomerang":
+        paths = _paths(work)
+        video_ok = output_video_ready if probe_videos else video_file_present
+        clips_ok = video_ok(paths["background_raw"]) and video_ok(paths["foreground_dressed"])
+        if not clips_ok:
+            card_bg = CARDS_DIR / card_id / "background.mp4"
+            card_fg = CARDS_DIR / card_id / "foreground.mp4"
+            clips_ok = video_ok(card_bg) and video_ok(card_fg)
+        if not clips_ok:
+            return False
+        if read_boomerang_report(work):
+            return True
+        # Pipelines that passed Create card before this step existed stay done.
+        approved = state["approved"] if state else []
+        return "boomerang" in approved
     paths = preview_paths(work, card_id, state, probe_videos=probe_videos)[step]
     if not paths:
         return False
@@ -562,6 +592,7 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         ],
         "trim": [paths["trim_report"]],
         "dress": [paths["foreground_dressed"]],
+        "boomerang": [],
         "compress": [
             work / "foreground-aligned-for-compress.mp4",
             work / "compress-bg-tmp.mp4",
@@ -579,6 +610,10 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
     if step == "trim" and output_video_ready(paths["background_source"]):
         # Restore the pristine Grok clip so dress always sees the untrimmed source after reject.
         shutil.copy2(paths["background_source"], paths["background_raw"])
+
+    if step == "boomerang":
+        _restore_boomerang_clips_if_current(work)
+        _clear_boomerang_backups(work, card_id)
 
     if step == "card":
         # Keep published card videos on disk so a failed remake (or dress remake)
@@ -676,6 +711,9 @@ def approve_flow_step(
 
 
 def reject_flow_step(card_id: str, step: VideoFlowStep) -> dict:
+    if step == "boomerang":
+        # Undo the cut without wiping a mesh that was mirrored onto it.
+        return reset_boomerang_step(card_id, card_label="")
     work = work_dir(card_id)
     state = read_state(work)
     for downstream in downstream_steps(step):
@@ -819,7 +857,8 @@ def import_manual_clips(
             "frames_after": None,
         },
     )
-    state["approved"] = ["background", "trim", "dress", "card"]
+    state["approved"] = ["background", "trim", "dress", "boomerang", "card"]
+    _write_boomerang_report(work, _skipped_boomerang_report())
     # Keep mesh/symbols if those artifacts already exist for this card.
     mesh_out = MESH_DIR / f"{card_id}.json"
     if mesh_out.exists():
@@ -831,7 +870,7 @@ def import_manual_clips(
         record_step_approved(work, approved_step)
     print(
         f"Imported manual clips for {card_id} — "
-        "background, trim, dress, and card marked approved."
+        "background, trim, dress, boomerang, and card marked approved."
     )
     return flow_state(card_id)
 
@@ -1028,7 +1067,7 @@ def recover_stale_approvals(
     # Published card implies background + dress + card were done, even if the
     # work-dir dress clip was cleaned up or only a grok-compatible bg remains.
     if published:
-        restored: list[VideoFlowStep] = ["background", "trim", "dress", "card"]
+        restored: list[VideoFlowStep] = ["background", "trim", "dress", "boomerang", "card"]
     elif background_clip and video_ok(background_clip):
         restored = ["background"]
         if (work / "trim-report.json").exists():
@@ -2155,7 +2194,107 @@ def _boomerang_ready_clip(*candidates: Path | None) -> Path:
     for clip in candidates:
         if clip is not None and output_video_ready(clip):
             return clip
-    raise RuntimeError("Card videos missing — run Create card first.")
+    raise RuntimeError("Background and dress clips are missing — approve Video edit first.")
+
+
+def _card_label_or_draft(card_id: str, card_label: str) -> str:
+    label = card_label.strip()
+    if label:
+        return label
+    draft = read_flow_draft(card_id) or {}
+    fallback = str(draft.get("card_label") or "").strip()
+    return fallback or card_id
+
+
+def _clip_matches_report(path: Path, expected: object) -> bool:
+    return isinstance(expected, int) and path.is_file() and path.stat().st_size == expected
+
+
+def _restore_boomerang_clips_if_current(work: Path) -> None:
+    """Put work-dir clips back when they are still the boomerang cut.
+
+    Upstream rejects delete the dress clip first. Only a file that still matches
+    the report is restored, so a trim reset is not overwritten by the backup.
+    """
+    report = read_boomerang_report(work)
+    if not report or report.get("skipped"):
+        return
+    paths = _paths(work)
+    bg_backup = paths["background_pre_boomerang"]
+    fg_backup = paths["foreground_pre_boomerang"]
+    if _clip_matches_report(paths["background_raw"], report.get("background_bytes")) and bg_backup.is_file():
+        shutil.copy2(bg_backup, paths["background_raw"])
+    if (
+        _clip_matches_report(paths["foreground_dressed"], report.get("foreground_bytes"))
+        and fg_backup.is_file()
+    ):
+        shutil.copy2(fg_backup, paths["foreground_dressed"])
+
+
+def _skipped_boomerang_report() -> dict:
+    return {
+        "skipped": True,
+        "seconds": 0,
+        "mesh_mirrored": False,
+        "applied_at": int(time.time() * 1000),
+    }
+
+
+def _write_boomerang_report(work: Path, report: dict) -> None:
+    _paths(work)["boomerang_report"].write_text(
+        json.dumps(report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _require_boomerang_unlocked(card_id: str) -> tuple[Path, dict]:
+    work = work_dir(card_id)
+    state = read_state(work)
+    if "dress" not in state["approved"] or not step_unlocked(state, "boomerang"):
+        raise RuntimeError("Approve Video edit before the boomerang step.")
+    return work, state
+
+
+def _undo_boomerang_media(card_id: str, *, card_label: str) -> None:
+    """Restore pre-boomerang clips. Republish and restore meshes when the card exists."""
+    work = work_dir(card_id)
+    state = read_state(work)
+    paths = _paths(work)
+    bg_pristine = paths["background_pre_boomerang"]
+    fg_pristine = paths["foreground_pre_boomerang"]
+    if not (output_video_ready(bg_pristine) and output_video_ready(fg_pristine)):
+        _clear_boomerang_backups(work, card_id)
+        return
+    shutil.copy2(bg_pristine, paths["background_raw"])
+    shutil.copy2(fg_pristine, paths["foreground_dressed"])
+    card_done = "card" in state["approved"]
+    if card_done:
+        _publish_card(
+            card_id=card_id,
+            card_label=_card_label_or_draft(card_id, card_label),
+            paths=paths,
+        )
+    pairs = _boomerang_mesh_pairs(work, card_id)
+    canonical_live, canonical_backup = pairs[0]
+    mesh_restored = canonical_backup.exists()
+    if mesh_restored:
+        for live, backup in pairs:
+            if backup.exists():
+                shutil.copy2(backup, live)
+    _clear_boomerang_backups(work, card_id)
+    if not mesh_restored and canonical_live.exists() and card_done:
+        print("Mesh was generated on the boomerang clip — regenerate it.")
+        reject_flow_step(card_id, "mesh")
+    if card_done:
+        _invalidate_compress(work, card_id)
+
+
+def _drop_boomerang_approval_before_card(work: Path) -> None:
+    state = read_state(work)
+    if "card" in state["approved"] or "boomerang" not in state["approved"]:
+        return
+    state["approved"].remove("boomerang")
+    write_state(work, state)
 
 
 def apply_boomerang_step(
@@ -2164,26 +2303,22 @@ def apply_boomerang_step(
     card_label: str,
     seconds: float = BOOMERANG_DEFAULT_SECONDS,
 ) -> dict:
-    """Turn the card into a boomerang: first `seconds` forward, then reversed.
+    """Play the first `seconds` forward, then the same frames reversed, on both clips.
 
-    Both clips get the same frame-exact treatment so the pair stays in sync,
-    and the tracked meshes are mirrored in time so symbol points and the
-    scratch mask carry over. Re-running starts from the pre-boomerang copies.
+    Runs after Video edit and before Create card. Re-running starts from the
+    pre-boomerang copies. When the card is already published, the new clips are
+    republished and an existing mesh is mirrored in time so symbol points stay.
     """
-    work = work_dir(card_id)
-    state = read_state(work)
-    if "card" not in state["approved"]:
-        raise RuntimeError("Approve Create card before making a boomerang.")
-    label = card_label.strip()
-    if not label:
-        raise RuntimeError("Card label is required")
-
+    work, state = _require_boomerang_unlocked(card_id)
+    record_step_started(work, "boomerang")
     paths = _paths(work)
     card_bg, card_fg = card_paths(ROOT, CARDS_DIR, card_id)
     bg_pristine = paths["background_pre_boomerang"]
     fg_pristine = paths["foreground_pre_boomerang"]
+    report = read_boomerang_report(work)
     if not (
-        read_boomerang_report(work)
+        report
+        and not report.get("skipped")
         and output_video_ready(bg_pristine)
         and output_video_ready(fg_pristine)
     ):
@@ -2206,27 +2341,35 @@ def apply_boomerang_step(
             f"Warning: boomerang frame counts differ — background "
             f"{bg_result['frames_after']}, foreground {fg_result['frames_after']}"
         )
-    _publish_card(card_id=card_id, card_label=label, paths=paths)
 
+    card_done = "card" in state["approved"]
     fps = float(fg_result["fps"])
     pivot_t = (int(fg_result["forward_frames"]) - 1) / fps
     total_duration = int(fg_result["frames_after"]) / fps
-    pairs = _boomerang_mesh_pairs(work, card_id)
-    canonical_live, canonical_backup = pairs[0]
     mesh_mirrored = False
-    if canonical_backup.exists():
-        for live, backup in pairs:
-            if backup.exists():
-                mirror_mesh_in_time(backup, live, pivot_t=pivot_t, total_duration=total_duration)
-        mesh_mirrored = True
-        print(f"Mirrored mesh in time around {pivot_t:.3f}s ({total_duration:.2f}s total)")
-    elif canonical_live.exists():
-        # Mesh was tracked on an earlier boomerang, so it can't be re-mirrored.
-        print("Mesh was generated after the previous boomerang — regenerate it.")
-        reject_flow_step(card_id, "mesh")
-    _invalidate_compress(work, card_id)
+    if card_done:
+        _publish_card(
+            card_id=card_id,
+            card_label=_card_label_or_draft(card_id, card_label),
+            paths=paths,
+        )
+        pairs = _boomerang_mesh_pairs(work, card_id)
+        canonical_live, canonical_backup = pairs[0]
+        if canonical_backup.exists():
+            for live, backup in pairs:
+                if backup.exists():
+                    mirror_mesh_in_time(
+                        backup, live, pivot_t=pivot_t, total_duration=total_duration
+                    )
+            mesh_mirrored = True
+            print(f"Mirrored mesh in time around {pivot_t:.3f}s ({total_duration:.2f}s total)")
+        elif canonical_live.exists():
+            print("Mesh was generated after the previous boomerang — regenerate it.")
+            reject_flow_step(card_id, "mesh")
+        _invalidate_compress(work, card_id)
 
-    report = {
+    written = {
+        "skipped": False,
         "seconds": float(seconds),
         "fps": fps,
         "forward_frames": int(fg_result["forward_frames"]),
@@ -2238,46 +2381,53 @@ def apply_boomerang_step(
         "foreground_bytes": paths["foreground_dressed"].stat().st_size,
         "applied_at": int(time.time() * 1000),
     }
-    paths["boomerang_report"].write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    _write_boomerang_report(work, written)
+    if not card_done:
+        _drop_boomerang_approval_before_card(work)
+    record_step_finished(work, "boomerang")
     print(
-        f"Boomerang ready for {card_id}: first {report['forward_frames'] / fps:.2f}s "
-        f"forward + reverse = {report['duration_after']:.2f}s"
+        f"Boomerang ready for {card_id}: first {written['forward_frames'] / fps:.2f}s "
+        f"forward + reverse = {written['duration_after']:.2f}s"
     )
     return flow_state(card_id)
 
 
-def reset_boomerang_step(card_id: str, *, card_label: str) -> dict:
-    """Undo the boomerang: restore the original clips and meshes and republish."""
+def skip_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
+    """Keep the Video edit clips unchanged so Create card can run."""
+    work, _state = _require_boomerang_unlocked(card_id)
+    record_step_started(work, "boomerang")
+    report = read_boomerang_report(work)
+    if report and not report.get("skipped"):
+        _undo_boomerang_media(card_id, card_label=card_label)
+    else:
+        _clear_boomerang_backups(work, card_id)
+    _write_boomerang_report(work, _skipped_boomerang_report())
+    _drop_boomerang_approval_before_card(work)
+    record_step_finished(work, "boomerang")
+    print(f"Boomerang skipped for {card_id}")
+    return flow_state(card_id)
+
+
+def reset_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
+    """Undo the boomerang: restore the original clips and meshes."""
     work = work_dir(card_id)
-    paths = _paths(work)
-    bg_pristine = paths["background_pre_boomerang"]
-    fg_pristine = paths["foreground_pre_boomerang"]
-    if not (
-        read_boomerang_report(work)
-        and output_video_ready(bg_pristine)
-        and output_video_ready(fg_pristine)
-    ):
+    report = read_boomerang_report(work)
+    if not report:
         raise RuntimeError("No boomerang to undo for this card.")
-    label = card_label.strip()
-    if not label:
-        raise RuntimeError("Card label is required")
-
-    shutil.copy2(bg_pristine, paths["background_raw"])
-    shutil.copy2(fg_pristine, paths["foreground_dressed"])
-    _publish_card(card_id=card_id, card_label=label, paths=paths)
-
-    pairs = _boomerang_mesh_pairs(work, card_id)
-    canonical_live, canonical_backup = pairs[0]
-    mesh_restored = canonical_backup.exists()
-    if mesh_restored:
-        for live, backup in pairs:
-            if backup.exists():
-                shutil.copy2(backup, live)
-    _clear_boomerang_backups(work, card_id)
-    if not mesh_restored and canonical_live.exists():
-        print("Mesh was generated on the boomerang clip — regenerate it.")
-        reject_flow_step(card_id, "mesh")
-    _invalidate_compress(work, card_id)
+    if report.get("skipped"):
+        _clear_boomerang_backups(work, card_id)
+        _drop_boomerang_approval_before_card(work)
+        return flow_state(card_id)
+    paths = _paths(work)
+    if not (
+        output_video_ready(paths["background_pre_boomerang"])
+        and output_video_ready(paths["foreground_pre_boomerang"])
+    ):
+        _clear_boomerang_backups(work, card_id)
+        _drop_boomerang_approval_before_card(work)
+        return flow_state(card_id)
+    _undo_boomerang_media(card_id, card_label=card_label)
+    _drop_boomerang_approval_before_card(work)
     print(f"Boomerang undone for {card_id}")
     return flow_state(card_id)
 
@@ -2564,6 +2714,9 @@ def run_video_flow_step(
             dress_video_model=dress_model,
         )
         _sync_foreground_to_background(work, paths)
+    elif step == "boomerang":
+        # Headless runs keep the clips. The dashboard picks a duration itself.
+        skip_boomerang_step(card_id, card_label=card_label)
     elif step == "card":
         if not output_video_ready(paths["background_raw"]) or not output_video_ready(
             paths["foreground_dressed"]

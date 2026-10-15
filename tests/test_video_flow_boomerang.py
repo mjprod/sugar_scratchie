@@ -135,14 +135,57 @@ def test_boomerang_requires_operator(client, card_id):
     assert response.status_code == 401
 
 
-def test_boomerang_requires_card_approved(client, dashboard_headers, card_id):
+def test_boomerang_requires_video_edit(client, dashboard_headers, card_id):
     response = client.post(
         f"/api/video-flow/{card_id}/boomerang",
         json={"card_label": "Test", "seconds": 5},
         headers=dashboard_headers,
     )
     assert response.status_code == 400, response.text
-    assert "Create card" in response.json()["detail"]
+    assert "Video edit" in response.json()["detail"]
+
+
+@needs_ffmpeg
+def test_boomerang_before_create_card_gates_publish(card_id):
+    work = work_dir(card_id)
+    _make_clip(work / "background-raw.mp4")
+    _make_clip(work / "foreground-dressed.mp4")
+    write_state(work, {"approved": ["background", "trim", "dress"]})
+
+    flow = video_flow.apply_boomerang_step(card_id, card_label="Test", seconds=2)
+
+    forward = 2 * FPS
+    assert flow["boomerang"]["frames_after"] == 2 * forward - 1
+    assert flow["boomerang"]["mesh_mirrored"] is False
+    assert flow["steps"]["boomerang"]["status"] == "review"
+    assert flow["steps"]["card"]["status"] == "locked"
+    assert "card" not in read_state(work)["approved"]
+
+    flow = video_flow.skip_boomerang_step(card_id, card_label="Test")
+    assert flow["boomerang"]["skipped"] is True
+    assert probe_video_timing(work / "background-raw.mp4")["frames"] == SOURCE_SECONDS * FPS
+
+    flow = video_flow.approve_flow_step(card_id, "boomerang")
+    assert flow["steps"]["boomerang"]["status"] == "approved"
+    assert flow["steps"]["card"]["status"] == "ready"
+
+
+def test_boomerang_backfill_keeps_later_steps(card_id):
+    work = work_dir(card_id)
+    write_state(
+        work,
+        {"approved": ["background", "trim", "dress", "card", "mesh", "symbols", "compress"]},
+    )
+    assert read_state(work)["approved"] == [
+        "background",
+        "trim",
+        "dress",
+        "boomerang",
+        "card",
+        "mesh",
+        "symbols",
+        "compress",
+    ]
 
 
 @pytest.fixture

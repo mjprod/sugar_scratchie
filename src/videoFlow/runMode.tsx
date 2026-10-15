@@ -140,13 +140,14 @@ type VideoFlowState = {
 
 type BoomerangReport = {
   seconds: number;
-  fps: number;
-  forward_frames: number;
-  frames_before: number;
-  frames_after: number;
-  duration_after: number;
-  mesh_mirrored: boolean;
-  applied_at: number;
+  fps?: number;
+  forward_frames?: number;
+  frames_before?: number;
+  frames_after?: number;
+  duration_after?: number;
+  mesh_mirrored?: boolean;
+  applied_at?: number;
+  skipped?: boolean;
 };
 
 const BOOMERANG_DEFAULT_SECONDS = 5;
@@ -253,6 +254,7 @@ function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
     step === "background" ||
     step === "trim" ||
     step === "dress" ||
+    step === "boomerang" ||
     step === "compress" ||
     step === "card" ||
     step === "mesh" ||
@@ -519,6 +521,7 @@ function BoomerangPanel({
   cardId,
   cardLabel,
   report,
+  cardApproved,
   busy,
   onBusy,
   onError,
@@ -528,13 +531,17 @@ function BoomerangPanel({
   cardId: string;
   cardLabel: string;
   report: BoomerangReport | null;
+  cardApproved: boolean;
   busy: boolean;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
   onState: (state: VideoFlowState) => void;
   onClipsChanged: () => void;
 }) {
-  const [seconds, setSeconds] = useState(String(report?.seconds ?? BOOMERANG_DEFAULT_SECONDS));
+  const applied = Boolean(report && !report.skipped && report.forward_frames && report.fps);
+  const [seconds, setSeconds] = useState(
+    String(applied && report?.seconds ? report.seconds : BOOMERANG_DEFAULT_SECONDS),
+  );
   const parsedSeconds = Number(seconds);
   const secondsValid =
     Number.isFinite(parsedSeconds) &&
@@ -561,11 +568,13 @@ function BoomerangPanel({
 
   return (
     <Flex direction="column" gap="3">
-      <Heading size="3">Boomerang</Heading>
-      <Text color="gray" size="2">
-        Plays the first N seconds forward, then the same frames backwards, and re-exports both
-        clips as MP4. The mesh is mirrored in time, so symbol points and the scratch mask stay.
-      </Text>
+      <Callout.Root color="blue">
+        <Callout.Text size="2">
+          Plays the first N seconds of the bikini clip and the dress clip forward, then the same
+          frames backwards. <strong>Create card</strong> publishes the version you approve here.
+          Keep the clips as-is when this card should stay a straight loop.
+        </Callout.Text>
+      </Callout.Root>
       <Flex align="end" gap="3" wrap="wrap">
         <Field label="Forward seconds">
           <TextField.Root
@@ -583,9 +592,17 @@ function BoomerangPanel({
           onClick={() => void post("boomerang", { seconds: parsedSeconds })}
         >
           {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
-          {report ? "Re-make boomerang" : "Make boomerang"}
+          {applied ? "Re-make boomerang" : "Make boomerang"}
         </Button>
-        {report ? (
+        <Button
+          disabled={disabled}
+          type="button"
+          variant="soft"
+          onClick={() => void post("boomerang", { skip: true, seconds: BOOMERANG_DEFAULT_SECONDS })}
+        >
+          Keep as-is
+        </Button>
+        {applied ? (
           <Button
             disabled={disabled}
             type="button"
@@ -597,19 +614,36 @@ function BoomerangPanel({
           </Button>
         ) : null}
       </Flex>
-      {report ? (
+      {applied && report?.fps && report.forward_frames && report.duration_after ? (
         <Text color="gray" size="2">
           Boomerang: first {(report.forward_frames / report.fps).toFixed(1)}s forward + reverse,{" "}
           {report.duration_after.toFixed(1)}s total ({report.frames_after} frames)
           {report.mesh_mirrored ? ", mesh mirrored" : ""}.
+          {cardApproved
+            ? " Published clips were replaced."
+            : " Approve when the loop looks right."}
         </Text>
+      ) : report?.skipped ? (
+        <Text color="gray" size="2">
+          {cardApproved
+            ? "Clips kept as-is."
+            : "Kept the clips as-is. Approve to continue to Create card."}
+        </Text>
+      ) : (
+        <Text color="gray" size="2">
+          {cardApproved
+            ? "Make a boomerang to replace the published clips, or leave them as they are."
+            : "Make a boomerang or keep the clips as-is, then approve to unlock Create card."}
+        </Text>
+      )}
+      {cardApproved ? (
+        <Callout.Root color="amber">
+          <Callout.Text size="2">
+            This card is already published. Making or undoing a boomerang replaces those clips, so
+            run <strong>Finalize</strong> again afterwards.
+          </Callout.Text>
+        </Callout.Root>
       ) : null}
-      <Callout.Root color="amber">
-        <Callout.Text size="2">
-          Making or undoing a boomerang replaces the published clips, so run{" "}
-          <strong>Finalize</strong> again afterwards.
-        </Callout.Text>
-      </Callout.Root>
     </Flex>
   );
 }
@@ -2727,7 +2761,8 @@ export function RunMode(props: RunModeProps) {
     (actionStep === "background" && backgroundOnWavespeed);
   const canUseBackgroundVideo = backgroundOnWavespeed ? canUseWavespeed : canUseGrok;
   const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
-  const actionIsInteractive = actionStep === "symbols" || actionStep === "trim";
+  const actionIsInteractive =
+    actionStep === "symbols" || actionStep === "trim" || actionStep === "boomerang";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -3212,8 +3247,18 @@ export function RunMode(props: RunModeProps) {
         {activeStep && flowState?.steps[activeStep]?.status === "approved" ? (
           <Callout.Root color="blue" mb="4">
             <Callout.Text>
-              This step is finished. Edit the prompt above if you want a different result, then click{" "}
-              <strong>Remake step</strong>. Steps after this one will need to run again.
+              {activeStep === "boomerang" ? (
+                <>
+                  This step is finished. Use the controls below to make a boomerang or keep the
+                  clips as-is.
+                  {cardApproved ? " Changing the clips means you should run Finalize again." : null}
+                </>
+              ) : (
+                <>
+                  This step is finished. Edit the prompt above if you want a different result, then
+                  click <strong>Remake step</strong>. Steps after this one will need to run again.
+                </>
+              )}
             </Callout.Text>
           </Callout.Root>
         ) : null}
@@ -3710,6 +3755,20 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
+        {activeNode === "boomerang" ? (
+          <BoomerangPanel
+            cardId={cardId.trim()}
+            cardLabel={cardLabel.trim()}
+            report={flowState?.boomerang ?? null}
+            cardApproved={cardApproved}
+            busy={importBusy || jobBusy}
+            onBusy={setImportBusy}
+            onError={onError}
+            onState={setFlowState}
+            onClipsChanged={() => setCardMediaRevision(Date.now())}
+          />
+        ) : null}
+
         {activeNode === "compress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="blue">
@@ -3812,18 +3871,8 @@ export function RunMode(props: RunModeProps) {
               <>
                 <Text color="gray" size="2">
                   Card already published. Re-importing replaces both videos and keeps mesh ready.
+                  Change the loop on the Boomerang step.
                 </Text>
-                <Separator size="4" />
-                <BoomerangPanel
-                  cardId={cardId.trim()}
-                  cardLabel={cardLabel.trim()}
-                  report={flowState?.boomerang ?? null}
-                  busy={importBusy || jobBusy}
-                  onBusy={setImportBusy}
-                  onError={onError}
-                  onState={setFlowState}
-                  onClipsChanged={() => setCardMediaRevision(Date.now())}
-                />
               </>
             ) : cardApproved && !cardArtifactsReady ? (
               <Callout.Root color="amber">
@@ -3835,7 +3884,8 @@ export function RunMode(props: RunModeProps) {
               </Callout.Root>
             ) : (
               <Text color="gray" size="2">
-                Or run the AI pipeline (Setup → image to video → dress → Create card) instead.
+                Or run the AI pipeline (Setup → image to video → dress → Boomerang → Create card)
+                instead.
               </Text>
             )}
           </Flex>
@@ -4065,11 +4115,15 @@ export function RunMode(props: RunModeProps) {
                   : actionStatus === "ready"
                   ? actionStep === "trim"
                     ? " — delete white frames (or keep as-is) in the Fix frames panel"
-                    : actionIsInteractive
+                    : actionStep === "boomerang"
+                      ? " — make a boomerang or keep the clips as-is"
+                      : actionIsInteractive
                       ? " — place points on the mesh, then save"
                       : " — ready to run"
                   : actionStatus === "approved"
-                    ? " — done (remake to regenerate)"
+                    ? actionStep === "boomerang"
+                      ? " — done"
+                      : " — done (remake to regenerate)"
                     : actionStatus === "running" || jobBusy
                       ? " — running…"
                       : ""}
@@ -4078,7 +4132,8 @@ export function RunMode(props: RunModeProps) {
             <Text size="2">Setup — source image and card id.</Text>
           ) : activeNode === "card" ? (
             <Text size="2">
-              Create card — upload both videos to skip the AI steps, or run after dress is approved.
+              Create card — upload both videos to skip the AI steps, or run after Boomerang is
+              approved.
             </Text>
           ) : (
             <Text size="2">Select a pipeline step to run or remake.</Text>
@@ -4143,7 +4198,7 @@ export function RunMode(props: RunModeProps) {
             </Button>
           ) : null}
 
-          {actionStatus === "approved" && actionStep ? (
+          {actionStatus === "approved" && actionStep && actionStep !== "boomerang" ? (
             <Button
               disabled={!canRemakeActionStep}
               type="button"

@@ -183,6 +183,7 @@ from backend.services.video_flow import (
     reject_flow_step,
     reset_boomerang_step,
     reset_trim_step,
+    skip_boomerang_step,
     run_generate_photo_scratch_backgrounds,
     run_generate_photo_scratch_layer,
     run_generate_source_image,
@@ -374,10 +375,11 @@ class VideoFlowTrimRequest(BaseModel):
 class VideoFlowBoomerangRequest(BaseModel):
     card_label: str = Field(min_length=1, max_length=120)
     seconds: float = Field(default=BOOMERANG_DEFAULT_SECONDS, ge=1, le=30)
+    skip: bool = False
 
 
 class VideoFlowBoomerangResetRequest(BaseModel):
-    card_label: str = Field(min_length=1, max_length=120)
+    card_label: str = Field(default="", max_length=120)
 
 
 class VideoFlowImportClipsRequest(BaseModel):
@@ -2138,11 +2140,14 @@ def post_video_flow_boomerang(card_id: str, request: VideoFlowBoomerangRequest) 
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
         raise HTTPException(status_code=400, detail="Invalid card id")
     try:
-        result = apply_boomerang_step(
-            card_id,
-            card_label=request.card_label,
-            seconds=request.seconds,
-        )
+        if request.skip:
+            result = skip_boomerang_step(card_id, card_label=request.card_label)
+        else:
+            result = apply_boomerang_step(
+                card_id,
+                card_label=request.card_label,
+                seconds=request.seconds,
+            )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     cancel_stale_video_flow_jobs(card_id)
