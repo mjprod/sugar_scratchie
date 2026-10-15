@@ -340,8 +340,11 @@ def update_generation_model(
     if _label_taken(db, role, label, ignore_id=slug):
         raise HTTPException(status_code=409, detail="Another model on this step already uses that name")
     endpoint = _clean_endpoint(info, request.endpoint_path)
-    if endpoint != (row.endpoint_path or "").strip():
-        _confirm_provider_model(info, endpoint, allow_empty=not (row.endpoint_path or "").strip())
+    stored = (row.endpoint_path or "").strip()
+    if endpoint != stored:
+        # A blank x.ai path is the env default. Clearing a pin must stay allowed;
+        # a new non-empty id is still checked against the provider list.
+        _confirm_provider_model(info, endpoint, allow_empty=not endpoint)
     row.label = label
     row.provider = info.provider
     row.adapter = info.id

@@ -43,10 +43,10 @@ def normalize_source_image_model(
     provider: str | None = None,
 ) -> SourceImageModel:
     raw = (image_model or "").strip()
-    if raw in ("seedream-v5-lite", "seedream-v5.0-lite"):
-        return "seedream-v5-lite"
+    # Old drafts stored Seedream on ai_provider and left the image model blank or on Grok.
     if provider in ("seedream-v5-lite", "seedream-v5.0-lite") and raw in ("", "grok-imagine"):
-        return "seedream-v5-lite"
+        raw = "seedream-v5-lite"
+    # Alias mapping and disabled/deleted rows both live in accept_model_id.
     return _accept("source_image", raw, default="grok-imagine")
 
 
@@ -59,10 +59,12 @@ def normalize_dress_video_model(model: str | None) -> DressVideoModel:
 
 
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
-    if _spec("source_image", image_model).adapter == "seedream_image":
-        return "seedream-v5-lite"
+    # The image-model dropdown is hidden for x.ai, so a leftover Seedream id
+    # (the Video Flow default) must not send stills to WaveSpeed.
     if provider == "xai":
         return "xai"
+    if _spec("source_image", image_model).adapter == "seedream_image":
+        return "seedream-v5-lite"
     return "wavespeed"
 
 

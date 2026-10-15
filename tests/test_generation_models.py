@@ -3,10 +3,15 @@ from __future__ import annotations
 import uuid
 
 from backend.services.ai_provider import (
+    edit_image_scenery,
     edit_video,
+    generate_portrait_image,
     image_to_video,
     normalize_background_video_model,
     normalize_dress_video_model,
+    normalize_source_image_model,
+    source_image_route,
+    swap_face_on_image,
 )
 from backend.generation_models_store import resolve_spec
 
@@ -374,7 +379,101 @@ def test_new_xai_model_requires_a_listed_id(client, dashboard_headers, monkeypat
         enhance_motion_prompt=False,
     )
     assert called["model"] == "grok-imagine-video-9"
+
+    cleared = client.put(
+        f"/api/generation-models/background_video/{model_id}",
+        headers=dashboard_headers,
+        json={
+            "label": f"Grok custom {model_id}",
+            "adapter": "grok_i2v",
+            "endpoint_path": "",
+            "enabled": True,
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["endpoint_path"] == ""
+
+    called.clear()
+    image_to_video(
+        provider="xai",
+        image=tmp_path / "still.png",
+        prompt="locked camera",
+        out=tmp_path / "out.mp4",
+        model="grok-imagine-video-1.5",
+        resolution="720p",
+        image_field="image",
+        endpoint="/v1/videos/generations",
+        background_video_model=model_id,
+        enhance_motion_prompt=False,
+    )
+    assert called["model"] == "grok-imagine-video-1.5"
     client.delete(
         f"/api/generation-models/background_video/{model_id}",
         headers=dashboard_headers,
     )
+
+
+def test_xai_provider_routes_stills_off_leftover_seedream(monkeypatch, tmp_path):
+    assert source_image_route("xai", "seedream-v5-lite") == "xai"
+    assert source_image_route("xai", "grok-imagine") == "xai"
+    assert source_image_route("wavespeed", "seedream-v5-lite") == "seedream-v5-lite"
+    assert source_image_route("wavespeed", "grok-imagine") == "wavespeed"
+
+    def refuse_seedream(**kwargs):
+        raise AssertionError(f"seedream still used: {kwargs.get('out')}")
+
+    calls: list[str] = []
+
+    def record(name):
+        def fake(**kwargs):
+            calls.append(name)
+            return kwargs.get("out")
+
+        return fake
+
+    monkeypatch.setattr("backend.services.wavespeed.generate_portrait_image_seedream", refuse_seedream)
+    monkeypatch.setattr("backend.services.wavespeed.swap_face_on_image_seedream", refuse_seedream)
+    monkeypatch.setattr("backend.services.wavespeed.edit_image_scenery_seedream", refuse_seedream)
+    monkeypatch.setattr("backend.services.grok.generate_portrait_image", record("portrait"))
+    monkeypatch.setattr("backend.services.grok.swap_face_on_image", record("face"))
+    monkeypatch.setattr("backend.services.grok.edit_image_scenery", record("scenery"))
+
+    out = tmp_path / "out.png"
+    generate_portrait_image(
+        provider="xai",
+        image_model="seedream-v5-lite",
+        prompt="portrait",
+        out=out,
+    )
+    swap_face_on_image(
+        provider="xai",
+        image_model="seedream-v5-lite",
+        base_image=tmp_path / "base.png",
+        face_image=tmp_path / "face.png",
+        out=out,
+    )
+    edit_image_scenery(
+        provider="xai",
+        image_model="seedream-v5-lite",
+        image=tmp_path / "still.png",
+        theme="beach",
+        out=out,
+    )
+    assert calls == ["portrait", "face", "scenery"]
+
+
+def test_disabled_seedream_is_remapped(monkeypatch):
+    assert normalize_source_image_model("seedream-v5-lite") == "seedream-v5-lite"
+    assert normalize_source_image_model("seedream-v5.0-lite") == "seedream-v5-lite"
+    assert normalize_source_image_model("grok-imagine", provider="seedream-v5-lite") == "seedream-v5-lite"
+    assert normalize_source_image_model("", provider="seedream-v5.0-lite") == "seedream-v5-lite"
+
+    monkeypatch.setattr(
+        "backend.generation_models_store.enabled_ids",
+        lambda role: {"grok-imagine"} if role == "source_image" else set(),
+    )
+    assert normalize_source_image_model("seedream-v5-lite") == "grok-imagine"
+    assert normalize_source_image_model("seedream-v5.0-lite") == "grok-imagine"
+    assert normalize_source_image_model("grok-imagine", provider="seedream-v5-lite") == "grok-imagine"
+    assert normalize_source_image_model("", provider="seedream-v5.0-lite") == "grok-imagine"
+    assert normalize_source_image_model("grok-imagine") == "grok-imagine"
