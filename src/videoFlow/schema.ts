@@ -440,8 +440,15 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     const dressIndex = pipeline.indexOf("dress");
     pipeline.splice(dressIndex + 1, 0, "boomerang");
     if (!nodes.some((node) => node?.id === "boomerang")) {
-      const boomerangNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "boomerang");
-      if (boomerangNode) nodes.push(boomerangNode);
+      const template = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "boomerang");
+      if (template) {
+        const dressNode = nodes.find((node) => node?.id === "dress");
+        const cardNode = nodes.find((node) => node?.id === "card");
+        const x =
+          dressNode && cardNode ? Math.round((dressNode.x + cardNode.x) / 2) : template.x;
+        const y = dressNode ? dressNode.y : template.y;
+        nodes.push({ ...template, x, y });
+      }
     }
     if (!reviewSteps.includes("boomerang")) {
       reviewSteps = [...reviewSteps, "boomerang"];
