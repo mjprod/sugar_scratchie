@@ -939,12 +939,28 @@ def assign_photo_scratch_variations(
 
     Photo number does not choose the variation. One batch gets distinct options
     until a list runs out, then another shuffled pass. A later run of the same
-    slots gets a new shuffle.
+    slots gets a new shuffle. Options come from the saved catalog, so deleted
+    builtins stay gone and custom options can be drawn. Empty operator fields
+    keep this shuffle.
     """
+    catalog = photo_scratch_variation_catalog()
     chooser = rng or random.Random()
-    poses = _shuffled_take(PHOTO_SCRATCH_POSE_VARIATIONS, len(slot_ids), chooser)
-    scenes = _shuffled_take(PHOTO_SCRATCH_SCENE_VARIATIONS, len(slot_ids), chooser)
-    placements = _shuffled_take(PHOTO_SCRATCH_PLACEMENT_VARIATIONS, len(slot_ids), chooser)
+
+    def texts(group: str, fallback: list[str]) -> list[str]:
+        rows = catalog.get(group) or []
+        picked = [
+            str(row.get("text") or "").strip()
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        picked = [text for text in picked if text]
+        return picked or fallback
+
+    poses = _shuffled_take(texts("poses", PHOTO_SCRATCH_POSE_VARIATIONS), len(slot_ids), chooser)
+    scenes = _shuffled_take(texts("scenes", PHOTO_SCRATCH_SCENE_VARIATIONS), len(slot_ids), chooser)
+    placements = _shuffled_take(
+        texts("placements", PHOTO_SCRATCH_PLACEMENT_VARIATIONS), len(slot_ids), chooser
+    )
     return {
         slot_id: PhotoScratchVariation(poses[index], scenes[index], placements[index])
         for index, slot_id in enumerate(slot_ids)

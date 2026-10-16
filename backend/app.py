@@ -930,7 +930,8 @@ class GeneratePhotoScratchRequest(BaseModel):
     prompt: str = ""  # Optional override; empty = built-in default for the layer
     # When True (batch default), only fill slots missing approved+pending for the layer.
     fill_empty_only: bool = True
-    # Operator review: pose / lighting / position chosen before create. Empty = shuffle.
+    # Operator review: pose / lighting / position chosen before create.
+    # Empty fields shuffle from the saved catalog.
     variations: list[dict[str, str]] = Field(default_factory=list)
     # One-slot tile generation approves immediately. A 10-photo run leaves each
     # image pending so it can be reviewed as it appears.

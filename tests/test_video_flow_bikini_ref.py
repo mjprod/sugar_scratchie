@@ -131,7 +131,10 @@ def test_bikini_prompt_numbers_references_in_send_order():
     assert "flattering Cowgirl bikini" in unchanged
 
 
-def test_photo_number_does_not_lock_pose_or_position():
+def test_photo_number_does_not_lock_pose_or_position(monkeypatch, tmp_path):
+    import backend.services.grok as grok
+
+    monkeypatch.setattr(grok, "VARIATION_CATALOG_PATH", tmp_path / "missing.json")
     slot_ids = [f"slot_{index:02d}" for index in range(1, 11)]
     first = assign_photo_scratch_variations(slot_ids, random.Random(1))
     second = assign_photo_scratch_variations(slot_ids, random.Random(2))
@@ -203,6 +206,25 @@ def test_variation_overrides_replace_only_the_fields_you_set():
     assert merged["slot_01"].scene == planned["slot_01"].scene
     assert "left side of the frame" in merged["slot_01"].placement
     assert merged["slot_02"] == planned["slot_02"]
+
+
+def test_shuffle_uses_saved_variation_catalog(monkeypatch, tmp_path):
+    import backend.services.grok as grok
+
+    monkeypatch.setattr(grok, "VARIATION_CATALOG_PATH", tmp_path / "variations.json")
+    grok.save_photo_scratch_variation_catalog(
+        {
+            "poses": [{"label": "Custom lean", "text": "leaning on one elbow, looking at camera"}],
+            "scenes": [{"label": "Moon", "text": "moonlight only"}],
+            "placements": [{"label": "Far left", "text": "Place her at the far left edge."}],
+        }
+    )
+    slot_ids = [f"slot_{index:02d}" for index in range(1, 4)]
+    planned = assign_photo_scratch_variations(slot_ids, random.Random(1))
+    assert {item.pose for item in planned.values()} == {"leaning on one elbow, looking at camera"}
+    assert {item.scene for item in planned.values()} == {"moonlight only"}
+    assert all("far left edge" in item.placement for item in planned.values())
+    assert "hands on hips" not in planned["slot_01"].pose
 
 
 def test_variation_catalog_endpoint(client, dashboard_headers, monkeypatch, tmp_path):

@@ -1025,6 +1025,8 @@ const LAYER_META: Record<"background" | "bikini" | "clothes", { label: string; s
 /** Slot grid columns and Generate-button order: Background → Bikini → Top. */
 const PHOTO_SCRATCH_LAYER_ORDER = ["background", "bikini", "clothes"] as const;
 const PHOTO_SCRATCH_SLOT_COUNT = 10;
+const PHOTO_JOB_POLL_MS = 2000;
+const PHOTO_JOB_POLL_GIVE_UP = 8;
 
 const PENDING_FIELD: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
   background: "pending_bg",
@@ -1545,6 +1547,7 @@ function CardPhotosPanel({
   const [optionsOpen, setOptionsOpen] = useState(false);
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
+  const catalogSaveRef = useRef(0);
   const [slotConfig, setSlotConfig] = useState<VariationDraft[]>([]);
   // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
   // Defaults to x.ai; bikini batch uses WaveSpeed/Seedream unless the user overrides.
@@ -1757,15 +1760,25 @@ function CardPhotosPanel({
     layer: PhotoScratchLayerType,
     token: number,
   ): Promise<{ status: string; detail: string }> {
+    let misses = 0;
     while (genTokenRef.current[layer] === token) {
-      const next = await api<{ status: string; logs: string[] }>(
-        `/api/jobs/${encodeURIComponent(jobId)}`,
-      );
-      if (next.status === "succeeded" || next.status === "failed" || next.status === "cancelled") {
-        const logs = next.logs ?? [];
-        return { status: next.status, detail: logs[logs.length - 1] ?? next.status };
+      try {
+        const next = await api<{ status: string; logs: string[] }>(
+          `/api/jobs/${encodeURIComponent(jobId)}`,
+        );
+        misses = 0;
+        if (next.status === "succeeded" || next.status === "failed" || next.status === "cancelled") {
+          const logs = next.logs ?? [];
+          return { status: next.status, detail: logs[logs.length - 1] ?? next.status };
+        }
+      } catch (caught) {
+        misses += 1;
+        if (misses >= PHOTO_JOB_POLL_GIVE_UP) {
+          const detail = caught instanceof Error ? caught.message : String(caught);
+          return { status: "failed", detail };
+        }
       }
-      await sleep(2000);
+      await sleep(PHOTO_JOB_POLL_MS);
     }
     return { status: "cancelled", detail: "stopped" };
   }
@@ -1843,11 +1856,14 @@ function CardPhotosPanel({
   }
 
   async function persistVariationCatalog(next: PhotoScratchVariationCatalog) {
+    const saveId = ++catalogSaveRef.current;
     try {
       const saved = await savePhotoScratchVariationCatalog(next);
+      if (saveId !== catalogSaveRef.current || catalogRef.current !== next) return;
       catalogRef.current = saved;
       setCatalog(saved);
     } catch (caught) {
+      if (saveId !== catalogSaveRef.current || catalogRef.current !== next) return;
       reportError(caught);
     }
   }
@@ -1993,7 +2009,7 @@ function CardPhotosPanel({
               done: index,
             },
           }));
-          const result = await waitForPhotoJob(job.id, token);
+          const result = await waitForPhotoJob(job.id, layer, token);
           if (genTokenRef.current[layer] !== token) return;
           if (result.status !== "succeeded") {
             failures.push(`${slot.label}: ${result.detail}`);
