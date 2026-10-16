@@ -4,7 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from backend.services.grok import motion_source_style_prompt, photo_scratch_bikini_prompt
+import random
+
+from backend.services.grok import (
+    PHOTO_SCRATCH_PLACEMENT_VARIATIONS,
+    PHOTO_SCRATCH_POSE_VARIATIONS,
+    PhotoScratchVariation,
+    apply_photo_scratch_variation_overrides,
+    assign_photo_scratch_variations,
+    motion_source_style_prompt,
+    photo_scratch_background_prompt,
+    photo_scratch_background_prompt_locked,
+    photo_scratch_bikini_prompt,
+    photo_scratch_prompt_with_background,
+    default_photo_scratch_variation_catalog,
+)
 
 CARD_ID = "test_bikini_ref"
 URL = f"/api/video-flow/{CARD_ID}/draft"
@@ -115,6 +129,126 @@ def test_bikini_prompt_numbers_references_in_send_order():
     assert "Three references" in unchanged
     assert "reference 3 = FACE" in unchanged
     assert "flattering Cowgirl bikini" in unchanged
+
+
+def test_photo_number_does_not_lock_pose_or_position():
+    slot_ids = [f"slot_{index:02d}" for index in range(1, 11)]
+    first = assign_photo_scratch_variations(slot_ids, random.Random(1))
+    second = assign_photo_scratch_variations(slot_ids, random.Random(2))
+
+    assert [first[slot_id].pose for slot_id in slot_ids] != PHOTO_SCRATCH_POSE_VARIATIONS
+    assert first["slot_01"].pose != second["slot_01"].pose
+    assert first["slot_01"].placement != second["slot_01"].placement
+    assert len({item.pose for item in first.values()}) == len(PHOTO_SCRATCH_POSE_VARIATIONS)
+    assert len({item.placement for item in first.values()}) == len(
+        PHOTO_SCRATCH_PLACEMENT_VARIATIONS
+    )
+
+
+def test_bikini_prompt_uses_placement_instead_of_a_fixed_frame():
+    placed = photo_scratch_bikini_prompt(
+        "Cowgirl",
+        "walking pose mid-stride toward camera, full body",
+        with_background=True,
+        placement="Place her on the left side of the frame, full body visible, with open scene on her right.",
+    )
+    assert "left side of the frame" in placed
+    assert "head near the top third" not in placed
+
+    locked = photo_scratch_bikini_prompt("Cowgirl", with_background=True)
+    assert "head near the top third" in locked
+
+    custom = photo_scratch_prompt_with_background(
+        "Put her in the room.",
+        has_background=True,
+        pose="hands clasped behind back, upright stance",
+        placement="Place her on the right side of the frame, full body visible, with open scene on her left.",
+    )
+    assert "right side of the frame" in custom
+    assert "hands clasped behind back" in custom
+    assert "does not touch, lean on, sit on, or hold any furniture" in custom
+
+    background = photo_scratch_background_prompt("Police", "warm amber tones")
+    assert "No furniture and no props" in background
+    assert "warm amber tones" in background
+    locked_background = photo_scratch_background_prompt_locked("Empty Police room, no people.")
+    assert "No furniture and no props" in locked_background
+    assert photo_scratch_background_prompt_locked(background) == background
+
+
+def test_variation_catalog_labels_match_prompt_text():
+    catalog = default_photo_scratch_variation_catalog()
+    assert [row["text"] for row in catalog["poses"]] == PHOTO_SCRATCH_POSE_VARIATIONS
+    assert [row["text"] for row in catalog["placements"]] == PHOTO_SCRATCH_PLACEMENT_VARIATIONS
+    assert all(row["label"] and row["text"] for group in catalog.values() for row in group)
+
+
+def test_variation_overrides_replace_only_the_fields_you_set():
+    slot_ids = ["slot_01", "slot_02"]
+    planned = assign_photo_scratch_variations(slot_ids, random.Random(1))
+    merged = apply_photo_scratch_variation_overrides(
+        planned,
+        {
+            "slot_01": PhotoScratchVariation(
+                pose="hands clasped behind back, upright stance",
+                scene="",
+                placement=(
+                    "Place her on the left side of the frame, full body visible, "
+                    "with open scene on her right."
+                ),
+            )
+        },
+    )
+    assert merged["slot_01"].pose == "hands clasped behind back, upright stance"
+    assert merged["slot_01"].scene == planned["slot_01"].scene
+    assert "left side of the frame" in merged["slot_01"].placement
+    assert merged["slot_02"] == planned["slot_02"]
+
+
+def test_variation_catalog_endpoint(client, dashboard_headers, monkeypatch, tmp_path):
+    import backend.services.grok as grok
+
+    monkeypatch.setattr(grok, "VARIATION_CATALOG_PATH", tmp_path / "missing.json")
+    response = client.get("/api/photo-scratch/variations", headers=dashboard_headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["poses"]) == 10
+    assert body["poses"][0]["label"]
+    assert body["placements"][0]["text"]
+
+
+def test_variation_catalog_can_be_updated(client, dashboard_headers, monkeypatch, tmp_path):
+    import backend.services.grok as grok
+
+    monkeypatch.setattr(grok, "VARIATION_CATALOG_PATH", tmp_path / "variations.json")
+    current = client.get("/api/photo-scratch/variations", headers=dashboard_headers)
+    assert current.status_code == 200, current.text
+    catalog = current.json()
+    catalog["poses"] = [
+        {"label": "Custom lean", "text": "leaning on one elbow, looking at camera"},
+        *catalog["poses"][1:],
+    ]
+    saved = client.put("/api/photo-scratch/variations", json=catalog, headers=dashboard_headers)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["poses"][0]["label"] == "Custom lean"
+    again = client.get("/api/photo-scratch/variations", headers=dashboard_headers)
+    assert again.json()["poses"][0]["text"] == "leaning on one elbow, looking at camera"
+
+    catalog["scenes"] = []
+    rejected = client.put("/api/photo-scratch/variations", json=catalog, headers=dashboard_headers)
+    assert rejected.status_code == 400, rejected.text
+
+
+def test_generate_rejects_a_bad_variation_slot(client, dashboard_headers):
+    response = client.post(
+        "/api/cards/test_bikini_ref/photo-scratch/generate",
+        json={
+            "layer": "background",
+            "variations": [{"slot_id": "photo-3", "pose": "standing", "scene": "", "placement": ""}],
+        },
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 400, response.text
 
 
 def test_step1_style_edit_prefers_seedream_then_falls_back_to_xai(monkeypatch):

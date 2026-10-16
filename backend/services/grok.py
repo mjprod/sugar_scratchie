@@ -4,11 +4,13 @@ import base64
 import json
 import mimetypes
 import os
+import random
 import re
 import subprocess
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -741,32 +743,231 @@ def edit_image_scenery(
     return out
 
 
-# Per-slot pose / composition variety for bikini (and scene mood for backgrounds).
-PHOTO_SCRATCH_POSE_VARIATIONS = [
-    "standing centered, hands on hips, confident front-facing pose",
-    "three-quarter turn toward camera, one hand in hair",
-    "leaning casually against furniture or a wall prop in the scene",
-    "seated on the edge of a chair or desk in the scene, legs crossed",
-    "walking pose mid-stride toward camera, full body",
-    "slight crouch / ready stance, weight on one leg",
-    "hands clasped behind back, upright stance",
-    "one hand on a desk or prop, looking over shoulder",
-    "arms crossed, relaxed hip cock, medium-wide framing",
-    "soft S-curve pose, weight shifted, looking at camera",
+# (short label for the review UI, prompt text sent to the image model)
+PHOTO_SCRATCH_POSE_OPTIONS: list[tuple[str, str]] = [
+    ("Hands on hips, front", "standing centered, hands on hips, confident front-facing pose"),
+    ("Three-quarter, hand in hair", "three-quarter turn toward camera, one hand in hair"),
+    ("Weight on one hip", "standing with weight on one hip, both feet on the floor, not leaning on anything"),
+    ("Ankles crossed", "standing upright with ankles crossed, not sitting"),
+    ("Walking toward camera", "walking pose mid-stride toward camera, full body"),
+    ("Crouch, weight on one leg", "slight crouch / ready stance, weight on one leg"),
+    ("Hands behind back", "hands clasped behind back, upright stance"),
+    ("Look over shoulder", "standing, looking back over one shoulder, hands free, not touching any prop"),
+    ("Arms crossed", "arms crossed, relaxed hip cock, medium-wide framing"),
+    ("Soft S-curve", "soft S-curve pose, weight shifted, looking at camera"),
 ]
 
-PHOTO_SCRATCH_SCENE_VARIATIONS = [
-    "warm amber tones",
-    "cool blue tones",
-    "dramatic side lighting",
-    "bright natural window light",
-    "moody low-key lighting",
-    "pastel colour palette",
-    "dark richly saturated palette",
-    "golden hour glow",
-    "high-contrast cinematic lighting",
-    "vivid neon accent lighting",
+PHOTO_SCRATCH_SCENE_OPTIONS: list[tuple[str, str]] = [
+    ("Warm amber", "warm amber tones"),
+    ("Cool blue", "cool blue tones"),
+    ("Dramatic side light", "dramatic side lighting"),
+    ("Bright window light", "bright natural window light"),
+    ("Moody low light", "moody low-key lighting"),
+    ("Pastel", "pastel colour palette"),
+    ("Dark saturated", "dark richly saturated palette"),
+    ("Golden hour", "golden hour glow"),
+    ("High contrast", "high-contrast cinematic lighting"),
+    ("Neon accent", "vivid neon accent lighting"),
 ]
+
+# Where she stands in the 9:16 frame.
+PHOTO_SCRATCH_PLACEMENT_OPTIONS: list[tuple[str, str]] = [
+    (
+        "Center, full body",
+        "Place her in the center of the frame, full body, head near the top edge and feet near the bottom.",
+    ),
+    (
+        "Left side",
+        "Place her on the left side of the frame, full body visible, with open scene on her right.",
+    ),
+    (
+        "Right side",
+        "Place her on the right side of the frame, full body visible, with open scene on her left.",
+    ),
+    (
+        "Left of center, closer",
+        "Place her slightly left of center and a step closer to the camera, still full body, head and feet in frame.",
+    ),
+    (
+        "Right of center, farther",
+        "Place her slightly right of center and a step farther back so more of the room shows around her, full body.",
+    ),
+    (
+        "Low camera, center-right",
+        "Use a slightly low camera: she fills the center-right, head near the top, feet near the bottom.",
+    ),
+    (
+        "High camera, center-left",
+        "Use a slightly high camera: she stands center-left, full body, a little more floor visible in front of her.",
+    ),
+    (
+        "Foreground, off-center left",
+        "Place her in the foreground, off-center to the left, large in frame, head and feet still fully visible.",
+    ),
+    (
+        "Mid-room, centered",
+        "Place her mid-room and centered, with a modest gap of scene above her head and on both sides.",
+    ),
+    (
+        "Near the right edge",
+        "Place her closer to the right edge, full body, scene visible on her left.",
+    ),
+]
+
+PHOTO_SCRATCH_POSE_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_POSE_OPTIONS]
+PHOTO_SCRATCH_SCENE_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_SCENE_OPTIONS]
+PHOTO_SCRATCH_PLACEMENT_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_PLACEMENT_OPTIONS]
+
+_DEFAULT_PLACEMENT = (
+    "Full body from head to toe clearly visible. She must fill the 9:16 frame — "
+    "head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
+    "Do NOT zoom out or leave large empty space above/below her."
+)
+
+
+@dataclass(frozen=True)
+class PhotoScratchVariation:
+    pose: str
+    scene: str
+    placement: str
+
+
+def _shuffled_take(options: list[str], count: int, rng: random.Random) -> list[str]:
+    if count <= 0:
+        return []
+    if not options:
+        return [""] * count
+    picked: list[str] = []
+    while len(picked) < count:
+        batch = list(options)
+        rng.shuffle(batch)
+        picked.extend(batch)
+    return picked[:count]
+
+
+def default_photo_scratch_variation_catalog() -> dict[str, list[dict[str, str]]]:
+    """Built-in pose, lighting, and position options."""
+
+    def rows(options: list[tuple[str, str]]) -> list[dict[str, str]]:
+        return [{"label": label, "text": text} for label, text in options]
+
+    return {
+        "poses": rows(PHOTO_SCRATCH_POSE_OPTIONS),
+        "scenes": rows(PHOTO_SCRATCH_SCENE_OPTIONS),
+        "placements": rows(PHOTO_SCRATCH_PLACEMENT_OPTIONS),
+    }
+
+
+VARIATION_CATALOG_PATH = Path(__file__).resolve().parents[2] / ".tmp" / "photo-scratch-variations.json"
+_VARIATION_GROUPS = ("poses", "scenes", "placements")
+
+
+def _validate_variation_catalog(raw: object) -> dict[str, list[dict[str, str]]]:
+    if not isinstance(raw, dict):
+        raise ValueError("Catalog must be an object")
+    cleaned: dict[str, list[dict[str, str]]] = {}
+    for group in _VARIATION_GROUPS:
+        rows = raw.get(group)
+        if not isinstance(rows, list) or len(rows) == 0:
+            raise ValueError(f"{group} needs at least one option")
+        if len(rows) > 30:
+            raise ValueError(f"{group} has too many options")
+        cleaned_rows: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Each option needs a label and text")
+            label = str(row.get("label") or "").strip()
+            text = str(row.get("text") or "").strip()
+            if not label or not text:
+                raise ValueError("Each option needs a label and text")
+            if len(label) > 80 or len(text) > 400:
+                raise ValueError("Option text is too long")
+            if text in seen:
+                raise ValueError(f"Duplicate {group} text")
+            seen.add(text)
+            cleaned_rows.append({"label": label, "text": text})
+        cleaned[group] = cleaned_rows
+    return cleaned
+
+
+def photo_scratch_variation_catalog() -> dict[str, list[dict[str, str]]]:
+    """Pose, lighting, and position options, including operator edits."""
+    path = VARIATION_CATALOG_PATH
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            return _validate_variation_catalog(loaded)
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+    return default_photo_scratch_variation_catalog()
+
+
+def save_photo_scratch_variation_catalog(raw: object) -> dict[str, list[dict[str, str]]]:
+    """Replace the saved pose, lighting, and position options."""
+    catalog = _validate_variation_catalog(raw)
+    path = VARIATION_CATALOG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    return catalog
+
+
+def apply_photo_scratch_variation_overrides(
+    planned: dict[str, PhotoScratchVariation],
+    overrides: dict[str, PhotoScratchVariation],
+) -> dict[str, PhotoScratchVariation]:
+    """Keep the shuffled plan, then replace any field the operator set in the review."""
+    merged = dict(planned)
+    for slot_id, override in overrides.items():
+        base = merged.get(slot_id)
+        if base is None:
+            merged[slot_id] = override
+            continue
+        merged[slot_id] = PhotoScratchVariation(
+            pose=(override.pose or "").strip() or base.pose,
+            scene=(override.scene or "").strip() or base.scene,
+            placement=(override.placement or "").strip() or base.placement,
+        )
+    return merged
+
+
+def assign_photo_scratch_variations(
+    slot_ids: list[str],
+    rng: random.Random | None = None,
+) -> dict[str, PhotoScratchVariation]:
+    """Pick pose, lighting, and frame placement for a generation batch.
+
+    Photo number does not choose the variation. One batch gets distinct options
+    until a list runs out, then another shuffled pass. A later run of the same
+    slots gets a new shuffle.
+    """
+    chooser = rng or random.Random()
+    poses = _shuffled_take(PHOTO_SCRATCH_POSE_VARIATIONS, len(slot_ids), chooser)
+    scenes = _shuffled_take(PHOTO_SCRATCH_SCENE_VARIATIONS, len(slot_ids), chooser)
+    placements = _shuffled_take(PHOTO_SCRATCH_PLACEMENT_VARIATIONS, len(slot_ids), chooser)
+    return {
+        slot_id: PhotoScratchVariation(poses[index], scenes[index], placements[index])
+        for index, slot_id in enumerate(slot_ids)
+    }
+
+
+def photo_scratch_placement_clause(placement: str = "") -> str:
+    text = (placement or "").strip()
+    if not text:
+        return _DEFAULT_PLACEMENT
+    return (
+        f"{text} Keep her the clear subject of a vertical 9:16 card and large enough to scratch — "
+        "do not shrink her into a tiny figure, and do not crop off her head or feet."
+    )
+
+
+_NO_FURNITURE = (
+    "No furniture and no props — no chairs, desks, tables, sofas, beds, counters, or objects. "
+    "Bare themed walls and floor only."
+)
+_NO_FURNITURE_INTERACTION = (
+    "She stands on the floor and does not touch, lean on, sit on, or hold any furniture or object."
+)
 
 
 def photo_scratch_background_prompt(theme: str, variation: str = "") -> str:
@@ -775,9 +976,20 @@ def photo_scratch_background_prompt(theme: str, variation: str = "") -> str:
     hint = f" {variation.strip()}." if variation.strip() else ""
     return (
         f"Empty {scenery} themed room/scene backdrop only — no people, no faces, no body. "
+        f"{_NO_FURNITURE} "
         f"Photorealistic, soft professional lighting, 9:16 vertical, suitable as a "
         f"scratch-card background plate.{hint}"
     )
+
+
+def photo_scratch_background_prompt_locked(prompt: str) -> str:
+    """Keep a custom background prompt, but still forbid furniture and props."""
+    text = (prompt or "").strip()
+    if not text:
+        return text
+    if "no furniture" in text.lower():
+        return text
+    return f"{text} {_NO_FURNITURE}"
 
 
 def photo_scratch_face_ref_clause() -> str:
@@ -819,6 +1031,7 @@ def photo_scratch_bikini_prompt(
     with_face: bool = False,
     with_bikini: bool = False,
     bikini_caption: str = "",
+    placement: str = "",
 ) -> str:
     """Identity-locked bikini. With a bg plate: place the woman naturally inside the scene.
 
@@ -826,6 +1039,7 @@ def photo_scratch_bikini_prompt(
     """
     scenery = (theme or "").strip() or "stylish"
     pose = (variation or "").strip() or PHOTO_SCRATCH_POSE_VARIATIONS[0]
+    framing = photo_scratch_placement_clause(placement)
     face_clause = photo_scratch_face_ref_clause() if with_face else ""
     woman_ref = 2 if with_background else 1
     bikini_ref = woman_ref + 1
@@ -854,11 +1068,9 @@ def photo_scratch_bikini_prompt(
             f"Place the woman from reference 2 standing naturally INSIDE the scene from reference 1. "
             f"Rules: "
             f"(1) Her feet must rest on the floor of the scene — correct perspective and scale for the room. "
-            f"(2) Full body from head to toe clearly visible. She must fill the 9:16 frame — "
-            f"head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
-            f"Do NOT zoom out or leave large empty space above/below her. "
+            f"(2) {framing} "
             f"(3) {swimsuit} "
-            f"(4) Pose: {pose}. "
+            f"(4) Pose: {pose}. {_NO_FURNITURE_INTERACTION} "
             f"(5) Her lighting, shadow, and colour temperature must match the room in reference 1. "
             f"(6) Completely erase her original backdrop — only the reference-1 environment shows behind her. "
             f"(7) Keep {kept} exactly from reference 2. "
@@ -874,19 +1086,21 @@ def photo_scratch_bikini_prompt(
                 f"reference 2 = BIKINI (the swimsuit to dress her in), "
                 f"reference 3 = FACE (her exact face). "
                 f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
+                f"{framing} "
                 f"{swimsuit} "
                 f"Keep identity, hair, skin tone, and body proportions from reference 1. "
                 f"{face_clause}"
                 f"Clean studio backdrop (no busy scene). "
-                f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+                f"Photorealistic, 9:16. Do not invent a different woman."
             )
         return (
             f"Reference 1 = WOMAN, reference 2 = BIKINI. "
             f"Using this exact same woman from reference 1, change her outfit and restage her: {pose}. "
+            f"{framing} "
             f"{swimsuit} "
             f"Keep face, identity, hair, skin tone, and body proportions from reference 1. "
             f"Clean studio backdrop (no busy scene). "
-            f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+            f"Photorealistic, 9:16. Do not invent a different woman."
         )
     if with_face:
         # No bikini photo: images are woman, then face. Name both.
@@ -895,17 +1109,19 @@ def photo_scratch_bikini_prompt(
             f"reference 2 = FACE (her exact face). "
             f"Using this exact same woman from reference 1, change her outfit to a "
             f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
+            f"{framing} "
             f"Keep identity, hair, skin tone, and body proportions from reference 1. "
             f"{face_clause}"
             f"Clean studio backdrop (no busy scene). "
-            f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+            f"Photorealistic, 9:16. Do not invent a different woman."
         )
     return (
         f"Using this exact same woman from the reference image, change her outfit to a "
         f"flattering {scenery} bikini/swimwear and restage her: {pose}. "
+        f"{framing} "
         f"Keep face, identity, hair, skin tone, and body proportions. "
         f"Clean studio backdrop (no busy scene). "
-        f"Full body from head to toe, photorealistic, 9:16. Do not invent a different woman."
+        f"Photorealistic, 9:16. Do not invent a different woman."
     )
 
 
@@ -983,7 +1199,13 @@ def photo_scratch_custom_locks_source_pose(prompt: str) -> bool:
     )
 
 
-def photo_scratch_prompt_with_background(custom: str, *, has_background: bool, pose: str = "") -> str:
+def photo_scratch_prompt_with_background(
+    custom: str,
+    *,
+    has_background: bool,
+    pose: str = "",
+    placement: str = "",
+) -> str:
     """When a custom prompt is used with a bg plate, force scene placement + optional pose."""
     text = (custom or "").strip()
     if not text or not has_background:
@@ -1000,6 +1222,11 @@ def photo_scratch_prompt_with_background(custom: str, *, has_background: bool, p
         )
     if pose and pose.lower() not in lowered:
         extras.append(f"Pose and framing for this card: {pose}.")
+    if "does not touch" not in lowered and "not touching" not in lowered:
+        extras.append(_NO_FURNITURE_INTERACTION)
+    placement_text = (placement or "").strip()
+    if placement_text and placement_text.lower() not in lowered:
+        extras.append(photo_scratch_placement_clause(placement_text))
     if not extras:
         return text
     return f"{text} {' '.join(extras)}"

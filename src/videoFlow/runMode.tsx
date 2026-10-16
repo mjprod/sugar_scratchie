@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Gamepad2, ImagePlus, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, Gamepad2, ImagePlus, Loader2, Play, RotateCcw, Shuffle, Sparkles, X } from "lucide-react";
 import {
   Badge,
   Box,
@@ -7,6 +7,7 @@ import {
   Card,
   Checkbox,
   Code,
+  Dialog,
   Flex,
   Grid,
   Heading,
@@ -25,6 +26,8 @@ import {
   defaultPhotoScratchPrompt,
   deletePhotoScratchLayer,
   fetchPhotoScratchSlots,
+  fetchPhotoScratchVariationCatalog,
+  savePhotoScratchVariationCatalog,
   generatePhotoScratchLayer,
   photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
@@ -35,6 +38,9 @@ import {
   uploadPhotoScratchLayer,
   type PhotoScratchLayerType,
   type PhotoScratchSlot,
+  type PhotoScratchVariationCatalog,
+  type PhotoScratchVariationChoice,
+  type PhotoScratchVariationOption,
 } from "../shared/models";
 import { fetchThemes, type ThemeInfo } from "../shared/themes";
 import { flowStepBadge, type FlowNodeRuntime } from "./flowCanvas";
@@ -1135,22 +1141,145 @@ function SlotPriceInput({
   );
 }
 
+function shuffledTake(options: string[], count: number): string[] {
+  if (count <= 0 || options.length === 0) return [];
+  const picked: string[] = [];
+  while (picked.length < count) {
+    const batch = [...options];
+    for (let index = batch.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      const current = batch[index];
+      batch[index] = batch[swapIndex];
+      batch[swapIndex] = current;
+    }
+    picked.push(...batch);
+  }
+  return picked.slice(0, count);
+}
+
+function photoNumber(slotId: string): string {
+  const num = slotId.replace("slot_", "");
+  return String(Number(num) || num);
+}
+
+type VariationDraft = {
+  slotId: string;
+  label: string;
+  pose: string;
+  scene: string;
+  placement: string;
+  hasClothesRef: boolean;
+  /** Words sent for this photo. Starts as the shared prompt unless this photo already has its own. */
+  prompt: string;
+  /** True once this photo's prompt is edited, so the shared box stops overwriting it. */
+  promptEdited: boolean;
+};
+
+function variationRows(
+  targets: PhotoScratchSlot[],
+  catalog: PhotoScratchVariationCatalog,
+  layer: PhotoScratchLayerType,
+  sharedPrompt: string,
+  previous: VariationDraft[] = [],
+  savedPoses: Record<string, string> = {},
+): VariationDraft[] {
+  const poses = shuffledTake(
+    catalog.poses.map((option) => option.text),
+    targets.length,
+  );
+  const scenes = shuffledTake(
+    catalog.scenes.map((option) => option.text),
+    targets.length,
+  );
+  const placements = shuffledTake(
+    catalog.placements.map((option) => option.text),
+    targets.length,
+  );
+  const prior = new Map(previous.map((row) => [row.slotId, row]));
+  return targets.map((slot, index) => {
+    const saved = slotLayerPrompt(slot, layer);
+    const old = prior.get(slot.id);
+    const promptEdited = old?.promptEdited ?? Boolean(saved);
+    const shuffledPose = poses[index] ?? "";
+    return {
+      slotId: slot.id,
+      label: slot.label,
+      pose: old?.pose || savedPoses[slot.id] || shuffledPose,
+      scene: scenes[index] ?? "",
+      placement: placements[index] ?? "",
+      hasClothesRef: Boolean(slot.clothes_ref),
+      prompt: promptEdited ? (old?.prompt ?? saved) : sharedPrompt,
+      promptEdited,
+    };
+  });
+}
+
+function VariationSelect({
+  label,
+  value,
+  options,
+  onChange,
+  compact = false,
+  fill = false,
+}: {
+  label: string;
+  value: string;
+  options: PhotoScratchVariationOption[];
+  onChange: (next: string) => void;
+  compact?: boolean;
+  fill?: boolean;
+}) {
+  return (
+    <label
+      style={
+        fill
+          ? { display: "block", width: "100%", minWidth: 0 }
+          : compact
+            ? { flex: "0 0 200px" }
+            : { flex: "1 1 200px", minWidth: 160 }
+      }
+    >
+      {compact ? null : (
+        <Text as="div" color="gray" mb="1" size="1">
+          {label}
+        </Text>
+      )}
+      {!value ? (
+        <Text as="div" color="gray" size="1">
+          Choose one.
+        </Text>
+      ) : null}
+      {value ? (
+        <Select.Root value={value} onValueChange={onChange}>
+          <Select.Trigger style={{ width: "100%" }} />
+          <Select.Content>
+            {options.map((option) => (
+              <Select.Item key={option.text} value={option.text}>
+                {option.label}
+              </Select.Item>
+            ))}
+            {!options.some((option) => option.text === value) ? (
+              <Select.Item value={value}>{value}</Select.Item>
+            ) : null}
+          </Select.Content>
+        </Select.Root>
+      ) : null}
+    </label>
+  );
+}
+
 function SlotLayerUpload({
   cardId,
   slotId,
   layer,
   src,
   theme,
-  sourceImage,
-  aiProvider,
-  sourceImageModel,
-  prompt,
   slotPrompt,
   aiBlockedReason,
   busy,
   onUpdate,
   onError,
-  onSlotAiDone,
+  onAskGenerate,
   onSlotPromptBlur,
   clothesRef,
   onClothesRefChange,
@@ -1160,10 +1289,6 @@ function SlotLayerUpload({
   layer: "background" | "bikini" | "clothes";
   src?: string;
   theme: string;
-  sourceImage: string;
-  aiProvider: string;
-  sourceImageModel: string;
-  prompt: string;
   /** Saved per-slot override for this layer (empty = use shared layer default). */
   slotPrompt: string;
   /** Non-empty when AI generate should be disabled (e.g. missing bikini for top). */
@@ -1171,7 +1296,8 @@ function SlotLayerUpload({
   busy: boolean;
   onUpdate: (slot: PhotoScratchSlot) => void;
   onError: (msg: string) => void;
-  onSlotAiDone: () => void;
+  /** Opens the review step for this one photo. Generation starts only after Create. */
+  onAskGenerate: () => void;
   onSlotPromptBlur: (slotId: string, layer: PhotoScratchLayerType, value: string) => void;
   /** Top tile only: this slot's clothes reference (empty = random themed costume). */
   clothesRef?: string;
@@ -1180,15 +1306,7 @@ function SlotLayerUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
   const meta = LAYER_META[layer];
-  const [aiBusy, setAiBusy] = useState(false);
   const [refBusy, setRefBusy] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
 
   async function handleFile(file: File) {
     onError("");
@@ -1236,61 +1354,7 @@ async function handleClothesRef(image: string) {
     }
   }
 
-  async function handleAiGenerate() {
-    if (aiBusy || aiBlockedReason) {
-      if (aiBlockedReason) onError(aiBlockedReason);
-      return;
-    }
-    onError("");
-    setAiBusy(true);
-    try {
-      const job = await generatePhotoScratchLayer(
-        cardId,
-        layer,
-        theme,
-        aiProvider,
-        sourceImageModel,
-        sourceImage,
-        slotId,
-        prompt,
-      );
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const next = await api<{ id: string; status: string; logs: string[] }>(
-              `/api/jobs/${encodeURIComponent(job.id)}`,
-            );
-            if (
-              next.status === "succeeded" ||
-              next.status === "failed" ||
-              next.status === "cancelled"
-            ) {
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
-              setAiBusy(false);
-              if (next.status === "succeeded") {
-                onSlotAiDone();
-              } else {
-                onError(
-                  `AI ${layer} failed: ${next.logs?.[next.logs.length - 1] ?? next.status}`,
-                );
-              }
-            }
-          } catch {
-            /* ignore transient poll errors */
-          }
-        })();
-      }, 2500);
-    } catch (caught) {
-      setAiBusy(false);
-      onError(caught instanceof Error ? caught.message : String(caught));
-    }
-  }
-
-  const disabled = busy || aiBusy;
+  const disabled = busy;
 
   return (
     <Box
@@ -1323,12 +1387,12 @@ async function handleClothesRef(image: string) {
             disabled={disabled || Boolean(aiBlockedReason)}
             size="1"
             style={{ position: "absolute", top: 6, left: 6 }}
-            title={aiBlockedReason || "Regenerate with AI"}
+            title={aiBlockedReason || "Review pose and position, then create"}
             type="button"
             variant="soft"
-            onClick={() => void handleAiGenerate()}
+            onClick={onAskGenerate}
           >
-            {aiBusy ? <Loader2 {...iconProps} className="spin" /> : <Sparkles {...iconProps} />}
+            {busy ? <Loader2 {...iconProps} className="spin" /> : <Sparkles {...iconProps} />}
             AI
           </Button>
         </Box>
@@ -1344,7 +1408,7 @@ async function handleClothesRef(image: string) {
             padding: 8,
           }}
         >
-          {aiBusy ? (
+          {busy ? (
             <>
               <Loader2 size={22} strokeWidth={1.5} className="spin" color="var(--accent-9)" />
               <Text align="center" color="gray" size="1">
@@ -1356,9 +1420,9 @@ async function handleClothesRef(image: string) {
               <Button
                 disabled={disabled || Boolean(aiBlockedReason)}
                 size="1"
-                title={aiBlockedReason || `Generate ${meta.label} with AI`}
+                title={aiBlockedReason || `Review ${meta.label}, then create`}
                 type="button"
-                onClick={() => void handleAiGenerate()}
+                onClick={onAskGenerate}
               >
                 <Sparkles {...iconProps} />
                 AI
@@ -1491,6 +1555,11 @@ function CardPhotosPanel({
   const [panelError, setPanelError] = useState("");
   const [layerBusy] = useState(false);
   const [showPrompts, setShowPrompts] = useState(true);
+  const [catalog, setCatalog] = useState<PhotoScratchVariationCatalog | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
+  const [slotConfig, setSlotConfig] = useState<VariationDraft[]>([]);
   // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
   // Defaults to x.ai; bikini batch uses WaveSpeed/Seedream unless the user overrides.
   const [psProvider, setPsProvider] = useState<AiProvider>("xai");
@@ -1519,7 +1588,47 @@ function CardPhotosPanel({
   useEffect(() => {
     clothesRefPrefilledRef.current = false;
     setClothesRefDraft("");
+    setSlotConfig([]);
   }, [cardId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPhotoScratchVariationCatalog()
+      .then((next) => {
+        if (!cancelled) setCatalog(next);
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) onError(caught instanceof Error ? caught.message : String(caught));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onError]);
+
+  useEffect(() => {
+    if (!catalog || slots.length === 0) return;
+    setSlotConfig((prev) => {
+      const same =
+        prev.length === slots.length &&
+        prev.every((row, index) => row.slotId === slots[index]?.id);
+      if (same) {
+        const changed = prev.some((row) => {
+          const slot = slots.find((entry) => entry.id === row.slotId);
+          return Boolean(
+            slot && (slot.label !== row.label || Boolean(slot.clothes_ref) !== row.hasClothesRef),
+          );
+        });
+        if (!changed) return prev;
+        return prev.map((row) => {
+          const slot = slots.find((entry) => entry.id === row.slotId);
+          return slot
+            ? { ...row, label: slot.label, hasClothesRef: Boolean(slot.clothes_ref) }
+            : row;
+        });
+      }
+      return variationRows(slots, catalog, "bikini", "");
+    });
+  }, [catalog, slots]);
 
   // Show the card's existing reference in the "apply to all" picker after load.
   useEffect(() => {
@@ -1698,25 +1807,143 @@ function CardPhotosPanel({
     onError(msg);
   }
 
-  async function handleGenerate(layer: PhotoScratchLayerType) {
+  function slotsForPlan(layer: PhotoScratchLayerType, onlySlotId: string): PhotoScratchSlot[] {
+    if (onlySlotId) {
+      const slot = slots.find((entry) => entry.id === onlySlotId);
+      return slot ? [slot] : [];
+    }
+    const hasPending = pendingByLayer(layer).length > 0;
+    if (!hasPending) return slotsEligibleForLayer(slots, layer);
+    return slots.filter((slot) => {
+      if (layer === "bikini") return Boolean(slot.background);
+      if (layer === "clothes") return Boolean(slot.bikini);
+      return true;
+    });
+  }
+
+  function updateSlotConfig(
+    slotId: string,
+    field: "pose" | "scene" | "placement",
+    value: string,
+  ) {
+    setSlotConfig((current) =>
+      current.map((row) => (row.slotId === slotId ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  function shuffleSlotPoses() {
+    if (!catalog || slotConfig.length === 0) return;
+    const nextPoses = shuffledTake(
+      catalog.poses.map((option) => option.text),
+      slotConfig.length,
+    );
+    setSlotConfig((current) =>
+      current.map((row, index) => ({ ...row, pose: nextPoses[index] ?? row.pose })),
+    );
+  }
+
+  function editVariationOption(
+    group: keyof PhotoScratchVariationCatalog,
+    index: number,
+    field: "label" | "text",
+    value: string,
+  ) {
+    const current = catalogRef.current;
+    if (!current) return;
+    const previous = current[group][index];
+    if (!previous) return;
+    const next: PhotoScratchVariationCatalog = {
+      ...current,
+      [group]: current[group].map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row,
+      ),
+    };
+    catalogRef.current = next;
+    setCatalog(next);
+    if (field !== "text" || previous.text === value) return;
+    setSlotConfig((rows) =>
+      rows.map((row) => {
+        if (group === "poses" && row.pose === previous.text) return { ...row, pose: value };
+        if (group === "scenes" && row.scene === previous.text) return { ...row, scene: value };
+        if (group === "placements" && row.placement === previous.text) {
+          return { ...row, placement: value };
+        }
+        return row;
+      }),
+    );
+  }
+
+  async function persistVariationCatalog(next: PhotoScratchVariationCatalog) {
+    try {
+      const saved = await savePhotoScratchVariationCatalog(next);
+      catalogRef.current = saved;
+      setCatalog(saved);
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  function addVariationOption(group: keyof PhotoScratchVariationCatalog) {
+    const current = catalogRef.current;
+    if (!current) return;
+    const count = current[group].length + 1;
+    const next: PhotoScratchVariationCatalog = {
+      ...current,
+      [group]: [
+        ...current[group],
+        { label: `New ${count}`, text: `Custom ${group} option ${count}` },
+      ],
+    };
+    catalogRef.current = next;
+    setCatalog(next);
+    void persistVariationCatalog(next);
+  }
+
+  function deleteVariationOption(group: keyof PhotoScratchVariationCatalog, index: number) {
+    const current = catalogRef.current;
+    if (!current) return;
+    if (current[group].length <= 1) {
+      reportError("Keep at least one option.");
+      return;
+    }
+    const next: PhotoScratchVariationCatalog = {
+      ...current,
+      [group]: current[group].filter((_, rowIndex) => rowIndex !== index),
+    };
+    catalogRef.current = next;
+    setCatalog(next);
+    void persistVariationCatalog(next);
+  }
+
+  async function startGenerate(layer: PhotoScratchLayerType, onlySlotId = "") {
     const id = cardId.trim();
     if (!id || genJobs[layer]) return;
+    if (slotConfig.length === 0) {
+      reportError("Configure the slots first.");
+      return;
+    }
     if ((layer === "bikini" || layer === "clothes") && !image.trim()) {
       reportError("Set the Flow source image in Setup first — bikini/top must match that girl.");
       return;
     }
-    if (layer === "bikini" && !slots.some((s) => s.background)) {
+    if (!onlySlotId && layer === "bikini" && !slots.some((slot) => slot.background)) {
       reportError("Generate and approve backgrounds first, then bikinis.");
       return;
     }
-    if (layer === "clothes" && !slots.some((s) => s.bikini)) {
+    if (!onlySlotId && layer === "clothes" && !slots.some((slot) => slot.bikini)) {
       reportError("Approve bikinis first so the top matches the same pose and girl.");
       return;
     }
+    if (onlySlotId && layer === "clothes") {
+      const slot = slots.find((entry) => entry.id === onlySlotId);
+      if (slot && !slot.bikini) {
+        reportError("Generate/approve bikini on this card first.");
+        return;
+      }
+    }
     const hasPending = pendingByLayer(layer).length > 0;
-    const eligible = slotsEligibleForLayer(slots, layer);
-    // Top up eligible empty slots only. Pending review may regenerate those pending slots.
-    if (!hasPending && eligible.length === 0) {
+    const targets = slotsForPlan(layer, onlySlotId);
+    if (!onlySlotId && !hasPending && targets.length === 0) {
       reportError(
         layer === "clothes"
           ? "No tops to generate — approve bikinis on empty slots first (or delete tops to refill)."
@@ -1726,8 +1953,19 @@ function CardPhotosPanel({
       );
       return;
     }
-    const fillEmptyOnly = !hasPending;
-    const count = hasPending ? PHOTO_SCRATCH_SLOT_COUNT : eligible.length;
+    if (targets.length === 0) {
+      reportError("No photos to generate.");
+      return;
+    }
+    const choices: PhotoScratchVariationChoice[] = targets.map((slot) => {
+      const row = slotConfig.find((entry) => entry.slotId === slot.id);
+      return {
+        slot_id: slot.id,
+        pose: row?.pose ?? "",
+        scene: row?.scene ?? "",
+        placement: row?.placement ?? "",
+      };
+    });
     const { provider, imageModel } = resolvePsAi(layer);
     setPanelError("");
     try {
@@ -1738,15 +1976,20 @@ function CardPhotosPanel({
         provider,
         imageModel,
         image.trim(),
-        "",
+        onlySlotId,
         requestPrompt(layer),
-        count,
-        fillEmptyOnly,
+        onlySlotId ? 1 : hasPending ? PHOTO_SCRATCH_SLOT_COUNT : targets.length,
+        onlySlotId ? false : !hasPending,
+        choices,
       );
       setGenJobs((prev) => ({ ...prev, [layer]: { id: job.id, logs: [] } }));
     } catch (caught) {
       reportError(caught);
     }
+  }
+
+  async function handleGenerate(layer: PhotoScratchLayerType) {
+    await startGenerate(layer);
   }
 
   async function handleApprove(slotId: string, layer: PhotoScratchLayerType) {
@@ -1859,9 +2102,10 @@ function CardPhotosPanel({
     const needsBackground = layer === "bikini" && !hasApprovedBackground;
     const needsBikini = layer === "clothes" && !hasApprovedBikini;
     const nothingToFill = !hasPending && eligible.length === 0;
-    const blocked = needsSource || needsBackground || needsBikini || nothingToFill;
+    const blocked = needsSource || needsBackground || needsBikini || nothingToFill || slotConfig.length === 0;
     let title = "";
-    if (needsSource) title = "Set Flow source image in Setup first";
+    if (slotConfig.length === 0) title = "Configure the slots first";
+    else if (needsSource) title = "Set Flow source image in Setup first";
     else if (needsBackground) title = "Approve backgrounds first, then bikinis";
     else if (needsBikini) title = "Approve bikinis first so top matches";
     else if (nothingToFill) {
@@ -2032,8 +2276,8 @@ function CardPhotosPanel({
         <Box>
           <Heading size="3">Photo Scratch cards</Heading>
           <Text color="gray" size="2">
-            Order: Background → Bikini → Top. Bikini puts the girl into each card&apos;s background
-            with a different pose; Top keeps that same pose (needed for scratch alignment).
+            Order: configure each slot, then generate. Background → Bikini → Top. The top keeps
+            the bikini pose so scratch holes stay aligned.
           </Text>
           <Flex align="center" gap="2" mt="2" wrap="wrap">
             <Badge color={layersCompleteCount > 0 ? "green" : "gray"} variant="soft">
@@ -2055,9 +2299,6 @@ function CardPhotosPanel({
           </Flex>
         </Box>
         <Flex gap="2" wrap="wrap">
-          {generateButton("background", "backgrounds")}
-          {generateButton("bikini", "bikinis")}
-          {generateButton("clothes", "tops")}
           <Button
             color="gray"
             size="2"
@@ -2089,6 +2330,179 @@ function CardPhotosPanel({
           ) : null}
         </Flex>
       </Flex>
+
+      {catalog ? (
+        <Dialog.Root open={optionsOpen} onOpenChange={setOptionsOpen}>
+          <Dialog.Content
+            style={{
+              maxWidth: 880,
+              maxHeight: "calc(100vh - 32px)",
+              overflow: "auto",
+            }}
+          >
+            <Dialog.Title>Pose, lighting, and position options</Dialog.Title>
+            <Dialog.Description size="2" mb="3">
+              Add, edit, or delete choices. Changes are saved when you leave a field.
+            </Dialog.Description>
+            <Grid columns={{ initial: "1", md: "3" }} gap="3">
+              {(
+                [
+                  ["poses", "Poses"],
+                  ["scenes", "Lighting"],
+                  ["placements", "Positions"],
+                ] as const
+              ).map(([group, title]) => (
+                <Box key={group}>
+                  <Flex align="center" justify="between" gap="2" mb="2">
+                    <Text size="2" weight="bold">
+                      {title}
+                    </Text>
+                    <Button
+                      color="gray"
+                      size="1"
+                      type="button"
+                      variant="soft"
+                      onClick={() => addVariationOption(group)}
+                    >
+                      Add
+                    </Button>
+                  </Flex>
+                  <Flex direction="column" gap="2">
+                    {catalog[group].map((option, index) => (
+                      <Flex key={`${group}-${index}`} align="center" gap="1">
+                        <TextField.Root
+                          style={{ flex: "0 0 110px" }}
+                          value={option.label}
+                          onChange={(event) =>
+                            editVariationOption(group, index, "label", event.currentTarget.value)
+                          }
+                          onBlur={() => {
+                            const next = catalogRef.current;
+                            if (next) void persistVariationCatalog(next);
+                          }}
+                        />
+                        <TextField.Root
+                          style={{ flex: "1 1 auto" }}
+                          value={option.text}
+                          onChange={(event) =>
+                            editVariationOption(group, index, "text", event.currentTarget.value)
+                          }
+                          onBlur={() => {
+                            const next = catalogRef.current;
+                            if (next) void persistVariationCatalog(next);
+                          }}
+                        />
+                        <Button
+                          color="gray"
+                          size="1"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => deleteVariationOption(group, index)}
+                        >
+                          <X {...iconProps} />
+                        </Button>
+                      </Flex>
+                    ))}
+                  </Flex>
+                </Box>
+              ))}
+            </Grid>
+          </Dialog.Content>
+        </Dialog.Root>
+      ) : null}
+
+      {catalog && slotConfig.length > 0 ? (
+        <Box mb="4" style={{ overflowX: "auto" }}>
+          <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+            <Box>
+              <Text as="div" size="2" weight="bold">
+                Slots
+              </Text>
+              <Text as="div" color="gray" size="1">
+                Set pose, lighting, and position first. Generate uses this list.
+              </Text>
+            </Box>
+            <Flex gap="2" wrap="wrap">
+              <Button
+                color="gray"
+                size="1"
+                type="button"
+                variant="soft"
+                onClick={() => setOptionsOpen(true)}
+              >
+                Edit options
+              </Button>
+              <Button color="gray" size="1" type="button" variant="soft" onClick={shuffleSlotPoses}>
+                <Shuffle {...iconProps} />
+                Shuffle poses
+              </Button>
+            </Flex>
+          </Flex>
+          <Flex align="center" gap="2" mb="1">
+            <Text size="1" style={{ width: 28 }} weight="bold">
+              #
+            </Text>
+            <Text size="1" style={{ flex: "0 0 200px" }} weight="bold">
+              Pose
+            </Text>
+            <Text size="1" style={{ flex: "1 1 auto" }} weight="bold">
+              Pose text
+            </Text>
+            <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
+              Lighting
+            </Text>
+            <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
+              Position
+            </Text>
+          </Flex>
+          <Flex direction="column" gap="1" mb="3">
+            {slotConfig.map((row) => (
+              <Flex key={row.slotId} align="center" gap="2">
+                <Text size="2" style={{ width: 28 }} weight="bold">
+                  {photoNumber(row.slotId)}
+                </Text>
+                <VariationSelect
+                  compact
+                  label="Pose"
+                  options={catalog.poses}
+                  value={row.pose}
+                  onChange={(next) => updateSlotConfig(row.slotId, "pose", next)}
+                />
+                <TextField.Root
+                  style={{ flex: "1 1 auto" }}
+                  value={row.pose}
+                  onChange={(event) => updateSlotConfig(row.slotId, "pose", event.currentTarget.value)}
+                />
+                <Box style={{ flex: "0 0 180px", minWidth: 0 }}>
+                  <VariationSelect
+                    compact
+                    fill
+                    label="Lighting"
+                    options={catalog.scenes}
+                    value={row.scene}
+                    onChange={(next) => updateSlotConfig(row.slotId, "scene", next)}
+                  />
+                </Box>
+                <Box style={{ flex: "0 0 180px", minWidth: 0 }}>
+                  <VariationSelect
+                    compact
+                    fill
+                    label="Position"
+                    options={catalog.placements}
+                    value={row.placement}
+                    onChange={(next) => updateSlotConfig(row.slotId, "placement", next)}
+                  />
+                </Box>
+              </Flex>
+            ))}
+          </Flex>
+          <Flex gap="2" wrap="wrap">
+            {generateButton("background", "backgrounds")}
+            {generateButton("bikini", "bikinis")}
+            {generateButton("clothes", "tops")}
+          </Flex>
+        </Box>
+      ) : null}
 
       <Flex align="end" gap="3" mb="4" wrap="wrap">
         <Box style={{ minWidth: 160 }}>
@@ -2340,7 +2754,6 @@ function CardPhotosPanel({
                       } else if (layer === "clothes" && !slot.bikini) {
                         aiBlockedReason = "Generate/approve bikini on this card first";
                       }
-                      const layerAi = resolvePsAi(layer);
                       return (
                         <SlotLayerUpload
                           key={layer}
@@ -2349,19 +2762,15 @@ function CardPhotosPanel({
                           layer={layer}
                           src={slot[layer]}
                           theme={theme}
-                          sourceImage={image.trim()}
-                          aiProvider={layerAi.provider}
-                          sourceImageModel={layerAi.imageModel}
-                          prompt={slotLayerPrompt(slot, layer) || requestPrompt(layer)}
                           slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
-                          busy={layerBusy}
+                          busy={layerBusy || Boolean(genJobs[layer])}
                           onUpdate={handleSlotUpdate}
                           onError={(msg) => {
                             setPanelError(msg);
                             onError(msg);
                           }}
-                          onSlotAiDone={() => void refreshSlots(true)}
+                          onAskGenerate={() => void startGenerate(layer, slot.id)}
                           onSlotPromptBlur={(id, layerType, value) =>
                             void handleSlotPromptBlur(id, layerType, value)
                           }
@@ -2383,10 +2792,8 @@ function CardPhotosPanel({
 
           {!hasAnyPending && !anyGenBusy && !hasAnyLayer ? (
             <Text color="gray" size="2">
-              Start with <strong>Generate backgrounds</strong> (empty scene), approve, then{" "}
-              <strong>Generate bikinis</strong> (girl onto that scene), then{" "}
-              <strong>Generate tops</strong>. Delete any you dislike — the button shows how many
-              empty slots will be filled.
+              Configure the slots above, then <strong>Generate backgrounds</strong>. Approve those,
+              then generate bikinis, then tops.
             </Text>
           ) : null}
         </Flex>
