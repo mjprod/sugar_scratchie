@@ -1169,19 +1169,11 @@ type VariationDraft = {
   scene: string;
   placement: string;
   hasClothesRef: boolean;
-  /** Words sent for this photo. Starts as the shared prompt unless this photo already has its own. */
-  prompt: string;
-  /** True once this photo's prompt is edited, so the shared box stops overwriting it. */
-  promptEdited: boolean;
 };
 
 function variationRows(
   targets: PhotoScratchSlot[],
   catalog: PhotoScratchVariationCatalog,
-  layer: PhotoScratchLayerType,
-  sharedPrompt: string,
-  previous: VariationDraft[] = [],
-  savedPoses: Record<string, string> = {},
 ): VariationDraft[] {
   const poses = shuffledTake(
     catalog.poses.map((option) => option.text),
@@ -1195,23 +1187,14 @@ function variationRows(
     catalog.placements.map((option) => option.text),
     targets.length,
   );
-  const prior = new Map(previous.map((row) => [row.slotId, row]));
-  return targets.map((slot, index) => {
-    const saved = slotLayerPrompt(slot, layer);
-    const old = prior.get(slot.id);
-    const promptEdited = old?.promptEdited ?? Boolean(saved);
-    const shuffledPose = poses[index] ?? "";
-    return {
-      slotId: slot.id,
-      label: slot.label,
-      pose: old?.pose || savedPoses[slot.id] || shuffledPose,
-      scene: scenes[index] ?? "",
-      placement: placements[index] ?? "",
-      hasClothesRef: Boolean(slot.clothes_ref),
-      prompt: promptEdited ? (old?.prompt ?? saved) : sharedPrompt,
-      promptEdited,
-    };
-  });
+  return targets.map((slot, index) => ({
+    slotId: slot.id,
+    label: slot.label,
+    pose: poses[index] ?? "",
+    scene: scenes[index] ?? "",
+    placement: placements[index] ?? "",
+    hasClothesRef: Boolean(slot.clothes_ref),
+  }));
 }
 
 function VariationSelect({
@@ -1629,7 +1612,7 @@ function CardPhotosPanel({
             : row;
         });
       }
-      return variationRows(slots, catalog, "bikini", "");
+      return variationRows(slots, catalog);
     });
   }, [catalog, slots]);
 
@@ -1702,12 +1685,17 @@ function CardPhotosPanel({
     done: number;
   };
   const [genJobs, setGenJobs] = useState<Partial<Record<PhotoScratchLayerType, PhotoGenRun>>>({});
-  const genTokenRef = useRef(0);
+  const genTokenRef = useRef<Partial<Record<PhotoScratchLayerType, number>>>({});
   const genLayerRef = useRef<Partial<Record<PhotoScratchLayerType, boolean>>>({});
 
   useEffect(() => {
     return () => {
-      genTokenRef.current += 1;
+      const current = genTokenRef.current;
+      genTokenRef.current = {
+        background: (current.background ?? 0) + 1,
+        bikini: (current.bikini ?? 0) + 1,
+        clothes: (current.clothes ?? 0) + 1,
+      };
       genLayerRef.current = {};
       setGenJobs({});
     };
@@ -1766,9 +1754,10 @@ function CardPhotosPanel({
 
   async function waitForPhotoJob(
     jobId: string,
+    layer: PhotoScratchLayerType,
     token: number,
   ): Promise<{ status: string; detail: string }> {
-    while (genTokenRef.current === token) {
+    while (genTokenRef.current[layer] === token) {
       const next = await api<{ status: string; logs: string[] }>(
         `/api/jobs/${encodeURIComponent(jobId)}`,
       );
@@ -1947,7 +1936,8 @@ function CardPhotosPanel({
       };
     });
     const { provider, imageModel } = resolvePsAi(layer);
-    const token = ++genTokenRef.current;
+    const token = (genTokenRef.current[layer] ?? 0) + 1;
+    genTokenRef.current[layer] = token;
     const single = Boolean(onlySlotId);
     genLayerRef.current[layer] = true;
     setPanelError("");
@@ -1964,7 +1954,7 @@ function CardPhotosPanel({
     const failures: string[] = [];
     try {
       for (let index = 0; index < targets.length; index += 1) {
-        if (genTokenRef.current !== token) return;
+        if (genTokenRef.current[layer] !== token) return;
         const slot = targets[index];
         setGenJobs((prev) => ({
           ...prev,
@@ -1992,7 +1982,7 @@ function CardPhotosPanel({
             choice,
             single,
           );
-          if (genTokenRef.current !== token) return;
+          if (genTokenRef.current[layer] !== token) return;
           setGenJobs((prev) => ({
             ...prev,
             [layer]: {
@@ -2004,12 +1994,12 @@ function CardPhotosPanel({
             },
           }));
           const result = await waitForPhotoJob(job.id, token);
-          if (genTokenRef.current !== token) return;
+          if (genTokenRef.current[layer] !== token) return;
           if (result.status !== "succeeded") {
             failures.push(`${slot.label}: ${result.detail}`);
           }
         } catch (caught) {
-          if (genTokenRef.current !== token) return;
+          if (genTokenRef.current[layer] !== token) return;
           failures.push(
             `${slot.label}: ${caught instanceof Error ? caught.message : String(caught)}`,
           );
@@ -2021,7 +2011,7 @@ function CardPhotosPanel({
         }
       }
     } finally {
-      if (genTokenRef.current === token) {
+      if (genTokenRef.current[layer] === token) {
         genLayerRef.current[layer] = false;
         setGenJobs((prev) => {
           const copy = { ...prev };
@@ -2030,7 +2020,7 @@ function CardPhotosPanel({
         });
       }
     }
-    if (genTokenRef.current !== token) return;
+    if (genTokenRef.current[layer] !== token) return;
     if (failures.length > 0) {
       reportError(`Some ${LAYER_LABEL[layer]} failed. ${failures.join(" ")}`);
     }
