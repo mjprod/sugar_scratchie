@@ -158,7 +158,13 @@ from backend.symbols_store import (
     upload_symbol_lottie,
 )
 from backend.services.ai_provider import AiProvider, BackgroundVideoModel, DressVideoModel, SourceImageModel
-from backend.services.grok import edit_video, image_dress_flow as run_image_dress_flow, image_to_video as run_image_to_video
+from backend.services.grok import (
+    edit_video,
+    image_dress_flow as run_image_dress_flow,
+    image_to_video as run_image_to_video,
+    photo_scratch_variation_catalog,
+    save_photo_scratch_variation_catalog,
+)
 from backend.services.garment_mask import generate_garment_mask as run_generate_garment_mask
 from backend.services.mesh_symbols import (
     SYMBOL_POINT_COUNT,
@@ -885,6 +891,32 @@ def get_published_photo_scratch(db: Annotated[Session, Depends(get_session)]) ->
     return {"cards": [card.dict() for card in cards]}
 
 
+@app.get("/api/photo-scratch/variations")
+def get_photo_scratch_variations() -> dict:
+    """Pose, lighting, and frame-position options for the review step before generate."""
+    return photo_scratch_variation_catalog()
+
+
+class PhotoScratchVariationOptionBody(BaseModel):
+    label: str
+    text: str
+
+
+class PhotoScratchVariationCatalogBody(BaseModel):
+    poses: list[PhotoScratchVariationOptionBody]
+    scenes: list[PhotoScratchVariationOptionBody]
+    placements: list[PhotoScratchVariationOptionBody]
+
+
+@app.put("/api/photo-scratch/variations")
+def put_photo_scratch_variations(request: PhotoScratchVariationCatalogBody) -> dict:
+    """Create, update, or delete pose, lighting, and position options."""
+    try:
+        return save_photo_scratch_variation_catalog(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 # ── Photo-scratch slot endpoints ──────────────────────────────────────────────
 
 class GeneratePhotoScratchRequest(BaseModel):
@@ -898,6 +930,12 @@ class GeneratePhotoScratchRequest(BaseModel):
     prompt: str = ""  # Optional override; empty = built-in default for the layer
     # When True (batch default), only fill slots missing approved+pending for the layer.
     fill_empty_only: bool = True
+    # Operator review: pose / lighting / position chosen before create.
+    # Empty fields shuffle from the saved catalog.
+    variations: list[dict[str, str]] = Field(default_factory=list)
+    # One-slot tile generation approves immediately. A 10-photo run leaves each
+    # image pending so it can be reviewed as it appears.
+    approve: bool = True
 
 
 class SetSlotPromptRequest(BaseModel):
@@ -1160,6 +1198,19 @@ def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -
             # Validate early so the job queue doesn't silently fail.
             workspace_path(source_image, must_exist=True)
     custom_prompt = request.prompt.strip()
+    chosen: list[dict[str, str]] = []
+    for item in request.variations:
+        slot_key = str(item.get("slot_id") or "").strip()
+        if not re.fullmatch(r"slot_\d{2}", slot_key):
+            raise HTTPException(status_code=400, detail="Invalid slot_id")
+        pose = str(item.get("pose") or "").strip()
+        scene = str(item.get("scene") or "").strip()
+        placement = str(item.get("placement") or "").strip()
+        if max(len(pose), len(scene), len(placement)) > 400:
+            raise HTTPException(status_code=400, detail="Variation text is too long")
+        chosen.append(
+            {"slot_id": slot_key, "pose": pose, "scene": scene, "placement": placement}
+        )
     job = enqueue(
         "generate-photo-scratch-layer",
         ["generate-photo-scratch-layer", card_id, layer, slot_id or "all"],
@@ -1174,6 +1225,8 @@ def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -
             slot_id=slot_id,
             prompt=custom_prompt,
             fill_empty_only=False if slot_id else request.fill_empty_only,
+            variations=chosen,
+            approve=request.approve,
         ),
     )
     return job.public()

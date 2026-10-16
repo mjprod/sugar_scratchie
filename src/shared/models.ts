@@ -551,6 +551,8 @@ export function defaultPhotoScratchPrompt(
   if (layer === "background") {
     return (
       `Empty ${scenery} themed room/scene backdrop only — no people, no faces, no body. ` +
+      "No furniture and no props — no chairs, desks, tables, sofas, beds, counters, or objects. " +
+      "Bare themed walls and floor only. " +
       "Photorealistic, soft professional lighting, 9:16 vertical, suitable as a scratch-card background plate."
     );
   }
@@ -561,15 +563,18 @@ export function defaultPhotoScratchPrompt(
         `(2) the WOMAN whose identity to keep. Put the exact same woman from reference 2 ` +
         `into the full scene from reference 1. Completely replace her original plain wall / ` +
         `studio backdrop. She wears a flattering ${scenery} bikini/swimwear. ` +
-        `Each card gets a different pose (backend adds one per slot). Keep only face, identity, ` +
+        `Each picture gets its own pose and position in the frame (the backend picks a new one ` +
+        `every time, not a fixed pose for photo 1, photo 2, and so on). Keep only face, identity, ` +
         `hair, skin tone, and body proportions — do NOT copy her source pose or camera crop. ` +
+        "She stands on the floor and does not touch, lean on, sit on, or hold any furniture or object. " +
         "Full body, photorealistic, 9:16. Do not invent a different woman."
       );
     }
     return (
       `Using this exact same woman from the reference image, change her outfit to a ` +
-      `flattering ${scenery} bikini/swimwear and restage her with a new pose (backend varies ` +
-      `pose per card). Keep face, identity, hair, skin tone, and body proportions. ` +
+      `flattering ${scenery} bikini/swimwear and restage her with a new pose and a new ` +
+      `position in the frame (the backend picks a fresh one each generation). ` +
+      `Keep face, identity, hair, skin tone, and body proportions. ` +
       `Clean studio / transparent-friendly backdrop. Full body, photorealistic, 9:16. ` +
       "Do not invent a different woman."
     );
@@ -600,6 +605,37 @@ export function defaultPhotoScratchPrompt(
   );
 }
 
+export type PhotoScratchVariationOption = {
+  label: string;
+  text: string;
+};
+
+export type PhotoScratchVariationCatalog = {
+  poses: PhotoScratchVariationOption[];
+  scenes: PhotoScratchVariationOption[];
+  placements: PhotoScratchVariationOption[];
+};
+
+export type PhotoScratchVariationChoice = {
+  slot_id: string;
+  pose: string;
+  scene: string;
+  placement: string;
+};
+
+export async function fetchPhotoScratchVariationCatalog(): Promise<PhotoScratchVariationCatalog> {
+  return api<PhotoScratchVariationCatalog>("/api/photo-scratch/variations");
+}
+
+export async function savePhotoScratchVariationCatalog(
+  catalog: PhotoScratchVariationCatalog,
+): Promise<PhotoScratchVariationCatalog> {
+  return api<PhotoScratchVariationCatalog>("/api/photo-scratch/variations", {
+    method: "PUT",
+    body: JSON.stringify(catalog),
+  });
+}
+
 export async function fetchPhotoScratchSlots(
   cardId: string,
   theme = "",
@@ -622,6 +658,8 @@ export async function generatePhotoScratchLayer(
   prompt = "",
   count = 10,
   fillEmptyOnly = true,
+  variations: PhotoScratchVariationChoice[] = [],
+  approve = true,
 ): Promise<{ id: string; status: string }> {
   return api(`/api/cards/${encodeURIComponent(cardId)}/photo-scratch/generate`, {
     method: "POST",
@@ -635,6 +673,8 @@ export async function generatePhotoScratchLayer(
       slot_id: slotId,
       prompt,
       fill_empty_only: slotId ? false : fillEmptyOnly,
+      variations,
+      approve,
     }),
   });
 }

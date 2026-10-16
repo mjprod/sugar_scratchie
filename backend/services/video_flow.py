@@ -28,14 +28,16 @@ from backend.services.ai_provider import (
 from backend.services.grok import (
     DRESS_ENHANCE_SYSTEM,
     DEFAULT_PORTRAIT_PROMPT,
+    PhotoScratchVariation,
     api_key,
     describe_outfit,
     is_stock_portrait_prompt,
     normalize_background_motion_prompt,
     output_video_ready,
-    PHOTO_SCRATCH_POSE_VARIATIONS,
-    PHOTO_SCRATCH_SCENE_VARIATIONS,
+    apply_photo_scratch_variation_overrides,
+    assign_photo_scratch_variations,
     photo_scratch_background_prompt,
+    photo_scratch_background_prompt_locked,
     motion_source_bikini_prompt,
     motion_source_style_prompt,
     photo_scratch_bikini_prompt,
@@ -1583,6 +1585,8 @@ def run_generate_photo_scratch_layer(
     slot_id: str = "",
     prompt: str = "",
     fill_empty_only: bool = True,
+    variations: list[dict[str, str]] | None = None,
+    approve: bool = True,
 ) -> dict:
     """Generate still images for one photo-scratch layer type.
 
@@ -1590,6 +1594,8 @@ def run_generate_photo_scratch_layer(
     Otherwise generates up to `count` slots (1..10).
     When fill_empty_only is True, only slots missing approved and pending for
     the layer are filled (top-up after deletes).
+    `variations` is the operator's review: pose, scene, and placement per slot.
+    Empty fields keep the shuffled default.
     """
     from backend.cards import (
         PHOTO_SCRATCH_LAYER_NAMES,
@@ -1701,14 +1707,28 @@ def run_generate_photo_scratch_layer(
             )
 
     clothes_captions: dict[str, str] = {}
-    for slot in slots_to_run:
-        # Variation hint keyed off slot number so regenerations stay distinctive.
-        try:
-            slot_num = int(slot.id.replace("slot_", "")) - 1
-        except ValueError:
-            slot_num = 0
-        pose_hint = PHOTO_SCRATCH_POSE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_POSE_VARIATIONS)]
-        scene_hint = PHOTO_SCRATCH_SCENE_VARIATIONS[slot_num % len(PHOTO_SCRATCH_SCENE_VARIATIONS)]
+    # Shuffled first, then replaced by whatever the operator confirmed in the review.
+    overrides: dict[str, PhotoScratchVariation] = {}
+    for item in variations or []:
+        slot_key = str(item.get("slot_id") or "").strip()
+        if not slot_key:
+            continue
+        overrides[slot_key] = PhotoScratchVariation(
+            pose=str(item.get("pose") or ""),
+            scene=str(item.get("scene") or ""),
+            placement=str(item.get("placement") or ""),
+        )
+    variation_plan = apply_photo_scratch_variation_overrides(
+        assign_photo_scratch_variations([slot.id for slot in slots_to_run]),
+        overrides,
+    )
+    total = len(slots_to_run)
+    for index, slot in enumerate(slots_to_run, start=1):
+        print(f"Photo-scratch {layer_type} {index}/{total} starting {slot.id}")
+        variation = variation_plan[slot.id]
+        pose_hint = variation.pose
+        scene_hint = variation.scene
+        placement_hint = variation.placement
         filename = f"{slot.id}_{layer_type}.jpg"
         out = pending_dir / filename
         out.unlink(missing_ok=True)
@@ -1739,10 +1759,14 @@ def run_generate_photo_scratch_layer(
                         with_face=with_face,
                         with_bikini=with_bikini,
                         bikini_caption=bikini_caption,
+                        placement=placement_hint,
                     )
                 elif with_bg:
                     patched = photo_scratch_prompt_with_background(
-                        custom, has_background=True, pose=pose_hint
+                        custom,
+                        has_background=True,
+                        pose=pose_hint,
+                        placement=placement_hint,
                     )
                     if patched and bikini_clause:
                         patched = f"{patched} {bikini_clause}"
@@ -1755,6 +1779,7 @@ def run_generate_photo_scratch_layer(
                         with_face=with_face,
                         with_bikini=with_bikini,
                         bikini_caption=bikini_caption,
+                        placement=placement_hint,
                     )
                 elif custom and (
                     "reference 1" in custom.lower()
@@ -1768,9 +1793,13 @@ def run_generate_photo_scratch_layer(
                         with_face=with_face,
                         with_bikini=with_bikini,
                         bikini_caption=bikini_caption,
+                        placement=placement_hint,
                     )
                 elif custom and not photo_scratch_custom_locks_source_pose(custom):
-                    final_prompt = f"{custom} Pose and framing for this card: {pose_hint}."
+                    final_prompt = (
+                        f"{custom} Pose and framing for this card: {pose_hint}. "
+                        f"{placement_hint}"
+                    )
                     if bikini_clause:
                         final_prompt = f"{final_prompt} {bikini_clause}"
                     if with_face:
@@ -1783,6 +1812,7 @@ def run_generate_photo_scratch_layer(
                         with_face=with_face,
                         with_bikini=with_bikini,
                         bikini_caption=bikini_caption,
+                        placement=placement_hint,
                     )
                 if with_bg or with_face or with_bikini:
                     refs = "environment+woman" if with_bg else "woman"
@@ -1792,7 +1822,7 @@ def run_generate_photo_scratch_layer(
                         refs += "+face"
                     print(
                         f"Photo-scratch bikini {slot.id}: {refs} composite, "
-                        f"pose={pose_hint[:48]}…"
+                        f"pose={pose_hint[:48]}… placement={placement_hint[:48]}…"
                     )
                 edit_photo_scratch_layer(
                     provider=ai_provider,
@@ -1845,7 +1875,11 @@ def run_generate_photo_scratch_layer(
                     aspect_ratio="9:16",
                 )
             else:  # background — empty scene plate only
-                base = custom if custom else photo_scratch_background_prompt(theme_str)
+                base = (
+                    photo_scratch_background_prompt_locked(custom)
+                    if custom
+                    else photo_scratch_background_prompt(theme_str)
+                )
                 generate_portrait_image(
                     provider=ai_provider,
                     image_model=source_image_model,
@@ -1872,8 +1906,9 @@ def run_generate_photo_scratch_layer(
             detail += " " + "; ".join(failures)
         raise RuntimeError(detail)
 
-    # One-by-one: auto-approve so the slot fills immediately (no batch review needed).
-    if target_slot:
+    # The per-tile button approves immediately. A multi-photo run leaves each
+    # image pending so the operator can review it as it appears.
+    if target_slot and approve:
         from backend.cards import approve_photo_scratch_layer
 
         for sid in written:
@@ -1885,7 +1920,7 @@ def run_generate_photo_scratch_layer(
         "slot_id": target_slot or None,
         "generated": len(written),
         "slots": written,
-        "auto_approved": bool(target_slot),
+        "auto_approved": bool(target_slot and approve),
     }
 
 
