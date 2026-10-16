@@ -932,6 +932,9 @@ class GeneratePhotoScratchRequest(BaseModel):
     fill_empty_only: bool = True
     # Operator review: pose / lighting / position chosen before create. Empty = shuffle.
     variations: list[dict[str, str]] = Field(default_factory=list)
+    # One-slot tile generation approves immediately. A 10-photo run leaves each
+    # image pending so it can be reviewed as it appears.
+    approve: bool = True
 
 
 class SetSlotPromptRequest(BaseModel):
@@ -1222,6 +1225,7 @@ def generate_photo_scratch(card_id: str, request: GeneratePhotoScratchRequest) -
             prompt=custom_prompt,
             fill_empty_only=False if slot_id else request.fill_empty_only,
             variations=chosen,
+            approve=request.approve,
         ),
     )
     return job.public()

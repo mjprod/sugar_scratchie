@@ -659,6 +659,7 @@ export async function generatePhotoScratchLayer(
   count = 10,
   fillEmptyOnly = true,
   variations: PhotoScratchVariationChoice[] = [],
+  approve = true,
 ): Promise<{ id: string; status: string }> {
   return api(`/api/cards/${encodeURIComponent(cardId)}/photo-scratch/generate`, {
     method: "POST",
@@ -673,6 +674,7 @@ export async function generatePhotoScratchLayer(
       prompt,
       fill_empty_only: slotId ? false : fillEmptyOnly,
       variations,
+      approve,
     }),
   });
 }

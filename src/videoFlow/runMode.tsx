@@ -1277,6 +1277,7 @@ function SlotLayerUpload({
   slotPrompt,
   aiBlockedReason,
   busy,
+  generating = false,
   onUpdate,
   onError,
   onAskGenerate,
@@ -1294,6 +1295,8 @@ function SlotLayerUpload({
   /** Non-empty when AI generate should be disabled (e.g. missing bikini for top). */
   aiBlockedReason?: string;
   busy: boolean;
+  /** Spinner on this tile. `busy` alone only disables the controls. */
+  generating?: boolean;
   onUpdate: (slot: PhotoScratchSlot) => void;
   onError: (msg: string) => void;
   /** Opens the review step for this one photo. Generation starts only after Create. */
@@ -1392,7 +1395,7 @@ async function handleClothesRef(image: string) {
             variant="soft"
             onClick={onAskGenerate}
           >
-            {busy ? <Loader2 {...iconProps} className="spin" /> : <Sparkles {...iconProps} />}
+            {generating ? <Loader2 {...iconProps} className="spin" /> : <Sparkles {...iconProps} />}
             AI
           </Button>
         </Box>
@@ -1408,7 +1411,7 @@ async function handleClothesRef(image: string) {
             padding: 8,
           }}
         >
-          {busy ? (
+          {generating ? (
             <>
               <Loader2 size={22} strokeWidth={1.5} className="spin" color="var(--accent-9)" />
               <Text align="center" color="gray" size="1">
@@ -1690,11 +1693,25 @@ function CardPhotosPanel({
     });
   }, [slots, theme]);
 
-  // Per-layer job tracking (independent generate buttons)
-  const [genJobs, setGenJobs] = useState<
-    Partial<Record<PhotoScratchLayerType, { id: string; logs: string[] }>>
-  >({});
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // One photo at a time. The grid refreshes after each image instead of waiting for all 10.
+  type PhotoGenRun = {
+    id: string;
+    index: number;
+    total: number;
+    slotId: string;
+    done: number;
+  };
+  const [genJobs, setGenJobs] = useState<Partial<Record<PhotoScratchLayerType, PhotoGenRun>>>({});
+  const genTokenRef = useRef(0);
+  const genLayerRef = useRef<Partial<Record<PhotoScratchLayerType, boolean>>>({});
+
+  useEffect(() => {
+    return () => {
+      genTokenRef.current += 1;
+      genLayerRef.current = {};
+      setGenJobs({});
+    };
+  }, [cardId]);
 
   const PENDING_KEY: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
     background: "pending_bg",
@@ -1743,63 +1760,26 @@ function CardPhotosPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when card changes
   }, [cardId]);
 
-  // Poll all active generation jobs.
-  useEffect(() => {
-    const activeIds = Object.values(genJobs)
-      .map((job) => job?.id)
-      .filter(Boolean) as string[];
-    if (activeIds.length === 0) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitForPhotoJob(
+    jobId: string,
+    token: number,
+  ): Promise<{ status: string; detail: string }> {
+    while (genTokenRef.current === token) {
+      const next = await api<{ status: string; logs: string[] }>(
+        `/api/jobs/${encodeURIComponent(jobId)}`,
+      );
+      if (next.status === "succeeded" || next.status === "failed" || next.status === "cancelled") {
+        const logs = next.logs ?? [];
+        return { status: next.status, detail: logs[logs.length - 1] ?? next.status };
       }
-      return;
+      await sleep(2000);
     }
-    pollRef.current = setInterval(() => {
-      void (async () => {
-        let anyFinished = false;
-        for (const [layer, job] of Object.entries(genJobs) as [
-          PhotoScratchLayerType,
-          { id: string; logs: string[] } | undefined,
-        ][]) {
-          if (!job?.id) continue;
-          try {
-            const next = await api<{ id: string; status: string; logs: string[] }>(
-              `/api/jobs/${encodeURIComponent(job.id)}`,
-            );
-            setGenJobs((prev) => ({
-              ...prev,
-              [layer]: { id: job.id, logs: next.logs ?? [] },
-            }));
-            if (
-              next.status === "succeeded" ||
-              next.status === "failed" ||
-              next.status === "cancelled"
-            ) {
-              anyFinished = true;
-              setGenJobs((prev) => {
-                const copy = { ...prev };
-                delete copy[layer];
-                return copy;
-              });
-              if (next.status === "failed" || next.status === "cancelled") {
-                setPanelError(
-                  `Generate ${LAYER_LABEL[layer]} ${next.status}: ${next.logs?.[next.logs.length - 1] ?? "check Jobs tab"}`,
-                );
-              }
-            }
-          } catch {
-            /* ignore transient poll errors */
-          }
-        }
-        if (anyFinished) await refreshSlots();
-      })();
-    }, 3000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll when jobs change
-  }, [JSON.stringify(Object.keys(genJobs)), cardId]);
+    return { status: "cancelled", detail: "stopped" };
+  }
 
   function reportError(caught: unknown) {
     const msg = caught instanceof Error ? caught.message : String(caught);
@@ -1917,7 +1897,7 @@ function CardPhotosPanel({
 
   async function startGenerate(layer: PhotoScratchLayerType, onlySlotId = "") {
     const id = cardId.trim();
-    if (!id || genJobs[layer]) return;
+    if (!id || genJobs[layer] || genLayerRef.current[layer]) return;
     if (slotConfig.length === 0) {
       reportError("Configure the slots first.");
       return;
@@ -1967,24 +1947,92 @@ function CardPhotosPanel({
       };
     });
     const { provider, imageModel } = resolvePsAi(layer);
+    const token = ++genTokenRef.current;
+    const single = Boolean(onlySlotId);
+    genLayerRef.current[layer] = true;
     setPanelError("");
+    setGenJobs((prev) => ({
+      ...prev,
+      [layer]: {
+        id: "",
+        index: 1,
+        total: targets.length,
+        slotId: targets[0].id,
+        done: 0,
+      },
+    }));
+    const failures: string[] = [];
     try {
-      const job = await generatePhotoScratchLayer(
-        id,
-        layer,
-        theme,
-        provider,
-        imageModel,
-        image.trim(),
-        onlySlotId,
-        requestPrompt(layer),
-        onlySlotId ? 1 : hasPending ? PHOTO_SCRATCH_SLOT_COUNT : targets.length,
-        onlySlotId ? false : !hasPending,
-        choices,
-      );
-      setGenJobs((prev) => ({ ...prev, [layer]: { id: job.id, logs: [] } }));
-    } catch (caught) {
-      reportError(caught);
+      for (let index = 0; index < targets.length; index += 1) {
+        if (genTokenRef.current !== token) return;
+        const slot = targets[index];
+        setGenJobs((prev) => ({
+          ...prev,
+          [layer]: {
+            id: "",
+            index: index + 1,
+            total: targets.length,
+            slotId: slot.id,
+            done: index,
+          },
+        }));
+        try {
+          const choice = choices.filter((entry) => entry.slot_id === slot.id);
+          const job = await generatePhotoScratchLayer(
+            id,
+            layer,
+            theme,
+            provider,
+            imageModel,
+            image.trim(),
+            slot.id,
+            requestPrompt(layer),
+            1,
+            false,
+            choice,
+            single,
+          );
+          if (genTokenRef.current !== token) return;
+          setGenJobs((prev) => ({
+            ...prev,
+            [layer]: {
+              id: job.id,
+              index: index + 1,
+              total: targets.length,
+              slotId: slot.id,
+              done: index,
+            },
+          }));
+          const result = await waitForPhotoJob(job.id, token);
+          if (genTokenRef.current !== token) return;
+          if (result.status !== "succeeded") {
+            failures.push(`${slot.label}: ${result.detail}`);
+          }
+        } catch (caught) {
+          if (genTokenRef.current !== token) return;
+          failures.push(
+            `${slot.label}: ${caught instanceof Error ? caught.message : String(caught)}`,
+          );
+        }
+        try {
+          await refreshSlots(true);
+        } catch {
+          /* the pictures stay on disk; the next refresh can pick them up */
+        }
+      }
+    } finally {
+      if (genTokenRef.current === token) {
+        genLayerRef.current[layer] = false;
+        setGenJobs((prev) => {
+          const copy = { ...prev };
+          delete copy[layer];
+          return copy;
+        });
+      }
+    }
+    if (genTokenRef.current !== token) return;
+    if (failures.length > 0) {
+      reportError(`Some ${LAYER_LABEL[layer]} failed. ${failures.join(" ")}`);
     }
   }
 
@@ -2118,7 +2166,9 @@ function CardPhotosPanel({
       }
     }
     let buttonLabel: string;
-    if (busy) buttonLabel = `Generating ${label}…`;
+    const run = genJobs[layer];
+    if (busy && run) buttonLabel = `Generating ${run.index}/${run.total}…`;
+    else if (busy) buttonLabel = `Generating ${label}…`;
     else if (hasPending) buttonLabel = `Regenerate ${label}`;
     else if (eligible.length === 0) buttonLabel = `Generate ${label}`;
     else buttonLabel = `Generate ${eligible.length} ${label}`;
@@ -2143,40 +2193,33 @@ function CardPhotosPanel({
     const pendingKey = PENDING_KEY[layer];
     const approvedKey = layer as keyof PhotoScratchSlot;
     const pendingSlots = slots.filter((s) => Boolean(s[pendingKey]));
-    if (pendingSlots.length === 0 && !genJobs[layer]) return null;
+    const run = genJobs[layer];
+    if (pendingSlots.length === 0 && !run) return null;
+    const current = run ? slots.find((slot) => slot.id === run.slotId) : undefined;
 
     return (
       <Flex key={layer} direction="column" gap="3">
-        {genJobs[layer] ? (
+        {run ? (
           <Callout.Root color="blue">
             <Callout.Text weight="bold">
-              Generating {LAYER_LABEL[layer]} — this can take a few minutes.
+              {title} {run.index} of {run.total}
+              {current ? ` — ${current.label}` : ""}
             </Callout.Text>
-            {(genJobs[layer]?.logs.length ?? 0) > 0 ? (
-              <Box
-                asChild
-                mt="2"
-                style={{
-                  maxHeight: 120,
-                  overflow: "auto",
-                  fontFamily: "ui-monospace, monospace",
-                  fontSize: 12,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                <pre>{(genJobs[layer]?.logs ?? []).slice(-8).join("\n")}</pre>
-              </Box>
-            ) : null}
+            <Callout.Text>
+              {run.done} finished. Each picture shows up here as soon as it is ready.
+            </Callout.Text>
           </Callout.Root>
         ) : null}
 
-        {pendingSlots.length > 0 ? (
+        {pendingSlots.length > 0 || run ? (
           <>
-            <Callout.Root color="amber">
-              <Callout.Text weight="bold">
-                {title} — approve or skip each one.
-              </Callout.Text>
-            </Callout.Root>
+            {pendingSlots.length > 0 ? (
+              <Callout.Root color="amber">
+                <Callout.Text weight="bold">
+                  {title} — approve or skip each one.
+                </Callout.Text>
+              </Callout.Root>
+            ) : null}
             <Grid columns={{ initial: "2", sm: "3", md: "5" }} gap="3">
               {slots.map((slot) => {
                 const pendingSrc = slot[pendingKey] as string | undefined;
@@ -2255,10 +2298,15 @@ function CardPhotosPanel({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      flexDirection: "column",
+                      gap: 8,
                     }}
                   >
+                    {run?.slotId === slot.id ? (
+                      <Loader2 size={22} strokeWidth={1.5} className="spin" color="var(--accent-9)" />
+                    ) : null}
                     <Text color="gray" size="1">
-                      {slot.label}
+                      {run?.slotId === slot.id ? "Generating…" : slot.label}
                     </Text>
                   </Box>
                 );
@@ -2501,6 +2549,13 @@ function CardPhotosPanel({
             {generateButton("bikini", "bikinis")}
             {generateButton("clothes", "tops")}
           </Flex>
+          <Box mt="4">
+            <Flex direction="column" gap="5">
+              {reviewSection("background", "Background")}
+              {reviewSection("bikini", "Bikini")}
+              {reviewSection("clothes", "Top")}
+            </Flex>
+          </Box>
         </Box>
       ) : null}
 
@@ -2690,11 +2745,6 @@ function CardPhotosPanel({
         </Text>
       ) : (
         <Flex direction="column" gap="5">
-          {reviewSection("bikini", "Bikini review")}
-          {reviewSection("clothes", "Top review")}
-          {reviewSection("background", "Background review")}
-
-          {/* Keep approved slots visible even while another layer is generating / pending review. */}
           {hasAnyLayer ? (
             <Flex direction="column" gap="4">
               <Text size="2" weight="bold">
@@ -2765,6 +2815,7 @@ function CardPhotosPanel({
                           slotPrompt={slotLayerPrompt(slot, layer)}
                           aiBlockedReason={aiBlockedReason}
                           busy={layerBusy || Boolean(genJobs[layer])}
+                          generating={genJobs[layer]?.slotId === slot.id}
                           onUpdate={handleSlotUpdate}
                           onError={(msg) => {
                             setPanelError(msg);

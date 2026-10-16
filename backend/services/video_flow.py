@@ -1586,6 +1586,7 @@ def run_generate_photo_scratch_layer(
     prompt: str = "",
     fill_empty_only: bool = True,
     variations: list[dict[str, str]] | None = None,
+    approve: bool = True,
 ) -> dict:
     """Generate still images for one photo-scratch layer type.
 
@@ -1721,7 +1722,9 @@ def run_generate_photo_scratch_layer(
         assign_photo_scratch_variations([slot.id for slot in slots_to_run]),
         overrides,
     )
-    for slot in slots_to_run:
+    total = len(slots_to_run)
+    for index, slot in enumerate(slots_to_run, start=1):
+        print(f"Photo-scratch {layer_type} {index}/{total} starting {slot.id}")
         variation = variation_plan[slot.id]
         pose_hint = variation.pose
         scene_hint = variation.scene
@@ -1903,8 +1906,9 @@ def run_generate_photo_scratch_layer(
             detail += " " + "; ".join(failures)
         raise RuntimeError(detail)
 
-    # One-by-one: auto-approve so the slot fills immediately (no batch review needed).
-    if target_slot:
+    # The per-tile button approves immediately. A multi-photo run leaves each
+    # image pending so the operator can review it as it appears.
+    if target_slot and approve:
         from backend.cards import approve_photo_scratch_layer
 
         for sid in written:
@@ -1916,7 +1920,7 @@ def run_generate_photo_scratch_layer(
         "slot_id": target_slot or None,
         "generated": len(written),
         "slots": written,
-        "auto_approved": bool(target_slot),
+        "auto_approved": bool(target_slot and approve),
     }
 
 
