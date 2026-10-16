@@ -1547,7 +1547,7 @@ function CardPhotosPanel({
   const [optionsOpen, setOptionsOpen] = useState(false);
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
-  const catalogSaveRef = useRef(0);
+  const catalogSaveFlight = useRef<Promise<void> | null>(null);
   const [slotConfig, setSlotConfig] = useState<VariationDraft[]>([]);
   // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
   // Defaults to x.ai; bikini batch uses WaveSpeed/Seedream unless the user overrides.
@@ -1855,16 +1855,36 @@ function CardPhotosPanel({
     );
   }
 
-  async function persistVariationCatalog(next: PhotoScratchVariationCatalog) {
-    const saveId = ++catalogSaveRef.current;
+  async function persistVariationCatalog() {
+    if (catalogSaveFlight.current) return;
+    let settled: PhotoScratchVariationCatalog | null = null;
+    const run = (async () => {
+      while (true) {
+        const snapshot = catalogRef.current;
+        if (!snapshot) return;
+        try {
+          const saved = await savePhotoScratchVariationCatalog(snapshot);
+          if (catalogRef.current !== snapshot) continue;
+          catalogRef.current = saved;
+          setCatalog(saved);
+          settled = saved;
+          return;
+        } catch (caught) {
+          if (catalogRef.current !== snapshot) continue;
+          reportError(caught);
+          settled = snapshot;
+          return;
+        }
+      }
+    })();
+    catalogSaveFlight.current = run;
     try {
-      const saved = await savePhotoScratchVariationCatalog(next);
-      if (saveId !== catalogSaveRef.current || catalogRef.current !== next) return;
-      catalogRef.current = saved;
-      setCatalog(saved);
-    } catch (caught) {
-      if (saveId !== catalogSaveRef.current || catalogRef.current !== next) return;
-      reportError(caught);
+      await run;
+    } finally {
+      catalogSaveFlight.current = null;
+      if (settled && catalogRef.current && catalogRef.current !== settled) {
+        void persistVariationCatalog();
+      }
     }
   }
 
@@ -1881,7 +1901,7 @@ function CardPhotosPanel({
     };
     catalogRef.current = next;
     setCatalog(next);
-    void persistVariationCatalog(next);
+    void persistVariationCatalog();
   }
 
   function deleteVariationOption(group: keyof PhotoScratchVariationCatalog, index: number) {
@@ -1897,7 +1917,7 @@ function CardPhotosPanel({
     };
     catalogRef.current = next;
     setCatalog(next);
-    void persistVariationCatalog(next);
+    void persistVariationCatalog();
   }
 
   async function startGenerate(layer: PhotoScratchLayerType, onlySlotId = "") {
@@ -2432,7 +2452,7 @@ function CardPhotosPanel({
                           }
                           onBlur={() => {
                             const next = catalogRef.current;
-                            if (next) void persistVariationCatalog(next);
+                            if (next) void persistVariationCatalog();
                           }}
                         />
                         <TextField.Root
@@ -2443,7 +2463,7 @@ function CardPhotosPanel({
                           }
                           onBlur={() => {
                             const next = catalogRef.current;
-                            if (next) void persistVariationCatalog(next);
+                            if (next) void persistVariationCatalog();
                           }}
                         />
                         <Button
