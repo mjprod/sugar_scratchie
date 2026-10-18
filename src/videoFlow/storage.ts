@@ -178,10 +178,11 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
     const parsed = JSON.parse(raw) as Partial<StoredVideoFlowDraft> & { picturePrompt?: string };
     if (!parsed.cardId && !parsed.image) return null;
     const theme = normalizeTheme(parsed.theme);
+    const rawPicturePrompts = Array.isArray(parsed.picturePrompts) ? parsed.picturePrompts : undefined;
     return {
       image: parsed.image ?? "",
       theme,
-      picturePrompts: normalizePicturePrompts(parsed.picturePrompts, theme, parsed.picturePrompt),
+      picturePrompts: normalizePicturePrompts(rawPicturePrompts, theme, parsed.picturePrompt),
       pictureVariationCount: pictureVariationCountOf(parsed.pictureVariationCount),
       backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt, theme),
       foregroundMotionPrompt: normalizeStoredMotionPrompt(
