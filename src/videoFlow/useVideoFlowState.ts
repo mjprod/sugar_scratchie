@@ -10,7 +10,15 @@ import {
   dressPromptForThemeWithReference,
   isStockBackgroundMotionPromptText,
   isStockDressPromptText,
+  defaultPicturePrompts,
+  isStockPictureTakePrompt,
+  normalizePicturePrompts,
   normalizeTheme,
+  picturePromptForTake,
+  pictureVariationCountOf,
+  type PicturePrompts,
+  type PictureTake,
+  type PictureVariationCount,
   parseVideoFlowJson,
   stringifyVideoFlowJson,
   type VideoFlowJson,
@@ -80,6 +88,8 @@ function draftPayload(
     // Never persist the workspace root as the source image (corrupt save).
     image: looksLikeWorkspaceRootPath(draft.image) ? "" : draft.image,
     theme: draft.theme || DEFAULT_THEME,
+    picture_prompts: draft.picturePrompts,
+    picture_variation_count: draft.pictureVariationCount,
     background_motion_prompt:
       draft.backgroundMotionPrompt || flow.defaults.background_motion_prompt,
     foreground_motion_prompt:
@@ -139,6 +149,14 @@ export function useVideoFlowState() {
   const [image, setImage] = useState(hydrateFromStored ? (storedDraft?.image ?? "") : "");
   const [theme, setTheme] = useState(
     hydrateFromStored ? (storedDraft?.theme?.trim() || DEFAULT_THEME) : DEFAULT_THEME,
+  );
+  const [pictureVariationCount, setPictureVariationCount] = useState<PictureVariationCount>(
+    hydrateFromStored ? pictureVariationCountOf(storedDraft?.pictureVariationCount) : 3,
+  );
+  const [picturePrompts, setPicturePrompts] = useState<PicturePrompts>(
+    hydrateFromStored
+      ? (storedDraft?.picturePrompts ?? defaultPicturePrompts(storedDraft?.theme ?? DEFAULT_THEME))
+      : defaultPicturePrompts(DEFAULT_THEME),
   );
   const [backgroundMotionPrompt, setBackgroundMotionPrompt] = useState(
     hydrateFromStored
@@ -271,6 +289,26 @@ export function useVideoFlowState() {
     let motion =
       draft.backgroundMotionPrompt || draft.foregroundMotionPrompt || "";
     let dress = draft.dressPrompt || "";
+    let picturePromptsToApply = normalizePicturePrompts(
+      draft.picturePrompts,
+      themeToApply,
+      undefined,
+    );
+    const localPrompts = sameCard ? local?.picturePrompts : undefined;
+    if (localPrompts) {
+      picturePromptsToApply = picturePromptsToApply.map((text, index) => {
+        const take = (index + 1) as PictureTake;
+        const localText = (localPrompts[index] ?? "").trim();
+        if (
+          localText &&
+          !isStockPictureTakePrompt(localText, themeToApply, take) &&
+          isStockPictureTakePrompt(text, themeToApply, take)
+        ) {
+          return localText;
+        }
+        return text;
+      }) as PicturePrompts;
+    }
     // If we kept a local theme the server lacked, rewrite stock prompts to match.
     if (
       themeToApply !== serverTheme &&
@@ -288,9 +326,21 @@ export function useVideoFlowState() {
     } else if (dressRefToApply && isStockDressPromptText(dress, themeToApply)) {
       dress = dressPromptForThemeWithReference(themeToApply);
     }
+    picturePromptsToApply = picturePromptsToApply.map((text, index) => {
+      const take = (index + 1) as PictureTake;
+      if (
+        isStockPictureTakePrompt(text, serverTheme || DEFAULT_THEME, take) ||
+        isStockPictureTakePrompt(text, themeToApply, take)
+      ) {
+        return picturePromptForTake(themeToApply, take);
+      }
+      return text;
+    }) as PicturePrompts;
 
     setImage(imageToApply);
     setTheme(themeToApply);
+    setPicturePrompts(picturePromptsToApply);
+    setPictureVariationCount(pictureVariationCountOf(draft.pictureVariationCount));
     setBackgroundMotionPrompt(motion);
     setDressPrompt(dress);
     setDressReferenceImage(dressRefToApply);
@@ -317,6 +367,8 @@ export function useVideoFlowState() {
       ...draft,
       image: imageToApply,
       theme: themeToApply,
+      picturePrompts: picturePromptsToApply,
+      pictureVariationCount: pictureVariationCountOf(draft.pictureVariationCount),
       backgroundMotionPrompt: motion,
       foregroundMotionPrompt: motion,
       dressPrompt: dress,
@@ -401,6 +453,8 @@ export function useVideoFlowState() {
       applyIfCurrent({
         image: "",
         theme: DEFAULT_THEME,
+        picturePrompts: defaultPicturePrompts(DEFAULT_THEME),
+        pictureVariationCount: 3,
         backgroundMotionPrompt: flow.defaults.background_motion_prompt,
         foregroundMotionPrompt: flow.defaults.background_motion_prompt,
         dressPrompt: flow.defaults.dress_prompt,
@@ -499,6 +553,8 @@ export function useVideoFlowState() {
     const draft: StoredVideoFlowDraft = {
       image,
       theme,
+      picturePrompts,
+      pictureVariationCount,
       backgroundMotionPrompt,
       foregroundMotionPrompt: backgroundMotionPrompt,
       dressPrompt,
@@ -551,6 +607,8 @@ export function useVideoFlowState() {
   }, [
     image,
     theme,
+    picturePrompts,
+    pictureVariationCount,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -583,6 +641,14 @@ export function useVideoFlowState() {
         ? dressPromptForThemeWithReference
         : dressPromptForTheme;
       setTheme(nextRaw);
+      setPicturePrompts((current) =>
+        current.map((text, index) => {
+          const take = (index + 1) as PictureTake;
+          return isStockPictureTakePrompt(text, previousTheme, take)
+            ? picturePromptForTake(themeForPrompts, take)
+            : text;
+        }) as PicturePrompts,
+      );
       setBackgroundMotionPrompt((current) =>
         isStockBackgroundMotionPromptText(current, previousTheme)
           ? backgroundMotionPromptForTheme(themeForPrompts)
@@ -599,6 +665,7 @@ export function useVideoFlowState() {
 
   const applyThemeToPrompts = useCallback(() => {
     const themeForPrompts = normalizeTheme(theme);
+    setPicturePrompts(defaultPicturePrompts(themeForPrompts));
     setBackgroundMotionPrompt(backgroundMotionPromptForTheme(themeForPrompts));
     setDressPrompt(
       dressReferenceImage.trim()
@@ -626,6 +693,7 @@ export function useVideoFlowState() {
     writeStoredFlowJson(next);
     setFlowJsonText(stringifyVideoFlowJson(next));
     setEnhancePrompt(next.defaults.enhance_dress_prompt);
+    setPicturePrompts(defaultPicturePrompts(theme));
     setBackgroundMotionPrompt(next.defaults.background_motion_prompt);
     setDressPrompt(next.defaults.dress_prompt);
     setDressReferenceImage(next.defaults.dress_reference_image);
@@ -656,6 +724,10 @@ export function useVideoFlowState() {
     theme,
     updateTheme,
     applyThemeToPrompts,
+    picturePrompts,
+    setPicturePrompts,
+    pictureVariationCount,
+    setPictureVariationCount,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,

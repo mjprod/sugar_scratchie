@@ -349,6 +349,9 @@ class VideoFlowRequest(BaseModel):
     image_model: SourceImageModel = "grok-imagine"
     background_video_model: BackgroundVideoModel = "grok-imagine"
     dress_video_model: DressVideoModel = "wan-2.2-video-edit"
+    picture_prompt: str = ""
+    picture_prompts: list[str] = Field(default_factory=list)
+    picture_variation_count: int = Field(default=3, ge=1, le=3)
 
 
 class GenerateSourceImageRequest(BaseModel):
@@ -370,6 +373,7 @@ class VideoFlowStepRequest(VideoFlowRequest):
 class VideoFlowStepAction(BaseModel):
     step: VideoFlowStep
     mesh_tracker: Literal["bootstapir", "cotracker", "blend"] | None = None
+    picture_choice: int | None = Field(default=None, ge=1, le=3)
 
 
 class VideoFlowTrimRequest(BaseModel):
@@ -2013,6 +2017,9 @@ def video_flow_draft_kwargs(request: VideoFlowRequest, *, image: Path | str) -> 
         "source_image_model": request.image_model,
         "background_video_model": request.background_video_model,
         "dress_video_model": request.dress_video_model,
+        "picture_prompt": request.picture_prompt,
+        "picture_prompts": request.picture_prompts,
+        "picture_variation_count": request.picture_variation_count,
     }
 
 
@@ -2133,6 +2140,7 @@ def approve_video_flow_step(card_id: str, request: VideoFlowStepAction) -> dict:
             card_id,
             request.step,
             mesh_tracker=request.mesh_tracker,
+            picture_choice=request.picture_choice,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2306,6 +2314,9 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
             dress_video_model=request.dress_video_model,
             compress_preset=request.compress_preset,
             model_id=request.model_id,
+            picture_prompt=request.picture_prompt,
+            picture_prompts=request.picture_prompts,
+            picture_variation_count=request.picture_variation_count,
         ),
     )
     return job.public()

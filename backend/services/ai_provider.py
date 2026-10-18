@@ -203,6 +203,8 @@ def edit_image_scenery(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
     """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
     route = source_image_route(provider, image_model)
@@ -213,6 +215,8 @@ def edit_image_scenery(
             out=out,
             aspect_ratio=aspect_ratio,
             endpoint=_spec("source_image", image_model).endpoint_path,
+            variation=variation,
+            prompt=prompt,
         )
     stored = _stored_xai_model("source_image", image_model)
     if route == "xai" and stored:
@@ -222,6 +226,8 @@ def edit_image_scenery(
             out=out,
             aspect_ratio=aspect_ratio,
             model=stored,
+            variation=variation,
+            prompt=prompt,
         )
     return _with_xai_fallback(
         "scenery edit",
@@ -231,6 +237,8 @@ def edit_image_scenery(
             theme=theme,
             out=out,
             aspect_ratio=aspect_ratio,
+            variation=variation,
+            prompt=prompt,
         ),
     )
 

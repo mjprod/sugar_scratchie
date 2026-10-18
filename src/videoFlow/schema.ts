@@ -1,5 +1,6 @@
 export type FlowNodeId =
   | "source"
+  | "picture"
   | "background"
   | "trim"
   | "dress"
@@ -13,6 +14,7 @@ export type FlowNodeId =
 export type FlowNodeKind = "input" | "grok" | "process" | "output";
 
 export type VideoFlowStepKey =
+  | "picture"
   | "background"
   | "trim"
   | "dress"
@@ -71,6 +73,78 @@ export const DEFAULT_THEME = "warm beach";
 export function normalizeTheme(theme: string | undefined | null): string {
   const stripped = (theme ?? "").trim();
   return stripped || DEFAULT_THEME;
+}
+
+/** Stock Create-picture prompt. Matches backend scenery_edit_prompt without the per-take lighting line. */
+export function picturePromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, or reframe. Only change the background scenery.`;
+}
+
+export const PICTURE_TAKE_LIGHTING = [
+  "bright open daylight and vivid colors",
+  "golden-hour side light and warmer tones",
+  "soft diffused light with richer background detail",
+] as const;
+
+export type PictureTake = 1 | 2 | 3;
+export type PictureVariationCount = PictureTake;
+
+export function pictureVariationCountOf(value: unknown): PictureVariationCount {
+  const count = Number(value);
+  if (count === 1 || count === 2 || count === 3) return count;
+  return 3;
+}
+export type PicturePrompts = [string, string, string];
+
+export function picturePromptForTake(theme: string, take: PictureTake): string {
+  return `${picturePromptForTheme(theme)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+}
+
+export function defaultPicturePrompts(theme: string): PicturePrompts {
+  return [1, 2, 3].map((take) => picturePromptForTake(theme, take as PictureTake)) as PicturePrompts;
+}
+
+export function isStockPictureTakePrompt(prompt: string, theme: string, take: PictureTake): boolean {
+  const stripped = prompt.trim();
+  if (!stripped) return true;
+  const scenery = normalizeTheme(theme);
+  return (
+    stripped === picturePromptForTake(scenery, take) ||
+    stripped === picturePromptForTake(DEFAULT_THEME, take) ||
+    stripped === picturePromptForTheme(scenery) ||
+    stripped === picturePromptForTheme(DEFAULT_THEME)
+  );
+}
+
+export function isStockPicturePromptText(prompt: string, theme: string): boolean {
+  const stripped = prompt.trim();
+  if (!stripped) return true;
+  return ([1, 2, 3] as const).some((take) => isStockPictureTakePrompt(stripped, theme, take));
+}
+
+/** Turn a saved list, or one older shared prompt, into the three take prompts. */
+export function normalizePicturePrompts(
+  prompts: readonly string[] | undefined,
+  theme: string,
+  shared?: string,
+): PicturePrompts {
+  const defaults = defaultPicturePrompts(theme);
+  const incoming = (prompts ?? []).slice(0, 3).map((item) => (item ?? "").trim());
+  const hasTake = incoming.some(Boolean);
+  if (!hasTake && shared?.trim()) {
+    const base = shared.trim();
+    return [1, 2, 3].map((take) => {
+      const index = take as PictureTake;
+      if (isStockPictureTakePrompt(base, theme, index)) return defaults[take - 1];
+      if (base.includes("Lighting for this take:")) return base;
+      return `${base} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+    }) as PicturePrompts;
+  }
+  return [1, 2, 3].map((take) => {
+    const text = incoming[take - 1] ?? "";
+    return isStockPictureTakePrompt(text, theme, take as PictureTake) ? defaults[take - 1] : text;
+  }) as PicturePrompts;
 }
 
 export function backgroundMotionPromptForTheme(theme: string): string {
@@ -215,11 +289,21 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Bikini background from the source image, fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
+    "Create a themed still from the source image and approve it, then animate that picture. Fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
   version: 1,
-  pipeline: ["background", "trim", "dress", "boomerang", "card", "mesh", "symbols", "compress"],
-  reviewSteps: ["background", "trim", "dress", "boomerang"],
-  canvas: { width: 1820, height: 200 },
+  pipeline: [
+    "picture",
+    "background",
+    "trim",
+    "dress",
+    "boomerang",
+    "card",
+    "mesh",
+    "symbols",
+    "compress",
+  ],
+  reviewSteps: ["picture", "background", "trim", "dress", "boomerang"],
+  canvas: { width: 2020, height: 200 },
   nodes: [
     {
       id: "source",
@@ -235,12 +319,25 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "image", label: "image" }],
     },
     {
+      id: "picture",
+      kind: "grok",
+      title: "Create picture",
+      subtitle: "Pick 1 of 3",
+      description:
+        "Three themed stills from the source image. Pick one before image-to-video.",
+      x: 220,
+      y: 56,
+      step: "picture",
+      inputs: [{ id: "image", label: "image" }],
+      outputs: [{ id: "image", label: "picture" }],
+    },
+    {
       id: "background",
       kind: "grok",
       title: "Image to video",
       subtitle: "Bikini background",
-      description: "Master motion clip — beach / bikini reveal",
-      x: 220,
+      description: "Animate the approved picture — beach / bikini reveal",
+      x: 420,
       y: 56,
       step: "background",
       inputs: [{ id: "image", label: "image" }],
@@ -252,7 +349,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Fix frames",
       subtitle: "Delete white frames",
       description: "Drop near-white flash frames from the start/end of the bikini clip before dress-up",
-      x: 360,
+      x: 560,
       y: 56,
       step: "trim",
       inputs: [{ id: "video", label: "background" }],
@@ -264,7 +361,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Video edit",
       subtitle: "Foreground dress",
       description: "Dress edit on the approved background clip — same scenery, same frames",
-      x: 520,
+      x: 720,
       y: 56,
       step: "dress",
       inputs: [{ id: "video", label: "trimmed" }],
@@ -277,7 +374,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       subtitle: "Forward + reverse",
       description:
         "Play the first N seconds of both clips forward, then the same frames backwards — or keep them as-is",
-      x: 700,
+      x: 900,
       y: 56,
       step: "boomerang",
       inputs: [
@@ -292,7 +389,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Create card",
       subtitle: "public/cards/",
       description: "Publish the boomerang (or original) clips under public/cards/<id>/, or import both videos by hand",
-      x: 880,
+      x: 1080,
       y: 56,
       step: "card",
       inputs: [
@@ -307,7 +404,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Generate mesh",
       subtitle: "Garment tracking",
       description: "Track the foreground for garment-local scratching",
-      x: 1060,
+      x: 1260,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -319,7 +416,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Place symbols",
       subtitle: "12 mesh points",
       description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 1240,
+      x: 1440,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -331,7 +428,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Finalize",
       subtitle: "390∶672 delivery",
       description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
-      x: 1420,
+      x: 1620,
       y: 56,
       step: "compress",
       inputs: [
@@ -346,7 +443,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow output",
       subtitle: "Scratch card",
       description: "Playable card in the scratch prototype",
-      x: 1600,
+      x: 1800,
       y: 56,
       step: null,
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -354,7 +451,8 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     },
   ],
   wires: [
-    { from: "source", to: "background" },
+    { from: "source", to: "picture" },
+    { from: "picture", to: "background" },
     { from: "background", to: "trim" },
     { from: "trim", to: "dress" },
     { from: "trim", to: "boomerang" },
@@ -380,6 +478,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
 };
 
 const STEP_IDS = new Set<VideoFlowStepKey>([
+  "picture",
   "background",
   "trim",
   "dress",
@@ -391,6 +490,7 @@ const STEP_IDS = new Set<VideoFlowStepKey>([
 ]);
 const NODE_IDS = new Set<FlowNodeId>([
   "source",
+  "picture",
   "background",
   "trim",
   "dress",
@@ -419,6 +519,26 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     if (!nodes.some((node) => node?.id === "symbols")) {
       const symbolsNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "symbols");
       if (symbolsNode) nodes.push(symbolsNode);
+    }
+    changed = true;
+  }
+
+  if (!pipeline.includes("picture")) {
+    const backgroundIndex = pipeline.indexOf("background");
+    pipeline.splice(backgroundIndex >= 0 ? backgroundIndex : 0, 0, "picture");
+    if (!nodes.some((node) => node?.id === "picture")) {
+      const template = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "picture");
+      const sourceNode = nodes.find((node) => node?.id === "source");
+      const insertX = sourceNode ? sourceNode.x + 200 : (template?.x ?? 220);
+      nodes = nodes.map((node) =>
+        node && typeof node.x === "number" && node.x >= insertX ? { ...node, x: node.x + 200 } : node,
+      );
+      if (template) {
+        nodes.push({ ...template, x: insertX, y: sourceNode?.y ?? template.y });
+      }
+    }
+    if (!reviewSteps.includes("picture")) {
+      reviewSteps = ["picture", ...reviewSteps];
     }
     changed = true;
   }
@@ -466,6 +586,16 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     reviewSteps,
     wires: DEFAULT_VIDEO_FLOW_JSON.wires,
     description: DEFAULT_VIDEO_FLOW_JSON.description,
+    canvas: {
+      width: Math.max(
+        typeof flow.canvas?.width === "number" ? flow.canvas.width : 0,
+        DEFAULT_VIDEO_FLOW_JSON.canvas.width,
+      ),
+      height:
+        typeof flow.canvas?.height === "number"
+          ? flow.canvas.height
+          : DEFAULT_VIDEO_FLOW_JSON.canvas.height,
+    },
   });
 }
 
@@ -560,6 +690,9 @@ export function parseVideoFlowJson(raw: string): VideoFlowJson {
       return {
         ...node,
         description: def.description,
+        ...(node.id === "picture" && node.subtitle === "Theme still"
+          ? { subtitle: def.subtitle }
+          : {}),
       };
     }),
     wires: flow.wires as FlowWireDef[],

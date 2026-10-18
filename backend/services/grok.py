@@ -669,16 +669,28 @@ def normalize_background_motion_prompt(prompt: str) -> str:
     return prompt.strip()
 
 
-def scenery_edit_prompt(theme: str) -> str:
+def scenery_edit_prompt(theme: str, variation: str = "") -> str:
     scenery = (theme or "").strip() or "warm beach"
+    lighting = f" Lighting for this take: {variation.strip()}." if variation.strip() else ""
     return (
         f"Replace the entire background behind the person with a vividly recognizable {scenery} "
         f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
         "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
         "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
         "body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, "
-        "or reframe. Only change the background scenery."
+        f"or reframe. Only change the background scenery.{lighting}"
     )
+
+
+def resolve_scenery_prompt(theme: str, variation: str = "", prompt: str = "") -> str:
+    """Operator prompt when set; otherwise the themed stock prompt. Lighting differs per take."""
+    base = prompt.strip()
+    if not base:
+        return scenery_edit_prompt(theme, variation)
+    hint = variation.strip()
+    if hint and "Lighting for this take:" not in base:
+        return f"{base} Lighting for this take: {hint}."
+    return base
 
 
 def motion_source_bikini_prompt(caption: str) -> str:
@@ -733,11 +745,14 @@ def edit_image_scenery(
     out: Path,
     aspect_ratio: str = "9:16",
     model: str | None = None,
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
     """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
     key = api_key()
-    text = scenery_edit_prompt(theme)
-    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}) ...")
+    text = resolve_scenery_prompt(theme, variation, prompt)
+    take = f", {variation.strip()}" if variation.strip() else ""
+    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}{take}) ...")
     result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image, model=model)
     _save_image_response(result, out)
     return out

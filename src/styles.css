@@ -2084,6 +2084,16 @@ textarea:focus-visible {
   max-height: 160px;
 }
 
+.picture-take-preview {
+  max-width: 280px;
+}
+
+.picture-take-preview .dashboard-preview-media,
+.picture-take-preview .dashboard-preview-media-button {
+  aspect-ratio: 9 / 16;
+  max-height: 520px;
+}
+
 .dashboard-preview-media-button {
   background: none;
   border: 0;

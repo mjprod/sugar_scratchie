@@ -370,11 +370,13 @@ def edit_image_scenery_seedream(
     out: Path,
     aspect_ratio: str = "9:16",
     endpoint: str | None = None,
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
-    from backend.services.grok import scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt
 
     payload = {
-        "prompt": scenery_edit_prompt(theme),
+        "prompt": resolve_scenery_prompt(theme, variation, prompt),
         "images": [media_url(image, "image/png")],
         "size": aspect_ratio_to_seedream_size(aspect_ratio),
         "output_format": "png",
@@ -392,11 +394,13 @@ def edit_image_scenery(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
-    from backend.services.grok import scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt
 
     payload = {
-        "prompt": scenery_edit_prompt(theme),
+        "prompt": resolve_scenery_prompt(theme, variation, prompt),
         "image": media_url(image, "image/png"),
         "aspect_ratio": aspect_ratio,
         "resolution": "2k",

@@ -50,6 +50,9 @@ import {
   stepToNode,
   type CompressPreset,
   type FlowNodeId,
+  type PicturePrompts,
+  type PictureTake,
+  type PictureVariationCount,
   type VideoFlowJson,
   type VideoFlowStepKey,
 } from "./schema";
@@ -257,6 +260,7 @@ function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
   if (command[0] !== "video-flow-step") return null;
   const step = command[1];
   if (
+    step === "picture" ||
     step === "background" ||
     step === "trim" ||
     step === "dress" ||
@@ -269,6 +273,124 @@ function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
     return step;
   }
   return null;
+}
+
+function previewMediaType(path: string): "image" | "video" {
+  const clean = path.split("?")[0].split("#")[0].toLowerCase();
+  return /\.(png|jpe?g|webp|gif)$/.test(clean) ? "image" : "video";
+}
+
+function pictureChoiceFromArtifact(path: string): number | null {
+  const name = path.split("?")[0].split("/").pop() ?? "";
+  const match = /^picture-([123])\.png$/i.exec(name);
+  return match ? Number(match[1]) : null;
+}
+
+const PICTURE_TAKE_OPTIONS = [
+  { value: "1", label: "1 · Bright daylight" },
+  { value: "2", label: "2 · Golden hour" },
+  { value: "3", label: "3 · Soft light" },
+] as const;
+
+const PICTURE_VARIATION_OPTIONS = [
+  { value: "1", label: "1 variation" },
+  { value: "2", label: "2 variations" },
+  { value: "3", label: "3 variations" },
+] as const;
+
+function PictureTakeEditor({
+  prompts,
+  onPromptsChange,
+  variationCount,
+  onVariationCountChange,
+  take,
+  onTakeChange,
+  artifacts,
+  onUse,
+  jobBusy,
+  showPreview,
+}: {
+  prompts: PicturePrompts;
+  onPromptsChange: (next: PicturePrompts) => void;
+  variationCount: PictureVariationCount;
+  onVariationCountChange: (count: PictureVariationCount) => void;
+  take: PictureTake;
+  onTakeChange: (take: PictureTake) => void;
+  artifacts: string[];
+  onUse?: (choice: number) => void;
+  jobBusy: boolean;
+  showPreview: boolean;
+}) {
+  const selectedTake = take > variationCount ? variationCount : take;
+  const artifact = artifacts.find((path) => pictureChoiceFromArtifact(path) === selectedTake);
+  return (
+    <Flex direction="column" gap="3">
+      <Field label="Variations">
+        <Select.Root
+          value={String(variationCount)}
+          onValueChange={(value) => {
+            const count = Number(value) as PictureVariationCount;
+            onVariationCountChange(count);
+            if (selectedTake > count) onTakeChange(count);
+          }}
+        >
+          <Select.Trigger />
+          <Select.Content>
+            {PICTURE_VARIATION_OPTIONS.map((option) => (
+              <Select.Item key={option.value} value={option.value}>
+                {option.label}
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select.Root>
+      </Field>
+      {variationCount > 1 ? (
+        <Field label="Picture">
+          <Select.Root
+            value={String(selectedTake)}
+            onValueChange={(value) => onTakeChange(Number(value) as PictureTake)}
+          >
+            <Select.Trigger />
+            <Select.Content>
+              {PICTURE_TAKE_OPTIONS.slice(0, variationCount).map((option) => (
+                <Select.Item key={option.value} value={option.value}>
+                  {option.label}
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Root>
+        </Field>
+      ) : null}
+      {showPreview ? (
+        artifact ? (
+          <div className="picture-take-preview">
+            <MediaPreview label={`Picture ${selectedTake}`} type="image" value={artifact} zoomable />
+          </div>
+        ) : (
+          <Text color="gray" size="2">
+            Picture {selectedTake} is not ready yet.
+          </Text>
+        )
+      ) : null}
+      {showPreview && artifact && onUse ? (
+        <Button disabled={jobBusy} type="button" onClick={() => onUse(selectedTake)}>
+          <Check {...iconProps} />
+          Use {selectedTake}
+        </Button>
+      ) : null}
+      <Field label={variationCount === 1 ? "Prompt" : `Prompt for picture ${selectedTake}`}>
+        <TextArea
+          rows={7}
+          value={prompts[selectedTake - 1] ?? ""}
+          onChange={(event) => {
+            const next = [...prompts] as PicturePrompts;
+            next[selectedTake - 1] = event.currentTarget.value;
+            onPromptsChange(next);
+          }}
+        />
+      </Field>
+    </Flex>
+  );
 }
 
 type TrimDetection = {
@@ -776,7 +898,7 @@ function SourceImageProviderFields({
       {aiProvider === "wavespeed" && spicyIds.includes(backgroundVideoModel) ? (
         <Callout.Root color="blue">
             <Callout.Text>
-              This model animates your source portrait on <strong>Step 1 (image to video)</strong> via
+              This model animates your approved picture on <strong>Image to video</strong> via
               WaveSpeed — not for still portraits. Use an image model above to generate the source
               image first.
             </Callout.Text>
@@ -970,6 +1092,8 @@ type RunModeProps = {
   enhancePrompt: boolean;
   image: string;
   theme: string;
+  picturePrompts: PicturePrompts;
+  pictureVariationCount: PictureVariationCount;
   backgroundMotionPrompt: string;
   dressPrompt: string;
   dressReferenceImage: string;
@@ -989,6 +1113,8 @@ type RunModeProps = {
   onImageChange: (value: string) => void;
   onThemeChange: (value: string) => void;
   onApplyThemeToPrompts: () => void;
+  onPicturePromptsChange: (value: PicturePrompts) => void;
+  onPictureVariationCountChange: (value: PictureVariationCount) => void;
   onBackgroundMotionPromptChange: (value: string) => void;
   onDressPromptChange: (value: string) => void;
   onDressReferenceImageChange: (value: string) => void;
@@ -2890,6 +3016,8 @@ export function RunMode(props: RunModeProps) {
     enhancePrompt,
     image,
     theme,
+    picturePrompts,
+    pictureVariationCount,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -2909,6 +3037,8 @@ export function RunMode(props: RunModeProps) {
     onImageChange,
     onThemeChange,
     onApplyThemeToPrompts,
+    onPicturePromptsChange,
+    onPictureVariationCountChange,
     onBackgroundMotionPromptChange,
     onDressPromptChange,
     onDressReferenceImageChange,
@@ -2942,6 +3072,7 @@ export function RunMode(props: RunModeProps) {
   const [activeNode, setActiveNode] = useState<FlowNodeId>("source");
   const [flowState, setFlowState] = useState<VideoFlowState | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
+  const [pictureTake, setPictureTake] = useState<PictureTake>(1);
   const [manualBackground, setManualBackground] = useState("");
   const [manualForeground, setManualForeground] = useState("");
   const [importBusy, setImportBusy] = useState(false);
@@ -3279,6 +3410,8 @@ export function RunMode(props: RunModeProps) {
   const stepPayload = {
     image,
     theme,
+    picture_prompts: picturePrompts,
+    picture_variation_count: pictureVariationCount,
     background_motion_prompt: backgroundMotionPrompt,
     foreground_motion_prompt: backgroundMotionPrompt,
     dress_prompt: dressPrompt,
@@ -3303,12 +3436,15 @@ export function RunMode(props: RunModeProps) {
     dress_video_model: dressVideoModel,
   };
 
+  const pictureNeedsAi = Boolean(theme.trim() || bikiniImage.trim() || faceImage.trim());
   const stepApiReady =
-    actionStep === "background"
-      ? canUseBackgroundVideo
-      : actionStep === "dress"
-        ? canUseDressVideo
-        : true;
+    actionStep === "picture"
+      ? !pictureNeedsAi || canUseSourceAi
+      : actionStep === "background"
+        ? canUseBackgroundVideo
+        : actionStep === "dress"
+          ? canUseDressVideo
+          : true;
 
   const canGeneratePromptImage = Boolean(cardId.trim() && canUseSourceAi && !sourceImageBusy);
   const canGenerateFaceSwap = Boolean(
@@ -3351,7 +3487,8 @@ export function RunMode(props: RunModeProps) {
   const cardArtifactsReady = Boolean(
     flowState?.steps.card?.artifacts?.filter(Boolean).length === 2,
   );
-  const needsSourceImage = actionStep === "background" || actionStep === "dress";
+  const needsSourceImage =
+    actionStep === "picture" || actionStep === "background" || actionStep === "dress";
 
   const canRunActionStep = Boolean(
     actionStep &&
@@ -3378,9 +3515,19 @@ export function RunMode(props: RunModeProps) {
       !jobBusy,
   );
 
+  const setupPictureStatus = flowState?.steps.picture?.status;
   const setupBackgroundStatus = flowState?.steps.background?.status;
-  const canRemakeBackgroundFromSetup = Boolean(
-    cardId.trim() && cardLabel.trim() && image && canUseBackgroundVideo && !jobBusy,
+  const pictureAlreadyRan =
+    setupPictureStatus === "approved" ||
+    setupPictureStatus === "review" ||
+    setupBackgroundStatus === "approved" ||
+    setupBackgroundStatus === "review";
+  const canRemakePictureFromSetup = Boolean(
+    cardId.trim() &&
+      cardLabel.trim() &&
+      image &&
+      (!pictureNeedsAi || canUseSourceAi) &&
+      !jobBusy,
   );
 
   const canImportManualClips = Boolean(
@@ -3492,7 +3639,11 @@ export function RunMode(props: RunModeProps) {
     }
   }
 
-  async function approveStep(step: VideoFlowStepKey, meshTracker?: MeshTracker) {
+  async function approveStep(
+    step: VideoFlowStepKey,
+    meshTracker?: MeshTracker,
+    pictureChoice?: number,
+  ) {
     if (!cardId.trim()) return;
     setFlowBusy(true);
     onError("");
@@ -3504,6 +3655,7 @@ export function RunMode(props: RunModeProps) {
           body: JSON.stringify({
             step,
             ...(meshTracker ? { mesh_tracker: meshTracker } : {}),
+            ...(pictureChoice ? { picture_choice: pictureChoice } : {}),
           }),
         },
       );
@@ -3664,32 +3816,73 @@ export function RunMode(props: RunModeProps) {
           ) : null}
           {actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
             <Callout.Root color="amber" className="flow-review-panel" mb="4">
-              <Callout.Text weight="bold">Approve this clip before the next step runs.</Callout.Text>
+              <Callout.Text weight="bold">
+                {actionStep === "picture"
+                  ? "Choose 1, 2, or 3 variations, then open each prompt."
+                  : "Approve this clip before the next step runs."}
+              </Callout.Text>
               <Flex direction="column" gap="3" mt="3">
-                {(actionPreviewArtifacts.length > 0
-                  ? actionPreviewArtifacts
-                  : flowState?.steps[actionStep]?.artifacts ?? []
-                ).map((artifact) => (
-                  <MediaPreview
-                    key={artifact}
-                    label={artifact.split("/").pop() ?? "Generated clip"}
-                    type="video"
-                    value={artifact}
+                {actionStep === "picture" ? (
+                  <PictureTakeEditor
+                    prompts={picturePrompts}
+                    onPromptsChange={onPicturePromptsChange}
+                    variationCount={pictureVariationCount}
+                    onVariationCountChange={onPictureVariationCountChange}
+                    take={pictureTake}
+                    onTakeChange={setPictureTake}
+                    artifacts={
+                      actionPreviewArtifacts.length > 0
+                        ? actionPreviewArtifacts
+                        : (flowState?.steps.picture?.artifacts ?? [])
+                    }
+                    onUse={(choice) => void approveStep("picture", undefined, choice)}
+                    jobBusy={jobBusy}
+                    showPreview={(actionPreviewArtifacts.length > 0
+                      ? actionPreviewArtifacts
+                      : (flowState?.steps.picture?.artifacts ?? [])
+                    ).some((artifact) => pictureChoiceFromArtifact(artifact) != null)}
                   />
-                ))}
+                ) : null}
+                {actionStep === "picture" &&
+                (actionPreviewArtifacts.length > 0
+                  ? actionPreviewArtifacts
+                  : flowState?.steps.picture?.artifacts ?? []
+                ).some((artifact) => pictureChoiceFromArtifact(artifact) != null) ? null : (
+                  (actionPreviewArtifacts.length > 0
+                    ? actionPreviewArtifacts
+                    : flowState?.steps[actionStep]?.artifacts ?? []
+                  ).map((artifact) => (
+                    <MediaPreview
+                      key={artifact}
+                      label={artifact.split("/").pop() ?? "Generated clip"}
+                      type={previewMediaType(artifact)}
+                      value={artifact}
+                      zoomable={previewMediaType(artifact) === "image"}
+                    />
+                  ))
+                )}
                 <Flex align="center" gap="2" wrap="wrap">
-                  <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
-                    <Check {...iconProps} />
-                    Use this clip
-                  </Button>
+                  {actionStep === "picture" &&
+                  (flowState?.steps.picture?.artifacts ?? []).some(
+                    (artifact) => pictureChoiceFromArtifact(artifact) != null,
+                  ) ? null : (
+                    <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
+                      <Check {...iconProps} />
+                      {actionStep === "picture" ? "Use this picture" : "Use this clip"}
+                    </Button>
+                  )}
                   <Button
                     disabled={jobBusy}
                     type="button"
                     color="red"
                     variant="soft"
-                    onClick={() => void rejectFocusClip()}
+                    onClick={() =>
+                      actionStep === "picture"
+                        ? void runStep("picture", true)
+                        : void rejectFocusClip()
+                    }
                   >
-                    Re-run step
+                    {actionStep === "picture" ? "Generate again" : "Re-run step"}
                   </Button>
                 </Flex>
               </Flex>
@@ -3732,6 +3925,11 @@ export function RunMode(props: RunModeProps) {
                   This step is finished. Use the controls below to make a boomerang or keep the
                   clips as-is.
                   {cardApproved ? " Changing the clips means you should run Finalize again." : null}
+                </>
+              ) : activeStep === "picture" ? (
+                <>
+                  This step is finished. Remake it to generate the variations you chose, then pick
+                  one before image-to-video runs again.
                 </>
               ) : (
                 <>
@@ -3968,8 +4166,8 @@ export function RunMode(props: RunModeProps) {
                 />
                 <Text color="gray" size="1">
                   If the source photo is already the bikini you want, leave this empty. Otherwise
-                  step 1 dresses her in this swimsuit before the video, and photo-scratch bikinis
-                  use it too.
+                  Create picture dresses her in this swimsuit before you approve it, and
+                  photo-scratch bikinis use it too.
                 </Text>
               </Flex>
             </Field>
@@ -3988,27 +4186,28 @@ export function RunMode(props: RunModeProps) {
                   onError={onError}
                 />
                 <Text color="gray" size="1">
-                  Step 1 and every photo-scratch generation send this photo as a face reference
-                  and face-lock the result, so her face stays the same across all cards and slots.
+                  Create picture and every photo-scratch generation send this photo as a face
+                  reference and face-lock the result, so her face stays the same across all cards
+                  and slots.
                 </Text>
               </Flex>
             </Field>
 
-            {setupBackgroundStatus === "approved" || setupBackgroundStatus === "review" ? (
+            {pictureAlreadyRan ? (
               <Callout.Root color="blue">
                 <Flex align="center" gap="3" wrap="wrap">
                   <Callout.Text>
-                    Step 1 already ran. After changing the source, bikini model, or face, remake it
-                    so the video uses them. Steps after it will need to run again.
+                    A picture already exists. After changing the source, bikini model, face, or
+                    theme, remake it and approve it before image-to-video runs again.
                   </Callout.Text>
                   <Button
-                    disabled={!canRemakeBackgroundFromSetup}
+                    disabled={!canRemakePictureFromSetup}
                     size="1"
                     type="button"
-                    onClick={() => void runStep("background", true)}
+                    onClick={() => void runStep("picture", true)}
                   >
                     <RotateCcw {...iconProps} />
-                    Remake Image to video
+                    Remake picture
                   </Button>
                 </Flex>
               </Callout.Root>
@@ -4045,26 +4244,59 @@ export function RunMode(props: RunModeProps) {
                 Apply theme to prompts
               </Button>
               <Text color="gray" size="2">
-                Rewrites background scenery + dress costume from the theme. With a dress
-                reference image attached, the dress prompt matches that reference. Hand-edited
-                prompts stay until you click Apply.
+                Rewrites the three picture prompts, background scenery, and dress costume from the theme.
+                With a dress reference image attached, the dress prompt matches that reference.
+                Hand-edited prompts stay until you click Apply.
               </Text>
             </Flex>
           </Flex>
         ) : null}
 
-        {activeNode === "background" ? (
+        {activeNode === "picture" ? (
           <Flex direction="column" gap="4">
-            {image ? (
+            <Text color="gray" size="2">
+              Choose 1, 2, or 3 variations. With more than one, open each prompt from the picture
+              list. Image to video stays locked until you use one.
+            </Text>
+            {flowState?.steps.picture?.status === "review" ? null : (
+              <PictureTakeEditor
+                prompts={picturePrompts}
+                onPromptsChange={onPicturePromptsChange}
+                variationCount={pictureVariationCount}
+                onVariationCountChange={onPictureVariationCountChange}
+                take={pictureTake}
+                onTakeChange={setPictureTake}
+                artifacts={flowState?.steps.picture?.artifacts ?? []}
+                jobBusy={jobBusy}
+                showPreview={false}
+              />
+            )}
+            {flowState?.steps.picture?.status === "approved" &&
+            !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
               <Callout.Root color="blue">
                 <Callout.Text>
-                  Step 1 uses the current source image above. If you changed it, click{" "}
-                  <strong>Run step</strong> or <strong>Remake step</strong> — old clips are cleared
-                  automatically.
+                  This card was animated before the picture step existed. Remake to generate three
+                  stills, pick one, then run image-to-video again.
                 </Callout.Text>
               </Callout.Root>
             ) : null}
-            <Field label="Step 1 video model">
+            {!canUseSourceAi && pictureNeedsAi ? (
+              <Text color="gray" size="2">
+                Add XAI_API_KEY or WAVESPEED_API_KEY to .env before generating the picture.
+              </Text>
+            ) : null}
+          </Flex>
+        ) : null}
+
+        {activeNode === "background" ? (
+          <Flex direction="column" gap="4">
+            <Callout.Root color="blue">
+              <Callout.Text>
+                Image to video animates the approved picture. To change bikini, face, or scenery,
+                remake <strong>Create picture</strong> and approve it first.
+              </Callout.Text>
+            </Callout.Root>
+            <Field label="Video model">
               <GenerationModelSelect
                 role="background_video"
                 value={backgroundVideoModel}
@@ -4087,7 +4319,7 @@ export function RunMode(props: RunModeProps) {
                 </Select.Content>
               </Select.Root>
             </Field>
-            <Field label="Bikini background prompt (image to video — approve before fix frames)">
+            <Field label="Bikini background prompt (animates the approved picture — approve before fix frames)">
               <TextArea
                 className="dashboard-textarea"
                 value={backgroundMotionPrompt}
@@ -4095,10 +4327,9 @@ export function RunMode(props: RunModeProps) {
               />
             </Field>
             <Text color="gray" size="2">
-              Theme scenery is baked into a still first (image edit), then animated — image-to-video
-              alone keeps city/balcony/outdoor backdrops. Locked camera + skin continuity are
-              enhanced when XAI_API_KEY is set. Click Apply theme on Setup if the prompt still looks
-              like the old blank-wall wording.
+              Theme scenery is baked in Create picture. This step only animates that approved
+              still. Locked camera + skin continuity are enhanced when XAI_API_KEY is set. Click
+              Apply theme on Setup if the prompt still looks like the old blank-wall wording.
             </Text>
           </Flex>
         ) : null}
@@ -4364,7 +4595,8 @@ export function RunMode(props: RunModeProps) {
               </Callout.Root>
             ) : (
               <Text color="gray" size="2">
-                Or run the AI pipeline (Setup → image to video → dress → Boomerang → Create card)
+                Or run the AI pipeline (Setup → Create picture → image to video → dress →
+                Boomerang → Create card)
                 instead.
               </Text>
             )}
@@ -4535,6 +4767,15 @@ export function RunMode(props: RunModeProps) {
         {(() => {
           if (!activeStep || activeStep === "symbols" || activeStep === "mesh") return null;
           const stepStatus = flowState?.steps[activeStep]?.status;
+          if (
+            activeStep === "picture" &&
+            stepStatus === "review" &&
+            (flowState?.steps.picture?.artifacts ?? []).some(
+              (artifact) => pictureChoiceFromArtifact(artifact) != null,
+            )
+          ) {
+            return null;
+          }
           const fromState = (flowState?.steps[activeStep]?.artifacts ?? []).filter(Boolean);
           const id = cardId.trim();
           // Only fall back to published card videos after a step has produced
@@ -4572,8 +4813,9 @@ export function RunMode(props: RunModeProps) {
                   <MediaPreview
                     key={`${artifact}:${cardMediaRevision}`}
                     label={artifact.split("/").pop() ?? "Result"}
-                    type="video"
+                    type={previewMediaType(artifact)}
                     value={artifact}
+                    zoomable={previewMediaType(artifact) === "image"}
                     cacheBust={cardMediaRevision || flowState?.boomerang?.applied_at}
                   />
                 ),
@@ -4589,7 +4831,9 @@ export function RunMode(props: RunModeProps) {
             <Text size="2" weight="medium">
               {flowState.steps[actionStep].label}
               {actionStatus === "review" && reviewSteps.has(actionStep)
-                ? " — watch the clip, then continue"
+                ? actionStep === "picture"
+                  ? " — pick one of the three pictures"
+                  : " — watch the clip, then continue"
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
@@ -4629,18 +4873,25 @@ export function RunMode(props: RunModeProps) {
 
           {actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
             <>
-              <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
-                <Check {...iconProps} />
-                Use this clip
-              </Button>
+              {actionStep === "picture" &&
+              (flowState?.steps.picture?.artifacts ?? []).some(
+                (artifact) => pictureChoiceFromArtifact(artifact) != null,
+              ) ? null : (
+                <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
+                  <Check {...iconProps} />
+                  {actionStep === "picture" ? "Use this picture" : "Use this clip"}
+                </Button>
+              )}
               <Button
                 disabled={jobBusy}
                 type="button"
                 color="red"
                 variant="soft"
-                onClick={() => void rejectFocusClip()}
+                onClick={() =>
+                  actionStep === "picture" ? void runStep("picture", true) : void rejectFocusClip()
+                }
               >
-                Re-run
+                {actionStep === "picture" ? "Generate again" : "Re-run"}
               </Button>
             </>
           ) : null}
