@@ -4,6 +4,22 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
 import { Field, iconProps, previewSource } from "./ui";
 
+const BRUSH_RADIUS_MIN = 8;
+const BRUSH_RADIUS_MAX = 80;
+const BRUSH_RADIUS_KEY_STEP = 2;
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    const type = (target as HTMLInputElement).type;
+    return type !== "range" && type !== "button" && type !== "checkbox" && type !== "radio";
+  }
+  return false;
+}
+
 type TrackedMeshFrame = {
   t: number;
   verts: [number, number][];
@@ -79,6 +95,7 @@ export function MaskEditor({
   title = "Mask Editor",
 }: MaskEditorProps) {
   const stillMode = Boolean(imageSrc.trim());
+  const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -111,6 +128,53 @@ export function MaskEditor({
   useEffect(() => {
     brushRef.current.radius = brushRadius;
   }, [brushRadius]);
+
+  useEffect(() => {
+    let commandChord = false;
+
+    const editorVisible = () => {
+      const root = rootRef.current;
+      return root != null && root.getClientRects().length > 0;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!editorVisible() || isTypingTarget(event.target)) return;
+      if (event.key === "Meta") {
+        if (!event.repeat) commandChord = false;
+        return;
+      }
+      if (event.metaKey) {
+        commandChord = true;
+        return;
+      }
+      if (event.ctrlKey || event.altKey) return;
+      const smaller = event.key === "{" || event.key === "[";
+      const larger = event.key === "}" || event.key === "]";
+      if (!smaller && !larger) return;
+      event.preventDefault();
+      const delta = smaller ? -BRUSH_RADIUS_KEY_STEP : BRUSH_RADIUS_KEY_STEP;
+      setBrushRadius((radius) =>
+        Math.min(BRUSH_RADIUS_MAX, Math.max(BRUSH_RADIUS_MIN, radius + delta)),
+      );
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Meta") return;
+      if (!editorVisible() || isTypingTarget(event.target)) return;
+      if (commandChord) {
+        commandChord = false;
+        return;
+      }
+      setBrushMode((mode) => (mode === "add" ? "erase" : "add"));
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
 
   function recomputeCoverage() {
     const garment = garmentRef.current;
@@ -443,7 +507,7 @@ export function MaskEditor({
   const coveragePct = coverage.total > 0 ? Math.round((coverage.on / coverage.total) * 100) : 0;
 
   return (
-    <Grid columns={{ initial: "1", md: "2" }} gap="5">
+    <Grid ref={rootRef} columns={{ initial: "1", md: "2" }} gap="5">
       <Flex direction="column" gap="4">
         <Flex align="center" justify="between">
           <Heading size="4">{title}</Heading>
@@ -478,7 +542,7 @@ export function MaskEditor({
         )}
 
         <Field label="Brush">
-          <Flex gap="2" wrap="wrap">
+          <Flex align="center" gap="2" wrap="wrap">
             <Button
               color={brushMode === "add" ? "green" : "gray"}
               variant={brushMode === "add" ? "solid" : "soft"}
@@ -493,17 +557,29 @@ export function MaskEditor({
             >
               Erase
             </Button>
+            <Text color="gray" size="1">
+              ⌘ add / erase
+            </Text>
           </Flex>
         </Field>
 
         <Field label={`Brush size (${brushRadius}px)`}>
-          <input
-            max={80}
-            min={8}
-            onChange={(event) => setBrushRadius(Number(event.currentTarget.value))}
-            type="range"
-            value={brushRadius}
-          />
+          <Flex align="center" gap="2">
+            <Text color="gray" size="1" title="Smaller brush">
+              {"{"}
+            </Text>
+            <input
+              max={BRUSH_RADIUS_MAX}
+              min={BRUSH_RADIUS_MIN}
+              onChange={(event) => setBrushRadius(Number(event.currentTarget.value))}
+              style={{ flex: 1, minWidth: 0 }}
+              type="range"
+              value={brushRadius}
+            />
+            <Text color="gray" size="1" title="Larger brush">
+              {"}"}
+            </Text>
+          </Flex>
         </Field>
 
         {stillMode ? null : (
