@@ -166,13 +166,13 @@ export function legacySoftBackgroundMotionPromptForTheme(theme: string): string 
 
 export function dressPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Replace her entire bikini with a sexy glamorous ${scenery} costume (complete top and bottom — unmistakably ${scenery}; if this is a role or profession, dress her in that ${scenery} uniform/outfit). Do not leave any bikini. Do not use a generic emerald evening gown or unrelated fashion dress. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+  return `Same woman, clothes only — she must stay the exact same person as the input video in every frame. Do not recast, beautify, or replace her. FACE LOCK: same eyes, nose, lips, jaw, makeup, and expression. HAIR LOCK: same hair color, length, style, and parting, fully visible — do not darken, lighten, or recolor her hair, and do not add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides or replaces her hair. SKIN LOCK: same undertone and lightness in every frame — no tan, no pale, no flicker. BODY LOCK: same pose, hands, arms, and motion. Replace her entire bikini with a sexy glamorous ${scenery} costume worn on this same woman (complete opaque top and bottom — unmistakably ${scenery}; if this is a role or profession, use that uniform as clothing only, not a new character). Do not leave any bikini. Do not use a generic emerald evening gown or unrelated fashion dress. Jewelry and trim may sit on the body, but nothing may cover her face or replace her hair. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame. No zoom or camera move.`;
 }
 
 /** Prefer this when a dress reference image is attached. */
 export function dressPromptForThemeWithReference(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Match the dress reference image outfit exactly (colors, cut, accessories, materials, glow). Replace her entire bikini with that full costume (complete top and bottom). Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+  return `Same woman, clothes only — she must stay the exact same person as the input video in every frame. Do not recast, beautify, or replace her. FACE LOCK: same eyes, nose, lips, jaw, makeup, and expression. HAIR LOCK: same hair color, length, style, and parting, fully visible — do not darken, lighten, or recolor her hair, and do not add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides or replaces her hair. SKIN LOCK: same undertone and lightness in every frame — no tan, no pale, no flicker. BODY LOCK: same pose, hands, arms, and motion. Match the dress reference image outfit exactly (colors, cut, accessories, materials, glow) and wear it on this same woman. Replace her entire bikini with that full costume (complete opaque top and bottom). Copy the clothes only — do not copy the reference person's face, hair, or body. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame. No zoom or camera move.`;
 }
 
 /** Earlier stock dress prompt: emerald satin + theme only in the scenery clause. */
@@ -239,6 +239,7 @@ export function isStockDressPromptText(prompt: string, theme: string): boolean {
   }
   if (stripped.startsWith("Replace her entire bikini with a glamorous ")) return true;
   if (stripped.startsWith("Replace her entire bikini with a sexy glamorous ")) return true;
+  if (stripped.startsWith("Same woman, clothes only")) return true;
   if (stripped.startsWith("Match the dress reference image outfit exactly")) return true;
   return (
     stripped === legacyDressNoSkin ||

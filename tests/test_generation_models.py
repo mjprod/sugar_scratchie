@@ -176,6 +176,8 @@ def test_custom_dress_model_uses_seedance_payload(client, dashboard_headers, mon
     )
     assert called["path"] == "/bytedance/seedance-2.0-fast/video-edit"
     assert "@Image 1" in called["prompt"]
+    assert "IDENTITY LOCK — she must be the exact same woman" in called["prompt"]
+    assert called["prompt"].rstrip().endswith("Do not recast her as a different person.")
 
     client.delete(
         f"/api/generation-models/dress_video/{model_id}",

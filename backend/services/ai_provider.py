@@ -448,8 +448,10 @@ def edit_video(
                 f"{final_prompt.rstrip()}\n\n"
                 f"CRITICAL — dress her in the exact outfit shown in {token} "
                 "(shape, color, cut, accessories, emissive glow/shine). "
-                "Keep her face, body, pose, motion, framing, and background unchanged."
+                "Copy the clothes only — do not copy that person's face, hair, or body. "
+                "Keep her face, hair, body, pose, motion, framing, and background unchanged."
             )
+        final_prompt = grok.append_dress_identity_lock(final_prompt)
         edit_fn = (
             wavespeed.edit_video_seedance2
             if spec.variant == "seedance"
@@ -480,15 +482,17 @@ def edit_video(
                 print(f"Enhancing dress prompt via {grok.chat_model()} (for WAN edit) ...")
                 final_prompt = grok.enhance_prompt(final_prompt, key, system=enhance_system)
                 print(f"Enhanced dress prompt:\n  {final_prompt}\n")
-            # Append reference LAST so the caption wins over any enhance rewrite.
+            # Caption before the identity lock: outfit match wins on clothes, lock forbids a recast.
             if caption:
                 final_prompt = (
                     f"{final_prompt.rstrip()}\n\n"
                     f"CRITICAL — match the dress reference image outfit exactly "
-                    f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+                    f"(shape, color, cut, accessories, emissive glow/shine). "
+                    f"Copy the clothes only, not that person's face or hair: {caption}"
                 )
         elif enhance and not xai_key_available():
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+        final_prompt = grok.append_dress_identity_lock(final_prompt)
         wavespeed.edit_video_wan22(
             video=video,
             prompt=final_prompt,

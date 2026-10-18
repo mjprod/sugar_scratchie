@@ -3128,6 +3128,9 @@ export function RunMode(props: RunModeProps) {
   const handledMeshJobId = useRef("");
   // Tracks which card async flow-state fetches belong to.
   const desiredFlowCardIdRef = useRef(cardId.trim());
+  // Bumped when the operator approves or rejects, so an older state fetch
+  // cannot paint the clip as still waiting and ask for a second approval.
+  const flowStateEpochRef = useRef(0);
 
   const runningStep = useMemo(() => {
     if (!stepJob || stepJob.status === "queued" || stepJob.status === "running") {
@@ -3153,19 +3156,27 @@ export function RunMode(props: RunModeProps) {
     return null;
   }, [stepJob]);
 
+  const applyFlowState = (next: VideoFlowState) => {
+    flowStateEpochRef.current += 1;
+    setFlowState(next);
+  };
+
   const refreshFlowState = async () => {
     const id = cardId.trim();
     if (!id) {
       setFlowState(null);
       return;
     }
+    const epoch = flowStateEpochRef.current;
     try {
       const data = await api<VideoFlowState>(`/api/video-flow/${encodeURIComponent(id)}/state`);
-      // Ignore late responses from a previous card.
+      // Ignore late responses from a previous card or from before an approve.
       if (desiredFlowCardIdRef.current !== id) return;
+      if (flowStateEpochRef.current !== epoch) return;
       setFlowState(data);
     } catch (caught) {
       if (desiredFlowCardIdRef.current !== id) return;
+      if (flowStateEpochRef.current !== epoch) return;
       setFlowState(null);
       onError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -3246,6 +3257,7 @@ export function RunMode(props: RunModeProps) {
     const id = cardId.trim();
     if (!id) return;
     setSourceJobHandledId(sourceImageJob.id);
+    const epoch = flowStateEpochRef.current;
     void (async () => {
       try {
         const data = await api<{ draft: NonNullable<Parameters<typeof storedDraftFromApi>[0]> }>(
@@ -3257,6 +3269,7 @@ export function RunMode(props: RunModeProps) {
         if (desiredFlowCardIdRef.current !== id) return;
         const stateData = await api<VideoFlowState>(`/api/video-flow/${encodeURIComponent(id)}/state`);
         if (desiredFlowCardIdRef.current !== id) return;
+        if (flowStateEpochRef.current !== epoch) return;
         setFlowState(stateData);
       } catch (caught) {
         if (desiredFlowCardIdRef.current !== id) return;
@@ -3526,7 +3539,7 @@ export function RunMode(props: RunModeProps) {
           }),
         },
       );
-      setFlowState(next);
+      applyFlowState(next);
       setManualBackground("");
       setManualForeground("");
       await onRefreshAssets();
@@ -3558,7 +3571,7 @@ export function RunMode(props: RunModeProps) {
           body: JSON.stringify({ foreground: manualDress.trim() }),
         },
       );
-      setFlowState(next);
+      applyFlowState(next);
       setManualDress("");
       await onRefreshAssets();
     } catch (caught) {
@@ -3628,7 +3641,7 @@ export function RunMode(props: RunModeProps) {
           }),
         },
       );
-      setFlowState(data);
+      applyFlowState(data);
       const next = nextPipelineStep(flow, step);
       if (next && data.steps[next]?.status === "ready") {
         const nodeId = stepToNodeMap[next];
@@ -3659,7 +3672,7 @@ export function RunMode(props: RunModeProps) {
         `/api/video-flow/${encodeURIComponent(cardId.trim())}/reject`,
         { method: "POST", body: JSON.stringify({ step }) },
       );
-      setFlowState(data);
+      applyFlowState(data);
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -3799,7 +3812,7 @@ export function RunMode(props: RunModeProps) {
                           ? actionPreviewArtifacts
                           : (flowState?.steps.picture?.artifacts ?? [])
                       }
-                      jobBusy={jobBusy}
+                      jobBusy={flowBusy}
                       onUse={(choice) => void approveStep("picture", undefined, choice)}
                     />
                     <PicturePromptFields
@@ -3833,13 +3846,13 @@ export function RunMode(props: RunModeProps) {
                   (flowState?.steps.picture?.artifacts ?? []).some(
                     (artifact) => pictureChoiceFromArtifact(artifact) != null,
                   ) ? null : (
-                    <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
+                    <Button disabled={flowBusy} type="button" onClick={() => void approveFocusClip()}>
                       <Check {...iconProps} />
                       {actionStep === "picture" ? "Use this picture" : "Use this clip"}
                     </Button>
                   )}
                   <Button
-                    disabled={jobBusy}
+                    disabled={flowBusy || (actionStep === "picture" && jobBusy)}
                     type="button"
                     color="red"
                     variant="soft"
@@ -4302,7 +4315,7 @@ export function RunMode(props: RunModeProps) {
             busy={jobBusy}
             onBusy={setFlowBusy}
             onError={onError}
-            onState={setFlowState}
+            onState={applyFlowState}
           />
         ) : null}
 
@@ -4437,7 +4450,7 @@ export function RunMode(props: RunModeProps) {
             busy={importBusy || jobBusy}
             onBusy={setImportBusy}
             onError={onError}
-            onState={setFlowState}
+            onState={applyFlowState}
             onClipsChanged={() => setCardMediaRevision(Date.now())}
           />
         ) : null}
@@ -4715,7 +4728,7 @@ export function RunMode(props: RunModeProps) {
             foregroundVideo={`/cards/${encodeURIComponent(cardId.trim())}/foreground.mp4`}
             meshJsonPath={`/mesh/${encodeURIComponent(cardId.trim())}.json`}
             onSaved={(nextState) => {
-              setFlowState(nextState as VideoFlowState);
+              applyFlowState(nextState as VideoFlowState);
               const next = nextPipelineStep(flow, "symbols");
               if (next && (nextState.steps[next]?.status === "ready" || nextState.steps[next]?.status === "approved")) {
                 const nodeId = stepToNodeMap[next];
@@ -4829,35 +4842,10 @@ export function RunMode(props: RunModeProps) {
         </Flex>
 
         <Flex align="center" gap="2" wrap="wrap">
-          {activeNode === "source" ? null : actionStatus === "review" && actionStep && !reviewSteps.has(actionStep) ? (
-            <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
+          {actionStatus === "review" && actionStep && !reviewSteps.has(actionStep) ? (
+            <Button disabled={flowBusy} type="button" onClick={() => void approveFocusClip()}>
               Continue
             </Button>
-          ) : null}
-
-          {activeNode !== "source" && actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
-            <>
-              {actionStep === "picture" &&
-              (flowState?.steps.picture?.artifacts ?? []).some(
-                (artifact) => pictureChoiceFromArtifact(artifact) != null,
-              ) ? null : (
-                <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
-                  <Check {...iconProps} />
-                  {actionStep === "picture" ? "Use this picture" : "Use this clip"}
-                </Button>
-              )}
-              <Button
-                disabled={jobBusy}
-                type="button"
-                color="red"
-                variant="soft"
-                onClick={() =>
-                  actionStep === "picture" ? void runStep("picture", true) : void rejectFocusClip()
-                }
-              >
-                {actionStep === "picture" ? "Generate again" : "Re-run"}
-              </Button>
-            </>
           ) : null}
 
           {activeNode !== "source" &&

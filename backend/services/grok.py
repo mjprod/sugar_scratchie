@@ -85,10 +85,13 @@ ENHANCE_SYSTEM = (
     "for a video EDIT model. Rules: (1) The ONLY change allowed is the dress/outfit "
     "described. Describe it vividly (fabric, color, cut, length, fit). (2) Then "
     "explicitly command the model to keep EVERYTHING else identical: the same "
-    "person, face, identity, hair, skin tone (same undertone and lightness in every "
-    "frame — no tan/pale flicker), body, pose, hands, motion, camera, "
-    "framing, subject scale / camera distance, background, lighting, shadows and "
-    "colors. (3) Do NOT add scenery, style, mood, camera moves, zoom, dolly, "
+    "person, face, identity, hair color, hair length, hair style, skin tone (same "
+    "undertone and lightness in every frame — no tan/pale flicker), body, pose, "
+    "hands, motion, camera, framing, subject scale / camera distance, background, "
+    "lighting, shadows and colors. Do NOT recast her as a different woman. Do NOT "
+    "add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides "
+    "or replaces her hair — a themed costume is clothing on this same woman, not a "
+    "new character. (3) Do NOT add scenery, style, mood, camera moves, zoom, dolly, "
     "effects or details that are not in the input. "
     "(4) Output ONLY the rewritten prompt, one paragraph, no preamble or quotes."
 )
@@ -132,18 +135,43 @@ DRESS_ENHANCE_SYSTEM = (
     "shine on the garment vividly — garment glow is part of the outfit, not a scene "
     "effect; preserve glow intensity from the reference description. If the user "
     "names a themed costume or role (police, nurse, beach cover-up, etc.), keep that "
-    "theme unmistakable — do NOT replace it with a generic evening gown. If a "
-    "reference-outfit caption is present, that outfit wins over any conflicting "
-    "description. (2) Keep the "
+    "theme unmistakable — do NOT replace it with a generic evening gown. The "
+    "costume is clothing worn by the woman already in the video, not a recast "
+    "character: do NOT change her face, and do NOT add a wig, hood, headdress, "
+    "veil, nemes, crown, or any head covering that hides or replaces her hair. "
+    "If a reference-outfit caption is present, that outfit wins over any conflicting "
+    "description — copy the clothes only, never the reference person's face or hair. "
+    "(2) Keep the "
     "EXACT same background, scenery, lighting, shadows, and environment as the "
     "input video — do NOT replace the background with a green screen or any other "
-    "scene. (3) Keep the same person, face, identity, hair, and skin tone "
-    "frame-for-frame — same undertone and lightness as the input clip in every "
-    "frame; no tan/pale flicker, no recoloring exposed skin. Keep body, pose, "
-    "hands, motion, camera, framing, subject scale / camera distance, and timing "
-    "identical — no zoom, dolly, or reframing. (4) Output ONLY "
+    "scene. (3) Keep the same person, face, identity, hair color, hair length, hair "
+    "style, and skin tone frame-for-frame — same undertone and lightness as the "
+    "input clip in every frame; no tan/pale flicker, no recoloring exposed skin or "
+    "hair. Keep body, pose, hands, motion, camera, framing, subject scale / camera "
+    "distance, and timing identical — no zoom, dolly, or reframing. (4) Output ONLY "
     "the rewritten prompt, one paragraph, no preamble or quotes."
 )
+
+# Appended after prompt enhancement so a rewrite cannot drop the identity lock.
+# The Egypt edit was recasting her (new face, darker hair, hood over the hair).
+DRESS_IDENTITY_LOCK = (
+    "IDENTITY LOCK — she must be the exact same woman as the input video, only wearing "
+    "different clothes. Same face in every frame: same eyes, nose, lips, jaw, makeup, and "
+    "expression. Same hair: same color, length, style, and parting, fully visible — do not "
+    "darken, lighten, or recolor it, and do not add a wig, hood, headdress, veil, nemes, "
+    "crown, or any head covering that hides or replaces her hair. Same skin undertone and "
+    "lightness in every frame — no tan, no pale, no flicker. Same body, pose, hands, arms, "
+    "and motion. Same background, scenery, lighting, camera, framing, and subject scale — "
+    "no zoom or camera move. Do not recast her as a different person."
+)
+
+
+def append_dress_identity_lock(prompt: str) -> str:
+    text = prompt.rstrip()
+    marker = "IDENTITY LOCK — she must be the exact same woman"
+    if marker in text:
+        return text
+    return f"{text}\n\n{DRESS_IDENTITY_LOCK}"
 
 
 def api_key() -> str:
@@ -1428,13 +1456,16 @@ def edit_video(
         final_prompt = enhance_prompt(final_prompt, key, system=enhance_system)
         print(f"Enhanced prompt:\n  {final_prompt}\n")
 
-    # Append reference LAST so the caption wins over any enhance rewrite.
+    # Caption before the identity lock so the outfit match wins on clothes,
+    # and the lock still forbids copying the reference person's face or hair.
     if caption:
         final_prompt = (
             f"{final_prompt.rstrip()}\n\n"
             f"CRITICAL — match the dress reference image outfit exactly "
-            f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+            f"(shape, color, cut, accessories, emissive glow/shine). "
+            f"Copy the clothes only, not that person's face or hair: {caption}"
         )
+    final_prompt = append_dress_identity_lock(final_prompt)
 
     edit_model = video_edit_model(model)
     if edit_model != model:
