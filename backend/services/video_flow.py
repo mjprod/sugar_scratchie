@@ -46,6 +46,7 @@ from backend.services.grok import (
     photo_scratch_custom_locks_source_pose,
     photo_scratch_face_ref_clause,
     photo_scratch_prompt_with_background,
+    extract_video_still,
     probe_video,
     request_id_sidecar,
 )
@@ -3046,6 +3047,14 @@ def run_video_flow_step(
         from backend.generation_models_store import model_label, resolve_spec
 
         print(f"Dress video: {model_label('dress_video', dress_model)}")
+        identity_still: Path | None = None
+        try:
+            identity_still = extract_video_still(
+                paths["background_raw"], work / "dress-identity.png"
+            )
+            print(f"Identity still for dress edit: {identity_still.name}")
+        except Exception as exc:
+            print(f"Could not extract identity still ({exc}); dress edit stays prompt-only.")
         reference = (dress_reference_image or "").strip()
         if reference:
             if resolve_spec("dress_video", dress_model).adapter == "prompt_video_edit":
@@ -3067,6 +3076,7 @@ def run_video_flow_step(
             prepare_compatible=True,
             enhance_system=DRESS_ENHANCE_SYSTEM,
             reference_image=reference or None,
+            identity_image=identity_still,
             dress_video_model=dress_model,
         )
         _sync_foreground_to_background(work, paths)

@@ -248,6 +248,30 @@ def run_media_command(cmd: list[str]) -> bytes:
     return result.stdout
 
 
+def extract_video_still(video: str | Path, out: Path, *, at_s: float = 0.35) -> Path:
+    """Grab one frame so a video-edit model can see the woman it must keep."""
+    src = Path(video)
+    if not src.exists():
+        raise RuntimeError(f"Video not found: {src}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run_media_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{at_s:.3f}",
+            "-i",
+            str(src),
+            "-frames:v",
+            "1",
+            str(out),
+        ]
+    )
+    if not out.is_file() or out.stat().st_size == 0:
+        raise RuntimeError(f"Could not extract a still from {src}")
+    return out
+
+
 def probe_video(path: Path) -> dict[str, int | float | str]:
     out = run_media_command(
         [

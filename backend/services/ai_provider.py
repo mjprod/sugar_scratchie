@@ -415,6 +415,21 @@ def image_to_video(
     )
 
 
+def _numbered_reference_token(token: str, index: int) -> str:
+    base = token or "Image 1"
+    if "1" in base:
+        return base.replace("1", str(index))
+    return f"{base} {index}"
+
+
+def _identity_still_clause(token: str) -> str:
+    return (
+        f"{token} is a still of the exact woman in this video. "
+        f"Keep her face, hair color, hair length, hair style, skin tone, body, pose, and hands "
+        f"identical to {token}. Change only her clothes."
+    )
+
+
 def edit_video(
     *,
     provider: AiProvider,
@@ -428,11 +443,13 @@ def edit_video(
     prepare_compatible: bool,
     enhance_system: str = grok.DRESS_ENHANCE_SYSTEM,
     reference_image: str | Path | None = None,
+    identity_image: str | Path | None = None,
     reference_field: str = "image",
     dress_video_model: DressVideoModel = "wan-2.2-video-edit",
 ) -> None:
     spec = _spec("dress_video", dress_video_model)
     native_reference_token = spec.reference_token or DRESS_REFERENCE_TOKENS.get(dress_video_model)
+    identity_str = str(identity_image).strip() if identity_image is not None else ""
     if spec.adapter == "reference_video_edit":
         # These models take the reference image directly — no Grok captioning needed.
         token = native_reference_token or "Image 1"
@@ -444,15 +461,20 @@ def edit_video(
             print(f"Enhanced dress prompt:\n  {final_prompt}\n")
         elif enhance:
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+        if identity_str:
+            who = _numbered_reference_token(token, 1)
+            final_prompt = f"{_identity_still_clause(who)} {final_prompt}"
         if reference_str:
+            outfit_token = _numbered_reference_token(token, 2 if identity_str else 1)
             final_prompt = (
                 f"{final_prompt.rstrip()}\n\n"
-                f"CRITICAL — dress her in the exact outfit shown in {token} "
+                f"CRITICAL — dress her in the exact outfit shown in {outfit_token} "
                 "(shape, color, cut, accessories, emissive glow/shine). "
                 "Copy the clothes only — do not copy that person's face, hair, or body. "
                 "Keep her face, hair, body, pose, motion, framing, and background unchanged."
             )
         final_prompt = grok.append_dress_identity_lock(final_prompt)
+        images = [item for item in (identity_str, reference_str) if item]
         edit_fn = (
             wavespeed.edit_video_seedance2
             if spec.variant == "seedance"
@@ -463,7 +485,8 @@ def edit_video(
             prompt=final_prompt,
             out=out,
             resolution=resolution or "720p",
-            reference_image=reference_str or None,
+            reference_image=None if identity_str else (reference_str or None),
+            reference_images=images if identity_str else None,
             path=spec.endpoint_path,
             label=spec.label,
         )
@@ -494,6 +517,31 @@ def edit_video(
         elif enhance and not xai_key_available():
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
         final_prompt = grok.append_dress_identity_lock(final_prompt)
+        if identity_str:
+            # WAN 2.2 is prompt-only. It redrew her face on the Egypt edit, so send
+            # a still of her to WAN 3.0, which can condition on reference images.
+            print(
+                "Prompt-only video edit recasts her face. "
+                "Using WAN 3.0 with a still of her as Image 1 so only the clothes change."
+            )
+            images = [identity_str]
+            prefix = _identity_still_clause("Image 1")
+            if reference_str:
+                images.append(reference_str)
+                prefix += (
+                    " Image 2 is the outfit to copy — clothes only, "
+                    "not that person's face, hair, or body."
+                )
+            wavespeed.edit_video_wan30(
+                video=video,
+                prompt=f"{prefix}\n\n{final_prompt}",
+                out=out,
+                resolution=resolution or "720p",
+                reference_images=images,
+                path=wavespeed.WAN30_VIDEO_EDIT_PATH,
+                label="wan-3.0 video edit (identity still)",
+            )
+            return
         wavespeed.edit_video_wan22(
             video=video,
             prompt=final_prompt,

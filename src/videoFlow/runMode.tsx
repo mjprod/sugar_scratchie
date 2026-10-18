@@ -612,11 +612,11 @@ function TrimFramesPanel({
           typeof info.applied.frames_after === "number"
             ? ` · ${info.applied.frames_before} → ${info.applied.frames_after} frames`
             : ""}
-          . Approve when the loop looks right.
+          . Continue when the loop looks right.
         </Text>
       ) : (
         <Text color="gray" size="2">
-          Apply a trim (or Keep as-is), preview the clip, then approve to unlock Video edit.
+          Apply a trim (or Keep as-is), preview the clip, then continue to Video edit.
         </Text>
       )}
     </Flex>
@@ -727,19 +727,19 @@ function BoomerangPanel({
           {report.mesh_mirrored ? ", mesh mirrored" : ""}.
           {cardApproved
             ? " Published clips were replaced."
-            : " Approve when the loop looks right."}
+            : " Continue when the loop looks right."}
         </Text>
       ) : report?.skipped ? (
         <Text color="gray" size="2">
           {cardApproved
             ? "Clips kept as-is."
-            : "Kept the clips as-is. Approve to continue to Create card."}
+            : "Kept the clips as-is. Continue to Create card."}
         </Text>
       ) : (
         <Text color="gray" size="2">
           {cardApproved
             ? "Make a boomerang to replace the published clips, or leave them as they are."
-            : "Make a boomerang or keep the clips as-is, then approve to unlock Create card."}
+            : "Make a boomerang or keep the clips as-is, then continue to Create card."}
         </Text>
       )}
       {cardApproved ? (
@@ -1054,6 +1054,79 @@ function MeshJobProgress({ logs }: { logs: string[] }) {
         <pre>{tail.join("\n") || "Starting…"}</pre>
       </Box>
     </Callout.Root>
+  );
+}
+
+/** Steps whose form is replaced by a loading panel while the job runs. */
+const LOADING_PANEL_STEPS = new Set<VideoFlowStepKey>([
+  "picture",
+  "background",
+  "dress",
+  "card",
+  "compress",
+]);
+
+const STEP_RUNNING_HINT: Partial<Record<VideoFlowStepKey, string>> = {
+  picture: "Creating the stills.",
+  background: "Animating the approved picture.",
+  dress: "Editing the outfit onto the approved clip.",
+  card: "Publishing the card videos.",
+  compress: "Aligning and compressing both clips.",
+};
+
+function StepRunningPanel({
+  label,
+  hint,
+  logs,
+  startedAt,
+}: {
+  label: string;
+  hint: string;
+  logs: string[];
+  startedAt: number | null;
+}) {
+  const fallbackStart = useRef(Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const startMs = typeof startedAt === "number" ? startedAt * 1000 : fallbackStart.current;
+  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const tail = logs.map((line) => line.trimEnd()).filter((line) => line.trim()).slice(-12);
+  const latest = tail.at(-1) ?? "Starting…";
+  const headline = latest.length > 180 ? `${latest.slice(0, 177)}…` : latest;
+  return (
+    <Flex align="center" direction="column" gap="3" px="4" py="7">
+      <Loader2 size={32} strokeWidth={1.75} className="spin" color="var(--accent-9)" />
+      <Heading size="4">{label}</Heading>
+      <Text align="center" color="gray" size="2" style={{ maxWidth: 480 }}>
+        {hint} {formatTimingDuration(elapsed)} so far. You can leave this page — the job keeps
+        running.
+      </Text>
+      <Text align="center" size="2" style={{ maxWidth: 520 }}>
+        {headline}
+      </Text>
+      {tail.length > 0 ? (
+        <Box
+          className="flow-job-log"
+          mt="2"
+          style={{
+            width: "100%",
+            overflow: "auto",
+            fontFamily: "ui-monospace, monospace",
+            fontSize: 12,
+            lineHeight: 1.45,
+            whiteSpace: "pre-wrap",
+            background: "var(--gray-2)",
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <pre style={{ margin: 0 }}>{tail.join("\n")}</pre>
+        </Box>
+      ) : null}
+    </Flex>
   );
 }
 
@@ -3244,7 +3317,7 @@ export function RunMode(props: RunModeProps) {
   }, [meshCandidateJob?.id, meshCandidateJob?.status, stepJob?.id, stepToNodeMap]);
 
   useEffect(() => {
-    if (activeRunningStep !== "mesh" && !meshCandidateRunning) return;
+    if (!activeRunningStep && !meshCandidateRunning) return;
     const timer = window.setInterval(() => {
       void refreshFlowState();
     }, 4000);
@@ -3396,6 +3469,14 @@ export function RunMode(props: RunModeProps) {
     (activeRunningStep === "mesh" &&
       (stepJob?.status === "running" || stepJob?.status === "queued")) ||
     meshCandidateRunning;
+
+  const showStepLoading = Boolean(
+    activeStep && LOADING_PANEL_STEPS.has(activeStep) && effectiveRunningStep === activeStep,
+  );
+  const runningStartedAt =
+    showStepLoading && activeStep
+      ? (flowState?.timings?.steps?.[activeStep]?.started_at ?? null)
+      : null;
 
   const stepPayload = {
     image,
@@ -3796,7 +3877,11 @@ export function RunMode(props: RunModeProps) {
               </Callout.Text>
             </Callout.Root>
           ) : null}
-          {actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
+          {actionStatus === "review" &&
+          actionStep &&
+          reviewSteps.has(actionStep) &&
+          actionStep !== "trim" &&
+          actionStep !== "boomerang" ? (
             <Callout.Root color="amber" className="flow-review-panel" mb="4">
               <Callout.Text weight="bold">
                 {actionStep === "picture"
@@ -3919,6 +4004,15 @@ export function RunMode(props: RunModeProps) {
               )}
             </Callout.Text>
           </Callout.Root>
+        ) : null}
+
+        {showStepLoading && activeStep ? (
+          <StepRunningPanel
+            hint={STEP_RUNNING_HINT[activeStep] ?? "This step is running."}
+            label={flowState?.steps[activeStep]?.label ?? activeMeta.title}
+            logs={stepJob?.logs ?? []}
+            startedAt={runningStartedAt}
+          />
         ) : null}
 
         {activeNode === "source" ? (
@@ -4233,7 +4327,7 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
-        {activeNode === "picture" ? (
+        {!showStepLoading && activeNode === "picture" ? (
           <Flex direction="column" gap="4">
             <Text color="gray" size="2">
               Choose 1, 2, or 3. Each picture has its own prompt below. Pick one after they are made.
@@ -4263,7 +4357,7 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
-        {activeNode === "background" ? (
+        {!showStepLoading && activeNode === "background" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="blue">
               <Callout.Text>
@@ -4319,7 +4413,7 @@ export function RunMode(props: RunModeProps) {
           />
         ) : null}
 
-        {activeNode === "dress" ? (
+        {!showStepLoading && activeNode === "dress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="orange">
               <Callout.Text size="2">
@@ -4455,7 +4549,7 @@ export function RunMode(props: RunModeProps) {
           />
         ) : null}
 
-        {activeNode === "compress" ? (
+        {!showStepLoading && activeNode === "compress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="blue">
               <Callout.Text size="2">
@@ -4500,7 +4594,7 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
-        {activeNode === "card" ? (
+        {!showStepLoading && activeNode === "card" ? (
           <Flex direction="column" gap="4">
             <Text size="2">
               Skip Setup through Create card by uploading both clips yourself. They are copied to{" "}
@@ -4740,7 +4834,10 @@ export function RunMode(props: RunModeProps) {
         ) : null}
 
         {(() => {
-          if (!activeStep || activeStep === "symbols" || activeStep === "mesh") return null;
+          if (showStepLoading) return null;
+          if (!activeStep || activeStep === "symbols" || activeStep === "mesh" || activeStep === "trim") {
+            return null;
+          }
           const stepStatus = flowState?.steps[activeStep]?.status;
           if (
             activeStep === "picture" &&
@@ -4812,7 +4909,11 @@ export function RunMode(props: RunModeProps) {
               {actionStatus === "review" && reviewSteps.has(actionStep)
                 ? actionStep === "picture"
                   ? " — pick one of the three pictures"
-                  : " — watch the clip, then continue"
+                  : actionStep === "trim"
+                    ? " — drop white frames or keep the clip, then continue"
+                    : actionStep === "boomerang"
+                      ? " — make a boomerang or keep the clips, then continue"
+                      : " — watch the clip, then continue"
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
@@ -4842,8 +4943,11 @@ export function RunMode(props: RunModeProps) {
         </Flex>
 
         <Flex align="center" gap="2" wrap="wrap">
-          {actionStatus === "review" && actionStep && !reviewSteps.has(actionStep) ? (
+          {actionStatus === "review" &&
+          actionStep &&
+          (!reviewSteps.has(actionStep) || actionStep === "trim" || actionStep === "boomerang") ? (
             <Button disabled={flowBusy} type="button" onClick={() => void approveFocusClip()}>
+              {actionStep === "trim" || actionStep === "boomerang" ? <Check {...iconProps} /> : null}
               Continue
             </Button>
           ) : null}
