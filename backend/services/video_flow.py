@@ -2988,11 +2988,11 @@ def run_video_flow_step(
             picture_prompt=picture_prompt.strip() or str(draft.get("picture_prompt") or ""),
             picture_prompts=picture_prompts
             if picture_prompts
-            else [
-                str(item or "")
-                for item in (draft.get("picture_prompts") or [])
+            else (
+                [str(item or "") for item in (draft.get("picture_prompts") or [])]
                 if isinstance(draft.get("picture_prompts"), list)
-            ],
+                else []
+            ),
             picture_variation_count=clamp_picture_variation_count(
                 picture_variation_count
                 if picture_variation_count is not None
