@@ -3473,9 +3473,12 @@ export function RunMode(props: RunModeProps) {
   const showStepLoading = Boolean(
     activeStep && LOADING_PANEL_STEPS.has(activeStep) && effectiveRunningStep === activeStep,
   );
+  const runningTiming =
+    showStepLoading && activeStep ? flowState?.timings?.steps?.[activeStep] : undefined;
+  // A finished run still has started_at. Ignore it until this run's stamp replaces it.
   const runningStartedAt =
-    showStepLoading && activeStep
-      ? (flowState?.timings?.steps?.[activeStep]?.started_at ?? null)
+    runningTiming && typeof runningTiming.started_at === "number" && !runningTiming.ended_at
+      ? runningTiming.started_at
       : null;
 
   const stepPayload = {
@@ -3982,7 +3985,7 @@ export function RunMode(props: RunModeProps) {
               </Text>
             </div>
 
-        {activeStep && flowState?.steps[activeStep]?.status === "approved" ? (
+        {!showStepLoading && activeStep && flowState?.steps[activeStep]?.status === "approved" ? (
           <Callout.Root color="blue" mb="4">
             <Callout.Text>
               {activeStep === "boomerang" ? (
