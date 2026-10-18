@@ -3521,13 +3521,6 @@ export function RunMode(props: RunModeProps) {
     setupPictureStatus === "review" ||
     setupBackgroundStatus === "approved" ||
     setupBackgroundStatus === "review";
-  const canRemakePictureFromSetup = Boolean(
-    cardId.trim() &&
-      cardLabel.trim() &&
-      image &&
-      canUseSourceAi &&
-      !jobBusy,
-  );
 
   const canImportManualClips = Boolean(
     cardId.trim() &&
@@ -4194,21 +4187,10 @@ export function RunMode(props: RunModeProps) {
 
             {pictureAlreadyRan ? (
               <Callout.Root color="blue">
-                <Flex align="center" gap="3" wrap="wrap">
-                  <Callout.Text>
-                    A picture already exists. After changing the source, bikini model, face, or
-                    theme, remake it and approve it before image-to-video runs again.
-                  </Callout.Text>
-                  <Button
-                    disabled={!canRemakePictureFromSetup}
-                    size="1"
-                    type="button"
-                    onClick={() => void runStep("picture", true)}
-                  >
-                    <RotateCcw {...iconProps} />
-                    Remake picture
-                  </Button>
-                </Flex>
+                <Callout.Text>
+                  A picture already exists. Open Create picture to change the variations, then
+                  remake it and approve it before image-to-video runs again.
+                </Callout.Text>
               </Callout.Root>
             ) : null}
 
@@ -4247,6 +4229,18 @@ export function RunMode(props: RunModeProps) {
                 With a dress reference image attached, the dress prompt matches that reference.
                 Hand-edited prompts stay until you click Apply.
               </Text>
+            </Flex>
+            <Flex>
+              <Button
+                disabled={!cardId.trim() || !image}
+                type="button"
+                onClick={() => {
+                  const nodeId = stepToNodeMap.picture;
+                  if (nodeId) setActiveNode(nodeId);
+                }}
+              >
+                Create picture
+              </Button>
             </Flex>
           </Flex>
         ) : null}
@@ -4826,7 +4820,11 @@ export function RunMode(props: RunModeProps) {
 
       <div className="flow-run-bar">
         <Flex direction="column" gap="3" style={{ flex: 1 }}>
-          {actionStep && flowState ? (
+          {activeNode === "source" ? (
+            <Text size="2">
+              Setup — open Create picture, choose 1, 2, or 3 variations, then make the stills.
+            </Text>
+          ) : actionStep && flowState ? (
             <Text size="2" weight="medium">
               {flowState.steps[actionStep].label}
               {actionStatus === "review" && reviewSteps.has(actionStep)
@@ -4851,8 +4849,6 @@ export function RunMode(props: RunModeProps) {
                       ? " — running…"
                       : ""}
             </Text>
-          ) : activeNode === "source" ? (
-            <Text size="2">Setup — source image and card id.</Text>
           ) : activeNode === "card" ? (
             <Text size="2">
               Create card — upload both videos to skip the AI steps, or run after Boomerang is
@@ -4864,13 +4860,13 @@ export function RunMode(props: RunModeProps) {
         </Flex>
 
         <Flex align="center" gap="2" wrap="wrap">
-          {actionStatus === "review" && actionStep && !reviewSteps.has(actionStep) ? (
+          {activeNode === "source" ? null : actionStatus === "review" && actionStep && !reviewSteps.has(actionStep) ? (
             <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
               Continue
             </Button>
           ) : null}
 
-          {actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
+          {activeNode !== "source" && actionStatus === "review" && actionStep && reviewSteps.has(actionStep) ? (
             <>
               {actionStep === "picture" &&
               (flowState?.steps.picture?.artifacts ?? []).some(
@@ -4895,7 +4891,8 @@ export function RunMode(props: RunModeProps) {
             </>
           ) : null}
 
-          {actionStatus === "ready" &&
+          {activeNode !== "source" &&
+          actionStatus === "ready" &&
           actionStep === "compress" &&
           flowState?.compress_report ? (
             <Button disabled={jobBusy} type="button" onClick={() => void approveFocusClip()}>
@@ -4904,7 +4901,7 @@ export function RunMode(props: RunModeProps) {
             </Button>
           ) : null}
 
-          {actionStatus === "ready" && actionIsInteractive && actionStep ? (
+          {activeNode !== "source" && actionStatus === "ready" && actionIsInteractive && actionStep ? (
             activeStep === actionStep ? null : (
               <Button
                 disabled={jobBusy}
@@ -4917,18 +4914,22 @@ export function RunMode(props: RunModeProps) {
                 Open {flowState?.steps[actionStep]?.label ?? actionStep}
               </Button>
             )
-          ) : actionStatus === "ready" ? (
+          ) : actionStatus === "ready" && activeNode !== "source" ? (
             <Button
               disabled={!canRunActionStep}
               type="button"
               onClick={() => actionStep && void runStep(actionStep, false)}
             >
               <Play {...iconProps} />
-              {actionStep === "compress" && flowState?.compress_report ? "Re-run finalize" : "Run step"}
+              {actionStep === "picture"
+                ? "Make picture"
+                : actionStep === "compress" && flowState?.compress_report
+                  ? "Re-run finalize"
+                  : "Run step"}
             </Button>
           ) : null}
 
-          {actionStatus === "approved" && actionStep && actionStep !== "boomerang" ? (
+          {activeNode !== "source" && actionStatus === "approved" && actionStep && actionStep !== "boomerang" ? (
             <Button
               disabled={!canRemakeActionStep}
               type="button"
@@ -4939,7 +4940,7 @@ export function RunMode(props: RunModeProps) {
             </Button>
           ) : null}
 
-          {actionStatus === "failed" && actionStep ? (
+          {activeNode !== "source" && actionStatus === "failed" && actionStep ? (
             <Button disabled={jobBusy} type="button" onClick={() => void runStep(actionStep, true)}>
               Retry
             </Button>
