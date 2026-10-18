@@ -597,7 +597,7 @@ def validate_step_enqueue(
         and not (step in state["approved"] and not force)
     ):
         raise RuntimeError(
-            "Source, bikini model, or face changed after the picture was created. "
+            "No approved picture exists, or the source/bikini/face inputs changed since it was created. "
             "Remake Create picture and approve it before image-to-video."
         )
     if step in state["approved"] and not force:
