@@ -149,7 +149,7 @@ export function normalizePicturePrompts(
 
 export function backgroundMotionPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene and matching lighting. Do not keep the original backdrop. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} scenery throughout.`;
+  return `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation stay identical to the input portrait in every frame, including the loop back. Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the new scene. Scene light stays in the background only. Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene. Do not keep the original backdrop. Do not change her lighting to match that scene. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Perfect loop, ${scenery} scenery throughout, with her colors frozen to the input still.`;
 }
 
 /** Pre-any-bg stock: only asked to replace blank/studio backdrops. */
@@ -205,7 +205,15 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
   const stripped = prompt.trim();
   const scenery = normalizeTheme(theme);
   if (!stripped) return true;
+  if (stripped.startsWith("COLOR AND SKIN LOCK")) return true;
   if (stripped.endsWith("setting with matching lighting.")) return true;
+  // Previous stock: themed scenery plus "matching lighting", which recolored her skin.
+  if (
+    stripped.includes("Place her in a clearly recognizable ") &&
+    stripped.includes("completely replace ANY existing background")
+  ) {
+    return true;
+  }
   // Older hand-edits that only swapped "blank wall" → "background" are still stock themed templates.
   if (
     stripped.includes("Place her in a clearly recognizable ") &&

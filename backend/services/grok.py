@@ -102,17 +102,43 @@ MOTION_ENHANCE_SYSTEM = (
     "but make camera and framing ironclad. (2) Explicitly forbid zoom in/out, dolly, "
     "push-in, pull-back, orbit, and any walking toward or away from camera. (3) She "
     "must stay on the same spot; subject size and framing must match the input image "
-    "in every frame. (4) Lock identity continuity: same face, hair, and skin tone in "
-    "every frame — same undertone and lightness, no skin color flicker, no sudden "
-    "tanning/paling, no beauty-filter shifts. (5) Prefer a seamless looping boomerang "
+    "in every frame. (4) COLOR AND SKIN LOCK is mandatory and must survive the rewrite. "
+    "Her skin undertone, lightness, hair color, and outfit color stay identical to the "
+    "input portrait in every frame, including the loop back. No tan, pale, bronze, "
+    "sunburn, flicker, beauty filter, white-balance shift, exposure change, or saturation "
+    "change on her. Do NOT relight or color-grade her to match the new background. "
+    "If the instruction says 'matching lighting', that light belongs to the scenery only. "
+    "(5) Prefer a seamless looping boomerang "
     "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
     "(e.g. nurse clinic, hospital room, police station, beach, neon city), KEEP and "
-    "STRENGTHEN that: place her in a clearly recognizable themed environment. Completely "
+    "STRENGTHEN the background only: place her in a clearly recognizable themed environment. Completely "
     "replace ANY existing background — city skylines, balconies, streets, outdoors, busy "
     "photos, studio, or plain walls — not only blank backdrops. Do NOT strip theme or "
     "scenery requests. Do NOT invent unrelated wardrobe changes beyond what the user wrote "
-    "(bikini in step 1 stays a bikini). (7) Output ONLY the rewritten prompt, one "
+    "(bikini in step 1 stays a bikini). Do NOT warm, cool, or grade her body because the "
+    "scene is sunny or dramatic. (7) Output ONLY the rewritten prompt, one "
     "paragraph, no preamble or quotes.")
+
+# Appended after motion-prompt enhancement. "Matching lighting" was tanning her
+# to the new scene, so this lock is last and forbids relighting the subject.
+MOTION_COLOR_LOCK = (
+    "COLOR AND SKIN LOCK — her color stays identical to the input portrait in every "
+    "frame, including the loop back to the first frame. Same skin undertone and lightness "
+    "from start to end: no tan, no pale, no bronze, no sunburn, no flicker, no "
+    "frame-to-frame shift. Do not relight her, color-grade her, warm her, cool her, or "
+    "change exposure, white balance, or saturation on her skin, hair, or bikini to match "
+    "the new background. Scene light stays in the background only. Hair color and bikini "
+    "color stay exactly as in the input image."
+)
+
+
+def append_motion_color_lock(prompt: str) -> str:
+    text = prompt.rstrip()
+    marker = "COLOR AND SKIN LOCK — her color stays identical to the input portrait"
+    if marker in text:
+        return text
+    return f"{text}\n\n{MOTION_COLOR_LOCK}"
+
 
 DRESS_CAPTION_SYSTEM = (
     "You describe clothing for a video EDIT prompt. Look ONLY at the outfit worn "
@@ -1504,6 +1530,7 @@ def image_to_video(
         print(f"Enhancing motion prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=MOTION_ENHANCE_SYSTEM)
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
+    final_prompt = append_motion_color_lock(final_prompt)
     payload = {
         "model": model,
         "prompt": final_prompt,
