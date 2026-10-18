@@ -3436,10 +3436,9 @@ export function RunMode(props: RunModeProps) {
     dress_video_model: dressVideoModel,
   };
 
-  const pictureNeedsAi = Boolean(theme.trim() || bikiniImage.trim() || faceImage.trim());
   const stepApiReady =
     actionStep === "picture"
-      ? !pictureNeedsAi || canUseSourceAi
+      ? canUseSourceAi
       : actionStep === "background"
         ? canUseBackgroundVideo
         : actionStep === "dress"
@@ -3526,7 +3525,7 @@ export function RunMode(props: RunModeProps) {
     cardId.trim() &&
       cardLabel.trim() &&
       image &&
-      (!pictureNeedsAi || canUseSourceAi) &&
+      canUseSourceAi &&
       !jobBusy,
   );
 
@@ -4280,7 +4279,7 @@ export function RunMode(props: RunModeProps) {
                 </Callout.Text>
               </Callout.Root>
             ) : null}
-            {!canUseSourceAi && pictureNeedsAi ? (
+            {!canUseSourceAi ? (
               <Text color="gray" size="2">
                 Add XAI_API_KEY or WAVESPEED_API_KEY to .env before generating the picture.
               </Text>
