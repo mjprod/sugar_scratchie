@@ -177,6 +177,7 @@ def test_boomerang_backfill_keeps_later_steps(card_id):
         {"approved": ["background", "trim", "dress", "card", "mesh", "symbols", "compress"]},
     )
     assert read_state(work)["approved"] == [
+        "picture",
         "background",
         "trim",
         "dress",

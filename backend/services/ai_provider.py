@@ -203,6 +203,8 @@ def edit_image_scenery(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
     """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
     route = source_image_route(provider, image_model)
@@ -213,6 +215,8 @@ def edit_image_scenery(
             out=out,
             aspect_ratio=aspect_ratio,
             endpoint=_spec("source_image", image_model).endpoint_path,
+            variation=variation,
+            prompt=prompt,
         )
     stored = _stored_xai_model("source_image", image_model)
     if route == "xai" and stored:
@@ -222,6 +226,8 @@ def edit_image_scenery(
             out=out,
             aspect_ratio=aspect_ratio,
             model=stored,
+            variation=variation,
+            prompt=prompt,
         )
     return _with_xai_fallback(
         "scenery edit",
@@ -231,6 +237,8 @@ def edit_image_scenery(
             theme=theme,
             out=out,
             aspect_ratio=aspect_ratio,
+            variation=variation,
+            prompt=prompt,
         ),
     )
 
@@ -379,6 +387,7 @@ def image_to_video(
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
     elif enhance_motion_prompt and not xai_key_available():
         print("Motion prompt enhancement skipped — XAI_API_KEY not set; using locked-camera prompt as written.")
+    final_prompt = grok.append_motion_color_lock(final_prompt)
 
     spec = _spec("background_video", background_video_model)
     if spec.adapter == "wan_spicy_i2v":
@@ -406,6 +415,21 @@ def image_to_video(
     )
 
 
+def _numbered_reference_token(token: str, index: int) -> str:
+    base = token or "Image 1"
+    if "1" in base:
+        return base.replace("1", str(index))
+    return f"{base} {index}"
+
+
+def _identity_still_clause(token: str) -> str:
+    return (
+        f"{token} is a still of the exact woman in this video. "
+        f"Keep her face, hair color, hair length, hair style, skin tone, body, pose, and hands "
+        f"identical to {token}. Change only her clothes."
+    )
+
+
 def edit_video(
     *,
     provider: AiProvider,
@@ -419,11 +443,13 @@ def edit_video(
     prepare_compatible: bool,
     enhance_system: str = grok.DRESS_ENHANCE_SYSTEM,
     reference_image: str | Path | None = None,
+    identity_image: str | Path | None = None,
     reference_field: str = "image",
     dress_video_model: DressVideoModel = "wan-2.2-video-edit",
 ) -> None:
     spec = _spec("dress_video", dress_video_model)
     native_reference_token = spec.reference_token or DRESS_REFERENCE_TOKENS.get(dress_video_model)
+    identity_str = str(identity_image).strip() if identity_image is not None else ""
     if spec.adapter == "reference_video_edit":
         # These models take the reference image directly — no Grok captioning needed.
         token = native_reference_token or "Image 1"
@@ -435,13 +461,20 @@ def edit_video(
             print(f"Enhanced dress prompt:\n  {final_prompt}\n")
         elif enhance:
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+        if identity_str:
+            who = _numbered_reference_token(token, 1)
+            final_prompt = f"{_identity_still_clause(who)} {final_prompt}"
         if reference_str:
+            outfit_token = _numbered_reference_token(token, 2 if identity_str else 1)
             final_prompt = (
                 f"{final_prompt.rstrip()}\n\n"
-                f"CRITICAL — dress her in the exact outfit shown in {token} "
+                f"CRITICAL — dress her in the exact outfit shown in {outfit_token} "
                 "(shape, color, cut, accessories, emissive glow/shine). "
-                "Keep her face, body, pose, motion, framing, and background unchanged."
+                "Copy the clothes only — do not copy that person's face, hair, or body. "
+                "Keep her face, hair, body, pose, motion, framing, and background unchanged."
             )
+        final_prompt = grok.append_dress_identity_lock(final_prompt)
+        images = [item for item in (identity_str, reference_str) if item]
         edit_fn = (
             wavespeed.edit_video_seedance2
             if spec.variant == "seedance"
@@ -452,7 +485,8 @@ def edit_video(
             prompt=final_prompt,
             out=out,
             resolution=resolution or "720p",
-            reference_image=reference_str or None,
+            reference_image=None if identity_str else (reference_str or None),
+            reference_images=images if identity_str else None,
             path=spec.endpoint_path,
             label=spec.label,
         )
@@ -472,15 +506,42 @@ def edit_video(
                 print(f"Enhancing dress prompt via {grok.chat_model()} (for WAN edit) ...")
                 final_prompt = grok.enhance_prompt(final_prompt, key, system=enhance_system)
                 print(f"Enhanced dress prompt:\n  {final_prompt}\n")
-            # Append reference LAST so the caption wins over any enhance rewrite.
+            # Caption before the identity lock: outfit match wins on clothes, lock forbids a recast.
             if caption:
                 final_prompt = (
                     f"{final_prompt.rstrip()}\n\n"
                     f"CRITICAL — match the dress reference image outfit exactly "
-                    f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+                    f"(shape, color, cut, accessories, emissive glow/shine). "
+                    f"Copy the clothes only, not that person's face or hair: {caption}"
                 )
         elif enhance and not xai_key_available():
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+        final_prompt = grok.append_dress_identity_lock(final_prompt)
+        if identity_str:
+            # WAN 2.2 is prompt-only. It redrew her face on the Egypt edit, so send
+            # a still of her to WAN 3.0, which can condition on reference images.
+            print(
+                "Prompt-only video edit recasts her face. "
+                "Using WAN 3.0 with a still of her as Image 1 so only the clothes change."
+            )
+            images = [identity_str]
+            prefix = _identity_still_clause("Image 1")
+            if reference_str:
+                images.append(reference_str)
+                prefix += (
+                    " Image 2 is the outfit to copy — clothes only, "
+                    "not that person's face, hair, or body."
+                )
+            wavespeed.edit_video_wan30(
+                video=video,
+                prompt=f"{prefix}\n\n{final_prompt}",
+                out=out,
+                resolution=resolution or "720p",
+                reference_images=images,
+                path=wavespeed.WAN30_VIDEO_EDIT_PATH,
+                label="wan-3.0 video edit (identity still)",
+            )
+            return
         wavespeed.edit_video_wan22(
             video=video,
             prompt=final_prompt,

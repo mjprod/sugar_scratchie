@@ -85,10 +85,13 @@ ENHANCE_SYSTEM = (
     "for a video EDIT model. Rules: (1) The ONLY change allowed is the dress/outfit "
     "described. Describe it vividly (fabric, color, cut, length, fit). (2) Then "
     "explicitly command the model to keep EVERYTHING else identical: the same "
-    "person, face, identity, hair, skin tone (same undertone and lightness in every "
-    "frame — no tan/pale flicker), body, pose, hands, motion, camera, "
-    "framing, subject scale / camera distance, background, lighting, shadows and "
-    "colors. (3) Do NOT add scenery, style, mood, camera moves, zoom, dolly, "
+    "person, face, identity, hair color, hair length, hair style, skin tone (same "
+    "undertone and lightness in every frame — no tan/pale flicker), body, pose, "
+    "hands, motion, camera, framing, subject scale / camera distance, background, "
+    "lighting, shadows and colors. Do NOT recast her as a different woman. Do NOT "
+    "add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides "
+    "or replaces her hair — a themed costume is clothing on this same woman, not a "
+    "new character. (3) Do NOT add scenery, style, mood, camera moves, zoom, dolly, "
     "effects or details that are not in the input. "
     "(4) Output ONLY the rewritten prompt, one paragraph, no preamble or quotes."
 )
@@ -99,17 +102,43 @@ MOTION_ENHANCE_SYSTEM = (
     "but make camera and framing ironclad. (2) Explicitly forbid zoom in/out, dolly, "
     "push-in, pull-back, orbit, and any walking toward or away from camera. (3) She "
     "must stay on the same spot; subject size and framing must match the input image "
-    "in every frame. (4) Lock identity continuity: same face, hair, and skin tone in "
-    "every frame — same undertone and lightness, no skin color flicker, no sudden "
-    "tanning/paling, no beauty-filter shifts. (5) Prefer a seamless looping boomerang "
+    "in every frame. (4) COLOR AND SKIN LOCK is mandatory and must survive the rewrite. "
+    "Her skin undertone, lightness, hair color, and outfit color stay identical to the "
+    "input portrait in every frame, including the loop back. No tan, pale, bronze, "
+    "sunburn, flicker, beauty filter, white-balance shift, exposure change, or saturation "
+    "change on her. Do NOT relight or color-grade her to match the new background. "
+    "If the instruction says 'matching lighting', that light belongs to the scenery only. "
+    "(5) Prefer a seamless looping boomerang "
     "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
     "(e.g. nurse clinic, hospital room, police station, beach, neon city), KEEP and "
-    "STRENGTHEN that: place her in a clearly recognizable themed environment. Completely "
+    "STRENGTHEN the background only: place her in a clearly recognizable themed environment. Completely "
     "replace ANY existing background — city skylines, balconies, streets, outdoors, busy "
     "photos, studio, or plain walls — not only blank backdrops. Do NOT strip theme or "
     "scenery requests. Do NOT invent unrelated wardrobe changes beyond what the user wrote "
-    "(bikini in step 1 stays a bikini). (7) Output ONLY the rewritten prompt, one "
+    "(bikini in step 1 stays a bikini). Do NOT warm, cool, or grade her body because the "
+    "scene is sunny or dramatic. (7) Output ONLY the rewritten prompt, one "
     "paragraph, no preamble or quotes.")
+
+# Appended after motion-prompt enhancement. "Matching lighting" was tanning her
+# to the new scene, so this lock is last and forbids relighting the subject.
+MOTION_COLOR_LOCK = (
+    "COLOR AND SKIN LOCK — her color stays identical to the input portrait in every "
+    "frame, including the loop back to the first frame. Same skin undertone and lightness "
+    "from start to end: no tan, no pale, no bronze, no sunburn, no flicker, no "
+    "frame-to-frame shift. Do not relight her, color-grade her, warm her, cool her, or "
+    "change exposure, white balance, or saturation on her skin, hair, or bikini to match "
+    "the new background. Scene light stays in the background only. Hair color and bikini "
+    "color stay exactly as in the input image."
+)
+
+
+def append_motion_color_lock(prompt: str) -> str:
+    text = prompt.rstrip()
+    marker = "COLOR AND SKIN LOCK — her color stays identical to the input portrait"
+    if marker in text:
+        return text
+    return f"{text}\n\n{MOTION_COLOR_LOCK}"
+
 
 DRESS_CAPTION_SYSTEM = (
     "You describe clothing for a video EDIT prompt. Look ONLY at the outfit worn "
@@ -132,18 +161,43 @@ DRESS_ENHANCE_SYSTEM = (
     "shine on the garment vividly — garment glow is part of the outfit, not a scene "
     "effect; preserve glow intensity from the reference description. If the user "
     "names a themed costume or role (police, nurse, beach cover-up, etc.), keep that "
-    "theme unmistakable — do NOT replace it with a generic evening gown. If a "
-    "reference-outfit caption is present, that outfit wins over any conflicting "
-    "description. (2) Keep the "
+    "theme unmistakable — do NOT replace it with a generic evening gown. The "
+    "costume is clothing worn by the woman already in the video, not a recast "
+    "character: do NOT change her face, and do NOT add a wig, hood, headdress, "
+    "veil, nemes, crown, or any head covering that hides or replaces her hair. "
+    "If a reference-outfit caption is present, that outfit wins over any conflicting "
+    "description — copy the clothes only, never the reference person's face or hair. "
+    "(2) Keep the "
     "EXACT same background, scenery, lighting, shadows, and environment as the "
     "input video — do NOT replace the background with a green screen or any other "
-    "scene. (3) Keep the same person, face, identity, hair, and skin tone "
-    "frame-for-frame — same undertone and lightness as the input clip in every "
-    "frame; no tan/pale flicker, no recoloring exposed skin. Keep body, pose, "
-    "hands, motion, camera, framing, subject scale / camera distance, and timing "
-    "identical — no zoom, dolly, or reframing. (4) Output ONLY "
+    "scene. (3) Keep the same person, face, identity, hair color, hair length, hair "
+    "style, and skin tone frame-for-frame — same undertone and lightness as the "
+    "input clip in every frame; no tan/pale flicker, no recoloring exposed skin or "
+    "hair. Keep body, pose, hands, motion, camera, framing, subject scale / camera "
+    "distance, and timing identical — no zoom, dolly, or reframing. (4) Output ONLY "
     "the rewritten prompt, one paragraph, no preamble or quotes."
 )
+
+# Appended after prompt enhancement so a rewrite cannot drop the identity lock.
+# The Egypt edit was recasting her (new face, darker hair, hood over the hair).
+DRESS_IDENTITY_LOCK = (
+    "IDENTITY LOCK — she must be the exact same woman as the input video, only wearing "
+    "different clothes. Same face in every frame: same eyes, nose, lips, jaw, makeup, and "
+    "expression. Same hair: same color, length, style, and parting, fully visible — do not "
+    "darken, lighten, or recolor it, and do not add a wig, hood, headdress, veil, nemes, "
+    "crown, or any head covering that hides or replaces her hair. Same skin undertone and "
+    "lightness in every frame — no tan, no pale, no flicker. Same body, pose, hands, arms, "
+    "and motion. Same background, scenery, lighting, camera, framing, and subject scale — "
+    "no zoom or camera move. Do not recast her as a different person."
+)
+
+
+def append_dress_identity_lock(prompt: str) -> str:
+    text = prompt.rstrip()
+    marker = "IDENTITY LOCK — she must be the exact same woman"
+    if marker in text:
+        return text
+    return f"{text}\n\n{DRESS_IDENTITY_LOCK}"
 
 
 def api_key() -> str:
@@ -192,6 +246,30 @@ def run_media_command(cmd: list[str]) -> bytes:
     if result.returncode != 0:
         raise RuntimeError(f"{cmd[0]} failed:\n{result.stderr.decode(errors='replace')}")
     return result.stdout
+
+
+def extract_video_still(video: str | Path, out: Path, *, at_s: float = 0.35) -> Path:
+    """Grab one frame so a video-edit model can see the woman it must keep."""
+    src = Path(video)
+    if not src.exists():
+        raise RuntimeError(f"Video not found: {src}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run_media_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{at_s:.3f}",
+            "-i",
+            str(src),
+            "-frames:v",
+            "1",
+            str(out),
+        ]
+    )
+    if not out.is_file() or out.stat().st_size == 0:
+        raise RuntimeError(f"Could not extract a still from {src}")
+    return out
 
 
 def probe_video(path: Path) -> dict[str, int | float | str]:
@@ -669,16 +747,28 @@ def normalize_background_motion_prompt(prompt: str) -> str:
     return prompt.strip()
 
 
-def scenery_edit_prompt(theme: str) -> str:
+def scenery_edit_prompt(theme: str, variation: str = "") -> str:
     scenery = (theme or "").strip() or "warm beach"
+    lighting = f" Lighting for this take: {variation.strip()}." if variation.strip() else ""
     return (
         f"Replace the entire background behind the person with a vividly recognizable {scenery} "
         f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
         "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
         "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
         "body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, "
-        "or reframe. Only change the background scenery."
+        f"or reframe. Only change the background scenery.{lighting}"
     )
+
+
+def resolve_scenery_prompt(theme: str, variation: str = "", prompt: str = "") -> str:
+    """Operator prompt when set; otherwise the themed stock prompt. Lighting differs per take."""
+    base = prompt.strip()
+    if not base:
+        return scenery_edit_prompt(theme, variation)
+    hint = variation.strip()
+    if hint and "Lighting for this take:" not in base:
+        return f"{base} Lighting for this take: {hint}."
+    return base
 
 
 def motion_source_bikini_prompt(caption: str) -> str:
@@ -733,11 +823,14 @@ def edit_image_scenery(
     out: Path,
     aspect_ratio: str = "9:16",
     model: str | None = None,
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
     """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
     key = api_key()
-    text = scenery_edit_prompt(theme)
-    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}) ...")
+    text = resolve_scenery_prompt(theme, variation, prompt)
+    take = f", {variation.strip()}" if variation.strip() else ""
+    print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}{take}) ...")
     result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image, model=model)
     _save_image_response(result, out)
     return out
@@ -1413,13 +1506,16 @@ def edit_video(
         final_prompt = enhance_prompt(final_prompt, key, system=enhance_system)
         print(f"Enhanced prompt:\n  {final_prompt}\n")
 
-    # Append reference LAST so the caption wins over any enhance rewrite.
+    # Caption before the identity lock so the outfit match wins on clothes,
+    # and the lock still forbids copying the reference person's face or hair.
     if caption:
         final_prompt = (
             f"{final_prompt.rstrip()}\n\n"
             f"CRITICAL — match the dress reference image outfit exactly "
-            f"(shape, color, cut, accessories, emissive glow/shine): {caption}"
+            f"(shape, color, cut, accessories, emissive glow/shine). "
+            f"Copy the clothes only, not that person's face or hair: {caption}"
         )
+    final_prompt = append_dress_identity_lock(final_prompt)
 
     edit_model = video_edit_model(model)
     if edit_model != model:
@@ -1458,6 +1554,7 @@ def image_to_video(
         print(f"Enhancing motion prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=MOTION_ENHANCE_SYSTEM)
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
+    final_prompt = append_motion_color_lock(final_prompt)
     payload = {
         "model": model,
         "prompt": final_prompt,

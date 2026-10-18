@@ -46,6 +46,7 @@ from backend.services.grok import (
     photo_scratch_custom_locks_source_pose,
     photo_scratch_face_ref_clause,
     photo_scratch_prompt_with_background,
+    extract_video_still,
     probe_video,
     request_id_sidecar,
 )
@@ -74,8 +75,50 @@ CARDS_DIR = ROOT / "public" / "cards"
 MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
 STEP1_STYLE_MODEL = "seedream-v5-lite"
+PICTURE_CHOICE_COUNT = 3
+# Same woman and framing; only background light changes so the three takes are distinct.
+PICTURE_SCENERY_VARIATIONS = (
+    "bright open daylight and vivid colors",
+    "golden-hour side light and warmer tones",
+    "soft diffused light with richer background detail",
+)
+
+
+def clamp_picture_variation_count(value: int | None) -> int:
+    try:
+        count = int(value if value is not None else PICTURE_CHOICE_COUNT)
+    except (TypeError, ValueError):
+        count = PICTURE_CHOICE_COUNT
+    return min(PICTURE_CHOICE_COUNT, max(1, count))
+
+
+def picture_take_prompts(
+    picture_prompts: list[str] | None,
+    picture_prompt: str,
+    theme: str,
+    *,
+    count: int | None = None,
+) -> list[str]:
+    """Exact text for each still. Empty slots fall back to the theme plus that take's lighting."""
+    from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt
+
+    take_count = clamp_picture_variation_count(count)
+    raw = [str(item or "").strip() for item in (picture_prompts or [])]
+    while len(raw) < take_count:
+        raw.append("")
+    shared = (picture_prompt or "").strip()
+    resolved: list[str] = []
+    for text, hint in zip(raw[:take_count], PICTURE_SCENERY_VARIATIONS[:take_count], strict=True):
+        if text:
+            resolved.append(text)
+        elif shared:
+            resolved.append(resolve_scenery_prompt(theme, hint, shared))
+        else:
+            resolved.append(scenery_edit_prompt(theme, hint))
+    return resolved
 
 VideoFlowStep = Literal[
+    "picture",
     "background",
     "trim",
     "dress",
@@ -94,8 +137,9 @@ MESH_TRACKERS: tuple[MeshTracker, MeshTracker, MeshTracker] = (
     "blend",
 )
 
-# Bikini background → drop white frames → dress edit → boomerang → publish + track → compress.
+# Picture still → bikini video → drop white frames → dress edit → boomerang → publish + track → compress.
 STEP_ORDER: list[VideoFlowStep] = [
+    "picture",
     "background",
     "trim",
     "dress",
@@ -107,7 +151,8 @@ STEP_ORDER: list[VideoFlowStep] = [
 ]
 
 STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
-    "background": [],
+    "picture": [],
+    "background": ["picture"],
     "trim": ["background"],
     "dress": ["trim"],
     "boomerang": ["dress"],
@@ -117,9 +162,10 @@ STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
     "compress": ["symbols"],
 }
 
-REVIEW_STEPS = frozenset({"background", "trim", "dress", "boomerang"})
+REVIEW_STEPS = frozenset({"picture", "background", "trim", "dress", "boomerang"})
 
 STEP_LABELS: dict[VideoFlowStep, str] = {
+    "picture": "Create picture",
     "background": "Background bikini (image to video)",
     "trim": "Fix frames (delete white frames)",
     "dress": "Foreground dress-up (video edit)",
@@ -340,6 +386,9 @@ def read_state(work: Path) -> dict:
 def normalize_state(state: dict) -> dict:
     """Drop stale approvals from older pipeline versions or skipped dependencies."""
     raw = [step for step in state["approved"] if step in STEP_ORDER]
+    # Cards animated before the picture gate existed — keep the video steps unlocked.
+    if "background" in raw and "picture" not in raw:
+        raw.append("picture")
     # Pre-trim pipelines approved dress without a fix-frames step — backfill it.
     later = {"dress", "boomerang", "card", "mesh", "symbols", "compress"}
     if (
@@ -425,6 +474,7 @@ def artifact_paths(
         trim_preview = background_preview
     boomerang_clips = [background_preview, dress_preview] if background_preview and dress_preview else []
     return {
+        "picture": picture_preview_paths(work, approved),
         "background": [background_preview],
         "trim": [trim_preview],
         "dress": [dress_preview],
@@ -481,6 +531,12 @@ def step_artifact_ready(
         report = work / "compress-report.json"
         video_ok = output_video_ready if probe_videos else video_file_present
         return video_ok(card_bg) and video_ok(card_fg) and report.exists()
+    if step == "picture":
+        if picture_preview_paths(work, state["approved"] if state else []):
+            return True
+        # Pipelines that animated before this step existed stay done.
+        approved = state["approved"] if state else []
+        return "background" in approved
     if step == "trim":
         report = work / "trim-report.json"
         background_clip = _work_background_clip(work)
@@ -535,6 +591,16 @@ def validate_step_enqueue(
         raise RuntimeError(
             f"Approve the {STEP_LABELS[missing]} result before running this step."
         )
+    if (
+        step == "background"
+        and image
+        and _picture_inputs_are_stale(work, _paths(work), image)
+        and not (step in state["approved"] and not force)
+    ):
+        raise RuntimeError(
+            "No approved picture exists, or the source/bikini/face inputs changed since it was created. "
+            "Remake Create picture and approve it before image-to-video."
+        )
     if step in state["approved"] and not force:
         return
     stale_source_image = (
@@ -582,15 +648,19 @@ def downstream_steps(step: VideoFlowStep) -> list[VideoFlowStep]:
 def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
     paths = _paths(work)
     files_by_step: dict[VideoFlowStep, list[Path]] = {
+        "picture": [
+            paths["picture"],
+            *picture_choice_paths(work),
+            paths["scenery_source"],
+            paths["styled_source"],
+            paths["styled_bikini"],
+            paths["styled_face"],
+        ],
         "background": [
             paths["background_raw"],
             paths["background_source"],
             paths["trim_report"],
             work / "background-raw-grok-compatible.mp4",
-            paths["scenery_source"],
-            paths["styled_source"],
-            paths["styled_bikini"],
-            paths["styled_face"],
         ],
         "trim": [paths["trim_report"]],
         "dress": [paths["foreground_dressed"]],
@@ -669,6 +739,7 @@ def approve_flow_step(
     step: VideoFlowStep,
     *,
     mesh_tracker: MeshTracker | None = None,
+    picture_choice: int | None = None,
 ) -> dict:
     work = work_dir(card_id)
     state = read_state(work)
@@ -695,6 +766,8 @@ def approve_flow_step(
         record_step_approved(work, step)
         write_state(work, state)
         return flow_state(card_id)
+    if step == "picture":
+        _publish_picture_choice(work, picture_choice, already_approved=step in state["approved"])
     if not step_artifact_ready(work, card_id, step, state):
         raise RuntimeError(f"Step '{step}' has no result to approve yet.")
     prev = STEP_DEPS[step]
@@ -879,7 +952,7 @@ def import_manual_clips(
             "frames_after": None,
         },
     )
-    state["approved"] = ["background", "trim", "dress", "boomerang", "card"]
+    state["approved"] = ["picture", "background", "trim", "dress", "boomerang", "card"]
     _write_boomerang_report(work, _skipped_boomerang_report())
     # Keep mesh/symbols if those artifacts already exist for this card.
     mesh_out = MESH_DIR / f"{card_id}.json"
@@ -1083,9 +1156,16 @@ def recover_stale_approvals(
     # Published card implies background + dress + card were done, even if the
     # work-dir dress clip was cleaned up or only a grok-compatible bg remains.
     if published:
-        restored: list[VideoFlowStep] = ["background", "trim", "dress", "boomerang", "card"]
+        restored: list[VideoFlowStep] = [
+            "picture",
+            "background",
+            "trim",
+            "dress",
+            "boomerang",
+            "card",
+        ]
     elif background_clip and video_ok(background_clip):
-        restored = ["background"]
+        restored = ["picture", "background"]
         if (work / "trim-report.json").exists():
             restored.append("trim")
         if video_ok(paths["foreground_dressed"]):
@@ -1187,6 +1267,9 @@ def save_flow_draft(
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
+    picture_prompt: str | None = None,
+    picture_prompts: list[str] | None = None,
+    picture_variation_count: int | None = None,
 ) -> dict:
     work = work_dir(card_id)
     existing = read_flow_draft(card_id) or {}
@@ -1196,9 +1279,24 @@ def save_flow_draft(
     def setup_field(value: str | None, key: str, default: str = "") -> str:
         return value if value is not None else str(existing.get(key) or default)
 
+    def saved_picture_prompts() -> list[str]:
+        if picture_prompts:
+            return [str(item or "").strip() for item in picture_prompts][:PICTURE_CHOICE_COUNT]
+        existing_list = existing.get("picture_prompts")
+        if isinstance(existing_list, list):
+            return [str(item or "").strip() for item in existing_list][:PICTURE_CHOICE_COUNT]
+        return []
+
     draft = {
         "image": str(image),
         "theme": saved_theme,
+        "picture_prompt": setup_field(picture_prompt, "picture_prompt"),
+        "picture_prompts": saved_picture_prompts(),
+        "picture_variation_count": clamp_picture_variation_count(
+            picture_variation_count
+            if picture_variation_count is not None
+            else existing.get("picture_variation_count")
+        ),
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -1314,14 +1412,7 @@ def _resolve_image_path(image: str | Path) -> Path:
     return path
 
 
-def _source_image_newer_than_background(
-    work: Path,
-    paths: dict[str, Path],
-    image: str | Path,
-) -> bool:
-    background = paths["background_raw"]
-    if not output_video_ready(background):
-        return False
+def _reference_inputs_newer_than(work: Path, image: str | Path, built_at: float) -> bool:
     draft = read_flow_draft(work.name) or {}
     inputs = [_resolve_image_path(image)] + [
         ref
@@ -1331,18 +1422,32 @@ def _source_image_newer_than_background(
         )
         if ref is not None
     ]
-    built_at = background.stat().st_mtime
-    return any(path.exists() and path.stat().st_mtime > built_at for path in inputs)
+    return any(path.is_file() and path.stat().st_mtime > built_at for path in inputs)
+
+
+def _source_image_newer_than_background(
+    work: Path,
+    paths: dict[str, Path],
+    image: str | Path,
+) -> bool:
+    background = paths["background_raw"]
+    if not output_video_ready(background):
+        return False
+    return _reference_inputs_newer_than(work, image, background.stat().st_mtime)
+
+
+def _picture_inputs_are_stale(work: Path, paths: dict[str, Path], image: str | Path) -> bool:
+    """True when the approved still is missing or older than Setup inputs."""
+    picture = paths["picture"]
+    if not picture.is_file() or picture.stat().st_size <= 0:
+        return True
+    return _reference_inputs_newer_than(work, image, picture.stat().st_mtime)
 
 
 def _clear_background_clip(paths: dict[str, Path]) -> None:
     for key in (
         "background_raw",
         "background_source",
-        "scenery_source",
-        "styled_source",
-        "styled_bikini",
-        "styled_face",
         "trim_report",
     ):
         path = paths[key]
@@ -1357,13 +1462,14 @@ def invalidate_after_source_image_change(card_id: str) -> dict:
     work = work_dir(card_id)
     state = read_state(work)
     paths = _paths(work)
+    has_picture = paths["picture"].is_file() or "picture" in state.get("approved", [])
     has_background = output_video_ready(paths["background_raw"]) or "background" in state.get(
         "approved", []
     )
-    if not has_background:
+    if not has_picture and not has_background:
         return flow_state(card_id)
-    print("Source image changed — clearing background clip and downstream steps.")
-    return reject_flow_step(card_id, "background")
+    print("Source image changed — clearing the picture and downstream steps.")
+    return reject_flow_step(card_id, "picture")
 
 
 def _draft_path_value(value: str | Path) -> str:
@@ -2026,6 +2132,7 @@ def _paths(work: Path) -> dict[str, Path]:
     return {
         "background_raw": work / "background-raw.mp4",
         "background_source": work / "background-source.mp4",
+        "picture": work / "picture.png",
         "scenery_source": work / "scenery-source.png",
         "styled_source": work / "styled-source.png",
         "styled_bikini": work / "styled-bikini.png",
@@ -2555,6 +2662,202 @@ def run_mesh_candidate_generation(
         print(f"Auto garment mask skipped for {candidate.name}: {exc}")
 
 
+def _image_file_ready(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def picture_choice_path(work: Path, index: int) -> Path:
+    return work / f"picture-{index}.png"
+
+
+def picture_choice_paths(work: Path) -> list[Path]:
+    return [picture_choice_path(work, index) for index in range(1, PICTURE_CHOICE_COUNT + 1)]
+
+
+def first_ready_picture_choice(work: Path) -> int | None:
+    """Lowest take that actually saved. CLI auto-approve uses this when take 1 failed."""
+    for index, path in enumerate(picture_choice_paths(work), start=1):
+        if _image_file_ready(path):
+            return index
+    return None
+
+
+def picture_preview_paths(work: Path, approved: list) -> list[str]:
+    """Three takes while choosing; the copied winner after approval."""
+    choices = [path for path in picture_choice_paths(work) if _image_file_ready(path)]
+    winner = work / "picture.png"
+    winner_ok = _image_file_ready(winner)
+    if "picture" in approved and winner_ok:
+        return [str(winner.relative_to(ROOT))]
+    if choices:
+        return [str(path.relative_to(ROOT)) for path in choices]
+    if winner_ok:
+        return [str(winner.relative_to(ROOT))]
+    return []
+
+
+def _publish_picture_choice(
+    work: Path,
+    picture_choice: int | None,
+    *,
+    already_approved: bool,
+) -> None:
+    choices = [path for path in picture_choice_paths(work) if _image_file_ready(path)]
+    winner = work / "picture.png"
+    if not choices:
+        return
+    if picture_choice is None:
+        if already_approved and _image_file_ready(winner):
+            return
+        raise RuntimeError("Pick one of the pictures before continuing.")
+    if picture_choice < 1 or picture_choice > PICTURE_CHOICE_COUNT:
+        raise RuntimeError("Pick picture 1, 2, or 3.")
+    src = picture_choice_path(work, picture_choice)
+    if not _image_file_ready(src):
+        raise RuntimeError(f"Picture {picture_choice} is missing — generate the set again.")
+    if src.resolve() != winner.resolve():
+        shutil.copy2(src, winner)
+    print(f"Using picture {picture_choice}")
+
+
+def _write_picture_file(src: str | Path, dest: Path) -> None:
+    """Copy a local still or download a URL into the reviewable picture file."""
+    source = Path(src) if not isinstance(src, str) else Path(src)
+    text = str(src).strip()
+    if source.is_file():
+        if source.resolve() == dest.resolve():
+            return
+        shutil.copy2(source, dest)
+        return
+    if text.startswith(("http://", "https://")):
+        import urllib.request
+
+        urllib.request.urlretrieve(text, dest)
+        return
+    resolved = _resolve_image_path(text)
+    if resolved.is_file():
+        if resolved.resolve() == dest.resolve():
+            return
+        shutil.copy2(resolved, dest)
+        return
+    raise RuntimeError(f"Source image not found: {src}")
+
+
+def build_picture_still(
+    *,
+    image: str | Path,
+    theme_text: str,
+    source_model: str,
+    ai_provider: str,
+    draft: dict,
+    paths: dict[str, Path],
+    picture_prompt: str = "",
+    picture_prompts: list[str] | None = None,
+    picture_variation_count: int | None = None,
+) -> Path:
+    """Bikini, face, and three themed scenery takes. The operator picks one."""
+    work = paths["picture"].parent
+    i2v_image: str | Path = image
+    face_path = _optional_draft_image(draft, "face_image", "Face reference")
+    bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
+    if bikini_path is not None:
+        bikini_still = paths["styled_bikini"]
+        bikini_caption = _caption_clothes_ref(str(bikini_path), {})
+        source_still = i2v_image
+
+        def dress_bikini(provider: str, model: str) -> None:
+            # Seedream follows the bikini photo + caption; x.ai keeps the old top's
+            # shape with two refs (and trips moderation), so it gets the caption only.
+            caption_only = provider == "xai" and bool(bikini_caption)
+            edit_photo_scratch_layer(
+                provider=provider,
+                image_model=model,
+                prompt=(
+                    motion_source_bikini_prompt(bikini_caption)
+                    if caption_only
+                    else motion_source_style_prompt(
+                        with_bikini=True, with_face=False, bikini_caption=bikini_caption
+                    )
+                ),
+                out=bikini_still,
+                source_image=source_still,
+                bikini_image=None if caption_only else bikini_path,
+                aspect_ratio="9:16",
+            )
+
+        _run_step1_style_edit("bikini dress-up", source_model, dress_bikini)
+        i2v_image = bikini_still
+    if face_path is not None:
+        face_still = paths["styled_face"]
+        face_base = i2v_image
+
+        def swap_face(provider: str, model: str) -> None:
+            swap_face_on_image(
+                provider=provider,
+                image_model=model,
+                base_image=face_base,
+                face_image=face_path,
+                out=face_still,
+                prompt=None,
+                aspect_ratio="9:16",
+            )
+
+        _run_step1_style_edit("face swap", source_model, swap_face)
+        i2v_image = face_still
+    if i2v_image != image:
+        shutil.copy2(i2v_image, paths["styled_source"])
+        i2v_image = paths["styled_source"]
+    # Image-to-video keeps busy source backdrops. Bake three scenery takes and
+    # wait until the operator picks one before animating.
+    bake_theme = theme_text.strip() or "warm beach"
+    take_count = clamp_picture_variation_count(picture_variation_count)
+    take_prompts = picture_take_prompts(
+        picture_prompts,
+        picture_prompt,
+        bake_theme,
+        count=take_count,
+    )
+    paths["picture"].unlink(missing_ok=True)
+    for extra in range(take_count + 1, PICTURE_CHOICE_COUNT + 1):
+        picture_choice_path(work, extra).unlink(missing_ok=True)
+    written: list[Path] = []
+    errors: list[str] = []
+    for index, (hint, take_prompt) in enumerate(
+        zip(PICTURE_SCENERY_VARIATIONS[:take_count], take_prompts, strict=True),
+        start=1,
+    ):
+        dest = picture_choice_path(work, index)
+        dest.unlink(missing_ok=True)
+        print(f"Picture {index}/{take_count} ({hint}) via {source_model}")
+        print(take_prompt)
+        try:
+            edit_image_scenery(
+                provider=ai_provider,
+                image_model=source_model,
+                image=i2v_image,
+                theme=bake_theme,
+                out=dest,
+                variation="",
+                prompt=take_prompt,
+            )
+        except RuntimeError as exc:
+            print(f"Picture {index} failed: {exc}")
+            errors.append(f"{index}: {exc}")
+            dest.unlink(missing_ok=True)
+            continue
+        written.append(dest)
+    if not written:
+        detail = "; ".join(errors) if errors else "no stills were written"
+        raise RuntimeError(f"Create picture failed ({detail}).")
+    if errors:
+        print(f"Continuing with {len(written)} picture(s); {len(errors)} failed.")
+    print("Pictures ready — pick one in the dashboard, then continue.")
+    return written[0]
+
+
 def run_video_flow_step(
     *,
     step: VideoFlowStep,
@@ -2581,6 +2884,9 @@ def run_video_flow_step(
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
+    picture_prompt: str = "",
+    picture_prompts: list[str] | None = None,
+    picture_variation_count: int | None = None,
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -2620,6 +2926,9 @@ def run_video_flow_step(
         dress_video_model=dress_model,
         compress_preset=delivery_preset,
         model_id=model_id,
+        picture_prompt=picture_prompt,
+        picture_prompts=picture_prompts,
+        picture_variation_count=picture_variation_count,
     )
 
     # Re-read state in case approvals changed while the job was queued.
@@ -2643,6 +2952,11 @@ def run_video_flow_step(
             write_state(work, state)
 
     if step_artifact_ready(work, card_id, step, state) and not force and step in REVIEW_STEPS:
+        if step == "background" and _picture_inputs_are_stale(work, paths, image):
+            raise RuntimeError(
+                "Source, bikini model, or face changed after the picture was created. "
+                "Remake Create picture and approve it before image-to-video."
+            )
         if step == "background" and _source_image_newer_than_background(work, paths, image):
             print("Source image is newer than the saved background clip — regenerating.")
             _clear_background_clip(paths)
@@ -2666,89 +2980,52 @@ def run_video_flow_step(
     record_step_started(work, step)
     step_started = time.time()
 
-    if step == "background":
-        if _source_image_newer_than_background(work, paths, image):
-            _clear_background_clip(paths)
-        motion_prompt = normalize_background_motion_prompt(background_motion_prompt)
+    if step == "picture":
         draft = read_flow_draft(card_id) or {}
         theme_text = (theme or "").strip() or str(draft.get("theme") or "").strip()
         source_model = normalize_source_image_model(
             str(draft.get("source_image_model") or "grok-imagine"),
             provider=str(draft.get("ai_provider") or ai_provider),
         )
-        i2v_image: str | Path = image
-        face_path = _optional_draft_image(draft, "face_image", "Face reference")
-        bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
-        if bikini_path is not None:
-            bikini_still = paths["styled_bikini"]
-            bikini_caption = _caption_clothes_ref(str(bikini_path), {})
-            source_still = i2v_image
-
-            def dress_bikini(provider: str, model: str) -> None:
-                # Seedream follows the bikini photo + caption; x.ai keeps the old top's
-                # shape with two refs (and trips moderation), so it gets the caption only.
-                caption_only = provider == "xai" and bool(bikini_caption)
-                edit_photo_scratch_layer(
-                    provider=provider,
-                    image_model=model,
-                    prompt=(
-                        motion_source_bikini_prompt(bikini_caption)
-                        if caption_only
-                        else motion_source_style_prompt(
-                            with_bikini=True, with_face=False, bikini_caption=bikini_caption
-                        )
-                    ),
-                    out=bikini_still,
-                    source_image=source_still,
-                    bikini_image=None if caption_only else bikini_path,
-                    aspect_ratio="9:16",
-                )
-
-            _run_step1_style_edit("bikini dress-up", source_model, dress_bikini)
-            i2v_image = bikini_still
-        if face_path is not None:
-            face_still = paths["styled_face"]
-            face_base = i2v_image
-
-            def swap_face(provider: str, model: str) -> None:
-                swap_face_on_image(
-                    provider=provider,
-                    image_model=model,
-                    base_image=face_base,
-                    face_image=face_path,
-                    out=face_still,
-                    prompt=None,
-                    aspect_ratio="9:16",
-                )
-
-            _run_step1_style_edit("face swap", source_model, swap_face)
-            i2v_image = face_still
-        if i2v_image != image:
-            shutil.copy2(i2v_image, paths["styled_source"])
-            i2v_image = paths["styled_source"]
-        if theme_text:
-            # Image-to-video keeps busy source backdrops (city balcony, etc.). Bake the
-            # themed scenery into a still first, then animate that frame.
-            scenery_still = paths["scenery_source"]
-            print(
-                f"Theme scenery bake ({theme_text}) via {source_model} "
-                "before image-to-video — I2V alone rarely replaces outdoor/city BGs."
+        build_picture_still(
+            image=image,
+            theme_text=theme_text,
+            source_model=source_model,
+            ai_provider=ai_provider,
+            draft=draft,
+            paths=paths,
+            picture_prompt=picture_prompt.strip() or str(draft.get("picture_prompt") or ""),
+            picture_prompts=picture_prompts
+            if picture_prompts
+            else (
+                [str(item or "") for item in (draft.get("picture_prompts") or [])]
+                if isinstance(draft.get("picture_prompts"), list)
+                else []
+            ),
+            picture_variation_count=clamp_picture_variation_count(
+                picture_variation_count
+                if picture_variation_count is not None
+                else draft.get("picture_variation_count")
+            ),
+        )
+    elif step == "background":
+        if _source_image_newer_than_background(work, paths, image):
+            _clear_background_clip(paths)
+        if _picture_inputs_are_stale(work, paths, image):
+            raise RuntimeError(
+                "Source, bikini model, or face changed after the picture was created. "
+                "Remake Create picture and approve it before image-to-video."
             )
-            edit_image_scenery(
-                provider=ai_provider,
-                image_model=source_model,
-                image=i2v_image,
-                theme=theme_text,
-                out=scenery_still,
-            )
-            i2v_image = scenery_still
+        picture = paths["picture"]
+        motion_prompt = normalize_background_motion_prompt(background_motion_prompt)
         from backend.generation_models_store import model_label
 
         print(f"Background video: {model_label('background_video', bg_video_model)}")
+        print(f"Animating approved picture: {picture.name}")
         print("Motion prompt uses locked-camera framing (enhance when XAI_API_KEY is set).")
         image_to_video(
             provider=ai_provider,
-            image=i2v_image,
+            image=picture,
             prompt=motion_prompt,
             out=paths["background_raw"],
             model=model,
@@ -2770,6 +3047,14 @@ def run_video_flow_step(
         from backend.generation_models_store import model_label, resolve_spec
 
         print(f"Dress video: {model_label('dress_video', dress_model)}")
+        identity_still: Path | None = None
+        try:
+            identity_still = extract_video_still(
+                paths["background_raw"], work / "dress-identity.png"
+            )
+            print(f"Identity still for dress edit: {identity_still.name}")
+        except Exception as exc:
+            print(f"Could not extract identity still ({exc}); dress edit stays prompt-only.")
         reference = (dress_reference_image or "").strip()
         if reference:
             if resolve_spec("dress_video", dress_model).adapter == "prompt_video_edit":
@@ -2791,6 +3076,7 @@ def run_video_flow_step(
             prepare_compatible=True,
             enhance_system=DRESS_ENHANCE_SYSTEM,
             reference_image=reference or None,
+            identity_image=identity_still,
             dress_video_model=dress_model,
         )
         _sync_foreground_to_background(work, paths)
@@ -2900,7 +3186,8 @@ def run_video_flow_step(
     print(f"Step time: {step} finished in {time.time() - step_started:.1f}s")
 
     if step in REVIEW_STEPS:
-        print(f"Step complete: {step} — preview the clip in the dashboard, then continue.")
+        noun = "picture" if step == "picture" else "clip"
+        print(f"Step complete: {step} — preview the {noun} in the dashboard, then continue.")
     elif step == "mesh" and tracker == "all":
         print(f"Step complete: {step} — pick a mesh tracker in the dashboard.")
     else:
@@ -2945,5 +3232,11 @@ def video_flow(
     for step in STEP_ORDER:
         run_video_flow_step(step=step, **shared)
         if step in REVIEW_STEPS:
-            approve_flow_step(card_id, step)
+            approve_flow_step(
+                card_id,
+                step,
+                picture_choice=first_ready_picture_choice(work_dir(card_id))
+                if step == "picture"
+                else None,
+            )
     print(f"Video flow complete: card={card_id}")

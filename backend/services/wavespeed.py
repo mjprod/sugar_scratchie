@@ -370,11 +370,13 @@ def edit_image_scenery_seedream(
     out: Path,
     aspect_ratio: str = "9:16",
     endpoint: str | None = None,
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
-    from backend.services.grok import scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt
 
     payload = {
-        "prompt": scenery_edit_prompt(theme),
+        "prompt": resolve_scenery_prompt(theme, variation, prompt),
         "images": [media_url(image, "image/png")],
         "size": aspect_ratio_to_seedream_size(aspect_ratio),
         "output_format": "png",
@@ -392,11 +394,13 @@ def edit_image_scenery(
     theme: str,
     out: Path,
     aspect_ratio: str = "9:16",
+    variation: str = "",
+    prompt: str = "",
 ) -> Path:
-    from backend.services.grok import scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt
 
     payload = {
-        "prompt": scenery_edit_prompt(theme),
+        "prompt": resolve_scenery_prompt(theme, variation, prompt),
         "image": media_url(image, "image/png"),
         "aspect_ratio": aspect_ratio,
         "resolution": "2k",
@@ -579,11 +583,18 @@ def edit_video_wan22(
     finish_video_job(request_id, out, label=label)
 
 
-def _reference_image_urls(reference_image: str | Path | None) -> list[str]:
-    reference_str = str(reference_image).strip() if reference_image is not None else ""
-    if not reference_str:
-        return []
-    return [media_url(reference_str, "image/png")]
+def _reference_image_urls(*images: str | Path | None) -> list[str]:
+    urls: list[str] = []
+    for image in images:
+        if image is None:
+            continue
+        if isinstance(image, (list, tuple)):
+            urls.extend(_reference_image_urls(*image))
+            continue
+        reference_str = str(image).strip()
+        if reference_str:
+            urls.append(media_url(reference_str, "image/png"))
+    return urls
 
 
 def edit_video_wan30(
@@ -593,6 +604,7 @@ def edit_video_wan30(
     out: Path,
     resolution: str = "720p",
     reference_image: str | Path | None = None,
+    reference_images: list[str | Path] | None = None,
     path: str | None = None,
     label: str = "wan-3.0 video edit",
 ) -> None:
@@ -612,7 +624,7 @@ def edit_video_wan30(
         "enable_prompt_expansion": False,
         "seed": -1,
     }
-    references = _reference_image_urls(reference_image)
+    references = _reference_image_urls(reference_images, reference_image)
     if references:
         payload["reference_images"] = references
     request_id = submit_video_job(
@@ -631,6 +643,7 @@ def edit_video_seedance2(
     out: Path,
     resolution: str = "720p",
     reference_image: str | Path | None = None,
+    reference_images: list[str | Path] | None = None,
     path: str | None = None,
     label: str = "seedance-2.0 video edit",
 ) -> None:
@@ -648,7 +661,7 @@ def edit_video_seedance2(
         "generate_audio": False,
         "enable_web_search": False,
     }
-    references = _reference_image_urls(reference_image)
+    references = _reference_image_urls(reference_images, reference_image)
     if references:
         payload["reference_images"] = references
     request_id = submit_video_job(

@@ -1,5 +1,6 @@
 export type FlowNodeId =
   | "source"
+  | "picture"
   | "background"
   | "trim"
   | "dress"
@@ -13,6 +14,7 @@ export type FlowNodeId =
 export type FlowNodeKind = "input" | "grok" | "process" | "output";
 
 export type VideoFlowStepKey =
+  | "picture"
   | "background"
   | "trim"
   | "dress"
@@ -73,9 +75,81 @@ export function normalizeTheme(theme: string | undefined | null): string {
   return stripped || DEFAULT_THEME;
 }
 
+/** Stock Create-picture prompt. Matches backend scenery_edit_prompt without the per-take lighting line. */
+export function picturePromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, or reframe. Only change the background scenery.`;
+}
+
+export const PICTURE_TAKE_LIGHTING = [
+  "bright open daylight and vivid colors",
+  "golden-hour side light and warmer tones",
+  "soft diffused light with richer background detail",
+] as const;
+
+export type PictureTake = 1 | 2 | 3;
+export type PictureVariationCount = PictureTake;
+
+export function pictureVariationCountOf(value: unknown): PictureVariationCount {
+  const count = Number(value);
+  if (count === 1 || count === 2 || count === 3) return count;
+  return 3;
+}
+export type PicturePrompts = [string, string, string];
+
+export function picturePromptForTake(theme: string, take: PictureTake): string {
+  return `${picturePromptForTheme(theme)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+}
+
+export function defaultPicturePrompts(theme: string): PicturePrompts {
+  return [1, 2, 3].map((take) => picturePromptForTake(theme, take as PictureTake)) as PicturePrompts;
+}
+
+export function isStockPictureTakePrompt(prompt: string, theme: string, take: PictureTake): boolean {
+  const stripped = prompt.trim();
+  if (!stripped) return true;
+  const scenery = normalizeTheme(theme);
+  return (
+    stripped === picturePromptForTake(scenery, take) ||
+    stripped === picturePromptForTake(DEFAULT_THEME, take) ||
+    stripped === picturePromptForTheme(scenery) ||
+    stripped === picturePromptForTheme(DEFAULT_THEME)
+  );
+}
+
+export function isStockPicturePromptText(prompt: string, theme: string): boolean {
+  const stripped = prompt.trim();
+  if (!stripped) return true;
+  return ([1, 2, 3] as const).some((take) => isStockPictureTakePrompt(stripped, theme, take));
+}
+
+/** Turn a saved list, or one older shared prompt, into the three take prompts. */
+export function normalizePicturePrompts(
+  prompts: readonly string[] | undefined,
+  theme: string,
+  shared?: string,
+): PicturePrompts {
+  const defaults = defaultPicturePrompts(theme);
+  const incoming = (prompts ?? []).slice(0, 3).map((item) => (item ?? "").trim());
+  const hasTake = incoming.some(Boolean);
+  if (!hasTake && shared?.trim()) {
+    const base = shared.trim();
+    return [1, 2, 3].map((take) => {
+      const index = take as PictureTake;
+      if (isStockPictureTakePrompt(base, theme, index)) return defaults[take - 1];
+      if (base.includes("Lighting for this take:")) return base;
+      return `${base} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+    }) as PicturePrompts;
+  }
+  return [1, 2, 3].map((take) => {
+    const text = incoming[take - 1] ?? "";
+    return isStockPictureTakePrompt(text, theme, take as PictureTake) ? defaults[take - 1] : text;
+  }) as PicturePrompts;
+}
+
 export function backgroundMotionPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene and matching lighting. Do not keep the original backdrop. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Keep her face, identity, hair, and skin tone identical in every frame — same undertone, same lightness, no tan/pale flicker, no color grading shifts on skin. Perfect loop, ${scenery} scenery throughout.`;
+  return `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation stay identical to the input portrait in every frame, including the loop back. Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the new scene. Scene light stays in the background only. Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene. Do not keep the original backdrop. Do not change her lighting to match that scene. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Perfect loop, ${scenery} scenery throughout, with her colors frozen to the input still.`;
 }
 
 /** Pre-any-bg stock: only asked to replace blank/studio backdrops. */
@@ -92,13 +166,13 @@ export function legacySoftBackgroundMotionPromptForTheme(theme: string): string 
 
 export function dressPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Replace her entire bikini with a sexy glamorous ${scenery} costume (complete top and bottom — unmistakably ${scenery}; if this is a role or profession, dress her in that ${scenery} uniform/outfit). Do not leave any bikini. Do not use a generic emerald evening gown or unrelated fashion dress. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+  return `Same woman, clothes only — she must stay the exact same person as the input video in every frame. Do not recast, beautify, or replace her. FACE LOCK: same eyes, nose, lips, jaw, makeup, and expression. HAIR LOCK: same hair color, length, style, and parting, fully visible — do not darken, lighten, or recolor her hair, and do not add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides or replaces her hair. SKIN LOCK: same undertone and lightness in every frame — no tan, no pale, no flicker. BODY LOCK: same pose, hands, arms, and motion. Replace her entire bikini with a sexy glamorous ${scenery} costume worn on this same woman (complete opaque top and bottom — unmistakably ${scenery}; if this is a role or profession, use that uniform as clothing only, not a new character). Do not leave any bikini. Do not use a generic emerald evening gown or unrelated fashion dress. Jewelry and trim may sit on the body, but nothing may cover her face or replace her hair. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame. No zoom or camera move.`;
 }
 
 /** Prefer this when a dress reference image is attached. */
 export function dressPromptForThemeWithReference(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `Match the dress reference image outfit exactly (colors, cut, accessories, materials, glow). Replace her entire bikini with that full costume (complete top and bottom). Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. Keep her face, identity, hair, and skin tone identical in every frame (same undertone and lightness — no tan/pale flicker). No zoom or camera move.`;
+  return `Same woman, clothes only — she must stay the exact same person as the input video in every frame. Do not recast, beautify, or replace her. FACE LOCK: same eyes, nose, lips, jaw, makeup, and expression. HAIR LOCK: same hair color, length, style, and parting, fully visible — do not darken, lighten, or recolor her hair, and do not add a wig, hood, headdress, veil, nemes, crown, or any head covering that hides or replaces her hair. SKIN LOCK: same undertone and lightness in every frame — no tan, no pale, no flicker. BODY LOCK: same pose, hands, arms, and motion. Match the dress reference image outfit exactly (colors, cut, accessories, materials, glow) and wear it on this same woman. Replace her entire bikini with that full costume (complete opaque top and bottom). Copy the clothes only — do not copy the reference person's face, hair, or body. Keep the exact same ${scenery} background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame. No zoom or camera move.`;
 }
 
 /** Earlier stock dress prompt: emerald satin + theme only in the scenery clause. */
@@ -131,7 +205,15 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
   const stripped = prompt.trim();
   const scenery = normalizeTheme(theme);
   if (!stripped) return true;
+  if (stripped.startsWith("COLOR AND SKIN LOCK")) return true;
   if (stripped.endsWith("setting with matching lighting.")) return true;
+  // Previous stock: themed scenery plus "matching lighting", which recolored her skin.
+  if (
+    stripped.includes("Place her in a clearly recognizable ") &&
+    stripped.includes("completely replace ANY existing background")
+  ) {
+    return true;
+  }
   // Older hand-edits that only swapped "blank wall" → "background" are still stock themed templates.
   if (
     stripped.includes("Place her in a clearly recognizable ") &&
@@ -165,6 +247,7 @@ export function isStockDressPromptText(prompt: string, theme: string): boolean {
   }
   if (stripped.startsWith("Replace her entire bikini with a glamorous ")) return true;
   if (stripped.startsWith("Replace her entire bikini with a sexy glamorous ")) return true;
+  if (stripped.startsWith("Same woman, clothes only")) return true;
   if (stripped.startsWith("Match the dress reference image outfit exactly")) return true;
   return (
     stripped === legacyDressNoSkin ||
@@ -215,11 +298,21 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Bikini background from the source image, fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
+    "Create a themed still from the source image and approve it, then animate that picture. Fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
   version: 1,
-  pipeline: ["background", "trim", "dress", "boomerang", "card", "mesh", "symbols", "compress"],
-  reviewSteps: ["background", "trim", "dress", "boomerang"],
-  canvas: { width: 1820, height: 200 },
+  pipeline: [
+    "picture",
+    "background",
+    "trim",
+    "dress",
+    "boomerang",
+    "card",
+    "mesh",
+    "symbols",
+    "compress",
+  ],
+  reviewSteps: ["picture", "background", "trim", "dress", "boomerang"],
+  canvas: { width: 2020, height: 200 },
   nodes: [
     {
       id: "source",
@@ -235,12 +328,25 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "image", label: "image" }],
     },
     {
+      id: "picture",
+      kind: "grok",
+      title: "Create picture",
+      subtitle: "Pick one",
+      description:
+        "Choose 1, 2, or 3. Each picture has its own prompt. Pick one before image-to-video.",
+      x: 220,
+      y: 56,
+      step: "picture",
+      inputs: [{ id: "image", label: "image" }],
+      outputs: [{ id: "image", label: "picture" }],
+    },
+    {
       id: "background",
       kind: "grok",
       title: "Image to video",
       subtitle: "Bikini background",
-      description: "Master motion clip — beach / bikini reveal",
-      x: 220,
+      description: "Animate the approved picture — beach / bikini reveal",
+      x: 420,
       y: 56,
       step: "background",
       inputs: [{ id: "image", label: "image" }],
@@ -252,7 +358,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Fix frames",
       subtitle: "Delete white frames",
       description: "Drop near-white flash frames from the start/end of the bikini clip before dress-up",
-      x: 360,
+      x: 560,
       y: 56,
       step: "trim",
       inputs: [{ id: "video", label: "background" }],
@@ -264,7 +370,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Video edit",
       subtitle: "Foreground dress",
       description: "Dress edit on the approved background clip — same scenery, same frames",
-      x: 520,
+      x: 720,
       y: 56,
       step: "dress",
       inputs: [{ id: "video", label: "trimmed" }],
@@ -277,7 +383,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       subtitle: "Forward + reverse",
       description:
         "Play the first N seconds of both clips forward, then the same frames backwards — or keep them as-is",
-      x: 700,
+      x: 900,
       y: 56,
       step: "boomerang",
       inputs: [
@@ -292,7 +398,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Create card",
       subtitle: "public/cards/",
       description: "Publish the boomerang (or original) clips under public/cards/<id>/, or import both videos by hand",
-      x: 880,
+      x: 1080,
       y: 56,
       step: "card",
       inputs: [
@@ -307,7 +413,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Generate mesh",
       subtitle: "Garment tracking",
       description: "Track the foreground for garment-local scratching",
-      x: 1060,
+      x: 1260,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -319,7 +425,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Place symbols",
       subtitle: "12 mesh points",
       description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 1240,
+      x: 1440,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -331,7 +437,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Finalize",
       subtitle: "390∶672 delivery",
       description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
-      x: 1420,
+      x: 1620,
       y: 56,
       step: "compress",
       inputs: [
@@ -346,7 +452,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow output",
       subtitle: "Scratch card",
       description: "Playable card in the scratch prototype",
-      x: 1600,
+      x: 1800,
       y: 56,
       step: null,
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -354,7 +460,8 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     },
   ],
   wires: [
-    { from: "source", to: "background" },
+    { from: "source", to: "picture" },
+    { from: "picture", to: "background" },
     { from: "background", to: "trim" },
     { from: "trim", to: "dress" },
     { from: "trim", to: "boomerang" },
@@ -380,6 +487,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
 };
 
 const STEP_IDS = new Set<VideoFlowStepKey>([
+  "picture",
   "background",
   "trim",
   "dress",
@@ -391,6 +499,7 @@ const STEP_IDS = new Set<VideoFlowStepKey>([
 ]);
 const NODE_IDS = new Set<FlowNodeId>([
   "source",
+  "picture",
   "background",
   "trim",
   "dress",
@@ -419,6 +528,26 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     if (!nodes.some((node) => node?.id === "symbols")) {
       const symbolsNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "symbols");
       if (symbolsNode) nodes.push(symbolsNode);
+    }
+    changed = true;
+  }
+
+  if (!pipeline.includes("picture")) {
+    const backgroundIndex = pipeline.indexOf("background");
+    pipeline.splice(backgroundIndex >= 0 ? backgroundIndex : 0, 0, "picture");
+    if (!nodes.some((node) => node?.id === "picture")) {
+      const template = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "picture");
+      const sourceNode = nodes.find((node) => node?.id === "source");
+      const insertX = sourceNode ? sourceNode.x + 200 : (template?.x ?? 220);
+      nodes = nodes.map((node) =>
+        node && typeof node.x === "number" && node.x >= insertX ? { ...node, x: node.x + 200 } : node,
+      );
+      if (template) {
+        nodes.push({ ...template, x: insertX, y: sourceNode?.y ?? template.y });
+      }
+    }
+    if (!reviewSteps.includes("picture")) {
+      reviewSteps = ["picture", ...reviewSteps];
     }
     changed = true;
   }
@@ -466,6 +595,16 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     reviewSteps,
     wires: DEFAULT_VIDEO_FLOW_JSON.wires,
     description: DEFAULT_VIDEO_FLOW_JSON.description,
+    canvas: {
+      width: Math.max(
+        typeof flow.canvas?.width === "number" ? flow.canvas.width : 0,
+        DEFAULT_VIDEO_FLOW_JSON.canvas.width,
+      ),
+      height:
+        typeof flow.canvas?.height === "number"
+          ? flow.canvas.height
+          : DEFAULT_VIDEO_FLOW_JSON.canvas.height,
+    },
   });
 }
 
@@ -560,6 +699,9 @@ export function parseVideoFlowJson(raw: string): VideoFlowJson {
       return {
         ...node,
         description: def.description,
+        ...(node.id === "picture" && node.subtitle === "Theme still"
+          ? { subtitle: def.subtitle }
+          : {}),
       };
     }),
     wires: flow.wires as FlowWireDef[],

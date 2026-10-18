@@ -5,6 +5,10 @@ import {
   dressPromptForTheme,
   isStockBackgroundMotionPromptText,
   isStockDressPromptText,
+  normalizePicturePrompts,
+  pictureVariationCountOf,
+  type PicturePrompts,
+  type PictureVariationCount,
   normalizeTheme,
   parseCompressPreset,
   stringifyVideoFlowJson,
@@ -138,6 +142,8 @@ function normalizeStoredDressPrompt(prompt: string | undefined, theme: string): 
 export type StoredVideoFlowDraft = {
   image: string;
   theme: string;
+  picturePrompts: PicturePrompts;
+  pictureVariationCount: PictureVariationCount;
   backgroundMotionPrompt: string;
   foregroundMotionPrompt: string;
   dressPrompt: string;
@@ -169,12 +175,15 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredVideoFlowDraft>;
+    const parsed = JSON.parse(raw) as Partial<StoredVideoFlowDraft> & { picturePrompt?: string };
     if (!parsed.cardId && !parsed.image) return null;
     const theme = normalizeTheme(parsed.theme);
+    const rawPicturePrompts = Array.isArray(parsed.picturePrompts) ? parsed.picturePrompts : undefined;
     return {
       image: parsed.image ?? "",
       theme,
+      picturePrompts: normalizePicturePrompts(rawPicturePrompts, theme, parsed.picturePrompt),
+      pictureVariationCount: pictureVariationCountOf(parsed.pictureVariationCount),
       backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt, theme),
       foregroundMotionPrompt: normalizeStoredMotionPrompt(
         parsed.foregroundMotionPrompt || parsed.backgroundMotionPrompt,
@@ -254,6 +263,9 @@ export function readFlowJsonText(): string {
 export function storedDraftFromApi(draft?: {
   image?: string;
   theme?: string;
+  picture_prompt?: string;
+  picture_prompts?: string[];
+  picture_variation_count?: number;
   background_motion_prompt?: string;
   foreground_motion_prompt?: string;
   dress_prompt?: string;
@@ -282,6 +294,8 @@ export function storedDraftFromApi(draft?: {
   return {
     image: draft.image ?? "",
     theme,
+    picturePrompts: normalizePicturePrompts(draft.picture_prompts, theme, draft.picture_prompt),
+    pictureVariationCount: pictureVariationCountOf(draft.picture_variation_count),
     backgroundMotionPrompt: draft.background_motion_prompt ?? "",
     foregroundMotionPrompt: draft.foreground_motion_prompt ?? "",
     dressPrompt: normalizeStoredDressPrompt(draft.dress_prompt, theme),

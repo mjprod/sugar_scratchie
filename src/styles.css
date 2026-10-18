@@ -2084,6 +2084,25 @@ textarea:focus-visible {
   max-height: 160px;
 }
 
+.picture-pick-grid {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.picture-pick-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.picture-pick-card .dashboard-preview-media,
+.picture-pick-card .dashboard-preview-media-button {
+  aspect-ratio: 9 / 16;
+  max-height: 420px;
+}
+
 .dashboard-preview-media-button {
   background: none;
   border: 0;
@@ -2911,6 +2930,11 @@ textarea:focus-visible {
 
 .flow-review-panel {
   border-width: 2px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.flow-review-panel > * {
+  min-width: 0;
 }
 
 .flow-job-log {

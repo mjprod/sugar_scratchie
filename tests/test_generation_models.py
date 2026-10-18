@@ -176,11 +176,43 @@ def test_custom_dress_model_uses_seedance_payload(client, dashboard_headers, mon
     )
     assert called["path"] == "/bytedance/seedance-2.0-fast/video-edit"
     assert "@Image 1" in called["prompt"]
+    assert "IDENTITY LOCK — she must be the exact same woman" in called["prompt"]
+    assert called["prompt"].rstrip().endswith("Do not recast her as a different person.")
 
     client.delete(
         f"/api/generation-models/dress_video/{model_id}",
         headers=dashboard_headers,
     )
+
+
+def test_prompt_only_dress_edit_sends_identity_still_to_wan30(client, monkeypatch, tmp_path):
+    called: dict = {}
+
+    def fake_wan30(**kwargs):
+        called.update(kwargs)
+
+    def fail_wan22(**kwargs):
+        raise AssertionError(f"wan 2.2 should not run when an identity still is available: {kwargs}")
+
+    monkeypatch.setattr("backend.services.wavespeed.edit_video_wan30", fake_wan30)
+    monkeypatch.setattr("backend.services.wavespeed.edit_video_wan22", fail_wan22)
+    still = tmp_path / "still.png"
+    edit_video(
+        provider="wavespeed",
+        video=tmp_path / "in.mp4",
+        prompt="egypt costume",
+        out=tmp_path / "out.mp4",
+        model="grok-imagine-video",
+        resolution="720p",
+        video_field="video",
+        enhance=False,
+        prepare_compatible=False,
+        dress_video_model="wan-2.2-video-edit",
+        identity_image=still,
+    )
+    assert called["path"] == "/alibaba/wan-3.0/video-edit"
+    assert called["reference_images"] == [str(still)]
+    assert "Image 1 is a still of the exact woman in this video" in called["prompt"]
 
 
 def test_builtin_xai_edit_skips_live_check(client, dashboard_headers, monkeypatch):
