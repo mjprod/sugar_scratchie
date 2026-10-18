@@ -2676,6 +2676,14 @@ def picture_choice_paths(work: Path) -> list[Path]:
     return [picture_choice_path(work, index) for index in range(1, PICTURE_CHOICE_COUNT + 1)]
 
 
+def first_ready_picture_choice(work: Path) -> int | None:
+    """Lowest take that actually saved. CLI auto-approve uses this when take 1 failed."""
+    for index, path in enumerate(picture_choice_paths(work), start=1):
+        if _image_file_ready(path):
+            return index
+    return None
+
+
 def picture_preview_paths(work: Path, approved: list) -> list[str]:
     """Three takes while choosing; the copied winner after approval."""
     choices = [path for path in picture_choice_paths(work) if _image_file_ready(path)]
@@ -3217,6 +3225,8 @@ def video_flow(
             approve_flow_step(
                 card_id,
                 step,
-                picture_choice=1 if step == "picture" else None,
+                picture_choice=first_ready_picture_choice(work_dir(card_id))
+                if step == "picture"
+                else None,
             )
     print(f"Video flow complete: card={card_id}")

@@ -11,6 +11,7 @@ from backend.services.video_flow import (
     picture_take_prompts,
     WORK_DIR,
     approve_flow_step,
+    first_ready_picture_choice,
     flow_state,
     read_state,
     validate_step_enqueue,
@@ -93,6 +94,15 @@ def test_picture_choices_must_be_picked_before_video(card_id: str):
         f".tmp/video-flow/{card_id}/picture.png"
     ]
     assert approved["steps"]["background"]["status"] == "ready"
+
+
+def test_auto_approve_uses_the_first_picture_that_saved(card_id: str):
+    work = work_dir(card_id)
+    (work / "picture-2.png").write_bytes(b"two")
+    (work / "picture-3.png").write_bytes(b"three")
+    assert first_ready_picture_choice(work) == 2
+    approve_flow_step(card_id, "picture", picture_choice=first_ready_picture_choice(work))
+    assert (work / "picture.png").read_bytes() == b"two"
 
 
 def test_picture_file_is_reviewed_before_video(card_id: str):
