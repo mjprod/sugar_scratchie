@@ -51,7 +51,6 @@ import {
   type CompressPreset,
   type FlowNodeId,
   type PicturePrompts,
-  type PictureTake,
   type PictureVariationCount,
   type VideoFlowJson,
   type VideoFlowStepKey,
@@ -286,57 +285,33 @@ function pictureChoiceFromArtifact(path: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-const PICTURE_TAKE_OPTIONS = [
-  { value: "1", label: "1 · Bright daylight" },
-  { value: "2", label: "2 · Golden hour" },
-  { value: "3", label: "3 · Soft light" },
+const PICTURE_COUNT_OPTIONS = [
+  { value: "1", label: "1" },
+  { value: "2", label: "2" },
+  { value: "3", label: "3" },
 ] as const;
 
-const PICTURE_VARIATION_OPTIONS = [
-  { value: "1", label: "1 variation" },
-  { value: "2", label: "2 variations" },
-  { value: "3", label: "3 variations" },
-] as const;
-
-function PictureTakeEditor({
+function PicturePromptFields({
   prompts,
   onPromptsChange,
   variationCount,
   onVariationCountChange,
-  take,
-  onTakeChange,
-  artifacts,
-  onUse,
-  jobBusy,
-  showPreview,
 }: {
   prompts: PicturePrompts;
   onPromptsChange: (next: PicturePrompts) => void;
   variationCount: PictureVariationCount;
   onVariationCountChange: (count: PictureVariationCount) => void;
-  take: PictureTake;
-  onTakeChange: (take: PictureTake) => void;
-  artifacts: string[];
-  onUse?: (choice: number) => void;
-  jobBusy: boolean;
-  showPreview: boolean;
 }) {
-  const selectedTake = take > variationCount ? variationCount : take;
-  const artifact = artifacts.find((path) => pictureChoiceFromArtifact(path) === selectedTake);
   return (
     <Flex direction="column" gap="3">
-      <Field label="Variations">
+      <Field label="Pictures">
         <Select.Root
           value={String(variationCount)}
-          onValueChange={(value) => {
-            const count = Number(value) as PictureVariationCount;
-            onVariationCountChange(count);
-            if (selectedTake > count) onTakeChange(count);
-          }}
+          onValueChange={(value) => onVariationCountChange(Number(value) as PictureVariationCount)}
         >
           <Select.Trigger />
           <Select.Content>
-            {PICTURE_VARIATION_OPTIONS.map((option) => (
+            {PICTURE_COUNT_OPTIONS.map((option) => (
               <Select.Item key={option.value} value={option.value}>
                 {option.label}
               </Select.Item>
@@ -344,52 +319,55 @@ function PictureTakeEditor({
           </Select.Content>
         </Select.Root>
       </Field>
-      {variationCount > 1 ? (
-        <Field label="Picture">
-          <Select.Root
-            value={String(selectedTake)}
-            onValueChange={(value) => onTakeChange(Number(value) as PictureTake)}
-          >
-            <Select.Trigger />
-            <Select.Content>
-              {PICTURE_TAKE_OPTIONS.slice(0, variationCount).map((option) => (
-                <Select.Item key={option.value} value={option.value}>
-                  {option.label}
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Root>
+      {Array.from({ length: variationCount }, (_, index) => (
+        <Field key={index} label={`Prompt ${index + 1}`}>
+          <TextArea
+            rows={6}
+            value={prompts[index] ?? ""}
+            onChange={(event) => {
+              const next = [...prompts] as PicturePrompts;
+              next[index] = event.currentTarget.value;
+              onPromptsChange(next);
+            }}
+          />
         </Field>
-      ) : null}
-      {showPreview ? (
-        artifact ? (
-          <div className="picture-take-preview">
-            <MediaPreview label={`Picture ${selectedTake}`} type="image" value={artifact} zoomable />
-          </div>
-        ) : (
-          <Text color="gray" size="2">
-            Picture {selectedTake} is not ready yet.
-          </Text>
-        )
-      ) : null}
-      {showPreview && artifact && onUse ? (
-        <Button disabled={jobBusy} type="button" onClick={() => onUse(selectedTake)}>
-          <Check {...iconProps} />
-          Use {selectedTake}
-        </Button>
-      ) : null}
-      <Field label={variationCount === 1 ? "Prompt" : `Prompt for picture ${selectedTake}`}>
-        <TextArea
-          rows={7}
-          value={prompts[selectedTake - 1] ?? ""}
-          onChange={(event) => {
-            const next = [...prompts] as PicturePrompts;
-            next[selectedTake - 1] = event.currentTarget.value;
-            onPromptsChange(next);
-          }}
-        />
-      </Field>
+      ))}
     </Flex>
+  );
+}
+
+function PicturePickGrid({
+  artifacts,
+  jobBusy,
+  onUse,
+}: {
+  artifacts: string[];
+  jobBusy: boolean;
+  onUse: (choice: number) => void;
+}) {
+  const choices = [1, 2, 3].filter((choice) =>
+    artifacts.some((path) => pictureChoiceFromArtifact(path) === choice),
+  );
+  if (!choices.length) return null;
+  return (
+    <div
+      className="picture-pick-grid"
+      style={{ gridTemplateColumns: `repeat(${choices.length}, minmax(0, 1fr))` }}
+    >
+      {choices.map((choice) => {
+        const artifact = artifacts.find((path) => pictureChoiceFromArtifact(path) === choice);
+        if (!artifact) return null;
+        return (
+          <div key={choice} className="picture-pick-card">
+            <MediaPreview label={`${choice}`} type="image" value={artifact} zoomable />
+            <Button disabled={jobBusy} type="button" onClick={() => onUse(choice)}>
+              <Check {...iconProps} />
+              Use {choice}
+            </Button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -3072,7 +3050,6 @@ export function RunMode(props: RunModeProps) {
   const [activeNode, setActiveNode] = useState<FlowNodeId>("source");
   const [flowState, setFlowState] = useState<VideoFlowState | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
-  const [pictureTake, setPictureTake] = useState<PictureTake>(1);
   const [manualBackground, setManualBackground] = useState("");
   const [manualForeground, setManualForeground] = useState("");
   const [importBusy, setImportBusy] = useState(false);
@@ -3810,30 +3787,28 @@ export function RunMode(props: RunModeProps) {
             <Callout.Root color="amber" className="flow-review-panel" mb="4">
               <Callout.Text weight="bold">
                 {actionStep === "picture"
-                  ? "Choose 1, 2, or 3 variations, then open each prompt."
+                  ? "Pick one picture."
                   : "Approve this clip before the next step runs."}
               </Callout.Text>
               <Flex direction="column" gap="3" mt="3">
                 {actionStep === "picture" ? (
-                  <PictureTakeEditor
-                    prompts={picturePrompts}
-                    onPromptsChange={onPicturePromptsChange}
-                    variationCount={pictureVariationCount}
-                    onVariationCountChange={onPictureVariationCountChange}
-                    take={pictureTake}
-                    onTakeChange={setPictureTake}
-                    artifacts={
-                      actionPreviewArtifacts.length > 0
-                        ? actionPreviewArtifacts
-                        : (flowState?.steps.picture?.artifacts ?? [])
-                    }
-                    onUse={(choice) => void approveStep("picture", undefined, choice)}
-                    jobBusy={jobBusy}
-                    showPreview={(actionPreviewArtifacts.length > 0
-                      ? actionPreviewArtifacts
-                      : (flowState?.steps.picture?.artifacts ?? [])
-                    ).some((artifact) => pictureChoiceFromArtifact(artifact) != null)}
-                  />
+                  <>
+                    <PicturePickGrid
+                      artifacts={
+                        actionPreviewArtifacts.length > 0
+                          ? actionPreviewArtifacts
+                          : (flowState?.steps.picture?.artifacts ?? [])
+                      }
+                      jobBusy={jobBusy}
+                      onUse={(choice) => void approveStep("picture", undefined, choice)}
+                    />
+                    <PicturePromptFields
+                      prompts={picturePrompts}
+                      onPromptsChange={onPicturePromptsChange}
+                      variationCount={pictureVariationCount}
+                      onVariationCountChange={onPictureVariationCountChange}
+                    />
+                  </>
                 ) : null}
                 {actionStep === "picture" &&
                 (actionPreviewArtifacts.length > 0
@@ -4248,20 +4223,14 @@ export function RunMode(props: RunModeProps) {
         {activeNode === "picture" ? (
           <Flex direction="column" gap="4">
             <Text color="gray" size="2">
-              Choose 1, 2, or 3 variations. With more than one, open each prompt from the picture
-              list. Image to video stays locked until you use one.
+              Choose 1, 2, or 3. Each picture has its own prompt below. Pick one after they are made.
             </Text>
             {flowState?.steps.picture?.status === "review" ? null : (
-              <PictureTakeEditor
+              <PicturePromptFields
                 prompts={picturePrompts}
                 onPromptsChange={onPicturePromptsChange}
                 variationCount={pictureVariationCount}
                 onVariationCountChange={onPictureVariationCountChange}
-                take={pictureTake}
-                onTakeChange={setPictureTake}
-                artifacts={flowState?.steps.picture?.artifacts ?? []}
-                jobBusy={jobBusy}
-                showPreview={false}
               />
             )}
             {flowState?.steps.picture?.status === "approved" &&

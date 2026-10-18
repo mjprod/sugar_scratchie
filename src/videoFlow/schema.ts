@@ -322,9 +322,9 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       id: "picture",
       kind: "grok",
       title: "Create picture",
-      subtitle: "Pick 1 of 3",
+      subtitle: "Pick one",
       description:
-        "Three themed stills from the source image. Pick one before image-to-video.",
+        "Choose 1, 2, or 3. Each picture has its own prompt. Pick one before image-to-video.",
       x: 220,
       y: 56,
       step: "picture",
