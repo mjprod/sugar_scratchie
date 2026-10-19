@@ -154,6 +154,7 @@ export function MaskEditor({
   const framesRef = useRef<TrackedMeshFrame[]>([]);
   const dimsRef = useRef({ cols: 0, rows: 0, width: 390, height: 672 });
   const brushRef = useRef({ mode: "add" as "add" | "erase", radius: 26 });
+  const eraseHoldRef = useRef({ holding: false, previous: "add" as "add" | "erase" });
   const drawingRef = useRef(false);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -185,8 +186,6 @@ export function MaskEditor({
   }, [brushRadius]);
 
   useEffect(() => {
-    let holdingErase = false;
-
     const editorVisible = () => {
       const root = rootRef.current;
       return root != null && root.getClientRects().length > 0;
@@ -196,17 +195,21 @@ export function MaskEditor({
       editorVisible() && !isTypingTarget(target) && !isTypingTarget(document.activeElement);
 
     const engageErase = () => {
-      if (holdingErase) return;
-      holdingErase = true;
+      const hold = eraseHoldRef.current;
+      if (hold.holding) return;
+      hold.previous = brushRef.current.mode;
+      if (hold.previous === "erase") return;
+      hold.holding = true;
       brushRef.current.mode = "erase";
       setBrushMode("erase");
     };
 
     const releaseErase = () => {
-      if (!holdingErase) return;
-      holdingErase = false;
-      brushRef.current.mode = "add";
-      setBrushMode("add");
+      const hold = eraseHoldRef.current;
+      if (!hold.holding) return;
+      hold.holding = false;
+      brushRef.current.mode = hold.previous;
+      setBrushMode(hold.previous);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -215,7 +218,7 @@ export function MaskEditor({
         engageErase();
         return;
       }
-      if (event.metaKey || holdingErase) releaseErase();
+      if (event.metaKey || eraseHoldRef.current.holding) releaseErase();
       if (!editorVisible() || isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
@@ -698,6 +701,16 @@ export function MaskEditor({
 
   zoomStepRef.current = (delta) => changeZoom(viewZoomRef.current + delta);
 
+  function selectBrushMode(mode: "add" | "erase") {
+    const hold = eraseHoldRef.current;
+    if (hold.holding) {
+      hold.previous = mode;
+      return;
+    }
+    brushRef.current.mode = mode;
+    setBrushMode(mode);
+  }
+
   const coveragePct = coverage.total > 0 ? Math.round((coverage.on / coverage.total) * 100) : 0;
 
   return (
@@ -740,14 +753,14 @@ export function MaskEditor({
             <Button
               color={brushMode === "add" ? "green" : "gray"}
               variant={brushMode === "add" ? "solid" : "soft"}
-              onClick={() => setBrushMode("add")}
+              onClick={() => selectBrushMode("add")}
             >
               Add
             </Button>
             <Button
               color={brushMode === "erase" ? "red" : "gray"}
               variant={brushMode === "erase" ? "solid" : "soft"}
-              onClick={() => setBrushMode("erase")}
+              onClick={() => selectBrushMode("erase")}
             >
               Erase
             </Button>
