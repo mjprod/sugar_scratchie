@@ -7,6 +7,14 @@ import { Field, iconProps, previewSource } from "./ui";
 const BRUSH_RADIUS_MIN = 8;
 const BRUSH_RADIUS_MAX = 80;
 const BRUSH_RADIUS_KEY_STEP = 2;
+const MASK_ZOOM_MIN = 1;
+const MASK_ZOOM_MAX = 4;
+const MASK_ZOOM_STEP = 0.5;
+
+function clampZoom(value: number) {
+  const stepped = Math.round(value * 100) / 100;
+  return Math.min(MASK_ZOOM_MAX, Math.max(MASK_ZOOM_MIN, stepped));
+}
 
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
@@ -58,6 +66,11 @@ function frameForTime(frames: TrackedMeshFrame[], time: number) {
   return Math.abs(previous.t - target) < Math.abs(current.t - target) ? previous : current;
 }
 
+function formatPlayhead(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0.0s";
+  return `${seconds.toFixed(1)}s`;
+}
+
 function coverFit(videoWidth: number, videoHeight: number, width: number, height: number) {
   const scale = Math.max(width / videoWidth, height / videoHeight);
   const drawWidth = videoWidth * scale;
@@ -96,6 +109,11 @@ export function MaskEditor({
 }: MaskEditorProps) {
   const stillMode = Boolean(imageSrc.trim());
   const rootRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const viewZoomRef = useRef(1);
+  const zoomPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pendingZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const zoomStepRef = useRef<(delta: number) => void>(() => {});
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -115,6 +133,10 @@ export function MaskEditor({
   const [brushMode, setBrushMode] = useState<"add" | "erase">("add");
   const [brushRadius, setBrushRadius] = useState(26);
   const [playing, setPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [viewZoom, setViewZoom] = useState(1);
+  const scrubbingRef = useRef(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [autoRunning, setAutoRunning] = useState(false);
 
@@ -148,6 +170,12 @@ export function MaskEditor({
         return;
       }
       if (event.ctrlKey || event.altKey) return;
+      if (event.key === "+" || event.key === "=" || event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        const zoomIn = event.key === "+" || event.key === "=";
+        zoomStepRef.current(zoomIn ? MASK_ZOOM_STEP : -MASK_ZOOM_STEP);
+        return;
+      }
       const smaller = event.key === "{" || event.key === "[";
       const larger = event.key === "}" || event.key === "]";
       if (!smaller && !larger) return;
@@ -174,6 +202,19 @@ export function MaskEditor({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
+  }, []);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      zoomPointerRef.current = { x: event.clientX, y: event.clientY };
+      zoomStepRef.current(event.deltaY < 0 ? MASK_ZOOM_STEP : -MASK_ZOOM_STEP);
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
   }, []);
 
   function recomputeCoverage() {
@@ -481,6 +522,51 @@ export function MaskEditor({
     }
   }
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || stillMode) return undefined;
+
+    const syncTime = () => {
+      if (!scrubbingRef.current) setPlayhead(video.currentTime || 0);
+    };
+    const syncDuration = () => {
+      const next = Number.isFinite(video.duration) ? video.duration : 0;
+      setDuration(next);
+      syncTime();
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+
+    video.addEventListener("timeupdate", syncTime);
+    video.addEventListener("seeked", syncTime);
+    video.addEventListener("loadedmetadata", syncDuration);
+    video.addEventListener("durationchange", syncDuration);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    syncDuration();
+
+    return () => {
+      video.removeEventListener("timeupdate", syncTime);
+      video.removeEventListener("seeked", syncTime);
+      video.removeEventListener("loadedmetadata", syncDuration);
+      video.removeEventListener("durationchange", syncDuration);
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+    };
+  }, [stillMode, videoSrc]);
+
+  function seek(seconds: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    const limit =
+      Number.isFinite(video.duration) && video.duration > 0
+        ? Math.max(0, video.duration - 0.001)
+        : Math.max(0, seconds);
+    const next = Math.min(limit, Math.max(0, seconds));
+    video.currentTime = next;
+    setPlayhead(next);
+  }
+
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
@@ -503,6 +589,40 @@ export function MaskEditor({
       Math.min((video.duration || 0) - 0.001, video.currentTime + deltaSeconds),
     );
   }
+
+  function changeZoom(next: number) {
+    const stage = stageRef.current;
+    const clamped = clampZoom(next);
+    const prev = viewZoomRef.current;
+    if (!stage || prev <= 0 || clamped === prev) {
+      viewZoomRef.current = clamped;
+      setViewZoom(clamped);
+      return;
+    }
+    const ratio = clamped / prev;
+    const scrollLeft = pendingZoomScrollRef.current?.left ?? stage.scrollLeft;
+    const scrollTop = pendingZoomScrollRef.current?.top ?? stage.scrollTop;
+    const rect = stage.getBoundingClientRect();
+    const pointer = zoomPointerRef.current;
+    const localX = pointer ? pointer.x - rect.left : stage.clientWidth / 2;
+    const localY = pointer ? pointer.y - rect.top : stage.clientHeight / 2;
+    const offsetX = Math.min(stage.clientWidth, Math.max(0, localX));
+    const offsetY = Math.min(stage.clientHeight, Math.max(0, localY));
+    const nextLeft = (scrollLeft + offsetX) * ratio - offsetX;
+    const nextTop = (scrollTop + offsetY) * ratio - offsetY;
+    pendingZoomScrollRef.current = { left: nextLeft, top: nextTop };
+    viewZoomRef.current = clamped;
+    setViewZoom(clamped);
+    requestAnimationFrame(() => {
+      const pending = pendingZoomScrollRef.current;
+      if (!pending || pending.left !== nextLeft || pending.top !== nextTop) return;
+      stage.scrollLeft = nextLeft;
+      stage.scrollTop = nextTop;
+      pendingZoomScrollRef.current = null;
+    });
+  }
+
+  zoomStepRef.current = (delta) => changeZoom(viewZoomRef.current + delta);
 
   const coveragePct = coverage.total > 0 ? Math.round((coverage.on / coverage.total) * 100) : 0;
 
@@ -648,47 +768,110 @@ export function MaskEditor({
       </Flex>
 
       <Flex direction="column" gap="3">
-        <Heading size="3">Canvas</Heading>
+        <Flex align="center" justify="between" gap="3">
+          <Heading size="3">Canvas</Heading>
+          <Flex align="center" gap="1">
+            <Button
+              color="gray"
+              disabled={viewZoom <= MASK_ZOOM_MIN}
+              onClick={() => changeZoom(viewZoom - MASK_ZOOM_STEP)}
+              size="1"
+              type="button"
+              variant="soft"
+            >
+              −
+            </Button>
+            <Text color="gray" size="1" style={{ fontVariantNumeric: "tabular-nums", minWidth: "3.2em", textAlign: "center" }}>
+              {Math.round(viewZoom * 100)}%
+            </Text>
+            <Button
+              color="gray"
+              disabled={viewZoom >= MASK_ZOOM_MAX}
+              onClick={() => changeZoom(viewZoom + MASK_ZOOM_STEP)}
+              size="1"
+              type="button"
+              variant="soft"
+            >
+              +
+            </Button>
+          </Flex>
+        </Flex>
         <Separator size="4" />
-        <Box className="mask-editor-stage">
-          {stillMode ? (
-            <img
-              ref={imageRef}
-              alt="Photo scratch layer"
-              className="mask-editor-video"
-              src={imageSrc}
+        <Box
+          className="mask-editor-stage"
+          ref={stageRef}
+          onPointerMove={(event) => {
+            zoomPointerRef.current = { x: event.clientX, y: event.clientY };
+          }}
+        >
+          <div className="mask-editor-zoom" style={{ width: `${viewZoom * 100}%` }}>
+            {stillMode ? (
+              <img
+                ref={imageRef}
+                alt="Photo scratch layer"
+                className="mask-editor-video"
+                src={imageSrc}
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                className="mask-editor-video"
+                loop
+                muted
+                playsInline
+                preload="auto"
+                src={videoSrc}
+              />
+            )}
+            <canvas
+              ref={canvasRef}
+              className="mask-editor-canvas"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                drawingRef.current = true;
+                paintAt(event.clientX, event.clientY);
+              }}
+              onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
+              onPointerUp={() => {
+                drawingRef.current = false;
+                recomputeCoverage();
+              }}
+              onPointerLeave={() => {
+                drawingRef.current = false;
+                cursorRef.current = null;
+                recomputeCoverage();
+              }}
             />
-          ) : (
-            <video
-              ref={videoRef}
-              className="mask-editor-video"
-              loop
-              muted
-              playsInline
-              preload="auto"
-              src={videoSrc}
-            />
-          )}
-          <canvas
-            ref={canvasRef}
-            className="mask-editor-canvas"
-            onPointerDown={(event) => {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              drawingRef.current = true;
-              paintAt(event.clientX, event.clientY);
-            }}
-            onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
-            onPointerUp={() => {
-              drawingRef.current = false;
-              recomputeCoverage();
-            }}
-            onPointerLeave={() => {
-              drawingRef.current = false;
-              cursorRef.current = null;
-              recomputeCoverage();
-            }}
-          />
+          </div>
         </Box>
+        {stillMode ? null : (
+          <Flex align="center" className="mask-editor-seek" gap="2">
+            <input
+              aria-label="Seek"
+              className="mask-editor-seek-bar"
+              disabled={duration <= 0}
+              max={duration > 0.001 ? duration - 0.001 : 0}
+              min={0}
+              onChange={(event) => seek(Number(event.currentTarget.value))}
+              onLostPointerCapture={() => {
+                scrubbingRef.current = false;
+              }}
+              onPointerDown={(event) => {
+                scrubbingRef.current = true;
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerUp={() => {
+                scrubbingRef.current = false;
+              }}
+              step={0.01}
+              type="range"
+              value={Math.min(playhead, duration > 0.001 ? duration - 0.001 : 0)}
+            />
+            <Text color="gray" size="1" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatPlayhead(playhead)} / {formatPlayhead(duration)}
+            </Text>
+          </Flex>
+        )}
         <Text color="gray" size="1">
           Green cells are scratchable. Red are off. Backdrop is cover-fit so painting matches the
           live scratch area.

@@ -2188,9 +2188,14 @@ textarea:focus-visible {
   border-radius: 8px;
   margin-inline: auto;
   max-width: 100%;
-  overflow: hidden;
+  overflow: auto;
   position: relative;
   width: min(100%, calc(560px * 390 / 672));
+}
+
+.mask-editor-zoom {
+  aspect-ratio: 390 / 672;
+  position: relative;
 }
 
 .mask-editor-video {
@@ -2207,6 +2212,19 @@ textarea:focus-visible {
   inset: 0;
   position: absolute;
   touch-action: none;
+  width: 100%;
+}
+
+.mask-editor-seek {
+  margin-inline: auto;
+  width: min(100%, calc(560px * 390 / 672));
+}
+
+.mask-editor-seek-bar {
+  accent-color: #2563eb;
+  flex: 1;
+  height: 22px;
+  min-width: 0;
   width: 100%;
 }
 
