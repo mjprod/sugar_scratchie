@@ -118,8 +118,11 @@ def test_picture_choices_must_be_picked_before_video(card_id: str):
     approved = approve_flow_step(card_id, "picture", picture_choice=2)
     assert (work / "picture.png").read_bytes() == b"two"
     assert approved["steps"]["picture"]["status"] == "approved"
+    assert approved["picture_choice"] == 2
     assert approved["steps"]["picture"]["artifacts"] == [
-        f".tmp/video-flow/{card_id}/picture.png"
+        f".tmp/video-flow/{card_id}/picture-1.png",
+        f".tmp/video-flow/{card_id}/picture-2.png",
+        f".tmp/video-flow/{card_id}/picture-3.png",
     ]
     assert approved["steps"]["background"]["status"] == "ready"
 
@@ -131,6 +134,28 @@ def test_auto_approve_uses_the_first_picture_that_saved(card_id: str):
     assert first_ready_picture_choice(work) == 2
     approve_flow_step(card_id, "picture", picture_choice=first_ready_picture_choice(work))
     assert (work / "picture.png").read_bytes() == b"two"
+
+
+def test_switching_picture_keeps_every_take_and_unlocks_video(card_id: str):
+    work = work_dir(card_id)
+    (work / "picture-1.png").write_bytes(b"one")
+    (work / "picture-2.png").write_bytes(b"two")
+    (work / "picture-3.png").write_bytes(b"three")
+    approve_flow_step(card_id, "picture", picture_choice=1)
+    write_state(work, {"approved": ["picture", "background"]})
+    (work / "background-raw.mp4").write_bytes(b"clip")
+
+    switched = approve_flow_step(card_id, "picture", picture_choice=3)
+
+    assert (work / "picture.png").read_bytes() == b"three"
+    assert switched["picture_choice"] == 3
+    assert "background" not in switched["approved"]
+    assert switched["steps"]["picture"]["artifacts"] == [
+        f".tmp/video-flow/{card_id}/picture-1.png",
+        f".tmp/video-flow/{card_id}/picture-2.png",
+        f".tmp/video-flow/{card_id}/picture-3.png",
+    ]
+    assert not (work / "background-raw.mp4").exists()
 
 
 def test_picture_file_is_reviewed_before_video(card_id: str):
