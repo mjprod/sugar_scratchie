@@ -32,6 +32,20 @@ function wheelEventPixels(event: WheelEvent, pagePixels: number) {
   return wheelDeltaPixels(event.deltaY, event.deltaMode, pagePixels);
 }
 
+function wheelPanPixels(event: WheelEvent, stage: HTMLElement) {
+  let deltaX = event.deltaX;
+  let deltaY = event.deltaY;
+  // Some browsers leave Shift+wheel on deltaY and scroll horizontally themselves.
+  if (event.shiftKey && deltaX === 0) {
+    deltaX = deltaY;
+    deltaY = 0;
+  }
+  return {
+    x: wheelDeltaPixels(deltaX, event.deltaMode, stage.clientWidth),
+    y: wheelDeltaPixels(deltaY, event.deltaMode, stage.clientHeight),
+  };
+}
+
 function wheelZoomDelta(event: WheelEvent, pagePixels: number) {
   return -(wheelEventPixels(event, pagePixels) / MASK_ZOOM_WHEEL_PIXELS) * MASK_ZOOM_STEP;
 }
@@ -300,8 +314,9 @@ export function MaskEditor({
       event.preventDefault();
       const zoomGesture = (event.ctrlKey || event.metaKey) && event.deltaY !== 0;
       if (!zoomGesture) {
-        stage.scrollLeft += wheelDeltaPixels(event.deltaX, event.deltaMode, stage.clientWidth);
-        stage.scrollTop += wheelDeltaPixels(event.deltaY, event.deltaMode, stage.clientHeight);
+        const pan = wheelPanPixels(event, stage);
+        stage.scrollLeft += pan.x;
+        stage.scrollTop += pan.y;
         return;
       }
       zoomPointerRef.current = { x: event.clientX, y: event.clientY };
