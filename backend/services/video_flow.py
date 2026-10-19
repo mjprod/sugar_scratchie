@@ -2753,7 +2753,10 @@ def matching_picture_choice(work: Path) -> int | None:
             stat = path.stat()
         except OSError:
             continue
-        if stat.st_size == winner_stat.st_size and stat.st_mtime == winner_stat.st_mtime:
+        if (
+            stat.st_size == winner_stat.st_size
+            and stat.st_mtime_ns == winner_stat.st_mtime_ns
+        ):
             return index
     return None
 
