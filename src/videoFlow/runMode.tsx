@@ -147,6 +147,7 @@ type VideoFlowState = {
   boomerang?: BoomerangReport | null;
   timings?: FlowTimings | null;
   recovered_approvals?: boolean;
+  picture_choice?: number | null;
 };
 
 type BoomerangReport = {
@@ -4549,9 +4550,64 @@ export function RunMode(props: RunModeProps) {
               : [];
           const artifacts = fromState.length ? fromState : fallback;
           if (!artifacts.length) return null;
+          const pictureLabel = (artifact: string) => {
+            const choice = pictureChoiceFromArtifact(artifact);
+            if (choice == null) return artifact.split("/").pop() ?? "Result";
+            if (pictureCompareMode === "models") {
+              const modelId = pictureModels[choice - 1] || sourceImageModel;
+              const model = findGenerationModel(models, "source_image", modelId);
+              return model?.label || modelId || `Picture ${choice}`;
+            }
+            return `Prompt ${choice}`;
+          };
+          const pictureChoices =
+            activeStep === "picture"
+              ? artifacts.filter((artifact) => pictureChoiceFromArtifact(artifact) != null)
+              : [];
+          const otherArtifacts =
+            activeStep === "picture"
+              ? artifacts.filter((artifact) => pictureChoiceFromArtifact(artifact) == null)
+              : artifacts;
+          const preview = (artifact: string) => (
+            <MediaPreview
+              key={`${artifact}:${cardMediaRevision}`}
+              label={activeStep === "picture" ? pictureLabel(artifact) : (artifact.split("/").pop() ?? "Result")}
+              type={previewMediaType(artifact)}
+              value={artifact}
+              zoomable={previewMediaType(artifact) === "image"}
+              cacheBust={cardMediaRevision || flowState?.boomerang?.applied_at}
+              headerAction={
+                activeStep === "picture" && pictureChoiceFromArtifact(artifact) != null ? (
+                  <Button
+                    disabled={flowBusy || flowState?.picture_choice === pictureChoiceFromArtifact(artifact)}
+                    size="1"
+                    type="button"
+                    onClick={() => {
+                      const choice = pictureChoiceFromArtifact(artifact);
+                      if (choice) void approveStep("picture", undefined, choice);
+                    }}
+                  >
+                    <Check {...iconProps} />
+                    {flowState?.picture_choice === pictureChoiceFromArtifact(artifact)
+                      ? "In use"
+                      : "Use this picture"}
+                  </Button>
+                ) : null
+              }
+            />
+          );
           return (
             <Flex direction="column" gap="3" mt="3">
-              {artifacts.map((artifact) =>
+              {pictureChoices.length ? (
+                <div className="picture-pick-grid">
+                  {pictureChoices.map((artifact) => (
+                    <div className="picture-pick-card" key={artifact}>
+                      {preview(artifact)}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {otherArtifacts.map((artifact) =>
                 artifact.endsWith("compress-report.json") ? (
                   <Text key={artifact} size="2">
                     Delivery report: <Code className="dashboard-code">{artifact}</Code>
@@ -4561,43 +4617,7 @@ export function RunMode(props: RunModeProps) {
                     Mesh written to <Code className="dashboard-code">{artifact}</Code>
                   </Text>
                 ) : (
-                  <MediaPreview
-                    key={`${artifact}:${cardMediaRevision}`}
-                    label={
-                      activeStep === "picture"
-                        ? (() => {
-                            const choice = pictureChoiceFromArtifact(artifact);
-                            if (choice == null) return artifact.split("/").pop() ?? "Result";
-                            if (pictureCompareMode === "models") {
-                              const modelId = pictureModels[choice - 1] || sourceImageModel;
-                              const model = findGenerationModel(models, "source_image", modelId);
-                              return model?.label || modelId || `Picture ${choice}`;
-                            }
-                            return `Prompt ${choice}`;
-                          })()
-                        : (artifact.split("/").pop() ?? "Result")
-                    }
-                    type={previewMediaType(artifact)}
-                    value={artifact}
-                    zoomable={previewMediaType(artifact) === "image"}
-                    cacheBust={cardMediaRevision || flowState?.boomerang?.applied_at}
-                    headerAction={
-                      activeStep === "picture" && pictureChoiceFromArtifact(artifact) != null ? (
-                        <Button
-                          disabled={flowBusy}
-                          size="1"
-                          type="button"
-                          onClick={() => {
-                            const choice = pictureChoiceFromArtifact(artifact);
-                            if (choice) void approveStep("picture", undefined, choice);
-                          }}
-                        >
-                          <Check {...iconProps} />
-                          Use this picture
-                        </Button>
-                      ) : null
-                    }
-                  />
+                  preview(artifact)
                 ),
               )}
             </Flex>

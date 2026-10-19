@@ -768,8 +768,23 @@ def approve_flow_step(
         record_step_approved(work, step)
         write_state(work, state)
         return flow_state(card_id)
+    picture_switched = False
     if step == "picture":
+        previous_choice = matching_picture_choice(work)
         _publish_picture_choice(work, picture_choice, already_approved=step in state["approved"])
+        picture_switched = (
+            picture_choice is not None
+            and previous_choice is not None
+            and picture_choice != previous_choice
+        )
+        if picture_switched:
+            for downstream in downstream_steps("picture"):
+                if downstream == "picture":
+                    continue
+                if downstream in state["approved"]:
+                    state["approved"].remove(downstream)
+                clear_step_outputs(work, card_id, downstream)
+                clear_step_timing(work, downstream)
     if not step_artifact_ready(work, card_id, step, state):
         raise RuntimeError(f"Step '{step}' has no result to approve yet.")
     prev = STEP_DEPS[step]
@@ -798,6 +813,8 @@ def approve_flow_step(
             dressed = work / "foreground-dressed.mp4"
             dressed.unlink(missing_ok=True)
             request_id_sidecar(dressed).unlink(missing_ok=True)
+        write_state(work, state)
+    elif picture_switched:
         write_state(work, state)
     return flow_state(card_id)
 
@@ -1228,6 +1245,7 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
         "boomerang": read_boomerang_report(work),
         "timings": timings_summary(work),
         "recovered_approvals": recovered,
+        "picture_choice": matching_picture_choice(work),
     }
 
 
@@ -2719,16 +2737,35 @@ def first_ready_picture_choice(work: Path) -> int | None:
     return None
 
 
-def picture_preview_paths(work: Path, approved: list) -> list[str]:
-    """Three takes while choosing; the copied winner after approval."""
-    choices = [path for path in picture_choice_paths(work) if _image_file_ready(path)]
+def matching_picture_choice(work: Path) -> int | None:
+    """Which take was copied to picture.png. copy2 keeps size and mtime."""
     winner = work / "picture.png"
-    winner_ok = _image_file_ready(winner)
-    if "picture" in approved and winner_ok:
-        return [str(winner.relative_to(ROOT))]
+    if not _image_file_ready(winner):
+        return None
+    try:
+        winner_stat = winner.stat()
+    except OSError:
+        return None
+    for index, path in enumerate(picture_choice_paths(work), start=1):
+        if not _image_file_ready(path):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_size == winner_stat.st_size and stat.st_mtime == winner_stat.st_mtime:
+            return index
+    return None
+
+
+def picture_preview_paths(work: Path, approved: list) -> list[str]:
+    """Every saved take, including after one is chosen, so all models stay visible."""
+    del approved
+    choices = [path for path in picture_choice_paths(work) if _image_file_ready(path)]
     if choices:
         return [str(path.relative_to(ROOT)) for path in choices]
-    if winner_ok:
+    winner = work / "picture.png"
+    if _image_file_ready(winner):
         return [str(winner.relative_to(ROOT))]
     return []
 
