@@ -1341,6 +1341,27 @@ function photoNumber(slotId: string): string {
   return String(Number(num) || num);
 }
 
+function InfluencerPositionGuide() {
+  return (
+    <Flex align="start" gap="3">
+      <img
+        alt="Influencer position. Keep her head under the top band, centered, cropped around mid-thigh."
+        src="/guides/influencer-position.png"
+        style={{ width: 108, height: "auto", borderRadius: 8, flex: "0 0 auto", background: "#000" }}
+      />
+      <Box>
+        <Text as="div" size="2" weight="bold">
+          Influencer position
+        </Text>
+        <Text as="div" color="gray" size="1">
+          Motion cards and photo cards use this frame. Her head stays under the top band, she stands
+          centered, and the crop ends around mid-thigh. Pose and lighting can change. Position cannot.
+        </Text>
+      </Box>
+    </Flex>
+  );
+}
+
 type VariationDraft = {
   slotId: string;
   label: string;
@@ -2591,12 +2612,11 @@ function CardPhotosPanel({
             <Dialog.Description size="2" mb="3">
               Add, edit, or delete choices. Changes are saved when you leave a field.
             </Dialog.Description>
-            <Grid columns={{ initial: "1", md: "3" }} gap="3">
+            <Grid columns={{ initial: "1", md: "2" }} gap="3">
               {(
                 [
                   ["poses", "Poses"],
                   ["scenes", "Lighting"],
-                  ["placements", "Positions"],
                 ] as const
               ).map(([group, title]) => (
                 <Box key={group}>
@@ -2666,7 +2686,7 @@ function CardPhotosPanel({
                 Slots
               </Text>
               <Text as="div" color="gray" size="1">
-                Set pose, lighting, and position first. Generate uses this list.
+                Set pose and lighting first. Every photo uses the influencer position.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -2685,6 +2705,9 @@ function CardPhotosPanel({
               </Button>
             </Flex>
           </Flex>
+          <Box mb="3">
+            <InfluencerPositionGuide />
+          </Box>
           <Flex align="center" gap="2" mb="1">
             <Text size="1" style={{ width: 28 }} weight="bold">
               #
@@ -2697,9 +2720,6 @@ function CardPhotosPanel({
             </Text>
             <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
               Lighting
-            </Text>
-            <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
-              Position
             </Text>
           </Flex>
           <Flex direction="column" gap="1" mb="3">
@@ -2728,16 +2748,6 @@ function CardPhotosPanel({
                     options={catalog.scenes}
                     value={row.scene}
                     onChange={(next) => updateSlotConfig(row.slotId, "scene", next)}
-                  />
-                </Box>
-                <Box style={{ flex: "0 0 180px", minWidth: 0 }}>
-                  <VariationSelect
-                    compact
-                    fill
-                    label="Position"
-                    options={catalog.placements}
-                    value={row.placement}
-                    onChange={(next) => updateSlotConfig(row.slotId, "placement", next)}
                   />
                 </Box>
               </Flex>
@@ -4020,6 +4030,7 @@ export function RunMode(props: RunModeProps) {
 
         {activeNode === "source" ? (
           <Flex direction="column" gap="4">
+            <InfluencerPositionGuide />
             <Tabs.Root value={sourceMode} onValueChange={(value) => onSourceModeChange(value as SourceImageMode)}>
               <Tabs.List className="dashboard-tabs">
                 <Tabs.Trigger value="upload">Upload</Tabs.Trigger>

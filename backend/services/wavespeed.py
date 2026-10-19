@@ -12,6 +12,8 @@ from backend.services.grok import (
     DEFAULT_PORTRAIT_PROMPT,
     DRESS_ENHANCE_SYSTEM,
     FACE_GUIDED_PORTRAIT_PROMPT,
+    INFLUENCER_POSITION,
+    with_influencer_position,
     FACE_SWAP_PROMPT,
     POLL_INTERVAL_S,
     POLL_TIMEOUT_S,
@@ -56,8 +58,9 @@ SEEDREAM_FACE_SWAP_PROMPT = (
     "Keep body, pose, outfit, background, and lighting identical."
 )
 SEEDREAM_FACE_GUIDED_PORTRAIT_PROMPT = (
-    "Full-body portrait photo of the person from Figure 1, matching their face and identity. "
-    "Casual fitted resort wear, plain white studio background, facing camera, fashion editorial."
+    "Portrait photo of the person from Figure 1, matching their face and identity. "
+    "Casual fitted resort wear, plain white studio background, facing camera, fashion editorial. "
+    f"{INFLUENCER_POSITION}"
 )
 SEEDREAM_PROMPT_WITH_FACE_PREFIX = (
     "Full-body portrait photo of the person from Figure 1, matching their face and identity. "
@@ -270,6 +273,7 @@ def generate_portrait_image_seedream(
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
     endpoint: str | None = None,
+    lock_position: bool = False,
 ) -> Path:
     text = prompt.strip() or DEFAULT_PORTRAIT_PROMPT
     size = aspect_ratio_to_seedream_size(aspect_ratio)
@@ -280,6 +284,11 @@ def generate_portrait_image_seedream(
             if user_customized
             else SEEDREAM_FACE_GUIDED_PORTRAIT_PROMPT
         )
+    else:
+        final_prompt = text
+    if lock_position:
+        final_prompt = with_influencer_position(final_prompt)
+    if face_image:
         payload = {
             "prompt": final_prompt,
             "images": [media_url(face_image, "image/png")],
@@ -292,7 +301,7 @@ def generate_portrait_image_seedream(
         run_image_task(edit_path, payload, out, label="seedream portrait edit")
     else:
         payload = {
-            "prompt": text,
+            "prompt": final_prompt,
             "size": size,
             "output_format": "png",
             "enable_base64_output": False,
@@ -309,6 +318,7 @@ def generate_portrait_image(
     out: Path,
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    lock_position: bool = False,
 ) -> Path:
     text = prompt.strip() or DEFAULT_PORTRAIT_PROMPT
     if face_image:
@@ -316,6 +326,11 @@ def generate_portrait_image(
         final_prompt = (
             f"{PROMPT_WITH_FACE_PREFIX}{text}" if user_customized else FACE_GUIDED_PORTRAIT_PROMPT
         )
+    else:
+        final_prompt = text
+    if lock_position:
+        final_prompt = with_influencer_position(final_prompt)
+    if face_image:
         payload = {
             "prompt": final_prompt,
             "image": media_url(face_image, "image/png"),
@@ -327,7 +342,7 @@ def generate_portrait_image(
         run_image_task(IMAGE_EDIT_PATH, payload, out, label="portrait edit")
     else:
         payload = {
-            "prompt": text,
+            "prompt": final_prompt,
             "aspect_ratio": aspect_ratio,
             "resolution": "2k",
             "num_images": 1,

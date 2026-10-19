@@ -121,6 +121,7 @@ def generate_portrait_image(
     out: Path,
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    lock_position: bool = False,
 ) -> Path:
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
@@ -130,6 +131,7 @@ def generate_portrait_image(
             face_image=face_image,
             aspect_ratio=aspect_ratio,
             endpoint=_spec("source_image", image_model).endpoint_path,
+            lock_position=lock_position,
         )
     stored = _stored_xai_model("source_image", image_model)
     if route == "xai" and stored:
@@ -139,6 +141,7 @@ def generate_portrait_image(
             face_image=face_image,
             aspect_ratio=aspect_ratio,
             model=stored,
+            lock_position=lock_position,
         )
     return _with_xai_fallback(
         "portrait generation",
@@ -147,6 +150,7 @@ def generate_portrait_image(
             prompt=prompt,
             out=out,
             face_image=face_image,
+            lock_position=lock_position,
             aspect_ratio=aspect_ratio,
         ),
     )

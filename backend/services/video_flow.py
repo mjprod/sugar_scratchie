@@ -45,6 +45,7 @@ from backend.services.grok import (
     photo_scratch_clothes_prompt,
     photo_scratch_custom_locks_source_pose,
     photo_scratch_face_ref_clause,
+    photo_scratch_placement_clause,
     photo_scratch_prompt_with_background,
     extract_video_still,
     probe_video,
@@ -1509,6 +1510,7 @@ def run_generate_source_image(
             out=out,
             face_image=face_image or None,
             aspect_ratio=aspect_ratio,
+            lock_position=True,
         )
         patched = patch_flow_draft_source(
             card_id,
@@ -1904,7 +1906,7 @@ def run_generate_photo_scratch_layer(
                 elif custom and not photo_scratch_custom_locks_source_pose(custom):
                     final_prompt = (
                         f"{custom} Pose and framing for this card: {pose_hint}. "
-                        f"{placement_hint}"
+                        f"{photo_scratch_placement_clause(placement_hint)}"
                     )
                     if bikini_clause:
                         final_prompt = f"{final_prompt} {bikini_clause}"
