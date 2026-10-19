@@ -197,6 +197,19 @@ def test_reapproving_same_bytes_when_mtime_differs_keeps_video(card_id: str):
     assert (work / "background-raw.mp4").read_bytes() == b"clip"
 
 
+def test_video_ready_check_is_false_when_ffprobe_is_missing(tmp_path, monkeypatch):
+    from backend.services import grok
+
+    clip = tmp_path / "background-raw.mp4"
+    clip.write_bytes(b"clip")
+
+    def missing_ffprobe(*_args, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "ffprobe")
+
+    monkeypatch.setattr(grok.subprocess, "run", missing_ffprobe)
+    assert grok.output_video_ready(clip) is False
+
+
 def test_picture_file_is_reviewed_before_video(card_id: str):
     work = work_dir(card_id)
     (work / "picture.png").write_bytes(b"png")

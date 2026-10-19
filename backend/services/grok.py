@@ -518,11 +518,16 @@ def request_id_sidecar(out: Path) -> Path:
 
 
 def output_video_ready(path: Path) -> bool:
+    """True when ffprobe can read a video stream.
+
+    A missing ffprobe binary raises FileNotFoundError from subprocess, the same
+    way a corrupt file raises RuntimeError. Either means the clip is not ready.
+    """
     if not path.exists() or path.stat().st_size == 0:
         return False
     try:
         probe_video(path)
-    except RuntimeError:
+    except (RuntimeError, OSError):
         return False
     return True
 
