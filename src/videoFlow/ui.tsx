@@ -68,6 +68,7 @@ export function MediaPreview({
   zoomable = false,
   cacheBust,
   onDelete,
+  headerAction,
 }: {
   label: string;
   size?: "compact" | "normal";
@@ -76,6 +77,7 @@ export function MediaPreview({
   zoomable?: boolean;
   cacheBust?: string | number;
   onDelete?: () => void;
+  headerAction?: ReactNode;
 }) {
   const src = previewSource(value, cacheBust);
   const [hasError, setHasError] = useState(false);
@@ -123,6 +125,7 @@ export function MediaPreview({
             {label}
           </Text>
           <Flex align="center" gap="1">
+            {headerAction}
             {showZoom && !hasError ? (
               <Button
                 aria-label={`Zoom ${label}`}

@@ -1,6 +1,10 @@
 import {
   backgroundMotionPromptForTheme,
   DEFAULT_BACKGROUND_MOTION_PROMPT,
+  normalizePictureModels,
+  pictureCompareModeOf,
+  type PictureCompareMode,
+  type PictureModels,
   DEFAULT_VIDEO_FLOW_JSON,
   dressPromptForTheme,
   isStockBackgroundMotionPromptText,
@@ -41,15 +45,15 @@ export const BACKGROUND_VIDEO_MODELS: { id: string; label: string; wavespeed: bo
 ];
 
 export const DRESS_VIDEO_MODELS: { id: DressVideoModel; label: string; wavespeed: boolean }[] = [
+  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
   { id: "seedance-2.0-video-edit", label: "WaveSpeed ByteDance Seedance 2.0 Video Edit", wavespeed: true },
   { id: "wan-3.0-video-edit", label: "WaveSpeed Alibaba WAN 3.0 Video Edit", wavespeed: true },
   { id: "wan-2.2-video-edit", label: "WaveSpeed WAN 2.2 Video Edit", wavespeed: true },
-  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
 ];
 
 export const DEFAULT_SOURCE_IMAGE_PROVIDER: AiProvider = "wavespeed";
 export const DEFAULT_SOURCE_IMAGE_MODEL: SourceImageModel = "seedream-v5-lite";
-export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "wan-2.2-video-edit";
+export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "grok-imagine";
 
 export function isWavespeedDressVideoModel(model: DressVideoModel): boolean {
   return DRESS_VIDEO_MODELS.some((entry) => entry.id === model && entry.wavespeed);
@@ -149,6 +153,8 @@ export type StoredVideoFlowDraft = {
   theme: string;
   picturePrompts: PicturePrompts;
   pictureVariationCount: PictureVariationCount;
+  pictureCompareMode: PictureCompareMode;
+  pictureModels: PictureModels;
   backgroundMotionPrompt: string;
   foregroundMotionPrompt: string;
   dressPrompt: string;
@@ -189,6 +195,8 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
       theme,
       picturePrompts: normalizePicturePrompts(rawPicturePrompts, theme, parsed.picturePrompt),
       pictureVariationCount: pictureVariationCountOf(parsed.pictureVariationCount),
+      pictureCompareMode: pictureCompareModeOf(parsed.pictureCompareMode),
+      pictureModels: normalizePictureModels(parsed.pictureModels, parsed.sourceImageModel),
       backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt, theme),
       foregroundMotionPrompt: normalizeStoredMotionPrompt(
         parsed.foregroundMotionPrompt || parsed.backgroundMotionPrompt,
@@ -271,6 +279,8 @@ export function storedDraftFromApi(draft?: {
   picture_prompt?: string;
   picture_prompts?: string[];
   picture_variation_count?: number;
+  picture_compare_mode?: string;
+  picture_models?: string[];
   background_motion_prompt?: string;
   foreground_motion_prompt?: string;
   dress_prompt?: string;
@@ -300,6 +310,8 @@ export function storedDraftFromApi(draft?: {
     theme,
     picturePrompts: normalizePicturePrompts(draft.picture_prompts, theme, draft.picture_prompt),
     pictureVariationCount: pictureVariationCountOf(draft.picture_variation_count),
+    pictureCompareMode: pictureCompareModeOf(draft.picture_compare_mode),
+    pictureModels: normalizePictureModels(draft.picture_models, draft.source_image_model),
     backgroundMotionPrompt: draft.background_motion_prompt ?? "",
     foregroundMotionPrompt: draft.foreground_motion_prompt ?? "",
     dressPrompt: normalizeStoredDressPrompt(draft.dress_prompt, theme),

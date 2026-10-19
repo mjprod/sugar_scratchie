@@ -55,7 +55,7 @@ def normalize_background_video_model(model: str | None) -> BackgroundVideoModel:
 
 
 def normalize_dress_video_model(model: str | None) -> DressVideoModel:
-    return _accept("dress_video", model, default="wan-2.2-video-edit")
+    return _accept("dress_video", model, default="grok-imagine")
 
 
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
@@ -199,6 +199,43 @@ def swap_face_on_image(
     )
 
 
+def lock_setup_face(
+    *,
+    base_image: str | Path,
+    face_image: str | Path,
+    out: Path,
+    provider: AiProvider = "xai",
+    image_model: SourceImageModel = "grok-imagine",
+    aspect_ratio: str = "9:16",
+) -> Path:
+    """Hard identity lock for Setup face reference.
+
+    Prefer WaveSpeed's dedicated image-face-swap (face region only). Edit-based
+    Seedream/Grok swaps often transplant bangs/hair from selfie face refs and
+    look pasted-on — those stay as fallbacks only.
+    """
+    if os.environ.get("WAVESPEED_API_KEY"):
+        try:
+            print("Face lock via WaveSpeed image-face-swap …")
+            return wavespeed.swap_face_on_image(
+                base_image=base_image,
+                face_image=face_image,
+                out=out,
+                aspect_ratio=aspect_ratio,
+            )
+        except RuntimeError as exc:
+            print(f"WaveSpeed image-face-swap failed ({exc}); falling back to edit swap …")
+    return swap_face_on_image(
+        provider=provider,
+        image_model=image_model,
+        base_image=base_image,
+        face_image=face_image,
+        out=out,
+        prompt=None,
+        aspect_ratio=aspect_ratio,
+    )
+
+
 def edit_image_scenery(
     *,
     provider: AiProvider,
@@ -209,6 +246,7 @@ def edit_image_scenery(
     aspect_ratio: str = "9:16",
     variation: str = "",
     prompt: str = "",
+    face_image: str | Path | None = None,
 ) -> Path:
     """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
     route = source_image_route(provider, image_model)
@@ -221,6 +259,7 @@ def edit_image_scenery(
             endpoint=_spec("source_image", image_model).endpoint_path,
             variation=variation,
             prompt=prompt,
+            face_image=face_image,
         )
     stored = _stored_xai_model("source_image", image_model)
     if route == "xai" and stored:
@@ -232,6 +271,7 @@ def edit_image_scenery(
             model=stored,
             variation=variation,
             prompt=prompt,
+            face_image=face_image,
         )
     return _with_xai_fallback(
         "scenery edit",
@@ -243,6 +283,7 @@ def edit_image_scenery(
             aspect_ratio=aspect_ratio,
             variation=variation,
             prompt=prompt,
+            face_image=face_image,
         ),
     )
 
@@ -391,7 +432,7 @@ def image_to_video(
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
     elif enhance_motion_prompt and not xai_key_available():
         print("Motion prompt enhancement skipped — XAI_API_KEY not set; using locked-camera prompt as written.")
-    final_prompt = grok.append_motion_color_lock(final_prompt)
+    final_prompt = grok.append_motion_locks(final_prompt)
 
     spec = _spec("background_video", background_video_model)
     if spec.adapter == "wan_spicy_i2v":
@@ -449,7 +490,7 @@ def edit_video(
     reference_image: str | Path | None = None,
     identity_image: str | Path | None = None,
     reference_field: str = "image",
-    dress_video_model: DressVideoModel = "wan-2.2-video-edit",
+    dress_video_model: DressVideoModel = "grok-imagine",
 ) -> None:
     spec = _spec("dress_video", dress_video_model)
     native_reference_token = spec.reference_token or DRESS_REFERENCE_TOKENS.get(dress_video_model)
@@ -522,28 +563,23 @@ def edit_video(
             print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
         final_prompt = grok.append_dress_identity_lock(final_prompt)
         if identity_str:
-            # WAN 2.2 is prompt-only. It redrew her face on the Egypt edit, so send
-            # a still of her to WAN 3.0, which can condition on reference images.
+            # WAN 2.2 is prompt-only and recasts her face. WAN 3.0 can take the
+            # still, but that edit times out. Grok edits the clip itself.
             print(
                 "Prompt-only video edit recasts her face. "
-                "Using WAN 3.0 with a still of her as Image 1 so only the clothes change."
+                "Using Grok video edit so she stays the woman in the clip."
             )
-            images = [identity_str]
-            prefix = _identity_still_clause("Image 1")
-            if reference_str:
-                images.append(reference_str)
-                prefix += (
-                    " Image 2 is the outfit to copy — clothes only, "
-                    "not that person's face, hair, or body."
-                )
-            wavespeed.edit_video_wan30(
+            grok.edit_video(
                 video=video,
-                prompt=f"{prefix}\n\n{final_prompt}",
+                prompt=final_prompt,
                 out=out,
-                resolution=resolution or "720p",
-                reference_images=images,
-                path=wavespeed.WAN30_VIDEO_EDIT_PATH,
-                label="wan-3.0 video edit (identity still)",
+                model=model,
+                resolution=resolution,
+                video_field=video_field,
+                enhance=False,
+                prepare_compatible=prepare_compatible,
+                enhance_system=enhance_system,
+                reference_image=None,
             )
             return
         wavespeed.edit_video_wan22(

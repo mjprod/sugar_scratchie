@@ -18,6 +18,7 @@ from backend.services.ai_provider import (
     edit_video,
     generate_portrait_image,
     image_to_video,
+    lock_setup_face,
     normalize_background_video_model,
     normalize_dress_video_model,
     normalize_provider,
@@ -77,11 +78,11 @@ MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
 STEP1_STYLE_MODEL = "seedream-v5-lite"
 PICTURE_CHOICE_COUNT = 3
-# Same woman and framing; only background light changes so the three takes are distinct.
+# Same woman, framing, and even light on her body. Only the background light changes.
 PICTURE_SCENERY_VARIATIONS = (
-    "bright open daylight and vivid colors",
-    "golden-hour side light and warmer tones",
-    "soft diffused light with richer background detail",
+    "bright daylight in the background only",
+    "warm sunset color in the background only",
+    "soft overcast light in the background only",
 )
 
 
@@ -101,7 +102,7 @@ def picture_take_prompts(
     count: int | None = None,
 ) -> list[str]:
     """Exact text for each still. Empty slots fall back to the theme plus that take's lighting."""
-    from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt, with_body_light
 
     take_count = clamp_picture_variation_count(count)
     raw = [str(item or "").strip() for item in (picture_prompts or [])]
@@ -111,7 +112,7 @@ def picture_take_prompts(
     resolved: list[str] = []
     for text, hint in zip(raw[:take_count], PICTURE_SCENERY_VARIATIONS[:take_count], strict=True):
         if text:
-            resolved.append(text)
+            resolved.append(with_body_light(text))
         elif shared:
             resolved.append(resolve_scenery_prompt(theme, hint, shared))
         else:
@@ -1264,13 +1265,15 @@ def save_flow_draft(
     ai_provider: str = "xai",
     source_image_model: str = "grok-imagine",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
     picture_prompt: str | None = None,
     picture_prompts: list[str] | None = None,
     picture_variation_count: int | None = None,
+    picture_compare_mode: str | None = None,
+    picture_models: list[str] | None = None,
 ) -> dict:
     work = work_dir(card_id)
     existing = read_flow_draft(card_id) or {}
@@ -1288,6 +1291,22 @@ def save_flow_draft(
             return [str(item or "").strip() for item in existing_list][:PICTURE_CHOICE_COUNT]
         return []
 
+    def saved_picture_models() -> list[str]:
+        if picture_models is not None:
+            return [str(item or "").strip() for item in picture_models][:PICTURE_CHOICE_COUNT]
+        existing_list = existing.get("picture_models")
+        if isinstance(existing_list, list):
+            return [str(item or "").strip() for item in existing_list][:PICTURE_CHOICE_COUNT]
+        return []
+
+    def saved_picture_compare_mode() -> str:
+        raw = (
+            picture_compare_mode
+            if picture_compare_mode is not None
+            else existing.get("picture_compare_mode")
+        )
+        return "models" if str(raw or "").strip() == "models" else "prompts"
+
     draft = {
         "image": str(image),
         "theme": saved_theme,
@@ -1298,6 +1317,8 @@ def save_flow_draft(
             if picture_variation_count is not None
             else existing.get("picture_variation_count")
         ),
+        "picture_compare_mode": saved_picture_compare_mode(),
+        "picture_models": saved_picture_models(),
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -1564,13 +1585,12 @@ def _face_swap_photo_scratch_layer(
     tmp_out = layer_path.with_name(f"{layer_path.stem}_faceswap.png")
     try:
         print(f"Face swap: swapping Setup face onto {layer_path.name} …")
-        swap_face_on_image(
-            provider=provider,
-            image_model=image_model,
+        lock_setup_face(
             base_image=layer_path,
             face_image=face_path,
             out=tmp_out,
-            prompt=None,
+            provider=normalize_provider(provider),
+            image_model=normalize_source_image_model(image_model, provider=provider),
             aspect_ratio="9:16",
         )
         if not tmp_out.is_file():
@@ -1578,7 +1598,10 @@ def _face_swap_photo_scratch_layer(
         from PIL import Image
 
         rgb = Image.open(tmp_out).convert("RGB")
-        rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
+        if layer_path.suffix.lower() == ".png":
+            rgb.save(layer_path, format="PNG", optimize=True)
+        else:
+            rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
         print(f"Face swap applied: {layer_path.name}")
     except Exception as exc:
         raise RuntimeError(
@@ -2757,6 +2780,19 @@ def _write_picture_file(src: str | Path, dest: Path) -> None:
     raise RuntimeError(f"Source image not found: {src}")
 
 
+def _provider_for_source_image_model(image_model: str) -> str:
+    from backend.generation_models_store import resolve_spec
+
+    model = normalize_source_image_model(image_model)
+    try:
+        provider = str(resolve_spec("source_image", model).provider or "").strip().lower()
+    except Exception:
+        provider = ""
+    if provider == "wavespeed" or model == "seedream-v5-lite":
+        return "wavespeed"
+    return "xai"
+
+
 def build_picture_still(
     *,
     image: str | Path,
@@ -2774,6 +2810,14 @@ def build_picture_still(
     i2v_image: str | Path = image
     face_path = _optional_draft_image(draft, "face_image", "Face reference")
     bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
+    compare_mode = (
+        "models" if str(draft.get("picture_compare_mode") or "").strip() == "models" else "prompts"
+    )
+    picture_model_ids = [
+        str(item or "").strip()
+        for item in (draft.get("picture_models") or [])
+        if str(item or "").strip()
+    ]
     if bikini_path is not None:
         bikini_still = paths["styled_bikini"]
         bikini_caption = _caption_clothes_ref(str(bikini_path), {})
@@ -2803,20 +2847,15 @@ def build_picture_still(
         i2v_image = bikini_still
     if face_path is not None:
         face_still = paths["styled_face"]
-        face_base = i2v_image
-
-        def swap_face(provider: str, model: str) -> None:
-            swap_face_on_image(
-                provider=provider,
-                image_model=model,
-                base_image=face_base,
-                face_image=face_path,
-                out=face_still,
-                prompt=None,
-                aspect_ratio="9:16",
-            )
-
-        _run_step1_style_edit("face swap", source_model, swap_face)
+        print(f"Face swap: locking Setup face onto {Path(i2v_image).name} …")
+        lock_setup_face(
+            base_image=i2v_image,
+            face_image=face_path,
+            out=face_still,
+            provider=normalize_provider(ai_provider),
+            image_model=normalize_source_image_model(source_model, provider=ai_provider),
+            aspect_ratio="9:16",
+        )
         i2v_image = face_still
     if i2v_image != image:
         shutil.copy2(i2v_image, paths["styled_source"])
@@ -2831,6 +2870,9 @@ def build_picture_still(
         bake_theme,
         count=take_count,
     )
+    # Models mode: same prompt on every take; vary the image model instead.
+    if compare_mode == "models" and take_prompts:
+        take_prompts = [take_prompts[0]] * take_count
     paths["picture"].unlink(missing_ok=True)
     for extra in range(take_count + 1, PICTURE_CHOICE_COUNT + 1):
         picture_choice_path(work, extra).unlink(missing_ok=True)
@@ -2842,18 +2884,40 @@ def build_picture_still(
     ):
         dest = picture_choice_path(work, index)
         dest.unlink(missing_ok=True)
-        print(f"Picture {index}/{take_count} ({hint}) via {source_model}")
+        if compare_mode == "models":
+            take_model = normalize_source_image_model(
+                picture_model_ids[index - 1] if index - 1 < len(picture_model_ids) else source_model,
+                provider=ai_provider,
+            )
+            take_provider = _provider_for_source_image_model(take_model)
+        else:
+            take_model = source_model
+            take_provider = normalize_provider(ai_provider)
+        print(
+            f"Picture {index}/{take_count} ({hint}) via {take_provider}/{take_model}"
+            f"{' [models mode]' if compare_mode == 'models' else ''}"
+        )
         print(take_prompt)
         try:
             edit_image_scenery(
-                provider=ai_provider,
-                image_model=source_model,
+                provider=take_provider,
+                image_model=take_model,
                 image=i2v_image,
                 theme=bake_theme,
                 out=dest,
                 variation="",
                 prompt=take_prompt,
+                face_image=face_path,
             )
+            # Scenery edits drift identity; hard-lock Setup face onto each take
+            # the same way photo-scratch does after layer generation.
+            if face_path is not None:
+                _face_swap_photo_scratch_layer(
+                    dest,
+                    face_path,
+                    provider=take_provider,
+                    image_model=take_model,
+                )
         except RuntimeError as exc:
             print(f"Picture {index} failed: {exc}")
             errors.append(f"{index}: {exc}")
@@ -2891,13 +2955,15 @@ def run_video_flow_step(
     force: bool = False,
     provider: str = "xai",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
     picture_prompt: str = "",
     picture_prompts: list[str] | None = None,
     picture_variation_count: int | None = None,
+    picture_compare_mode: str | None = None,
+    picture_models: list[str] | None = None,
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -2940,6 +3006,8 @@ def run_video_flow_step(
         picture_prompt=picture_prompt,
         picture_prompts=picture_prompts,
         picture_variation_count=picture_variation_count,
+        picture_compare_mode=picture_compare_mode,
+        picture_models=picture_models,
     )
 
     # Re-read state in case approvals changed while the job was queued.

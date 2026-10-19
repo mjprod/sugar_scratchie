@@ -23,6 +23,10 @@ export function VideoFlowRunPage() {
     setPicturePrompts,
     pictureVariationCount,
     setPictureVariationCount,
+    pictureCompareMode,
+    setPictureCompareMode,
+    pictureModels,
+    setPictureModels,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,
@@ -44,20 +48,12 @@ export function VideoFlowRunPage() {
     setTracker,
     meshTune,
     setMeshTune,
-    sourceMode,
-    setSourceMode,
-    sourcePrompt,
-    setSourcePrompt,
     faceImage,
     setFaceImage,
     bikiniImage,
     setBikiniImage,
-    baseImage,
-    setBaseImage,
     aiProvider,
-    setAiProvider,
     sourceImageModel,
-    setSourceImageModel,
     backgroundVideoModel,
     setBackgroundVideoModel,
     dressVideoModel,
@@ -68,7 +64,6 @@ export function VideoFlowRunPage() {
     refreshJobs,
     refreshProjects,
     activeProjectId,
-    applyVideoFlowDraft,
   } = state;
 
   return (
@@ -119,6 +114,8 @@ export function VideoFlowRunPage() {
             theme={theme}
             picturePrompts={picturePrompts}
             pictureVariationCount={pictureVariationCount}
+            pictureCompareMode={pictureCompareMode}
+            pictureModels={pictureModels}
             backgroundMotionPrompt={backgroundMotionPrompt}
             dressPrompt={dressPrompt}
             dressReferenceImage={dressReferenceImage}
@@ -130,16 +127,15 @@ export function VideoFlowRunPage() {
             resolution={resolution}
             tracker={tracker}
             meshTune={meshTune}
-            sourceMode={sourceMode}
-            sourcePrompt={sourcePrompt}
             faceImage={faceImage}
             bikiniImage={bikiniImage}
-            baseImage={baseImage}
             onImageChange={setImage}
             onThemeChange={updateTheme}
             onApplyThemeToPrompts={applyThemeToPrompts}
             onPicturePromptsChange={setPicturePrompts}
             onPictureVariationCountChange={setPictureVariationCount}
+            onPictureCompareModeChange={setPictureCompareMode}
+            onPictureModelsChange={setPictureModels}
             onBackgroundMotionPromptChange={setBackgroundMotionPrompt}
             onDressPromptChange={setDressPrompt}
             onDressReferenceImageChange={setDressReferenceImage}
@@ -150,17 +146,11 @@ export function VideoFlowRunPage() {
             onTrackerChange={setTracker}
             onMeshTuneChange={setMeshTune}
             onResolutionChange={setResolution}
-            onSourceModeChange={setSourceMode}
-            onSourcePromptChange={setSourcePrompt}
             onFaceImageChange={setFaceImage}
             onBikiniImageChange={setBikiniImage}
-            onBaseImageChange={setBaseImage}
-            onAiProviderChange={setAiProvider}
-            onSourceImageModelChange={setSourceImageModel}
             onBackgroundVideoModelChange={setBackgroundVideoModel}
             onDressVideoModelChange={setDressVideoModel}
             onEnhancePromptChange={setEnhancePrompt}
-            onApplyDraft={applyVideoFlowDraft}
             onRefreshJobs={refreshJobs}
             onRefreshAssets={async () => undefined}
             onError={setError}

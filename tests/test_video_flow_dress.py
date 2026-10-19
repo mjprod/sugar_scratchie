@@ -27,12 +27,19 @@ def card_id() -> Generator[str, None, None]:
         ("alibaba/wan-3.0/video-edit", "wan-3.0-video-edit"),
         ("grok-imagine", "grok-imagine"),
         ("wan-2.2-video-edit", "wan-2.2-video-edit"),
-        (None, "wan-2.2-video-edit"),
-        ("unknown", "wan-2.2-video-edit"),
+        (None, "grok-imagine"),
+        ("unknown", "grok-imagine"),
     ],
 )
 def test_normalize_dress_video_model(raw: str | None, expected: str):
     assert normalize_dress_video_model(raw) == expected
+
+
+def test_dress_video_default_is_grok():
+    from backend.services.generation_models import default_spec
+
+    assert default_spec("dress_video").id == "grok-imagine"
+    assert normalize_dress_video_model(None) == "grok-imagine"
 
 
 def test_resolve_photo_scratch_media_strips_cache_bust(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

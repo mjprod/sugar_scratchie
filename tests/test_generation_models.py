@@ -7,6 +7,7 @@ from backend.services.ai_provider import (
     edit_video,
     generate_portrait_image,
     image_to_video,
+    lock_setup_face,
     normalize_background_video_model,
     normalize_dress_video_model,
     normalize_source_image_model,
@@ -185,16 +186,20 @@ def test_custom_dress_model_uses_seedance_payload(client, dashboard_headers, mon
     )
 
 
-def test_prompt_only_dress_edit_sends_identity_still_to_wan30(client, monkeypatch, tmp_path):
+def test_prompt_only_dress_edit_sends_identity_still_to_grok(client, monkeypatch, tmp_path):
     called: dict = {}
 
-    def fake_wan30(**kwargs):
+    def fake_grok(**kwargs):
         called.update(kwargs)
+
+    def fail_wan30(**kwargs):
+        raise AssertionError(f"wan 3.0 identity still should not run: {kwargs}")
 
     def fail_wan22(**kwargs):
         raise AssertionError(f"wan 2.2 should not run when an identity still is available: {kwargs}")
 
-    monkeypatch.setattr("backend.services.wavespeed.edit_video_wan30", fake_wan30)
+    monkeypatch.setattr("backend.services.grok.edit_video", fake_grok)
+    monkeypatch.setattr("backend.services.wavespeed.edit_video_wan30", fail_wan30)
     monkeypatch.setattr("backend.services.wavespeed.edit_video_wan22", fail_wan22)
     still = tmp_path / "still.png"
     edit_video(
@@ -210,9 +215,10 @@ def test_prompt_only_dress_edit_sends_identity_still_to_wan30(client, monkeypatc
         dress_video_model="wan-2.2-video-edit",
         identity_image=still,
     )
-    assert called["path"] == "/alibaba/wan-3.0/video-edit"
-    assert called["reference_images"] == [str(still)]
-    assert "Image 1 is a still of the exact woman in this video" in called["prompt"]
+    assert called["enhance"] is False
+    assert called["reference_image"] is None
+    assert "egypt costume" in called["prompt"]
+    assert "IDENTITY LOCK — she must be the exact same woman" in called["prompt"]
 
 
 def test_builtin_xai_edit_skips_live_check(client, dashboard_headers, monkeypatch):
@@ -509,3 +515,29 @@ def test_disabled_seedream_is_remapped(monkeypatch):
     assert normalize_source_image_model("grok-imagine", provider="seedream-v5-lite") == "grok-imagine"
     assert normalize_source_image_model("", provider="seedream-v5.0-lite") == "grok-imagine"
     assert normalize_source_image_model("grok-imagine") == "grok-imagine"
+
+
+def test_lock_setup_face_prefers_wavespeed_dedicated_swap(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_ws(**kwargs):
+        calls.append("wavespeed")
+        return kwargs["out"]
+
+    def fake_edit(**kwargs):
+        calls.append("edit")
+        return kwargs["out"]
+
+    monkeypatch.setenv("WAVESPEED_API_KEY", "ws")
+    monkeypatch.setattr("backend.services.wavespeed.swap_face_on_image", fake_ws)
+    monkeypatch.setattr("backend.services.ai_provider.swap_face_on_image", fake_edit)
+
+    out = tmp_path / "locked.png"
+    lock_setup_face(
+        base_image=tmp_path / "base.png",
+        face_image=tmp_path / "face.png",
+        out=out,
+        provider="xai",
+        image_model="grok-imagine",
+    )
+    assert calls == ["wavespeed"]

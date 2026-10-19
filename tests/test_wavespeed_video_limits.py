@@ -59,6 +59,33 @@ def test_seedance_rejects_clip_over_its_duration(
         )
 
 
+def test_video_poll_waits_past_the_ten_minute_image_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WAN 3.0 identity-still edits were dying at the 10-minute image poll."""
+    assert grok.VIDEO_POLL_TIMEOUT_S == 1800
+    assert wavespeed.VIDEO_POLL_TIMEOUT_S == 1800
+    out = tmp_path / "out.mp4"
+    ticks = iter([0.0, 700.0])
+    monkeypatch.setattr(wavespeed.time, "time", lambda: next(ticks))
+    monkeypatch.setattr(wavespeed.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(wavespeed, "api_key", lambda: "key")
+    monkeypatch.setattr(
+        wavespeed,
+        "api_get",
+        lambda _path, _key: {"status": "completed", "outputs": ["https://cdn.example/v.mp4"]},
+    )
+
+    def fake_download(url: str, dest: Path) -> None:
+        dest.write_bytes(b"mp4")
+        downloaded.append(url)
+
+    downloaded: list[str] = []
+    monkeypatch.setattr(wavespeed, "download_video", fake_download)
+    wavespeed.finish_video_job("req-1", out, label="wan-3.0 video edit (identity still)")
+    assert downloaded == ["https://cdn.example/v.mp4"]
+
+
 def test_grok_limits_unchanged(clip: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(grok, "probe_video", _fake_probe(720, 1280, 10.0))
 

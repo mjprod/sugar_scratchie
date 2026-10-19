@@ -15,8 +15,11 @@ from backend.services.grok import (
     INFLUENCER_POSITION,
     with_influencer_position,
     FACE_SWAP_PROMPT,
+    _scenery_prompt_with_face,
+    face_replace_prompt,
     POLL_INTERVAL_S,
     POLL_TIMEOUT_S,
+    VIDEO_POLL_TIMEOUT_S,
     PROMPT_WITH_FACE_PREFIX,
     API_MAX_RETRIES,
     API_RETRY_BASE_S,
@@ -53,10 +56,7 @@ WAN30_MAX_SHORT_SIDE = 1080
 SEEDANCE2_MAX_DURATION_S = 15.0
 SEEDANCE2_MAX_SHORT_SIDE = 2160
 
-SEEDREAM_FACE_SWAP_PROMPT = (
-    "Replace the face in Figure 1 with the face from Figure 2. "
-    "Keep body, pose, outfit, background, and lighting identical."
-)
+SEEDREAM_FACE_SWAP_PROMPT = face_replace_prompt(seedream=True)
 SEEDREAM_FACE_GUIDED_PORTRAIT_PROMPT = (
     "Portrait photo of the person from Figure 1, matching their face and identity. "
     "Casual fitted resort wear, plain white studio background, facing camera, fashion editorial. "
@@ -172,11 +172,17 @@ def submit_task(path: str, payload: dict, key: str, *, label: str) -> str:
     return str(request_id)
 
 
-def poll_task(request_id: str, key: str, *, label: str) -> list[str]:
+def poll_task(
+    request_id: str,
+    key: str,
+    *,
+    label: str,
+    timeout_s: float = POLL_TIMEOUT_S,
+) -> list[str]:
     print(f"WaveSpeed task {request_id} — polling ...")
     started = time.time()
     while True:
-        if time.time() - started > POLL_TIMEOUT_S:
+        if time.time() - started > timeout_s:
             raise RuntimeError(f"Timed out waiting for WaveSpeed {label}.")
         result = unwrap_data(api_get(POLL_PATH.format(request_id=request_id), key))
         status = result.get("status")
@@ -241,7 +247,7 @@ def finish_video_job(request_id: str, out: Path, *, label: str) -> None:
     if not request_id:
         return
     key = api_key()
-    urls = poll_task(request_id, key, label=label)
+    urls = poll_task(request_id, key, label=label, timeout_s=VIDEO_POLL_TIMEOUT_S)
     download_video(urls[0], out)
     request_id_sidecar(out).unlink(missing_ok=True)
 
@@ -387,12 +393,18 @@ def edit_image_scenery_seedream(
     endpoint: str | None = None,
     variation: str = "",
     prompt: str = "",
+    face_image: str | Path | None = None,
 ) -> Path:
     from backend.services.grok import resolve_scenery_prompt
 
+    text = resolve_scenery_prompt(theme, variation, prompt)
+    images = [media_url(image, "image/png")]
+    if face_image is not None:
+        text = _scenery_prompt_with_face(text, seedream=True)
+        images.append(media_url(face_image, "image/png"))
     payload = {
-        "prompt": resolve_scenery_prompt(theme, variation, prompt),
-        "images": [media_url(image, "image/png")],
+        "prompt": text,
+        "images": images,
         "size": aspect_ratio_to_seedream_size(aspect_ratio),
         "output_format": "png",
         "enable_base64_output": False,
@@ -411,11 +423,15 @@ def edit_image_scenery(
     aspect_ratio: str = "9:16",
     variation: str = "",
     prompt: str = "",
+    face_image: str | Path | None = None,
 ) -> Path:
     from backend.services.grok import resolve_scenery_prompt
 
+    text = resolve_scenery_prompt(theme, variation, prompt)
+    if face_image is not None:
+        text = _scenery_prompt_with_face(text, seedream=False)
     payload = {
-        "prompt": resolve_scenery_prompt(theme, variation, prompt),
+        "prompt": text,
         "image": media_url(image, "image/png"),
         "aspect_ratio": aspect_ratio,
         "resolution": "2k",

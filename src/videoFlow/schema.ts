@@ -89,8 +89,29 @@ export function normalizeTheme(theme: string | undefined | null): string {
   return stripped || DEFAULT_THEME;
 }
 
+/** Even light on her body. Scene light stays in the background so the still stays easy to use. */
+export const PICTURE_BODY_LIGHT =
+  "BODY LIGHT — simple, even, soft light on her body. Her skin, bikini, and hair stay brightly and evenly lit from the front. No hard shadows, no dark side of her body, no dramatic side light, and no rim light on her. Do not relight her body to match the background.";
+
 /** Stock Create-picture prompt. Matches backend scenery_edit_prompt without the per-take lighting line. */
 export function picturePromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. ${PICTURE_BODY_LIGHT} Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery.\n\n${INFLUENCER_POSITION}`;
+}
+
+/** Previous stock prompt. "Matching lighting" and side light put shadows on her body. */
+const LEGACY_SIDE_LIGHT_TAKES = [
+  "bright open daylight and vivid colors",
+  "golden-hour side light and warmer tones",
+  "soft diffused light with richer background detail",
+] as const;
+
+function legacySideLightPicturePrompt(theme: string, take: PictureTake): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery. Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.\n\n${INFLUENCER_POSITION}`;
+}
+
+function legacySideLightPicturePromptNoTake(theme: string): string {
   const scenery = normalizeTheme(theme);
   return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery.\n\n${INFLUENCER_POSITION}`;
 }
@@ -102,19 +123,43 @@ export function legacyPicturePromptForTheme(theme: string): string {
 }
 
 export const PICTURE_TAKE_LIGHTING = [
-  "bright open daylight and vivid colors",
-  "golden-hour side light and warmer tones",
-  "soft diffused light with richer background detail",
+  "bright daylight in the background only",
+  "warm sunset color in the background only",
+  "soft overcast light in the background only",
 ] as const;
 
 export type PictureTake = 1 | 2 | 3;
 export type PictureVariationCount = PictureTake;
+/** Compare scenery prompts on one model, or one prompt across image models. */
+export type PictureCompareMode = "prompts" | "models";
+export type PictureModels = [string, string, string];
+
+export const DEFAULT_PICTURE_MODELS: PictureModels = [
+  "grok-imagine",
+  "seedream-v5-lite",
+  "grok-imagine",
+];
 
 export function pictureVariationCountOf(value: unknown): PictureVariationCount {
   const count = Number(value);
   if (count === 1 || count === 2 || count === 3) return count;
   return 3;
 }
+
+export function pictureCompareModeOf(value: unknown): PictureCompareMode {
+  return value === "models" ? "models" : "prompts";
+}
+
+export function normalizePictureModels(value: unknown, fallbackModel = "grok-imagine"): PictureModels {
+  const defaults = DEFAULT_PICTURE_MODELS;
+  const raw = Array.isArray(value) ? value : [];
+  return [0, 1, 2].map((index) => {
+    const item = raw[index];
+    if (typeof item === "string" && item.trim()) return item.trim();
+    return defaults[index] || fallbackModel;
+  }) as PictureModels;
+}
+
 export type PicturePrompts = [string, string, string];
 
 export function picturePromptForTake(theme: string, take: PictureTake): string {
@@ -135,15 +180,23 @@ export function isStockPictureTakePrompt(prompt: string, theme: string, take: Pi
   const stripped = prompt.trim();
   if (!stripped) return true;
   const scenery = normalizeTheme(theme);
-  const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
-  const legacyDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.`;
+  const legacyDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.`;
+  const legacyNewTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const legacyNewDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
   return (
     stripped === picturePromptForTake(scenery, take) ||
     stripped === picturePromptForTake(DEFAULT_THEME, take) ||
     stripped === picturePromptForTheme(scenery) ||
     stripped === picturePromptForTheme(DEFAULT_THEME) ||
+    stripped === legacySideLightPicturePrompt(scenery, take) ||
+    stripped === legacySideLightPicturePrompt(DEFAULT_THEME, take) ||
+    stripped === legacySideLightPicturePromptNoTake(scenery) ||
+    stripped === legacySideLightPicturePromptNoTake(DEFAULT_THEME) ||
     stripped === legacyTake ||
     stripped === legacyDefaultTake ||
+    stripped === legacyNewTake ||
+    stripped === legacyNewDefaultTake ||
     stripped === legacyPicturePromptForTheme(scenery) ||
     stripped === legacyPicturePromptForTheme(DEFAULT_THEME)
   );
@@ -181,7 +234,22 @@ export function normalizePicturePrompts(
 
 export function backgroundMotionPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation stay identical to the input portrait in every frame, including the loop back. Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the new scene. Scene light stays in the background only. Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene. Do not keep the original backdrop. Do not change her lighting to match that scene. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Perfect loop, ${scenery} scenery throughout, with her colors frozen to the input still.`;
+  // Create picture already baked the themed still. I2V must only animate in place —
+  // restaging / "walk into the scene" makes WAN spicy walk and cast scene lights on her.
+  return (
+    `Animate this approved ${scenery} portrait into a seamless looping boomerang video. ` +
+    `The ${scenery} background is already correct in the input still — keep that exact backdrop. ` +
+    `Do not replace the scenery or restage her. ` +
+    `She wears a bikini. Tiny sway, breathing, and hair motion only — she must not walk at all. ` +
+    `STATION LOCK — feet glued to the floor in their exact input positions. Zero steps. ` +
+    `No walk cycle, no stride, no approach, no walking in place. Subject scale must not grow. ` +
+    `Locked camera: no zoom, dolly, push-in, or pull-back. Framing matches the input image exactly. ` +
+    `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation ` +
+    `stay identical to the input still in every frame, including the loop back. ` +
+    `Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the scene. ` +
+    `Background lights and glows stay in the scenery only and must not cast colored light onto her body. ` +
+    `Perfect loop.`
+  );
 }
 
 /** Pre-any-bg stock: only asked to replace blank/studio backdrops. */
@@ -238,6 +306,13 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
   const scenery = normalizeTheme(theme);
   if (!stripped) return true;
   if (stripped.startsWith("COLOR AND SKIN LOCK")) return true;
+  // Current stock: animate the Create-picture still in place (no restage / walk-in).
+  if (
+    stripped.includes("Animate this approved ") &&
+    stripped.includes("background is already correct")
+  ) {
+    return true;
+  }
   if (stripped.endsWith("setting with matching lighting.")) return true;
   // Previous stock: themed scenery plus "matching lighting", which recolored her skin.
   if (
