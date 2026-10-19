@@ -45,6 +45,7 @@ from backend.services.grok import (
     photo_scratch_clothes_prompt,
     photo_scratch_custom_locks_source_pose,
     photo_scratch_face_ref_clause,
+    photo_scratch_placement_clause,
     photo_scratch_prompt_with_background,
     extract_video_still,
     probe_video,
@@ -1509,6 +1510,7 @@ def run_generate_source_image(
             out=out,
             face_image=face_image or None,
             aspect_ratio=aspect_ratio,
+            lock_position=True,
         )
         patched = patch_flow_draft_source(
             card_id,
@@ -1545,24 +1547,23 @@ def run_generate_source_image(
     return patched
 
 
-def _face_lock_photo_scratch_layer(
+def _face_swap_photo_scratch_layer(
     layer_path: Path,
     face_path: Path,
     *,
     provider: str,
     image_model: str,
 ) -> None:
-    """Polish pass: swap the Setup face reference onto a generated layer, in place.
+    """Required face swap: swap the Setup face reference onto a generated layer, in place.
 
-    Reference images improve identity a lot but don't guarantee it — the swap does.
-    Fail-soft: any error keeps the generated image untouched. Disable with
-    PHOTO_SCRATCH_FACE_LOCK=0.
+    When a face reference is set in Setup, the swap must succeed — a soft identity
+    hint is not enough. Disable with PHOTO_SCRATCH_FACE_LOCK=0 (ops escape hatch).
     """
     if os.environ.get("PHOTO_SCRATCH_FACE_LOCK", "1").strip().lower() in ("0", "false", "no"):
         return
-    tmp_out = layer_path.with_name(f"{layer_path.stem}_facelock.png")
+    tmp_out = layer_path.with_name(f"{layer_path.stem}_faceswap.png")
     try:
-        print(f"Face-lock: swapping Setup face onto {layer_path.name} …")
+        print(f"Face swap: swapping Setup face onto {layer_path.name} …")
         swap_face_on_image(
             provider=provider,
             image_model=image_model,
@@ -1578,9 +1579,12 @@ def _face_lock_photo_scratch_layer(
 
         rgb = Image.open(tmp_out).convert("RGB")
         rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
-        print(f"Face-lock applied: {layer_path.name}")
+        print(f"Face swap applied: {layer_path.name}")
     except Exception as exc:
-        print(f"Face-lock failed (keeping generated image): {exc}")
+        raise RuntimeError(
+            f"Face swap failed for {layer_path.name}: {exc}. "
+            "Fix the face reference photo or clear it in Setup."
+        ) from exc
     finally:
         tmp_out.unlink(missing_ok=True)
 
@@ -1904,7 +1908,7 @@ def run_generate_photo_scratch_layer(
                 elif custom and not photo_scratch_custom_locks_source_pose(custom):
                     final_prompt = (
                         f"{custom} Pose and framing for this card: {pose_hint}. "
-                        f"{placement_hint}"
+                        f"{photo_scratch_placement_clause(placement_hint)}"
                     )
                     if bikini_clause:
                         final_prompt = f"{final_prompt} {bikini_clause}"
@@ -1942,7 +1946,7 @@ def run_generate_photo_scratch_layer(
                     aspect_ratio="9:16",
                 )
                 if face_path is not None:
-                    _face_lock_photo_scratch_layer(
+                    _face_swap_photo_scratch_layer(
                         out,
                         face_path,
                         provider=ai_provider,
@@ -1980,6 +1984,13 @@ def run_generate_photo_scratch_layer(
                     source_image=edit_src,
                     aspect_ratio="9:16",
                 )
+                if face_path is not None:
+                    _face_swap_photo_scratch_layer(
+                        out,
+                        face_path,
+                        provider=ai_provider,
+                        image_model=source_image_model,
+                    )
             else:  # background — empty scene plate only
                 base = (
                     photo_scratch_background_prompt_locked(custom)

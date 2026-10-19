@@ -1341,6 +1341,27 @@ function photoNumber(slotId: string): string {
   return String(Number(num) || num);
 }
 
+function InfluencerPositionGuide() {
+  return (
+    <Flex align="start" gap="3">
+      <img
+        alt="Influencer position. Keep her head under the top band, centered, cropped around mid-thigh."
+        src="/guides/influencer-position.png"
+        style={{ width: 108, height: "auto", borderRadius: 8, flex: "0 0 auto", background: "#000" }}
+      />
+      <Box>
+        <Text as="div" size="2" weight="bold">
+          Influencer position
+        </Text>
+        <Text as="div" color="gray" size="1">
+          Motion cards use this frame. Her head stays under the top band, she stands centered, and the
+          crop ends around mid-thigh. Photo cards keep their own pose and position options.
+        </Text>
+      </Box>
+    </Flex>
+  );
+}
+
 type VariationDraft = {
   slotId: string;
   label: string;
@@ -4020,6 +4041,7 @@ export function RunMode(props: RunModeProps) {
 
         {activeNode === "source" ? (
           <Flex direction="column" gap="4">
+            <InfluencerPositionGuide />
             <Tabs.Root value={sourceMode} onValueChange={(value) => onSourceModeChange(value as SourceImageMode)}>
               <Tabs.List className="dashboard-tabs">
                 <Tabs.Trigger value="upload">Upload</Tabs.Trigger>
@@ -4332,8 +4354,10 @@ export function RunMode(props: RunModeProps) {
 
         {!showStepLoading && activeNode === "picture" ? (
           <Flex direction="column" gap="4">
+            <InfluencerPositionGuide />
             <Text color="gray" size="2">
               Choose 1, 2, or 3. Each picture has its own prompt below. Pick one after they are made.
+              Every still keeps the influencer position.
             </Text>
             {flowState?.steps.picture?.status === "review" ? null : (
               <PicturePromptFields

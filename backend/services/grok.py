@@ -20,7 +20,28 @@ CHAT_PATH = "/v1/chat/completions"
 IMAGE_GENERATIONS_PATH = "/v1/images/generations"
 IMAGE_EDITS_PATH = "/v1/images/edits"
 
+# Card framing from public/guides/influencer-position.png.
+# Head stays under the top band; body is centered; crop ends around mid-thigh.
+INFLUENCER_POSITION = (
+    "INFLUENCER POSITION — required framing for this card. "
+    "Vertical 9:16. She stands centered and square to the camera, facing forward. "
+    "Arms stay relaxed at her sides, slightly away from her torso, unless the pose only moves her arms. "
+    "Leave a clear empty band across the top, about 8% of the frame: the top of her head sits "
+    "just under that band and must never enter it or be cropped. "
+    "Crop her around mid-thigh so about the bottom 20% of the frame shows only her upper legs. "
+    "Do not show her feet, do not pull back to a distant full-body shot, and do not zoom into "
+    "a face or chest close-up. "
+    "She fills the center, with a gap between her hands and both side edges. "
+    "Do not shift her left or right, closer or farther, and do not change camera height. "
+    "A different pose may move her arms only. Her head height, crop, and scale stay identical."
+)
+
 DEFAULT_PORTRAIT_PROMPT = (
+    "Portrait of a woman in casual fitted resort wear, plain white studio background, "
+    "facing camera, fashion editorial photo. "
+    f"{INFLUENCER_POSITION}"
+)
+LEGACY_LOOKBOOK_PORTRAIT_PROMPT = (
     "Medium full-body portrait of a woman in casual fitted resort wear, plain white studio "
     "background, facing camera, fashion editorial photo. Frame from head to mid-thigh so she "
     "fills most of the vertical frame — same camera distance as a standard fashion lookbook "
@@ -64,10 +85,9 @@ PROMPT_WITH_FACE_PREFIX = (
     "Full-body portrait photo of the person from <IMAGE_0>, matching their face and identity. "
 )
 FACE_GUIDED_PORTRAIT_PROMPT = (
-    "Medium full-body portrait photo of the person from <IMAGE_0>, matching their face and identity. "
+    "Portrait photo of the person from <IMAGE_0>, matching their face and identity. "
     "Casual fitted resort wear, plain white studio background, facing camera, fashion editorial. "
-    "Frame from head to mid-thigh so she fills most of the vertical frame — not a face close-up "
-    "and not a distant wide shot."
+    f"{INFLUENCER_POSITION}"
 )
 
 MAX_DURATION_S = 8.7
@@ -694,6 +714,17 @@ def _edit_image(
     return api_post(IMAGE_EDITS_PATH, payload, key)
 
 
+def with_influencer_position(prompt: str) -> str:
+    """Append the locked card framing unless this prompt is an empty scene plate."""
+    text = (prompt or "").strip()
+    if not text or "INFLUENCER POSITION" in text:
+        return text
+    lowered = text.lower()
+    if "no people" in lowered or "no faces" in lowered or "backdrop only" in lowered:
+        return text
+    return f"{text}\n\n{INFLUENCER_POSITION}"
+
+
 def generate_portrait_image(
     *,
     prompt: str,
@@ -701,6 +732,7 @@ def generate_portrait_image(
     face_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
     model: str | None = None,
+    lock_position: bool = False,
 ) -> Path:
     key = api_key()
     text = prompt.strip() or DEFAULT_PORTRAIT_PROMPT
@@ -709,6 +741,11 @@ def generate_portrait_image(
         final_prompt = (
             f"{PROMPT_WITH_FACE_PREFIX}{text}" if user_customized else FACE_GUIDED_PORTRAIT_PROMPT
         )
+    else:
+        final_prompt = text
+    if lock_position:
+        final_prompt = with_influencer_position(final_prompt)
+    if face_image:
         result = _edit_image(
             prompt=final_prompt,
             aspect_ratio=aspect_ratio,
@@ -717,7 +754,7 @@ def generate_portrait_image(
             model=model,
         )
     else:
-        result = _generate_image(prompt=text, aspect_ratio=aspect_ratio, key=key, model=model)
+        result = _generate_image(prompt=final_prompt, aspect_ratio=aspect_ratio, key=key, model=model)
     _save_image_response(result, out)
     return out
 
@@ -726,6 +763,7 @@ def is_stock_portrait_prompt(prompt: str) -> bool:
     stripped = prompt.strip()
     return not stripped or stripped in (
         DEFAULT_PORTRAIT_PROMPT,
+        LEGACY_LOOKBOOK_PORTRAIT_PROMPT,
         LEGACY_PORTRAIT_PROMPT,
         LEGACY_BIKINI_PORTRAIT_PROMPT,
     )
@@ -750,14 +788,15 @@ def normalize_background_motion_prompt(prompt: str) -> str:
 def scenery_edit_prompt(theme: str, variation: str = "") -> str:
     scenery = (theme or "").strip() or "warm beach"
     lighting = f" Lighting for this take: {variation.strip()}." if variation.strip() else ""
-    return (
+    text = (
         f"Replace the entire background behind the person with a vividly recognizable {scenery} "
         f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
         "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
         "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
-        "body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, "
-        f"or reframe. Only change the background scenery.{lighting}"
+        "body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, "
+        f"or reframe away from the influencer position. Only change the background scenery.{lighting}"
     )
+    return with_influencer_position(text)
 
 
 def resolve_scenery_prompt(theme: str, variation: str = "", prompt: str = "") -> str:
@@ -767,8 +806,8 @@ def resolve_scenery_prompt(theme: str, variation: str = "", prompt: str = "") ->
         return scenery_edit_prompt(theme, variation)
     hint = variation.strip()
     if hint and "Lighting for this take:" not in base:
-        return f"{base} Lighting for this take: {hint}."
-    return base
+        base = f"{base} Lighting for this take: {hint}."
+    return with_influencer_position(base)
 
 
 def motion_source_bikini_prompt(caption: str) -> str:
@@ -863,7 +902,7 @@ PHOTO_SCRATCH_SCENE_OPTIONS: list[tuple[str, str]] = [
     ("Neon accent", "vivid neon accent lighting"),
 ]
 
-# Where she stands in the 9:16 frame.
+# Where she stands in the 9:16 frame (photo cards only — motion cards use INFLUENCER_POSITION).
 PHOTO_SCRATCH_PLACEMENT_OPTIONS: list[tuple[str, str]] = [
     (
         "Center, full body",
@@ -990,7 +1029,13 @@ def photo_scratch_variation_catalog() -> dict[str, list[dict[str, str]]]:
     if path.is_file():
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-            return _validate_variation_catalog(loaded)
+            catalog = _validate_variation_catalog(loaded)
+            # Drop the brief motion-only lock if it was saved into the photo catalog.
+            if len(catalog["placements"]) == 1 and "Influencer position" in (
+                catalog["placements"][0].get("label") or ""
+            ):
+                catalog["placements"] = default_photo_scratch_variation_catalog()["placements"]
+            return catalog
         except (OSError, json.JSONDecodeError, ValueError):
             pass
     return default_photo_scratch_variation_catalog()

@@ -156,10 +156,12 @@ def test_bikini_prompt_uses_placement_instead_of_a_fixed_frame():
         placement="Place her on the left side of the frame, full body visible, with open scene on her right.",
     )
     assert "left side of the frame" in placed
+    assert "INFLUENCER POSITION" not in placed
     assert "head near the top third" not in placed
 
     locked = photo_scratch_bikini_prompt("Cowgirl", with_background=True)
     assert "head near the top third" in locked
+    assert "INFLUENCER POSITION" not in locked
 
     custom = photo_scratch_prompt_with_background(
         "Put her in the room.",
@@ -168,6 +170,7 @@ def test_bikini_prompt_uses_placement_instead_of_a_fixed_frame():
         placement="Place her on the right side of the frame, full body visible, with open scene on her left.",
     )
     assert "right side of the frame" in custom
+    assert "INFLUENCER POSITION" not in custom
     assert "hands clasped behind back" in custom
     assert "does not touch, lean on, sit on, or hold any furniture" in custom
 
@@ -314,3 +317,24 @@ def test_motion_source_style_prompt_keeps_pose_and_orders_refs():
     face_only = motion_source_style_prompt(with_bikini=False, with_face=True)
     assert "reference 2 = FACE" in face_only
     assert "Keep her swimsuit exactly as in reference 1" in face_only
+
+
+def test_face_swap_photo_scratch_layer_raises_on_failure(tmp_path, monkeypatch):
+    import backend.services.video_flow as video_flow
+
+    layer = tmp_path / "slot_bikini.jpg"
+    face = tmp_path / "face.png"
+    layer.write_bytes(b"fake")
+    face.write_bytes(b"fake")
+
+    def boom(**kwargs):
+        raise RuntimeError("provider rejected swap")
+
+    monkeypatch.setattr(video_flow, "swap_face_on_image", boom)
+    with pytest.raises(RuntimeError, match="Face swap failed"):
+        video_flow._face_swap_photo_scratch_layer(
+            layer,
+            face,
+            provider="xai",
+            image_model="grok-imagine",
+        )

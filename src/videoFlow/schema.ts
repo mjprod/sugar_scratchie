@@ -70,6 +70,20 @@ export const FLOW_NODE_HEIGHT = 88;
 
 export const DEFAULT_THEME = "warm beach";
 
+/** Locked card framing. Keep identical to backend/services/grok.py INFLUENCER_POSITION. */
+export const INFLUENCER_POSITION =
+  "INFLUENCER POSITION — required framing for this card. " +
+  "Vertical 9:16. She stands centered and square to the camera, facing forward. " +
+  "Arms stay relaxed at her sides, slightly away from her torso, unless the pose only moves her arms. " +
+  "Leave a clear empty band across the top, about 8% of the frame: the top of her head sits " +
+  "just under that band and must never enter it or be cropped. " +
+  "Crop her around mid-thigh so about the bottom 20% of the frame shows only her upper legs. " +
+  "Do not show her feet, do not pull back to a distant full-body shot, and do not zoom into " +
+  "a face or chest close-up. " +
+  "She fills the center, with a gap between her hands and both side edges. " +
+  "Do not shift her left or right, closer or farther, and do not change camera height. " +
+  "A different pose may move her arms only. Her head height, crop, and scale stay identical.";
+
 export function normalizeTheme(theme: string | undefined | null): string {
   const stripped = (theme ?? "").trim();
   return stripped || DEFAULT_THEME;
@@ -77,6 +91,12 @@ export function normalizeTheme(theme: string | undefined | null): string {
 
 /** Stock Create-picture prompt. Matches backend scenery_edit_prompt without the per-take lighting line. */
 export function picturePromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery.\n\n${INFLUENCER_POSITION}`;
+}
+
+/** Stock Create-picture prompt from before the influencer position lock. */
+export function legacyPicturePromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
   return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, framing, and subject scale exactly. Do not crop, zoom, or reframe. Only change the background scenery.`;
 }
@@ -98,7 +118,13 @@ export function pictureVariationCountOf(value: unknown): PictureVariationCount {
 export type PicturePrompts = [string, string, string];
 
 export function picturePromptForTake(theme: string, take: PictureTake): string {
-  return `${picturePromptForTheme(theme)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const scenery = picturePromptForTheme(theme);
+  const marker = `\n\n${INFLUENCER_POSITION}`;
+  const lighting = ` Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  if (scenery.endsWith(marker)) {
+    return `${scenery.slice(0, -marker.length)}${lighting}${marker}`;
+  }
+  return `${scenery}${lighting}`;
 }
 
 export function defaultPicturePrompts(theme: string): PicturePrompts {
@@ -109,11 +135,17 @@ export function isStockPictureTakePrompt(prompt: string, theme: string, take: Pi
   const stripped = prompt.trim();
   if (!stripped) return true;
   const scenery = normalizeTheme(theme);
+  const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const legacyDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
   return (
     stripped === picturePromptForTake(scenery, take) ||
     stripped === picturePromptForTake(DEFAULT_THEME, take) ||
     stripped === picturePromptForTheme(scenery) ||
-    stripped === picturePromptForTheme(DEFAULT_THEME)
+    stripped === picturePromptForTheme(DEFAULT_THEME) ||
+    stripped === legacyTake ||
+    stripped === legacyDefaultTake ||
+    stripped === legacyPicturePromptForTheme(scenery) ||
+    stripped === legacyPicturePromptForTheme(DEFAULT_THEME)
   );
 }
 
@@ -320,7 +352,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow input",
       subtitle: "Source image",
       description:
-        "Upload a still, generate a portrait from a prompt (optional face reference), or face-swap onto a body photo",
+        "Upload a source still, optional bikini model, and optional face reference (face-swapped onto every AI generation)",
       x: 20,
       y: 56,
       step: null,

@@ -5,6 +5,7 @@ import {
   dressPromptForTheme,
   isStockBackgroundMotionPromptText,
   isStockDressPromptText,
+  INFLUENCER_POSITION,
   normalizePicturePrompts,
   pictureVariationCountOf,
   type PicturePrompts,
@@ -104,8 +105,11 @@ export function parseSourceImageModel(value: unknown, legacyProvider?: unknown):
   return "grok-imagine";
 }
 
-export const DEFAULT_PORTRAIT_PROMPT =
+export const LEGACY_LOOKBOOK_PORTRAIT_PROMPT =
   "Medium full-body portrait of a woman in casual fitted resort wear, plain white studio background, facing camera, fashion editorial photo. Frame from head to mid-thigh so she fills most of the vertical frame — same camera distance as a standard fashion lookbook shot. Do not crop as a close-up face shot and do not pull back to a distant full-body wide shot with empty space.";
+
+export const DEFAULT_PORTRAIT_PROMPT =
+  `Portrait of a woman in casual fitted resort wear, plain white studio background, facing camera, fashion editorial photo. ${INFLUENCER_POSITION}`;
 
 export const LEGACY_PORTRAIT_PROMPT =
   "Full-body portrait of a woman in casual fitted resort wear, plain white studio background, facing camera, fashion editorial photo.";
@@ -118,6 +122,7 @@ export function isStockPortraitPrompt(prompt: string): boolean {
   return (
     !stripped ||
     stripped === DEFAULT_PORTRAIT_PROMPT ||
+    stripped === LEGACY_LOOKBOOK_PORTRAIT_PROMPT ||
     stripped === LEGACY_PORTRAIT_PROMPT ||
     stripped === LEGACY_BIKINI_PORTRAIT_PROMPT
   );
@@ -289,7 +294,6 @@ export function storedDraftFromApi(draft?: {
   dress_video_model?: string;
 }): StoredVideoFlowDraft | null {
   if (!draft?.card_id) return null;
-  const sourceMode = draft.source_mode;
   const theme = normalizeTheme(draft.theme);
   return {
     image: draft.image ?? "",
@@ -308,9 +312,10 @@ export function storedDraftFromApi(draft?: {
     resolution: draft.resolution ?? "720p",
     tracker: (draft.tracker as StoredVideoFlowDraft["tracker"]) ?? "all",
     meshTune: meshTuneFromApi(draft.mesh_tune),
+    // Clamp to known modes for backward compatibility.
     sourceMode:
-      sourceMode === "prompt" || sourceMode === "face_swap" || sourceMode === "upload"
-        ? sourceMode
+      draft.source_mode === "prompt" || draft.source_mode === "face_swap" || draft.source_mode === "upload"
+        ? (draft.source_mode as SourceImageMode)
         : "upload",
     sourcePrompt: draft.source_prompt ?? "",
     faceImage: draft.face_image ?? "",

@@ -3088,7 +3088,7 @@ function ModelDetail({
           </Box>
         </Flex>
 
-        <Flex gap="2" mb="3" wrap="wrap">
+        <Flex gap="2" mb={creatingCardFor === model.id ? "2" : "3"} wrap="wrap">
           {publishedCards.length > 0 ? (
             <Button asChild size="1">
               <a href={playAllHref(model.id)}>
@@ -3097,12 +3097,15 @@ function ModelDetail({
               </a>
             </Button>
           ) : null}
-          {creatingCardFor === model.id ? null : (
-            <Button disabled={busy} size="1" variant="soft" onClick={onOpenCreateCard}>
-              <Plus {...iconProps} />
-              New motion card
-            </Button>
-          )}
+          <Button
+            disabled={busy}
+            size="1"
+            variant={creatingCardFor === model.id ? "solid" : "soft"}
+            onClick={creatingCardFor === model.id ? onCancelCreateCard : onOpenCreateCard}
+          >
+            <Plus {...iconProps} />
+            New motion card
+          </Button>
           <Button disabled={busy} size="1" variant="soft" onClick={onStartRename}>
             Edit profile
           </Button>
@@ -3119,6 +3122,20 @@ function ModelDetail({
             Delete
           </Button>
         </Flex>
+
+        {creatingCardFor === model.id ? (
+          <Box mb="3" style={{ maxWidth: 420 }}>
+            <CreateCardForm
+              busy={busy}
+              cardId={newCardId}
+              cardLabel={newCardLabel}
+              onCancel={onCancelCreateCard}
+              onCardIdChange={onCardIdChange}
+              onCardLabelChange={onCardLabelChange}
+              onSubmit={onCreateCard}
+            />
+          </Box>
+        ) : null}
 
         <Box mb="3">
           <div className="model-tags-section">
@@ -3292,20 +3309,6 @@ function ModelDetail({
             ) : null}
           </Flex>
         </Box>
-
-        {creatingCardFor === model.id ? (
-          <Box mb="3">
-            <CreateCardForm
-              busy={busy}
-              cardId={newCardId}
-              cardLabel={newCardLabel}
-              onCancel={onCancelCreateCard}
-              onCardIdChange={onCardIdChange}
-              onCardLabelChange={onCardLabelChange}
-              onSubmit={onCreateCard}
-            />
-          </Box>
-        ) : null}
 
         {modelCards.length > 0 ? (
           <Box className="models-card-list">
@@ -4738,12 +4741,17 @@ function CreateCardForm({
   onCardLabelChange: (value: string) => void;
   onSubmit: () => void;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ block: "nearest" });
+  }, []);
+
   return (
     <Flex
-      align={{ initial: "stretch", md: "end" }}
-      direction={{ initial: "column", md: "row" }}
-      gap="2"
-      wrap="wrap"
+      ref={rootRef}
+      direction="column"
+      gap="3"
       style={{
         padding: 12,
         borderRadius: 10,
@@ -4751,18 +4759,22 @@ function CreateCardForm({
         border: "1px solid var(--gray-5)",
       }}
     >
-      <label style={{ flex: 1, minWidth: 140 }}>
+      <label>
         <Text as="div" mb="1" size="1" weight="medium">
           Card id
         </Text>
         <TextField.Root
+          autoFocus
           disabled={busy}
           placeholder="shine_5"
           value={cardId}
           onChange={(event) => onCardIdChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && cardId.trim()) onSubmit();
+          }}
         />
       </label>
-      <label style={{ flex: 1, minWidth: 140 }}>
+      <label>
         <Text as="div" mb="1" size="1" weight="medium">
           Label
         </Text>
@@ -4771,15 +4783,18 @@ function CreateCardForm({
           placeholder="Shine 5"
           value={cardLabel}
           onChange={(event) => onCardLabelChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && cardId.trim()) onSubmit();
+          }}
         />
       </label>
-      <Flex gap="2">
+      <Flex gap="2" justify="end">
+        <Button color="gray" disabled={busy} variant="soft" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button disabled={busy || !cardId.trim()} onClick={onSubmit}>
           <Plus {...iconProps} />
           Create & edit
-        </Button>
-        <Button color="gray" disabled={busy} variant="soft" onClick={onCancel}>
-          Cancel
         </Button>
       </Flex>
     </Flex>
