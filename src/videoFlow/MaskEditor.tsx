@@ -295,9 +295,15 @@ export function MaskEditor({
       if (!stillInPriorGesture) wheelPredatesMetaRef.current = false;
       lastStageWheelAtRef.current = now;
 
-      // Pinch (ctrl) and Ctrl/⌘+wheel zoom. Plain wheel pans the overflow:auto stage.
-      if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0) return;
+      // Keep the wheel on the canvas. At 100% and at the scroll edges the stage
+      // cannot consume it, and the dashboard would scroll the editor away.
       event.preventDefault();
+      const zoomGesture = (event.ctrlKey || event.metaKey) && event.deltaY !== 0;
+      if (!zoomGesture) {
+        stage.scrollLeft += wheelDeltaPixels(event.deltaX, event.deltaMode, stage.clientWidth);
+        stage.scrollTop += wheelDeltaPixels(event.deltaY, event.deltaMode, stage.clientHeight);
+        return;
+      }
       zoomPointerRef.current = { x: event.clientX, y: event.clientY };
       zoomCarryRef.current += wheelZoomDelta(event, stage.clientHeight);
       const next = clampZoom(viewZoomRef.current + zoomCarryRef.current);
