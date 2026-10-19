@@ -4,6 +4,64 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
 import { Field, iconProps, previewSource } from "./ui";
 
+const BRUSH_RADIUS_MIN = 8;
+const BRUSH_RADIUS_MAX = 80;
+const BRUSH_RADIUS_KEY_STEP = 2;
+const MASK_ZOOM_MIN = 1;
+const MASK_ZOOM_MAX = 4;
+const MASK_ZOOM_STEP = 0.5;
+/** Pixel delta that matches one button or keyboard zoom step. */
+const MASK_ZOOM_WHEEL_PIXELS = 100;
+/** Firefox reports wheel notches in lines; one notch is about this many pixels. */
+const MASK_WHEEL_LINE_PIXELS = 40;
+/** Gap that ends a wheel gesture, so inertia is not a new ⌘+zoom. */
+const MASK_WHEEL_GESTURE_GAP_MS = 120;
+
+function clampZoom(value: number) {
+  const stepped = Math.round(value * 100) / 100;
+  return Math.min(MASK_ZOOM_MAX, Math.max(MASK_ZOOM_MIN, stepped));
+}
+
+function wheelDeltaPixels(delta: number, deltaMode: number, pagePixels: number) {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * MASK_WHEEL_LINE_PIXELS;
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return delta * (pagePixels || 800);
+  return delta;
+}
+
+function wheelEventPixels(event: WheelEvent, pagePixels: number) {
+  return wheelDeltaPixels(event.deltaY, event.deltaMode, pagePixels);
+}
+
+function wheelPanPixels(event: WheelEvent, stage: HTMLElement) {
+  let deltaX = event.deltaX;
+  let deltaY = event.deltaY;
+  // Some browsers leave Shift+wheel on deltaY and scroll horizontally themselves.
+  if (event.shiftKey && deltaX === 0) {
+    deltaX = deltaY;
+    deltaY = 0;
+  }
+  return {
+    x: wheelDeltaPixels(deltaX, event.deltaMode, stage.clientWidth),
+    y: wheelDeltaPixels(deltaY, event.deltaMode, stage.clientHeight),
+  };
+}
+
+function wheelZoomDelta(event: WheelEvent, pagePixels: number) {
+  return -(wheelEventPixels(event, pagePixels) / MASK_ZOOM_WHEEL_PIXELS) * MASK_ZOOM_STEP;
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    const type = (target as HTMLInputElement).type;
+    return type !== "range" && type !== "button" && type !== "checkbox" && type !== "radio";
+  }
+  return false;
+}
+
 type TrackedMeshFrame = {
   t: number;
   verts: [number, number][];
@@ -40,6 +98,11 @@ function frameForTime(frames: TrackedMeshFrame[], time: number) {
   if (!current) return previous ?? null;
   if (!previous) return current;
   return Math.abs(previous.t - target) < Math.abs(current.t - target) ? previous : current;
+}
+
+function formatPlayhead(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0.0s";
+  return `${seconds.toFixed(1)}s`;
 }
 
 function coverFit(videoWidth: number, videoHeight: number, width: number, height: number) {
@@ -79,6 +142,17 @@ export function MaskEditor({
   title = "Mask Editor",
 }: MaskEditorProps) {
   const stillMode = Boolean(imageSrc.trim());
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const viewZoomRef = useRef(1);
+  const zoomPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pendingZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const zoomCarryRef = useRef(0);
+  const zoomStepRef = useRef<(delta: number) => void>(() => {});
+  const lastStageWheelAtRef = useRef(0);
+  const wheelPredatesMetaRef = useRef(false);
+  const metaWheelPixelsRef = useRef(0);
+  const cancelMetaToggleRef = useRef<() => void>(() => {});
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -98,6 +172,10 @@ export function MaskEditor({
   const [brushMode, setBrushMode] = useState<"add" | "erase">("add");
   const [brushRadius, setBrushRadius] = useState(26);
   const [playing, setPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [viewZoom, setViewZoom] = useState(1);
+  const scrubbingRef = useRef(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [autoRunning, setAutoRunning] = useState(false);
 
@@ -111,6 +189,157 @@ export function MaskEditor({
   useEffect(() => {
     brushRef.current.radius = brushRadius;
   }, [brushRadius]);
+
+  useEffect(() => {
+    // "down" is a bare ⌘ press. OS shortcuts and ⌘+click never deliver the other
+    // key, so blur and pointer mark the press dirty and keyup does not toggle.
+    let metaGesture: "idle" | "down" | "dirty" = "idle";
+    let toggleFrame = 0;
+
+    const editorVisible = () => {
+      const root = rootRef.current;
+      return root != null && root.getClientRects().length > 0;
+    };
+
+    const clearToggleFrame = () => {
+      if (toggleFrame === 0) return;
+      window.cancelAnimationFrame(toggleFrame);
+      toggleFrame = 0;
+    };
+
+    const dirtyMetaGesture = () => {
+      if (metaGesture === "down") metaGesture = "dirty";
+      clearToggleFrame();
+    };
+    cancelMetaToggleRef.current = dirtyMetaGesture;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Meta") {
+        if (event.repeat || metaGesture === "dirty") return;
+        metaWheelPixelsRef.current = 0;
+        wheelPredatesMetaRef.current =
+          performance.now() - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
+        const usable = editorVisible() && !isTypingTarget(event.target) && !isTypingTarget(document.activeElement);
+        metaGesture = usable ? "down" : "dirty";
+        return;
+      }
+      if (event.metaKey || metaGesture === "down") {
+        metaGesture = "dirty";
+        clearToggleFrame();
+      }
+      if (!editorVisible() || isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      if (event.key === "+" || event.key === "=" || event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        const zoomIn = event.key === "+" || event.key === "=";
+        zoomStepRef.current(zoomIn ? MASK_ZOOM_STEP : -MASK_ZOOM_STEP);
+        return;
+      }
+      const smaller = event.key === "{" || event.key === "[";
+      const larger = event.key === "}" || event.key === "]";
+      if (!smaller && !larger) return;
+      event.preventDefault();
+      const delta = smaller ? -BRUSH_RADIUS_KEY_STEP : BRUSH_RADIUS_KEY_STEP;
+      setBrushRadius((radius) =>
+        Math.min(BRUSH_RADIUS_MAX, Math.max(BRUSH_RADIUS_MIN, radius + delta)),
+      );
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Meta") return;
+      const gesture = metaGesture;
+      metaGesture = "idle";
+      if (gesture !== "down") return;
+      if (!editorVisible() || isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
+      if (!document.hasFocus() || document.hidden) return;
+      clearToggleFrame();
+      toggleFrame = window.requestAnimationFrame(() => {
+        toggleFrame = 0;
+        if (!document.hasFocus() || document.hidden || !editorVisible()) return;
+        setBrushMode((mode) => (mode === "add" ? "erase" : "add"));
+      });
+    };
+
+    const onBlur = () => {
+      dirtyMetaGesture();
+    };
+
+    const onFocus = () => {
+      // Cmd+Tab can drop the Meta keyup. Forget the press without toggling.
+      if (metaGesture === "idle") return;
+      metaGesture = "idle";
+      clearToggleFrame();
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) dirtyMetaGesture();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      clearToggleFrame();
+      cancelMetaToggleRef.current = () => {};
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      const now = performance.now();
+      const stillInPriorGesture =
+        wheelPredatesMetaRef.current &&
+        now - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
+      if (!stillInPriorGesture) wheelPredatesMetaRef.current = false;
+      lastStageWheelAtRef.current = now;
+
+      // Keep the wheel on the canvas. At 100% and at the scroll edges the stage
+      // cannot consume it, and the dashboard would scroll the editor away.
+      event.preventDefault();
+      const zoomGesture = (event.ctrlKey || event.metaKey) && event.deltaY !== 0;
+      if (!zoomGesture) {
+        const pan = wheelPanPixels(event, stage);
+        stage.scrollLeft += pan.x;
+        stage.scrollTop += pan.y;
+        return;
+      }
+      zoomPointerRef.current = { x: event.clientX, y: event.clientY };
+      zoomCarryRef.current += wheelZoomDelta(event, stage.clientHeight);
+      const next = clampZoom(viewZoomRef.current + zoomCarryRef.current);
+      const applied = next - viewZoomRef.current;
+      zoomCarryRef.current -= applied;
+      if (
+        (next <= MASK_ZOOM_MIN && zoomCarryRef.current < 0) ||
+        (next >= MASK_ZOOM_MAX && zoomCarryRef.current > 0)
+      ) {
+        zoomCarryRef.current = 0;
+      }
+      if (applied !== 0) zoomStepRef.current(applied);
+      // A full zoom step is a deliberate ⌘+wheel. Inertia and trackpad noise are not.
+      if (event.metaKey && !wheelPredatesMetaRef.current) {
+        metaWheelPixelsRef.current += Math.abs(wheelEventPixels(event, stage.clientHeight));
+        if (metaWheelPixelsRef.current >= MASK_ZOOM_WHEEL_PIXELS) cancelMetaToggleRef.current();
+      }
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, []);
 
   function recomputeCoverage() {
     const garment = garmentRef.current;
@@ -417,6 +646,51 @@ export function MaskEditor({
     }
   }
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || stillMode) return undefined;
+
+    const syncTime = () => {
+      if (!scrubbingRef.current) setPlayhead(video.currentTime || 0);
+    };
+    const syncDuration = () => {
+      const next = Number.isFinite(video.duration) ? video.duration : 0;
+      setDuration(next);
+      syncTime();
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+
+    video.addEventListener("timeupdate", syncTime);
+    video.addEventListener("seeked", syncTime);
+    video.addEventListener("loadedmetadata", syncDuration);
+    video.addEventListener("durationchange", syncDuration);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    syncDuration();
+
+    return () => {
+      video.removeEventListener("timeupdate", syncTime);
+      video.removeEventListener("seeked", syncTime);
+      video.removeEventListener("loadedmetadata", syncDuration);
+      video.removeEventListener("durationchange", syncDuration);
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+    };
+  }, [stillMode, videoSrc]);
+
+  function seek(seconds: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    const limit =
+      Number.isFinite(video.duration) && video.duration > 0
+        ? Math.max(0, video.duration - 0.001)
+        : Math.max(0, seconds);
+    const next = Math.min(limit, Math.max(0, seconds));
+    video.currentTime = next;
+    setPlayhead(next);
+  }
+
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
@@ -440,10 +714,44 @@ export function MaskEditor({
     );
   }
 
+  function changeZoom(next: number) {
+    const stage = stageRef.current;
+    const clamped = clampZoom(next);
+    const prev = viewZoomRef.current;
+    if (!stage || prev <= 0 || clamped === prev) {
+      viewZoomRef.current = clamped;
+      setViewZoom(clamped);
+      return;
+    }
+    const ratio = clamped / prev;
+    const scrollLeft = pendingZoomScrollRef.current?.left ?? stage.scrollLeft;
+    const scrollTop = pendingZoomScrollRef.current?.top ?? stage.scrollTop;
+    const rect = stage.getBoundingClientRect();
+    const pointer = zoomPointerRef.current;
+    const localX = pointer ? pointer.x - rect.left : stage.clientWidth / 2;
+    const localY = pointer ? pointer.y - rect.top : stage.clientHeight / 2;
+    const offsetX = Math.min(stage.clientWidth, Math.max(0, localX));
+    const offsetY = Math.min(stage.clientHeight, Math.max(0, localY));
+    const nextLeft = (scrollLeft + offsetX) * ratio - offsetX;
+    const nextTop = (scrollTop + offsetY) * ratio - offsetY;
+    pendingZoomScrollRef.current = { left: nextLeft, top: nextTop };
+    viewZoomRef.current = clamped;
+    setViewZoom(clamped);
+    requestAnimationFrame(() => {
+      const pending = pendingZoomScrollRef.current;
+      if (!pending || pending.left !== nextLeft || pending.top !== nextTop) return;
+      stage.scrollLeft = nextLeft;
+      stage.scrollTop = nextTop;
+      pendingZoomScrollRef.current = null;
+    });
+  }
+
+  zoomStepRef.current = (delta) => changeZoom(viewZoomRef.current + delta);
+
   const coveragePct = coverage.total > 0 ? Math.round((coverage.on / coverage.total) * 100) : 0;
 
   return (
-    <Grid columns={{ initial: "1", md: "2" }} gap="5">
+    <Grid ref={rootRef} columns={{ initial: "1", md: "2" }} gap="5">
       <Flex direction="column" gap="4">
         <Flex align="center" justify="between">
           <Heading size="4">{title}</Heading>
@@ -478,7 +786,7 @@ export function MaskEditor({
         )}
 
         <Field label="Brush">
-          <Flex gap="2" wrap="wrap">
+          <Flex align="center" gap="2" wrap="wrap">
             <Button
               color={brushMode === "add" ? "green" : "gray"}
               variant={brushMode === "add" ? "solid" : "soft"}
@@ -493,17 +801,29 @@ export function MaskEditor({
             >
               Erase
             </Button>
+            <Text color="gray" size="1">
+              ⌘ add / erase
+            </Text>
           </Flex>
         </Field>
 
         <Field label={`Brush size (${brushRadius}px)`}>
-          <input
-            max={80}
-            min={8}
-            onChange={(event) => setBrushRadius(Number(event.currentTarget.value))}
-            type="range"
-            value={brushRadius}
-          />
+          <Flex align="center" gap="2">
+            <Text color="gray" size="1" title="Smaller brush">
+              {"{"}
+            </Text>
+            <input
+              max={BRUSH_RADIUS_MAX}
+              min={BRUSH_RADIUS_MIN}
+              onChange={(event) => setBrushRadius(Number(event.currentTarget.value))}
+              style={{ flex: 1, minWidth: 0 }}
+              type="range"
+              value={brushRadius}
+            />
+            <Text color="gray" size="1" title="Larger brush">
+              {"}"}
+            </Text>
+          </Flex>
         </Field>
 
         {stillMode ? null : (
@@ -572,50 +892,113 @@ export function MaskEditor({
       </Flex>
 
       <Flex direction="column" gap="3">
-        <Heading size="3">Canvas</Heading>
+        <Flex align="center" justify="between" gap="3">
+          <Heading size="3">Canvas</Heading>
+          <Flex align="center" gap="1">
+            <Button
+              color="gray"
+              disabled={viewZoom <= MASK_ZOOM_MIN}
+              onClick={() => changeZoom(viewZoom - MASK_ZOOM_STEP)}
+              size="1"
+              type="button"
+              variant="soft"
+            >
+              −
+            </Button>
+            <Text color="gray" size="1" style={{ fontVariantNumeric: "tabular-nums", minWidth: "3.2em", textAlign: "center" }}>
+              {Math.round(viewZoom * 100)}%
+            </Text>
+            <Button
+              color="gray"
+              disabled={viewZoom >= MASK_ZOOM_MAX}
+              onClick={() => changeZoom(viewZoom + MASK_ZOOM_STEP)}
+              size="1"
+              type="button"
+              variant="soft"
+            >
+              +
+            </Button>
+          </Flex>
+        </Flex>
         <Separator size="4" />
-        <Box className="mask-editor-stage">
-          {stillMode ? (
-            <img
-              ref={imageRef}
-              alt="Photo scratch layer"
-              className="mask-editor-video"
-              src={imageSrc}
+        <Box
+          className="mask-editor-stage"
+          ref={stageRef}
+          onPointerMove={(event) => {
+            zoomPointerRef.current = { x: event.clientX, y: event.clientY };
+          }}
+        >
+          <div className="mask-editor-zoom" style={{ width: `${viewZoom * 100}%` }}>
+            {stillMode ? (
+              <img
+                ref={imageRef}
+                alt="Photo scratch layer"
+                className="mask-editor-video"
+                src={imageSrc}
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                className="mask-editor-video"
+                loop
+                muted
+                playsInline
+                preload="auto"
+                src={videoSrc}
+              />
+            )}
+            <canvas
+              ref={canvasRef}
+              className="mask-editor-canvas"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                drawingRef.current = true;
+                paintAt(event.clientX, event.clientY);
+              }}
+              onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
+              onPointerUp={() => {
+                drawingRef.current = false;
+                recomputeCoverage();
+              }}
+              onPointerLeave={() => {
+                drawingRef.current = false;
+                cursorRef.current = null;
+                recomputeCoverage();
+              }}
             />
-          ) : (
-            <video
-              ref={videoRef}
-              className="mask-editor-video"
-              loop
-              muted
-              playsInline
-              preload="auto"
-              src={videoSrc}
-            />
-          )}
-          <canvas
-            ref={canvasRef}
-            className="mask-editor-canvas"
-            onPointerDown={(event) => {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              drawingRef.current = true;
-              paintAt(event.clientX, event.clientY);
-            }}
-            onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
-            onPointerUp={() => {
-              drawingRef.current = false;
-              recomputeCoverage();
-            }}
-            onPointerLeave={() => {
-              drawingRef.current = false;
-              cursorRef.current = null;
-              recomputeCoverage();
-            }}
-          />
+          </div>
         </Box>
+        {stillMode ? null : (
+          <Flex align="center" className="mask-editor-seek" gap="2">
+            <input
+              aria-label="Seek"
+              className="mask-editor-seek-bar"
+              disabled={duration <= 0}
+              max={duration > 0.001 ? duration - 0.001 : 0}
+              min={0}
+              onChange={(event) => seek(Number(event.currentTarget.value))}
+              onLostPointerCapture={() => {
+                scrubbingRef.current = false;
+              }}
+              onPointerDown={(event) => {
+                scrubbingRef.current = true;
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerUp={() => {
+                scrubbingRef.current = false;
+              }}
+              step={0.01}
+              type="range"
+              value={Math.min(playhead, duration > 0.001 ? duration - 0.001 : 0)}
+            />
+            <Text color="gray" size="1" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatPlayhead(playhead)} / {formatPlayhead(duration)}
+            </Text>
+          </Flex>
+        )}
         <Text color="gray" size="1">
           Green cells are scratchable. Red are off. Backdrop is cover-fit so painting matches the
-          live scratch area.
+          live scratch area. Scroll to pan. Pinch or Ctrl/⌘-scroll to zoom.
         </Text>
       </Flex>
     </Grid>
