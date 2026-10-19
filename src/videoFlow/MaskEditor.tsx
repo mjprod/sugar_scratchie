@@ -14,17 +14,26 @@ const MASK_ZOOM_STEP = 0.5;
 const MASK_ZOOM_WHEEL_PIXELS = 100;
 /** Firefox reports wheel notches in lines; one notch is about this many pixels. */
 const MASK_WHEEL_LINE_PIXELS = 40;
+/** Gap that ends a wheel gesture, so inertia is not a new ⌘+zoom. */
+const MASK_WHEEL_GESTURE_GAP_MS = 120;
 
 function clampZoom(value: number) {
   const stepped = Math.round(value * 100) / 100;
   return Math.min(MASK_ZOOM_MAX, Math.max(MASK_ZOOM_MIN, stepped));
 }
 
+function wheelDeltaPixels(delta: number, deltaMode: number, pagePixels: number) {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * MASK_WHEEL_LINE_PIXELS;
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return delta * (pagePixels || 800);
+  return delta;
+}
+
+function wheelEventPixels(event: WheelEvent, pagePixels: number) {
+  return wheelDeltaPixels(event.deltaY, event.deltaMode, pagePixels);
+}
+
 function wheelZoomDelta(event: WheelEvent, pagePixels: number) {
-  let pixels = event.deltaY;
-  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) pixels *= MASK_WHEEL_LINE_PIXELS;
-  else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) pixels *= pagePixels || 800;
-  return -(pixels / MASK_ZOOM_WHEEL_PIXELS) * MASK_ZOOM_STEP;
+  return -(wheelEventPixels(event, pagePixels) / MASK_ZOOM_WHEEL_PIXELS) * MASK_ZOOM_STEP;
 }
 
 function isTypingTarget(target: EventTarget | null) {
@@ -126,6 +135,10 @@ export function MaskEditor({
   const pendingZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const zoomCarryRef = useRef(0);
   const zoomStepRef = useRef<(delta: number) => void>(() => {});
+  const lastStageWheelAtRef = useRef(0);
+  const wheelPredatesMetaRef = useRef(false);
+  const metaWheelPixelsRef = useRef(0);
+  const cancelMetaToggleRef = useRef<() => void>(() => {});
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -165,7 +178,7 @@ export function MaskEditor({
 
   useEffect(() => {
     // "down" is a bare ⌘ press. OS shortcuts and ⌘+click never deliver the other
-    // key, so blur, pointer, and wheel mark the press dirty and keyup does not toggle.
+    // key, so blur and pointer mark the press dirty and keyup does not toggle.
     let metaGesture: "idle" | "down" | "dirty" = "idle";
     let toggleFrame = 0;
 
@@ -184,10 +197,14 @@ export function MaskEditor({
       if (metaGesture === "down") metaGesture = "dirty";
       clearToggleFrame();
     };
+    cancelMetaToggleRef.current = dirtyMetaGesture;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Meta") {
         if (event.repeat || metaGesture === "dirty") return;
+        metaWheelPixelsRef.current = 0;
+        wheelPredatesMetaRef.current =
+          performance.now() - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
         const usable = editorVisible() && !isTypingTarget(event.target) && !isTypingTarget(document.activeElement);
         metaGesture = usable ? "down" : "dirty";
         return;
@@ -249,26 +266,21 @@ export function MaskEditor({
       if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
     };
 
-    const onWheel = (event: WheelEvent) => {
-      if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
-    };
-
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("wheel", onWheel, { capture: true, passive: true });
     return () => {
       clearToggleFrame();
+      cancelMetaToggleRef.current = () => {};
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("wheel", onWheel, true);
     };
   }, []);
 
@@ -276,6 +288,13 @@ export function MaskEditor({
     const stage = stageRef.current;
     if (!stage) return undefined;
     const onWheel = (event: WheelEvent) => {
+      const now = performance.now();
+      const stillInPriorGesture =
+        wheelPredatesMetaRef.current &&
+        now - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
+      if (!stillInPriorGesture) wheelPredatesMetaRef.current = false;
+      lastStageWheelAtRef.current = now;
+
       // Pinch (ctrl) and Ctrl/⌘+wheel zoom. Plain wheel pans the overflow:auto stage.
       if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0) return;
       event.preventDefault();
@@ -291,6 +310,11 @@ export function MaskEditor({
         zoomCarryRef.current = 0;
       }
       if (applied !== 0) zoomStepRef.current(applied);
+      // A full zoom step is a deliberate ⌘+wheel. Inertia and trackpad noise are not.
+      if (event.metaKey && !wheelPredatesMetaRef.current) {
+        metaWheelPixelsRef.current += Math.abs(wheelEventPixels(event, stage.clientHeight));
+        if (metaWheelPixelsRef.current >= MASK_ZOOM_WHEEL_PIXELS) cancelMetaToggleRef.current();
+      }
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
