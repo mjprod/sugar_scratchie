@@ -198,8 +198,9 @@ export function MaskEditor({
 
     const engageErase = () => {
       const hold = eraseHoldRef.current;
-      if (hold.holding || persistentModeRef.current === "erase") return;
+      if (hold.holding) return;
       hold.holding = true;
+      if (persistentModeRef.current === "erase") return;
       brushRef.current.mode = "erase";
       setBrushMode("erase");
     };
@@ -703,11 +704,7 @@ export function MaskEditor({
 
   function selectBrushMode(mode: "add" | "erase") {
     persistentModeRef.current = mode;
-    const hold = eraseHoldRef.current;
-    if (hold.holding) {
-      if (mode === "erase") return;
-      hold.holding = false;
-    }
+    if (eraseHoldRef.current.holding) return;
     brushRef.current.mode = mode;
     setBrushMode(mode);
   }
