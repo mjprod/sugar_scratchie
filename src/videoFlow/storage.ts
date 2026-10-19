@@ -312,8 +312,11 @@ export function storedDraftFromApi(draft?: {
     resolution: draft.resolution ?? "720p",
     tracker: (draft.tracker as StoredVideoFlowDraft["tracker"]) ?? "all",
     meshTune: meshTuneFromApi(draft.mesh_tune),
-    // Setup is upload-only now; older drafts that used prompt/face_swap tabs normalize here.
-    sourceMode: "upload",
+    // Clamp to known modes for backward compatibility.
+    sourceMode:
+      draft.source_mode === "prompt" || draft.source_mode === "face_swap" || draft.source_mode === "upload"
+        ? (draft.source_mode as SourceImageMode)
+        : "upload",
     sourcePrompt: draft.source_prompt ?? "",
     faceImage: draft.face_image ?? "",
     bikiniImage: draft.bikini_image ?? "",
