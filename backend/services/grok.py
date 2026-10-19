@@ -902,11 +902,47 @@ PHOTO_SCRATCH_SCENE_OPTIONS: list[tuple[str, str]] = [
     ("Neon accent", "vivid neon accent lighting"),
 ]
 
-# One locked card position. Pose and lighting still vary; where she stands does not.
+# Where she stands in the 9:16 frame (photo cards only — motion cards use INFLUENCER_POSITION).
 PHOTO_SCRATCH_PLACEMENT_OPTIONS: list[tuple[str, str]] = [
     (
-        "Influencer position",
-        "Locked card position: centered, head under the top margin, cropped around mid-thigh.",
+        "Center, full body",
+        "Place her in the center of the frame, full body, head near the top edge and feet near the bottom.",
+    ),
+    (
+        "Left side",
+        "Place her on the left side of the frame, full body visible, with open scene on her right.",
+    ),
+    (
+        "Right side",
+        "Place her on the right side of the frame, full body visible, with open scene on her left.",
+    ),
+    (
+        "Left of center, closer",
+        "Place her slightly left of center and a step closer to the camera, still full body, head and feet in frame.",
+    ),
+    (
+        "Right of center, farther",
+        "Place her slightly right of center and a step farther back so more of the room shows around her, full body.",
+    ),
+    (
+        "Low camera, center-right",
+        "Use a slightly low camera: she fills the center-right, head near the top, feet near the bottom.",
+    ),
+    (
+        "High camera, center-left",
+        "Use a slightly high camera: she stands center-left, full body, a little more floor visible in front of her.",
+    ),
+    (
+        "Foreground, off-center left",
+        "Place her in the foreground, off-center to the left, large in frame, head and feet still fully visible.",
+    ),
+    (
+        "Mid-room, centered",
+        "Place her mid-room and centered, with a modest gap of scene above her head and on both sides.",
+    ),
+    (
+        "Near the right edge",
+        "Place her closer to the right edge, full body, scene visible on her left.",
     ),
 ]
 
@@ -914,7 +950,11 @@ PHOTO_SCRATCH_POSE_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_POSE_OPT
 PHOTO_SCRATCH_SCENE_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_SCENE_OPTIONS]
 PHOTO_SCRATCH_PLACEMENT_VARIATIONS = [text for _label, text in PHOTO_SCRATCH_PLACEMENT_OPTIONS]
 
-_DEFAULT_PLACEMENT = INFLUENCER_POSITION
+_DEFAULT_PLACEMENT = (
+    "Full body from head to toe clearly visible. She must fill the 9:16 frame — "
+    "head near the top third, feet near the bottom edge, body occupying most of the vertical height. "
+    "Do NOT zoom out or leave large empty space above/below her."
+)
 
 
 @dataclass(frozen=True)
@@ -983,23 +1023,19 @@ def _validate_variation_catalog(raw: object) -> dict[str, list[dict[str, str]]]:
     return cleaned
 
 
-def _lock_placement_options(
-    catalog: dict[str, list[dict[str, str]]],
-) -> dict[str, list[dict[str, str]]]:
-    """Position is the influencer guide. Pose and lighting stay editable."""
-    catalog["placements"] = [
-        {"label": label, "text": text} for label, text in PHOTO_SCRATCH_PLACEMENT_OPTIONS
-    ]
-    return catalog
-
-
 def photo_scratch_variation_catalog() -> dict[str, list[dict[str, str]]]:
     """Pose, lighting, and position options, including operator edits."""
     path = VARIATION_CATALOG_PATH
     if path.is_file():
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-            return _lock_placement_options(_validate_variation_catalog(loaded))
+            catalog = _validate_variation_catalog(loaded)
+            # Drop the brief motion-only lock if it was saved into the photo catalog.
+            if len(catalog["placements"]) == 1 and "Influencer position" in (
+                catalog["placements"][0].get("label") or ""
+            ):
+                catalog["placements"] = default_photo_scratch_variation_catalog()["placements"]
+            return catalog
         except (OSError, json.JSONDecodeError, ValueError):
             pass
     return default_photo_scratch_variation_catalog()
@@ -1007,7 +1043,7 @@ def photo_scratch_variation_catalog() -> dict[str, list[dict[str, str]]]:
 
 def save_photo_scratch_variation_catalog(raw: object) -> dict[str, list[dict[str, str]]]:
     """Replace the saved pose, lighting, and position options."""
-    catalog = _lock_placement_options(_validate_variation_catalog(raw))
+    catalog = _validate_variation_catalog(raw)
     path = VARIATION_CATALOG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
@@ -1070,9 +1106,13 @@ def assign_photo_scratch_variations(
 
 
 def photo_scratch_placement_clause(placement: str = "") -> str:
-    """Every photo card uses the influencer position. Catalog text cannot move her."""
-    del placement
-    return _DEFAULT_PLACEMENT
+    text = (placement or "").strip()
+    if not text:
+        return _DEFAULT_PLACEMENT
+    return (
+        f"{text} Keep her the clear subject of a vertical 9:16 card and large enough to scratch — "
+        "do not shrink her into a tiny figure, and do not crop off her head or feet."
+    )
 
 
 _NO_FURNITURE = (
@@ -1338,8 +1378,9 @@ def photo_scratch_prompt_with_background(
         extras.append(f"Pose and framing for this card: {pose}.")
     if "does not touch" not in lowered and "not touching" not in lowered:
         extras.append(_NO_FURNITURE_INTERACTION)
-    if "INFLUENCER POSITION" not in text:
-        extras.append(photo_scratch_placement_clause(placement))
+    placement_text = (placement or "").strip()
+    if placement_text and placement_text.lower() not in lowered:
+        extras.append(photo_scratch_placement_clause(placement_text))
     if not extras:
         return text
     return f"{text} {' '.join(extras)}"

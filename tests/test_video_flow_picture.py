@@ -6,7 +6,7 @@ from collections.abc import Generator
 
 import pytest
 
-from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt
+from backend.services.grok import INFLUENCER_POSITION, resolve_scenery_prompt, scenery_edit_prompt
 from backend.services.video_flow import (
     picture_take_prompts,
     WORK_DIR,
@@ -54,8 +54,10 @@ def test_operator_picture_prompt_keeps_their_text_and_adds_lighting():
     custom = "Put her in a neon rooftop at night. Keep her pose."
     assert resolve_scenery_prompt("warm beach", "bright open daylight", custom) == (
         "Put her in a neon rooftop at night. Keep her pose. Lighting for this take: bright open daylight."
+        f"\n\n{INFLUENCER_POSITION}"
     )
     assert resolve_scenery_prompt("Firegirl") == scenery_edit_prompt("Firegirl")
+    assert "INFLUENCER POSITION" in scenery_edit_prompt("Firegirl")
 
 
 def test_picture_backfill_keeps_later_steps(card_id: str):

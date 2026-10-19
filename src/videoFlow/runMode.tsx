@@ -1354,8 +1354,8 @@ function InfluencerPositionGuide() {
           Influencer position
         </Text>
         <Text as="div" color="gray" size="1">
-          Motion cards and photo cards use this frame. Her head stays under the top band, she stands
-          centered, and the crop ends around mid-thigh. Pose and lighting can change. Position cannot.
+          Motion cards use this frame. Her head stays under the top band, she stands centered, and the
+          crop ends around mid-thigh. Photo cards keep their own pose and position options.
         </Text>
       </Box>
     </Flex>
@@ -2612,11 +2612,12 @@ function CardPhotosPanel({
             <Dialog.Description size="2" mb="3">
               Add, edit, or delete choices. Changes are saved when you leave a field.
             </Dialog.Description>
-            <Grid columns={{ initial: "1", md: "2" }} gap="3">
+            <Grid columns={{ initial: "1", md: "3" }} gap="3">
               {(
                 [
                   ["poses", "Poses"],
                   ["scenes", "Lighting"],
+                  ["placements", "Positions"],
                 ] as const
               ).map(([group, title]) => (
                 <Box key={group}>
@@ -2686,7 +2687,7 @@ function CardPhotosPanel({
                 Slots
               </Text>
               <Text as="div" color="gray" size="1">
-                Set pose and lighting first. Every photo uses the influencer position.
+                Set pose, lighting, and position first. Generate uses this list.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -2705,9 +2706,6 @@ function CardPhotosPanel({
               </Button>
             </Flex>
           </Flex>
-          <Box mb="3">
-            <InfluencerPositionGuide />
-          </Box>
           <Flex align="center" gap="2" mb="1">
             <Text size="1" style={{ width: 28 }} weight="bold">
               #
@@ -2720,6 +2718,9 @@ function CardPhotosPanel({
             </Text>
             <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
               Lighting
+            </Text>
+            <Text size="1" style={{ flex: "0 0 180px" }} weight="bold">
+              Position
             </Text>
           </Flex>
           <Flex direction="column" gap="1" mb="3">
@@ -2748,6 +2749,16 @@ function CardPhotosPanel({
                     options={catalog.scenes}
                     value={row.scene}
                     onChange={(next) => updateSlotConfig(row.slotId, "scene", next)}
+                  />
+                </Box>
+                <Box style={{ flex: "0 0 180px", minWidth: 0 }}>
+                  <VariationSelect
+                    compact
+                    fill
+                    label="Position"
+                    options={catalog.placements}
+                    value={row.placement}
+                    onChange={(next) => updateSlotConfig(row.slotId, "placement", next)}
                   />
                 </Box>
               </Flex>
@@ -4343,8 +4354,10 @@ export function RunMode(props: RunModeProps) {
 
         {!showStepLoading && activeNode === "picture" ? (
           <Flex direction="column" gap="4">
+            <InfluencerPositionGuide />
             <Text color="gray" size="2">
               Choose 1, 2, or 3. Each picture has its own prompt below. Pick one after they are made.
+              Every still keeps the influencer position.
             </Text>
             {flowState?.steps.picture?.status === "review" ? null : (
               <PicturePromptFields

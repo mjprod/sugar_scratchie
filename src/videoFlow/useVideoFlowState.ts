@@ -105,7 +105,7 @@ function draftPayload(
     mesh_tune: meshTuneToApi(draft.meshTune),
     write_webm: draft.writeWebm,
     compress_preset: draft.compressPreset,
-    source_mode: draft.sourceMode,
+    source_mode: "upload",
     source_prompt: draft.sourcePrompt,
     face_image: draft.faceImage,
     bikini_image: draft.bikiniImage,

@@ -352,7 +352,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow input",
       subtitle: "Source image",
       description:
-        "Upload a still, generate a portrait from a prompt (optional face reference), or face-swap onto a body photo",
+        "Upload a source still, optional bikini model, and optional face reference (face-swapped onto every AI generation)",
       x: 20,
       y: 56,
       step: null,

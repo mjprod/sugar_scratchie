@@ -294,7 +294,6 @@ export function storedDraftFromApi(draft?: {
   dress_video_model?: string;
 }): StoredVideoFlowDraft | null {
   if (!draft?.card_id) return null;
-  const sourceMode = draft.source_mode;
   const theme = normalizeTheme(draft.theme);
   return {
     image: draft.image ?? "",
@@ -313,10 +312,8 @@ export function storedDraftFromApi(draft?: {
     resolution: draft.resolution ?? "720p",
     tracker: (draft.tracker as StoredVideoFlowDraft["tracker"]) ?? "all",
     meshTune: meshTuneFromApi(draft.mesh_tune),
-    sourceMode:
-      sourceMode === "prompt" || sourceMode === "face_swap" || sourceMode === "upload"
-        ? sourceMode
-        : "upload",
+    // Setup is upload-only now; older drafts that used prompt/face_swap tabs normalize here.
+    sourceMode: "upload",
     sourcePrompt: draft.source_prompt ?? "",
     faceImage: draft.face_image ?? "",
     bikiniImage: draft.bikini_image ?? "",

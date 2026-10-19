@@ -141,26 +141,27 @@ def test_photo_number_does_not_lock_pose_or_position(monkeypatch, tmp_path):
 
     assert [first[slot_id].pose for slot_id in slot_ids] != PHOTO_SCRATCH_POSE_VARIATIONS
     assert first["slot_01"].pose != second["slot_01"].pose
-    assert first["slot_01"].placement == second["slot_01"].placement
-    assert first["slot_01"].placement == PHOTO_SCRATCH_PLACEMENT_VARIATIONS[0]
+    assert first["slot_01"].placement != second["slot_01"].placement
     assert len({item.pose for item in first.values()}) == len(PHOTO_SCRATCH_POSE_VARIATIONS)
-    assert {item.placement for item in first.values()} == set(PHOTO_SCRATCH_PLACEMENT_VARIATIONS)
+    assert len({item.placement for item in first.values()}) == len(
+        PHOTO_SCRATCH_PLACEMENT_VARIATIONS
+    )
 
 
-def test_bikini_prompt_uses_the_influencer_position():
+def test_bikini_prompt_uses_placement_instead_of_a_fixed_frame():
     placed = photo_scratch_bikini_prompt(
         "Cowgirl",
         "walking pose mid-stride toward camera, full body",
         with_background=True,
         placement="Place her on the left side of the frame, full body visible, with open scene on her right.",
     )
-    assert "left side of the frame" not in placed
-    assert "INFLUENCER POSITION" in placed
+    assert "left side of the frame" in placed
+    assert "INFLUENCER POSITION" not in placed
     assert "head near the top third" not in placed
 
     locked = photo_scratch_bikini_prompt("Cowgirl", with_background=True)
-    assert "INFLUENCER POSITION" in locked
-    assert "just under that band" in locked
+    assert "head near the top third" in locked
+    assert "INFLUENCER POSITION" not in locked
 
     custom = photo_scratch_prompt_with_background(
         "Put her in the room.",
@@ -168,15 +169,14 @@ def test_bikini_prompt_uses_the_influencer_position():
         pose="hands clasped behind back, upright stance",
         placement="Place her on the right side of the frame, full body visible, with open scene on her left.",
     )
-    assert "right side of the frame" not in custom
-    assert "INFLUENCER POSITION" in custom
+    assert "right side of the frame" in custom
+    assert "INFLUENCER POSITION" not in custom
     assert "hands clasped behind back" in custom
     assert "does not touch, lean on, sit on, or hold any furniture" in custom
 
     background = photo_scratch_background_prompt("Police", "warm amber tones")
     assert "No furniture and no props" in background
     assert "warm amber tones" in background
-    assert "INFLUENCER POSITION" not in background
     locked_background = photo_scratch_background_prompt_locked("Empty Police room, no people.")
     assert "No furniture and no props" in locked_background
     assert photo_scratch_background_prompt_locked(background) == background
@@ -226,8 +226,7 @@ def test_shuffle_uses_saved_variation_catalog(monkeypatch, tmp_path):
     planned = assign_photo_scratch_variations(slot_ids, random.Random(1))
     assert {item.pose for item in planned.values()} == {"leaning on one elbow, looking at camera"}
     assert {item.scene for item in planned.values()} == {"moonlight only"}
-    assert {item.placement for item in planned.values()} == set(PHOTO_SCRATCH_PLACEMENT_VARIATIONS)
-    assert "far left edge" not in planned["slot_01"].placement
+    assert all("far left edge" in item.placement for item in planned.values())
     assert "hands on hips" not in planned["slot_01"].pose
 
 
@@ -318,3 +317,24 @@ def test_motion_source_style_prompt_keeps_pose_and_orders_refs():
     face_only = motion_source_style_prompt(with_bikini=False, with_face=True)
     assert "reference 2 = FACE" in face_only
     assert "Keep her swimsuit exactly as in reference 1" in face_only
+
+
+def test_face_swap_photo_scratch_layer_raises_on_failure(tmp_path, monkeypatch):
+    import backend.services.video_flow as video_flow
+
+    layer = tmp_path / "slot_bikini.jpg"
+    face = tmp_path / "face.png"
+    layer.write_bytes(b"fake")
+    face.write_bytes(b"fake")
+
+    def boom(**kwargs):
+        raise RuntimeError("provider rejected swap")
+
+    monkeypatch.setattr(video_flow, "swap_face_on_image", boom)
+    with pytest.raises(RuntimeError, match="Face swap failed"):
+        video_flow._face_swap_photo_scratch_layer(
+            layer,
+            face,
+            provider="xai",
+            image_model="grok-imagine",
+        )
