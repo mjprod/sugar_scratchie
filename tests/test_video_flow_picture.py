@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from collections.abc import Generator
@@ -13,6 +14,7 @@ from backend.services.video_flow import (
     WORK_DIR,
     approve_flow_step,
     first_ready_picture_choice,
+    matching_picture_choice,
     flow_state,
     read_state,
     validate_step_enqueue,
@@ -156,6 +158,43 @@ def test_switching_picture_keeps_every_take_and_unlocks_video(card_id: str):
         f".tmp/video-flow/{card_id}/picture-3.png",
     ]
     assert not (work / "background-raw.mp4").exists()
+
+
+def test_switching_unmatched_picture_still_clears_video(card_id: str):
+    work = work_dir(card_id)
+    (work / "picture-1.png").write_bytes(b"one")
+    (work / "picture-2.png").write_bytes(b"two")
+    (work / "picture-3.png").write_bytes(b"three")
+    winner = work / "picture.png"
+    winner.write_bytes(b"legacy-winner")
+    assert matching_picture_choice(work) is None
+    write_state(work, {"approved": ["picture", "background"]})
+    (work / "background-raw.mp4").write_bytes(b"clip")
+
+    switched = approve_flow_step(card_id, "picture", picture_choice=2)
+
+    assert winner.read_bytes() == b"two"
+    assert switched["picture_choice"] == 2
+    assert "background" not in switched["approved"]
+    assert not (work / "background-raw.mp4").exists()
+
+
+def test_reapproving_same_bytes_when_mtime_differs_keeps_video(card_id: str):
+    work = work_dir(card_id)
+    (work / "picture-1.png").write_bytes(b"one")
+    (work / "picture-2.png").write_bytes(b"two")
+    winner = work / "picture.png"
+    winner.write_bytes(b"two")
+    later = winner.stat().st_mtime + 30
+    os.utime(winner, (later, later))
+    assert matching_picture_choice(work) is None
+    write_state(work, {"approved": ["picture", "background"]})
+    (work / "background-raw.mp4").write_bytes(b"clip")
+
+    again = approve_flow_step(card_id, "picture", picture_choice=2)
+
+    assert "background" in again["approved"]
+    assert (work / "background-raw.mp4").read_bytes() == b"clip"
 
 
 def test_picture_file_is_reviewed_before_video(card_id: str):

@@ -770,13 +770,11 @@ def approve_flow_step(
         return flow_state(card_id)
     picture_switched = False
     if step == "picture":
-        previous_choice = matching_picture_choice(work)
-        _publish_picture_choice(work, picture_choice, already_approved=step in state["approved"])
-        picture_switched = (
-            picture_choice is not None
-            and previous_choice is not None
-            and picture_choice != previous_choice
+        already_approved = step in state["approved"]
+        picture_switched = already_approved and _picture_choice_replaces_winner(
+            work, picture_choice
         )
+        _publish_picture_choice(work, picture_choice, already_approved=already_approved)
         if picture_switched:
             for downstream in downstream_steps("picture"):
                 if downstream == "picture":
@@ -2759,6 +2757,29 @@ def matching_picture_choice(work: Path) -> int | None:
         ):
             return index
     return None
+
+
+def _picture_choice_replaces_winner(work: Path, picture_choice: int | None) -> bool:
+    """True when this take is not the still already published as picture.png.
+
+    Size and mtime identify a copy2 winner. When those don't match any take, compare
+    bytes so an unmatched winner still counts as a switch.
+    """
+    if picture_choice is None:
+        return False
+    previous = matching_picture_choice(work)
+    if previous is not None:
+        return previous != picture_choice
+    src = picture_choice_path(work, picture_choice)
+    winner = work / "picture.png"
+    if not _image_file_ready(src):
+        return False
+    if not _image_file_ready(winner):
+        return True
+    try:
+        return src.read_bytes() != winner.read_bytes()
+    except OSError:
+        return True
 
 
 def picture_preview_paths(work: Path, approved: list) -> list[str]:
