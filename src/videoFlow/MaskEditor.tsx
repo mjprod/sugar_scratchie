@@ -154,7 +154,8 @@ export function MaskEditor({
   const framesRef = useRef<TrackedMeshFrame[]>([]);
   const dimsRef = useRef({ cols: 0, rows: 0, width: 390, height: 672 });
   const brushRef = useRef({ mode: "add" as "add" | "erase", radius: 26 });
-  const eraseHoldRef = useRef({ holding: false, previous: "add" as "add" | "erase" });
+  const persistentModeRef = useRef<"add" | "erase">("add");
+  const eraseHoldRef = useRef({ holding: false });
   const drawingRef = useRef(false);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -179,6 +180,7 @@ export function MaskEditor({
     (meshFile.startsWith("/") ? meshFile : previewSource(`public/mesh/${meshFile}`));
 
   useEffect(() => {
+    if (!eraseHoldRef.current.holding) persistentModeRef.current = brushMode;
     brushRef.current.mode = brushMode;
   }, [brushMode]);
   useEffect(() => {
@@ -196,9 +198,7 @@ export function MaskEditor({
 
     const engageErase = () => {
       const hold = eraseHoldRef.current;
-      if (hold.holding) return;
-      hold.previous = brushRef.current.mode;
-      if (hold.previous === "erase") return;
+      if (hold.holding || persistentModeRef.current === "erase") return;
       hold.holding = true;
       brushRef.current.mode = "erase";
       setBrushMode("erase");
@@ -208,8 +208,9 @@ export function MaskEditor({
       const hold = eraseHoldRef.current;
       if (!hold.holding) return;
       hold.holding = false;
-      brushRef.current.mode = hold.previous;
-      setBrushMode(hold.previous);
+      const restore = persistentModeRef.current;
+      brushRef.current.mode = restore;
+      setBrushMode(restore);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -218,7 +219,6 @@ export function MaskEditor({
         engageErase();
         return;
       }
-      if (event.metaKey || eraseHoldRef.current.holding) releaseErase();
       if (!editorVisible() || isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
@@ -702,10 +702,11 @@ export function MaskEditor({
   zoomStepRef.current = (delta) => changeZoom(viewZoomRef.current + delta);
 
   function selectBrushMode(mode: "add" | "erase") {
+    persistentModeRef.current = mode;
     const hold = eraseHoldRef.current;
     if (hold.holding) {
-      hold.previous = mode;
-      return;
+      if (mode === "erase") return;
+      hold.holding = false;
     }
     brushRef.current.mode = mode;
     setBrushMode(mode);
