@@ -54,6 +54,7 @@ import {
   type PictureVariationCount,
   type VideoFlowJson,
   type VideoFlowStepKey,
+  normalizePicturePrompts,
 } from "./schema";
 import type { CompressReport } from "./projects";
 import { MaskEditor } from "./MaskEditor";
@@ -61,11 +62,10 @@ import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
-import { dressModelTakesReferenceImage, isStockPortraitPrompt, isWavespeedDressVideoModel, storedDraftFromApi, wavespeedPipelineModelValue, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageMode, type SourceImageModel, type StoredVideoFlowDraft } from "./storage";
+import { dressModelTakesReferenceImage, isWavespeedDressVideoModel, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageModel } from "./storage";
 import {
   findGenerationModel,
   GenerationModelSelect,
-  modelsForRole,
   useGenerationCatalog,
 } from "../shared/generationModels";
 
@@ -333,41 +333,6 @@ function PicturePromptFields({
         </Field>
       ))}
     </Flex>
-  );
-}
-
-function PicturePickGrid({
-  artifacts,
-  jobBusy,
-  onUse,
-}: {
-  artifacts: string[];
-  jobBusy: boolean;
-  onUse: (choice: number) => void;
-}) {
-  const choices = [1, 2, 3].filter((choice) =>
-    artifacts.some((path) => pictureChoiceFromArtifact(path) === choice),
-  );
-  if (!choices.length) return null;
-  return (
-    <div
-      className="picture-pick-grid"
-      style={{ gridTemplateColumns: `repeat(${choices.length}, minmax(0, 1fr))` }}
-    >
-      {choices.map((choice) => {
-        const artifact = artifacts.find((path) => pictureChoiceFromArtifact(path) === choice);
-        if (!artifact) return null;
-        return (
-          <div key={choice} className="picture-pick-card">
-            <MediaPreview label={`${choice}`} type="image" value={artifact} zoomable />
-            <Button disabled={jobBusy} type="button" onClick={() => onUse(choice)}>
-              <Check {...iconProps} />
-              Use {choice}
-            </Button>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -763,32 +728,6 @@ function nextPipelineStep(
   return flow.pipeline[index + 1] ?? null;
 }
 
-function formatSourceImageJobError(log: string | undefined): string {
-  if (!log) return "Source image job failed — check the Jobs tab for details.";
-  const fullLog = (log || "").replace(/^Job runner error: /, "");
-  const cleaned = fullLog.split("\n").pop()?.trim() || fullLog;
-  const lowered = cleaned.toLowerCase();
-  if (lowered.includes("both wavespeed and x.ai blocked")) {
-    return cleaned.replace(/^Job runner error: /, "");
-  }
-  if (
-    lowered.includes("content moderation") ||
-    lowered.includes("potentially sensitive") ||
-    lowered.includes("flagged as potentially sensitive")
-  ) {
-    const triedFallback = /retrying via x\.ai/i.test(log || "");
-    return (
-      (triedFallback
-        ? "WaveSpeed and x.ai both blocked this prompt (content moderation). "
-        : "Image generation was blocked (content moderation). ") +
-      "Use a neutral, fully-clothed studio portrait prompt, or upload a source image instead."
-    );
-  }
-  const wavespeedFailed = cleaned.match(/WaveSpeed [^:]+ failed: (.+)$/);
-  if (wavespeedFailed?.[1]) return wavespeedFailed[1];
-  return cleaned;
-}
-
 function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | null): string {
   if (!log) return "Step failed — check the Jobs tab for details.";
   const cleaned = log.replace(/^Job runner error: /, "").trim();
@@ -804,86 +743,6 @@ function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | nu
     return `${cleaned} Step 3 sends your approved bikini clip to the API — x.ai scans the video frames, not just your dress prompt. Switch to a WaveSpeed video edit model above, or upload your own dress video.`;
   }
   return cleaned;
-}
-
-function SourceImageProviderFields({
-  aiProvider,
-  sourceImageModel,
-  backgroundVideoModel,
-  onAiProviderChange,
-  onSourceImageModelChange,
-  onBackgroundVideoModelChange,
-}: {
-  aiProvider: AiProvider;
-  sourceImageModel: SourceImageModel;
-  backgroundVideoModel: BackgroundVideoModel;
-  onAiProviderChange: (value: AiProvider) => void;
-  onSourceImageModelChange: (value: SourceImageModel) => void;
-  onBackgroundVideoModelChange: (value: BackgroundVideoModel) => void;
-}) {
-  const { models } = useGenerationCatalog();
-  const spicyIds = modelsForRole(models, "background_video")
-    .filter((model) => model.adapter === "wan_spicy_i2v")
-    .map((model) => model.id);
-  const pipelineModel = wavespeedPipelineModelValue(sourceImageModel, backgroundVideoModel, spicyIds);
-  const imageChoices = [
-    ...modelsForRole(models, "source_image"),
-    ...modelsForRole(models, "background_video").filter((model) => model.adapter === "wan_spicy_i2v"),
-  ];
-
-  return (
-    <>
-      <Field label="Provider">
-        <Select.Root value={aiProvider} onValueChange={(value) => onAiProviderChange(value as AiProvider)}>
-          <Select.Trigger />
-          <Select.Content>
-            <Select.Item value="xai">x.ai</Select.Item>
-            <Select.Item value="wavespeed">WaveSpeed</Select.Item>
-          </Select.Content>
-        </Select.Root>
-      </Field>
-      {aiProvider === "wavespeed" ? (
-        <Field label="Image model">
-          <Select.Root
-            value={pipelineModel}
-            onValueChange={(value) => {
-              if (spicyIds.includes(value)) {
-                onBackgroundVideoModelChange(value);
-                return;
-              }
-              onSourceImageModelChange(value);
-              onBackgroundVideoModelChange("grok-imagine");
-            }}
-          >
-            <Select.Trigger />
-            <Select.Content>
-              {imageChoices.map((model) => (
-                <Select.Item key={`${model.role}:${model.id}`} value={model.id}>
-                  {model.adapter === "wan_spicy_i2v" ? `${model.label} (Step 1 video)` : model.label}
-                </Select.Item>
-              ))}
-              {pipelineModel && !imageChoices.some((model) => model.id === pipelineModel) ? (
-                <Select.Item value={pipelineModel}>{pipelineModel} (not in catalog)</Select.Item>
-              ) : null}
-            </Select.Content>
-          </Select.Root>
-        </Field>
-      ) : (
-        <Text color="gray" size="2">
-          Seedream v5.0 Lite and WAN 2.2 Spicy are available under the WaveSpeed provider.
-        </Text>
-      )}
-      {aiProvider === "wavespeed" && spicyIds.includes(backgroundVideoModel) ? (
-        <Callout.Root color="blue">
-            <Callout.Text>
-              This model animates your approved picture on <strong>Image to video</strong> via
-              WaveSpeed — not for still portraits. Use an image model above to generate the source
-              image first.
-            </Callout.Text>
-        </Callout.Root>
-      ) : null}
-    </>
-  );
 }
 
 function resolveFlowNodeStatuses(
@@ -1059,7 +918,6 @@ function MeshJobProgress({ logs }: { logs: string[] }) {
 
 /** Steps whose form is replaced by a loading panel while the job runs. */
 const LOADING_PANEL_STEPS = new Set<VideoFlowStepKey>([
-  "picture",
   "background",
   "dress",
   "card",
@@ -1156,11 +1014,8 @@ type RunModeProps = {
   resolution: string;
   tracker: MeshTrackerMode;
   meshTune: MeshTuneSettings;
-  sourceMode: SourceImageMode;
-  sourcePrompt: string;
   faceImage: string;
   bikiniImage: string;
-  baseImage: string;
   onImageChange: (value: string) => void;
   onThemeChange: (value: string) => void;
   onApplyThemeToPrompts: () => void;
@@ -1176,17 +1031,11 @@ type RunModeProps = {
   onTrackerChange: (value: MeshTrackerMode) => void;
   onMeshTuneChange: (value: MeshTuneSettings) => void;
   onResolutionChange: (value: string) => void;
-  onSourceModeChange: (value: SourceImageMode) => void;
-  onSourcePromptChange: (value: string) => void;
   onFaceImageChange: (value: string) => void;
   onBikiniImageChange: (value: string) => void;
-  onBaseImageChange: (value: string) => void;
-  onAiProviderChange: (value: AiProvider) => void;
-  onSourceImageModelChange: (value: SourceImageModel) => void;
   onBackgroundVideoModelChange: (value: BackgroundVideoModel) => void;
   onDressVideoModelChange: (value: DressVideoModel) => void;
   onEnhancePromptChange: (value: boolean) => void;
-  onApplyDraft: (draft: StoredVideoFlowDraft) => void;
   onRefreshJobs: () => Promise<void>;
   onRefreshAssets: () => Promise<void>;
   onError: (message: string) => void;
@@ -3101,11 +2950,8 @@ export function RunMode(props: RunModeProps) {
     resolution,
     tracker,
     meshTune,
-    sourceMode,
-    sourcePrompt,
     faceImage,
     bikiniImage,
-    baseImage,
     onImageChange,
     onThemeChange,
     onApplyThemeToPrompts,
@@ -3121,17 +2967,11 @@ export function RunMode(props: RunModeProps) {
     onTrackerChange,
     onMeshTuneChange,
     onResolutionChange,
-    onSourceModeChange,
-    onSourcePromptChange,
     onFaceImageChange,
     onBikiniImageChange,
-    onBaseImageChange,
-    onAiProviderChange,
-    onSourceImageModelChange,
     onBackgroundVideoModelChange,
     onDressVideoModelChange,
     onEnhancePromptChange,
-    onApplyDraft,
     onRefreshJobs,
     onRefreshAssets,
     onError,
@@ -3149,11 +2989,16 @@ export function RunMode(props: RunModeProps) {
   const [importBusy, setImportBusy] = useState(false);
   const [cardMediaRevision, setCardMediaRevision] = useState(0);
   const [manualDress, setManualDress] = useState("");
-  const [showFaceSwapPrompt, setShowFaceSwapPrompt] = useState(false);
   const [showMeshAdvanced, setShowMeshAdvanced] = useState(false);
-  const [sourceJobHandledId, setSourceJobHandledId] = useState("");
   const [compareTracker, setCompareTracker] = useState<MeshTracker>("cotracker");
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
+
+  useEffect(() => {
+    const next = normalizePicturePrompts(picturePrompts, theme);
+    if (next.some((text, index) => text !== picturePrompts[index])) {
+      onPicturePromptsChange(next);
+    }
+  }, [onPicturePromptsChange, picturePrompts, theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3168,20 +3013,6 @@ export function RunMode(props: RunModeProps) {
       cancelled = true;
     };
   }, []);
-
-  const sourceImageJob = useMemo(() => {
-    const scoped = jobs.filter(
-      (job) => job.kind === "generate-source-image" && job.command[1] === cardId.trim(),
-    );
-    return (
-      scoped.find((job) => job.status === "running" || job.status === "queued") ??
-      scoped[0] ??
-      null
-    );
-  }, [jobs, cardId]);
-
-  const sourceImageBusy =
-    sourceImageJob?.status === "running" || sourceImageJob?.status === "queued";
 
   const stepJob = useMemo(() => {
     const scoped = jobs.filter(
@@ -3345,33 +3176,6 @@ export function RunMode(props: RunModeProps) {
     return () => window.clearInterval(timer);
   }, [activeRunningStep, meshCandidateRunning, cardId]);
 
-  useEffect(() => {
-    if (!sourceImageJob || sourceImageJob.status !== "succeeded") return;
-    if (sourceJobHandledId === sourceImageJob.id) return;
-    const id = cardId.trim();
-    if (!id) return;
-    setSourceJobHandledId(sourceImageJob.id);
-    const epoch = flowStateEpochRef.current;
-    void (async () => {
-      try {
-        const data = await api<{ draft: NonNullable<Parameters<typeof storedDraftFromApi>[0]> }>(
-          `/api/video-flow/${encodeURIComponent(id)}/draft`,
-        );
-        if (desiredFlowCardIdRef.current !== id) return;
-        const parsed = storedDraftFromApi(data.draft);
-        if (parsed && parsed.cardId === id) onApplyDraft(parsed);
-        if (desiredFlowCardIdRef.current !== id) return;
-        const stateData = await api<VideoFlowState>(`/api/video-flow/${encodeURIComponent(id)}/state`);
-        if (desiredFlowCardIdRef.current !== id) return;
-        if (flowStateEpochRef.current !== epoch) return;
-        setFlowState(stateData);
-      } catch (caught) {
-        if (desiredFlowCardIdRef.current !== id) return;
-        onError(caught instanceof Error ? caught.message : String(caught));
-      }
-    })();
-  }, [cardId, onApplyDraft, onError, sourceImageJob, sourceJobHandledId]);
-
   // Intentionally no auto-reject on image change. Draft loads / card switches
   // used to look like edits and wipe published cards. Use Remake step instead.
 
@@ -3520,11 +3324,9 @@ export function RunMode(props: RunModeProps) {
     write_webm: writeWebm,
     compress_preset: compressPreset,
     mesh_tune: meshTuneToApi(meshTune),
-    source_mode: sourceMode,
-    source_prompt: sourcePrompt,
+    source_mode: "upload",
     face_image: faceImage,
     bikini_image: bikiniImage,
-    base_image: baseImage,
     provider: aiProvider,
     image_model: sourceImageModel,
     background_video_model: backgroundVideoModel,
@@ -3539,43 +3341,6 @@ export function RunMode(props: RunModeProps) {
         : actionStep === "dress"
           ? canUseDressVideo
           : true;
-
-  const canGeneratePromptImage = Boolean(cardId.trim() && canUseSourceAi && !sourceImageBusy);
-  const canGenerateFaceSwap = Boolean(
-    cardId.trim() && baseImage.trim() && faceImage.trim() && canUseSourceAi && !sourceImageBusy,
-  );
-
-  async function generateSourceImage(mode: "prompt" | "face_swap") {
-    const id = cardId.trim();
-    if (!id) return;
-    setFlowBusy(true);
-    onError("");
-    try {
-      await api<JobInfo>("/api/jobs/generate-source-image", {
-        method: "POST",
-        body: JSON.stringify({
-          mode,
-          card_id: id,
-          prompt:
-            mode === "face_swap" && !showFaceSwapPrompt
-              ? ""
-              : mode === "face_swap" && isStockPortraitPrompt(sourcePrompt)
-                ? ""
-                : sourcePrompt.trim(),
-          face_image: faceImage.trim(),
-          base_image: baseImage.trim(),
-          aspect_ratio: "9:16",
-          provider: aiProvider,
-          image_model: sourceImageModel,
-        }),
-      });
-      await onRefreshJobs();
-    } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setFlowBusy(false);
-    }
-  }
 
   const cardApproved = Boolean(flowState?.approved?.includes("card"));
   const cardArtifactsReady = Boolean(
@@ -3686,13 +3451,22 @@ export function RunMode(props: RunModeProps) {
     }
   }
 
-  async function runStep(step: VideoFlowStepKey, force = false) {
+  async function runStep(
+    step: VideoFlowStepKey,
+    force = false,
+    pictureCount?: PictureVariationCount,
+  ) {
     setFlowBusy(true);
     onError("");
     try {
       await api<JobInfo>("/api/jobs/video-flow/step", {
         method: "POST",
-        body: JSON.stringify({ ...stepPayload, step, force }),
+        body: JSON.stringify({
+          ...stepPayload,
+          ...(pictureCount ? { picture_variation_count: pictureCount } : {}),
+          step,
+          force,
+        }),
       });
       await onRefreshJobs();
     } catch (caught) {
@@ -3700,6 +3474,16 @@ export function RunMode(props: RunModeProps) {
     } finally {
       setFlowBusy(false);
     }
+  }
+
+  function handlePictureCountChange(count: PictureVariationCount) {
+    onPictureVariationCountChange(count);
+    if (count === pictureVariationCount) return;
+    const pictureStatus = flowState?.steps.picture?.status;
+    const hasPictures = (flowState?.steps.picture?.artifacts ?? []).some(Boolean);
+    if (!hasPictures && pictureStatus !== "approved" && pictureStatus !== "review") return;
+    if (effectiveRunningStep === "picture") return;
+    void runStep("picture", true, count);
   }
 
   async function generateMeshCandidate() {
@@ -3913,25 +3697,6 @@ export function RunMode(props: RunModeProps) {
                   : "Approve this clip before the next step runs."}
               </Callout.Text>
               <Flex direction="column" gap="3" mt="3">
-                {actionStep === "picture" ? (
-                  <>
-                    <PicturePickGrid
-                      artifacts={
-                        actionPreviewArtifacts.length > 0
-                          ? actionPreviewArtifacts
-                          : (flowState?.steps.picture?.artifacts ?? [])
-                      }
-                      jobBusy={flowBusy}
-                      onUse={(choice) => void approveStep("picture", undefined, choice)}
-                    />
-                    <PicturePromptFields
-                      prompts={picturePrompts}
-                      onPromptsChange={onPicturePromptsChange}
-                      variationCount={pictureVariationCount}
-                      onVariationCountChange={onPictureVariationCountChange}
-                    />
-                  </>
-                ) : null}
                 {actionStep === "picture" &&
                 (actionPreviewArtifacts.length > 0
                   ? actionPreviewArtifacts
@@ -4017,8 +3782,8 @@ export function RunMode(props: RunModeProps) {
                 </>
               ) : activeStep === "picture" ? (
                 <>
-                  This step is finished. Remake it to generate the variations you chose, then pick
-                  one before image-to-video runs again.
+                  Pick one of the pictures below. Each card has <strong>Use this picture</strong>.
+                  Remake only if you want a new set.
                 </>
               ) : (
                 <>
@@ -4042,213 +3807,19 @@ export function RunMode(props: RunModeProps) {
         {activeNode === "source" ? (
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
-            <Tabs.Root value={sourceMode} onValueChange={(value) => onSourceModeChange(value as SourceImageMode)}>
-              <Tabs.List className="dashboard-tabs">
-                <Tabs.Trigger value="upload">Upload</Tabs.Trigger>
-                <Tabs.Trigger value="prompt">Generate from prompt</Tabs.Trigger>
-                <Tabs.Trigger value="face_swap">Face swap</Tabs.Trigger>
-              </Tabs.List>
-
-              <Box pt="4">
-                <Tabs.Content value="upload">
-                  <Field label="Source image path or URL">
-                    <FilePathPicker
-                      accept="image/*"
-                      placeholder="Pick an image or paste a path/URL"
-                      preview="image"
-                      previewLabel="Source image"
-                      previewSize="compact"
-                      previewZoomable
-                      value={image}
-                      onChange={onImageChange}
-                      onError={onError}
-                    />
-                  </Field>
-                </Tabs.Content>
-
-                <Tabs.Content value="prompt">
-                  <Flex direction="column" gap="4">
-                    <SourceImageProviderFields
-                      aiProvider={aiProvider}
-                      sourceImageModel={sourceImageModel}
-                      backgroundVideoModel={backgroundVideoModel}
-                      onAiProviderChange={onAiProviderChange}
-                      onSourceImageModelChange={onSourceImageModelChange}
-                      onBackgroundVideoModelChange={onBackgroundVideoModelChange}
-                    />
-                    <Field label="Portrait prompt">
-                      <TextArea
-                        className="dashboard-textarea"
-                        value={sourcePrompt}
-                        onChange={(event) => onSourcePromptChange(event.currentTarget.value)}
-                      />
-                    </Field>
-                    <Field label="Optional face reference (steers identity)">
-                      <FilePathPicker
-                        accept="image/*"
-                        placeholder="Pick a face photo or paste a path/URL"
-                        preview="image"
-                        previewLabel="Face reference"
-                        previewSize="compact"
-                        value={faceImage}
-                        onChange={onFaceImageChange}
-                        onError={onError}
-                      />
-                    </Field>
-                    <Flex align="center" gap="3" wrap="wrap">
-                      <Button
-                        disabled={!canGeneratePromptImage}
-                        type="button"
-                        onClick={() => void generateSourceImage("prompt")}
-                      >
-                        {sourceImageBusy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
-                        Generate source image
-                      </Button>
-                      {!canUseSourceAi ? (
-                        <Text color="gray" size="2">
-                          {aiProvider === "xai"
-                            ? "Add XAI_API_KEY to .env first."
-                            : "Add WAVESPEED_API_KEY to .env first."}
-                        </Text>
-                      ) : null}
-                    </Flex>
-                    {sourceImageJob ? (
-                      <Callout.Root
-                        color={
-                          sourceImageJob.status === "failed" || sourceImageJob.status === "cancelled"
-                            ? "red"
-                            : sourceImageJob.status === "succeeded"
-                              ? "green"
-                              : "blue"
-                        }
-                      >
-                        <Callout.Text>
-                          Source image job {sourceImageJob.status}
-                          {sourceImageJob.status === "failed"
-                            ? ` — ${formatSourceImageJobError(sourceImageJob.logs[sourceImageJob.logs.length - 1])}`
-                            : ""}
-                        </Callout.Text>
-                      </Callout.Root>
-                    ) : null}
-                    {image ? (
-                      <MediaPreview
-                        label="Resolved source image"
-                        size="compact"
-                        type="image"
-                        value={image}
-                        zoomable
-                        onDelete={() => onImageChange("")}
-                      />
-                    ) : null}
-                  </Flex>
-                </Tabs.Content>
-
-                <Tabs.Content value="face_swap">
-                  <Flex direction="column" gap="4">
-                    <SourceImageProviderFields
-                      aiProvider={aiProvider}
-                      sourceImageModel={sourceImageModel}
-                      backgroundVideoModel={backgroundVideoModel}
-                      onAiProviderChange={onAiProviderChange}
-                      onSourceImageModelChange={onSourceImageModelChange}
-                      onBackgroundVideoModelChange={onBackgroundVideoModelChange}
-                    />
-                    <Field label="Base image (body / scene to keep)">
-                      <FilePathPicker
-                        accept="image/*"
-                        placeholder="Pick a body or scene photo"
-                        preview="image"
-                        previewLabel="Base image"
-                        previewSize="compact"
-                        value={baseImage}
-                        onChange={onBaseImageChange}
-                        onError={onError}
-                      />
-                    </Field>
-                    <Field label="Face image">
-                      <FilePathPicker
-                        accept="image/*"
-                        placeholder="Pick a face photo"
-                        preview="image"
-                        previewLabel="Face image"
-                        previewSize="compact"
-                        value={faceImage}
-                        onChange={onFaceImageChange}
-                        onError={onError}
-                      />
-                    </Field>
-                    <label className="checkbox-label">
-                      <Checkbox
-                        checked={showFaceSwapPrompt}
-                        onCheckedChange={(checked) => setShowFaceSwapPrompt(checked === true)}
-                      />
-                      Custom swap prompt (advanced)
-                    </label>
-                    {showFaceSwapPrompt ? (
-                      <Field label="Face swap prompt">
-                        <TextArea
-                          className="dashboard-textarea"
-                          placeholder="Leave empty for the default swap instruction"
-                          value={sourcePrompt}
-                          onChange={(event) => onSourcePromptChange(event.currentTarget.value)}
-                        />
-                      </Field>
-                    ) : null}
-                    <Callout.Root color="orange">
-                      <Callout.Text>
-                        Face swap can be rejected by xAI moderation depending on the photos. Try
-                        neutral studio portraits, or upload a finished source image instead.
-                      </Callout.Text>
-                    </Callout.Root>
-                    <Flex align="center" gap="3" wrap="wrap">
-                      <Button
-                        disabled={!canGenerateFaceSwap}
-                        type="button"
-                        onClick={() => void generateSourceImage("face_swap")}
-                      >
-                        {sourceImageBusy ? <Loader2 {...iconProps} className="spin" /> : <Play {...iconProps} />}
-                        Apply face swap
-                      </Button>
-                      {!canUseSourceAi ? (
-                        <Text color="gray" size="2">
-                          {aiProvider === "xai"
-                            ? "Add XAI_API_KEY to .env first."
-                            : "Add WAVESPEED_API_KEY to .env first."}
-                        </Text>
-                      ) : null}
-                    </Flex>
-                    {sourceImageJob ? (
-                      <Callout.Root
-                        color={
-                          sourceImageJob.status === "failed" || sourceImageJob.status === "cancelled"
-                            ? "red"
-                            : sourceImageJob.status === "succeeded"
-                              ? "green"
-                              : "blue"
-                        }
-                      >
-                        <Callout.Text>
-                          Source image job {sourceImageJob.status}
-                          {sourceImageJob.status === "failed"
-                            ? ` — ${formatSourceImageJobError(sourceImageJob.logs[sourceImageJob.logs.length - 1])}`
-                            : ""}
-                        </Callout.Text>
-                      </Callout.Root>
-                    ) : null}
-                    {image ? (
-                      <MediaPreview
-                        label="Resolved source image"
-                        size="compact"
-                        type="image"
-                        value={image}
-                        zoomable
-                        onDelete={() => onImageChange("")}
-                      />
-                    ) : null}
-                  </Flex>
-                </Tabs.Content>
-              </Box>
-            </Tabs.Root>
+            <Field label="Source image path or URL">
+              <FilePathPicker
+                accept="image/*"
+                placeholder="Pick an image or paste a path/URL"
+                preview="image"
+                previewLabel="Source image"
+                previewSize="compact"
+                previewZoomable
+                value={image}
+                onChange={onImageChange}
+                onError={onError}
+              />
+            </Field>
 
             <Field label="Bikini model (optional — dress her in this swimsuit)">
               <Flex direction="column" gap="1">
@@ -4356,17 +3927,24 @@ export function RunMode(props: RunModeProps) {
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
             <Text color="gray" size="2">
-              Choose 1, 2, or 3. Each picture has its own prompt below. Pick one after they are made.
-              Every still keeps the influencer position.
+              Choose 1, 2, or 3. Changing the number remakes that many stills. Pick one as soon as
+              it appears — you do not have to wait for the rest. Every still keeps the influencer
+              position.
             </Text>
-            {flowState?.steps.picture?.status === "review" ? null : (
-              <PicturePromptFields
-                prompts={picturePrompts}
-                onPromptsChange={onPicturePromptsChange}
-                variationCount={pictureVariationCount}
-                onVariationCountChange={onPictureVariationCountChange}
-              />
-            )}
+            {effectiveRunningStep === "picture" ? (
+              <Callout.Root color="blue">
+                <Callout.Text>
+                  Making {pictureVariationCount} picture{pictureVariationCount === 1 ? "" : "s"}.
+                  Use a picture as soon as it shows up.
+                </Callout.Text>
+              </Callout.Root>
+            ) : null}
+            <PicturePromptFields
+              prompts={picturePrompts}
+              onPromptsChange={onPicturePromptsChange}
+              variationCount={pictureVariationCount}
+              onVariationCountChange={handlePictureCountChange}
+            />
             {flowState?.steps.picture?.status === "approved" &&
             !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
               <Callout.Root color="blue">
@@ -4866,15 +4444,6 @@ export function RunMode(props: RunModeProps) {
             return null;
           }
           const stepStatus = flowState?.steps[activeStep]?.status;
-          if (
-            activeStep === "picture" &&
-            stepStatus === "review" &&
-            (flowState?.steps.picture?.artifacts ?? []).some(
-              (artifact) => pictureChoiceFromArtifact(artifact) != null,
-            )
-          ) {
-            return null;
-          }
           const fromState = (flowState?.steps[activeStep]?.artifacts ?? []).filter(Boolean);
           const id = cardId.trim();
           // Only fall back to published card videos after a step has produced
@@ -4916,6 +4485,22 @@ export function RunMode(props: RunModeProps) {
                     value={artifact}
                     zoomable={previewMediaType(artifact) === "image"}
                     cacheBust={cardMediaRevision || flowState?.boomerang?.applied_at}
+                    headerAction={
+                      activeStep === "picture" && pictureChoiceFromArtifact(artifact) != null ? (
+                        <Button
+                          disabled={flowBusy}
+                          size="1"
+                          type="button"
+                          onClick={() => {
+                            const choice = pictureChoiceFromArtifact(artifact);
+                            if (choice) void approveStep("picture", undefined, choice);
+                          }}
+                        >
+                          <Check {...iconProps} />
+                          Use this picture
+                        </Button>
+                      ) : null
+                    }
                   />
                 ),
               )}

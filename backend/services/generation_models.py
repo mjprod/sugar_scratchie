@@ -138,6 +138,14 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         sort_order=1,
     ),
     GenerationModelSpec(
+        id="grok-imagine",
+        role="dress_video",
+        label="x.ai Grok Imagine",
+        provider="xai",
+        adapter="grok_video_edit",
+        sort_order=0,
+    ),
+    GenerationModelSpec(
         id="seedance-2.0-video-edit",
         role="dress_video",
         label="WaveSpeed ByteDance Seedance 2.0 Video Edit",
@@ -146,7 +154,7 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         endpoint_path="/bytedance/seedance-2.0/video-edit",
         reference_token="@Image 1",
         variant="seedance",
-        sort_order=0,
+        sort_order=1,
     ),
     GenerationModelSpec(
         id="wan-3.0-video-edit",
@@ -157,7 +165,7 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         endpoint_path="/alibaba/wan-3.0/video-edit",
         reference_token="Image 1",
         variant="wan30",
-        sort_order=1,
+        sort_order=2,
     ),
     GenerationModelSpec(
         id="wan-2.2-video-edit",
@@ -166,14 +174,6 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         provider="wavespeed",
         adapter="prompt_video_edit",
         endpoint_path="/wavespeed-ai/wan-2.2/video-edit",
-        sort_order=2,
-    ),
-    GenerationModelSpec(
-        id="grok-imagine",
-        role="dress_video",
-        label="x.ai Grok Imagine",
-        provider="xai",
-        adapter="grok_video_edit",
         sort_order=3,
     ),
 )
@@ -185,7 +185,7 @@ BUILTINS_BY_KEY: dict[tuple[str, str], GenerationModelSpec] = {
 _DEFAULT_ID = {
     "source_image": "grok-imagine",
     "background_video": "grok-imagine",
-    "dress_video": "wan-2.2-video-edit",
+    "dress_video": "grok-imagine",
 }
 
 _BACKGROUND_ALIASES = {

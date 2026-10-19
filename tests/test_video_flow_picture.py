@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
@@ -28,36 +29,61 @@ def card_id() -> Generator[str, None, None]:
 
 
 def test_each_picture_take_keeps_its_own_prompt():
-    assert picture_take_prompts(
+    prompts = picture_take_prompts(
         ["rooftop at night", "rainy alley", "sunlit pier"],
         "",
         "Firegirl",
-    ) == ["rooftop at night", "rainy alley", "sunlit pier"]
+    )
+    assert [prompt.split("\n", 1)[0] for prompt in prompts] == [
+        "rooftop at night",
+        "rainy alley",
+        "sunlit pier",
+    ]
+    assert all("BODY LIGHT" in prompt for prompt in prompts)
 
 
 def test_variation_count_limits_how_many_prompts_are_sent():
     one = picture_take_prompts(["only this"], "", "Firegirl", count=1)
     two = picture_take_prompts(["day", "night"], "", "Firegirl", count=2)
-    assert one == ["only this"]
-    assert two == ["day", "night"]
+    assert one[0].startswith("only this")
+    assert [prompt.split("\n", 1)[0] for prompt in two] == ["day", "night"]
+    assert "BODY LIGHT" in one[0]
 
 
 def test_empty_picture_takes_use_theme_lighting():
     prompts = picture_take_prompts([], "", "Firegirl")
-    assert "bright open daylight" in prompts[0]
-    assert "golden-hour" in prompts[1]
-    assert "soft diffused" in prompts[2]
+    assert "bright daylight in the background only" in prompts[0]
+    assert "warm sunset color in the background only" in prompts[1]
+    assert "soft overcast light in the background only" in prompts[2]
+    assert "BODY LIGHT" in prompts[0]
     assert "Firegirl" in prompts[0]
+    assert "golden-hour" not in prompts[1]
 
 
 def test_operator_picture_prompt_keeps_their_text_and_adds_lighting():
+    from backend.services.grok import PICTURE_BODY_LIGHT
+
     custom = "Put her in a neon rooftop at night. Keep her pose."
     assert resolve_scenery_prompt("warm beach", "bright open daylight", custom) == (
         "Put her in a neon rooftop at night. Keep her pose. Lighting for this take: bright open daylight."
-        f"\n\n{INFLUENCER_POSITION}"
+        f"\n\n{PICTURE_BODY_LIGHT}\n\n{INFLUENCER_POSITION}"
     )
     assert resolve_scenery_prompt("Firegirl") == scenery_edit_prompt("Firegirl")
     assert "INFLUENCER POSITION" in scenery_edit_prompt("Firegirl")
+    assert "BODY LIGHT" in scenery_edit_prompt("Firegirl")
+
+
+def test_saved_side_light_prompt_keeps_even_light_on_her_body():
+    old = (
+        "Replace the entire background behind the person with a vividly recognizable Egypt "
+        "environment and matching lighting — a clear Egypt location/scene. "
+        "Lighting for this take: golden-hour side light and warmer tones."
+    )
+    prompts = picture_take_prompts([old], "", "Egypt", count=1)
+    assert "golden-hour" not in prompts[0]
+    assert "matching lighting" not in prompts[0]
+    assert "BODY LIGHT" in prompts[0]
+    assert "warm sunset color in the background only" in prompts[0]
 
 
 def test_picture_backfill_keeps_later_steps(card_id: str):
@@ -119,3 +145,91 @@ def test_picture_file_is_reviewed_before_video(card_id: str):
     approved = approve_flow_step(card_id, "picture")
     assert approved["steps"]["picture"]["status"] == "approved"
     assert approved["steps"]["background"]["status"] == "ready"
+
+
+def test_scenery_edit_sends_the_new_face(monkeypatch, tmp_path):
+    from backend.services import grok
+
+    captured: dict = {}
+
+    def fake_edit(**kwargs):
+        captured.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(grok, "api_key", lambda: "test")
+    monkeypatch.setattr(grok, "_edit_image", fake_edit)
+    monkeypatch.setattr(grok, "_save_image_response", lambda result, out: None)
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"face")
+    grok.edit_image_scenery(
+        image=tmp_path / "body.png",
+        theme="Police",
+        out=tmp_path / "out.png",
+        prompt="Keep the same woman, face, identity, hair, skin tone, body, pose.",
+        face_image=face,
+    )
+
+    assert captured["images"] == [tmp_path / "body.png", face]
+    assert "face, identity, hair, skin tone" not in captured["prompt"]
+    assert "<IMAGE_1> is her real face" in captured["prompt"]
+    assert "not a lookalike" in captured["prompt"]
+    assert "do not copy bangs" in captured["prompt"]
+    assert "not the woman in <IMAGE_0>" in captured["prompt"]
+
+
+def test_create_picture_face_locks_each_take_after_scenery(monkeypatch, tmp_path):
+    """Setup face reference must hard-swap onto every take after scenery bake."""
+    from PIL import Image
+
+    import backend.services.video_flow as video_flow
+
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+
+    source = tmp_path / "source.png"
+    face = tmp_path / "face.jpg"
+    Image.new("RGB", (8, 8), (10, 20, 30)).save(source)
+    Image.new("RGB", (8, 8), (200, 100, 50)).save(face)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    paths = {
+        "picture": work / "picture.png",
+        "styled_bikini": work / "styled-bikini.png",
+        "styled_face": work / "styled-face.png",
+        "styled_source": work / "styled-source.png",
+    }
+    scenery_calls: list[Path] = []
+    post_scenery_swaps: list[Path] = []
+
+    def fake_scenery(**kwargs):
+        out = Path(kwargs["out"])
+        Image.new("RGB", (8, 8), (40, 40, 40)).save(out)
+        scenery_calls.append(out)
+        return out
+
+    def fake_lock(**kwargs):
+        out = Path(kwargs["out"])
+        Image.new("RGB", (8, 8), (255, 0, 0)).save(out)
+        base = Path(kwargs["base_image"])
+        if Path(base).name.startswith("picture-"):
+            post_scenery_swaps.append(Path(base))
+        return out
+
+    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
+    monkeypatch.setattr(video_flow, "lock_setup_face", fake_lock)
+
+    video_flow.build_picture_still(
+        image=source,
+        theme_text="Police",
+        source_model="grok-imagine",
+        ai_provider="xai",
+        draft={"face_image": str(face)},
+        paths=paths,
+        picture_variation_count=2,
+    )
+
+    assert len(scenery_calls) == 2
+    assert post_scenery_swaps == [work / "picture-1.png", work / "picture-2.png"]
+    assert Image.open(work / "picture-1.png").getpixel((0, 0)) == (255, 0, 0)

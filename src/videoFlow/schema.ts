@@ -89,8 +89,29 @@ export function normalizeTheme(theme: string | undefined | null): string {
   return stripped || DEFAULT_THEME;
 }
 
+/** Even light on her body. Scene light stays in the background so the still stays easy to use. */
+export const PICTURE_BODY_LIGHT =
+  "BODY LIGHT — simple, even, soft light on her body. Her skin, bikini, and hair stay brightly and evenly lit from the front. No hard shadows, no dark side of her body, no dramatic side light, and no rim light on her. Do not relight her body to match the background.";
+
 /** Stock Create-picture prompt. Matches backend scenery_edit_prompt without the per-take lighting line. */
 export function picturePromptForTheme(theme: string): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. ${PICTURE_BODY_LIGHT} Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery.\n\n${INFLUENCER_POSITION}`;
+}
+
+/** Previous stock prompt. "Matching lighting" and side light put shadows on her body. */
+const LEGACY_SIDE_LIGHT_TAKES = [
+  "bright open daylight and vivid colors",
+  "golden-hour side light and warmer tones",
+  "soft diffused light with richer background detail",
+] as const;
+
+function legacySideLightPicturePrompt(theme: string, take: PictureTake): string {
+  const scenery = normalizeTheme(theme);
+  return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery. Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.\n\n${INFLUENCER_POSITION}`;
+}
+
+function legacySideLightPicturePromptNoTake(theme: string): string {
   const scenery = normalizeTheme(theme);
   return `Replace the entire background behind the person with a vividly recognizable ${scenery} environment and matching lighting — a clear ${scenery} location/scene, not a vague hint. Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, or reframe away from the influencer position. Only change the background scenery.\n\n${INFLUENCER_POSITION}`;
 }
@@ -102,9 +123,9 @@ export function legacyPicturePromptForTheme(theme: string): string {
 }
 
 export const PICTURE_TAKE_LIGHTING = [
-  "bright open daylight and vivid colors",
-  "golden-hour side light and warmer tones",
-  "soft diffused light with richer background detail",
+  "bright daylight in the background only",
+  "warm sunset color in the background only",
+  "soft overcast light in the background only",
 ] as const;
 
 export type PictureTake = 1 | 2 | 3;
@@ -135,15 +156,23 @@ export function isStockPictureTakePrompt(prompt: string, theme: string, take: Pi
   const stripped = prompt.trim();
   if (!stripped) return true;
   const scenery = normalizeTheme(theme);
-  const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
-  const legacyDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.`;
+  const legacyDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.`;
+  const legacyNewTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
+  const legacyNewDefaultTake = `${legacyPicturePromptForTheme(DEFAULT_THEME)} Lighting for this take: ${PICTURE_TAKE_LIGHTING[take - 1]}.`;
   return (
     stripped === picturePromptForTake(scenery, take) ||
     stripped === picturePromptForTake(DEFAULT_THEME, take) ||
     stripped === picturePromptForTheme(scenery) ||
     stripped === picturePromptForTheme(DEFAULT_THEME) ||
+    stripped === legacySideLightPicturePrompt(scenery, take) ||
+    stripped === legacySideLightPicturePrompt(DEFAULT_THEME, take) ||
+    stripped === legacySideLightPicturePromptNoTake(scenery) ||
+    stripped === legacySideLightPicturePromptNoTake(DEFAULT_THEME) ||
     stripped === legacyTake ||
     stripped === legacyDefaultTake ||
+    stripped === legacyNewTake ||
+    stripped === legacyNewDefaultTake ||
     stripped === legacyPicturePromptForTheme(scenery) ||
     stripped === legacyPicturePromptForTheme(DEFAULT_THEME)
   );

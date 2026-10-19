@@ -41,15 +41,15 @@ export const BACKGROUND_VIDEO_MODELS: { id: string; label: string; wavespeed: bo
 ];
 
 export const DRESS_VIDEO_MODELS: { id: DressVideoModel; label: string; wavespeed: boolean }[] = [
+  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
   { id: "seedance-2.0-video-edit", label: "WaveSpeed ByteDance Seedance 2.0 Video Edit", wavespeed: true },
   { id: "wan-3.0-video-edit", label: "WaveSpeed Alibaba WAN 3.0 Video Edit", wavespeed: true },
   { id: "wan-2.2-video-edit", label: "WaveSpeed WAN 2.2 Video Edit", wavespeed: true },
-  { id: "grok-imagine", label: "x.ai Grok Imagine", wavespeed: false },
 ];
 
 export const DEFAULT_SOURCE_IMAGE_PROVIDER: AiProvider = "wavespeed";
 export const DEFAULT_SOURCE_IMAGE_MODEL: SourceImageModel = "seedream-v5-lite";
-export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "wan-2.2-video-edit";
+export const DEFAULT_DRESS_VIDEO_MODEL: DressVideoModel = "grok-imagine";
 
 export function isWavespeedDressVideoModel(model: DressVideoModel): boolean {
   return DRESS_VIDEO_MODELS.some((entry) => entry.id === model && entry.wavespeed);

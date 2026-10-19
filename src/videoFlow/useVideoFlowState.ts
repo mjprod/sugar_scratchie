@@ -105,7 +105,7 @@ function draftPayload(
     mesh_tune: meshTuneToApi(draft.meshTune),
     write_webm: draft.writeWebm,
     compress_preset: draft.compressPreset,
-    source_mode: draft.sourceMode,
+    source_mode: "upload",
     source_prompt: draft.sourcePrompt,
     face_image: draft.faceImage,
     bikini_image: draft.bikiniImage,
@@ -189,7 +189,7 @@ export function useVideoFlowState() {
     storedDraft?.tracker ?? flow.defaults.tracker,
   );
   const [meshTune, setMeshTune] = useState(storedDraft?.meshTune ?? DEFAULT_MESH_TUNE);
-  const [sourceMode, setSourceMode] = useState<SourceImageMode>(storedDraft?.sourceMode ?? "upload");
+  const [sourceMode, setSourceMode] = useState<SourceImageMode>("upload");
   const [sourcePrompt, setSourcePrompt] = useState(() => {
     const saved = storedDraft?.sourcePrompt || DEFAULT_PORTRAIT_PROMPT;
     return isStockPortraitPrompt(saved) ? DEFAULT_PORTRAIT_PROMPT : saved;
@@ -352,7 +352,7 @@ export function useVideoFlowState() {
     setResolution(draft.resolution);
     setTracker(draft.tracker);
     setMeshTune(draft.meshTune ?? DEFAULT_MESH_TUNE);
-    setSourceMode(draft.sourceMode);
+    setSourceMode("upload");
     setSourcePrompt(
       isStockPortraitPrompt(draft.sourcePrompt) ? DEFAULT_PORTRAIT_PROMPT : draft.sourcePrompt || DEFAULT_PORTRAIT_PROMPT,
     );
@@ -567,7 +567,7 @@ export function useVideoFlowState() {
       resolution,
       tracker,
       meshTune,
-      sourceMode,
+      sourceMode: "upload",
       sourcePrompt,
       faceImage,
       bikiniImage,

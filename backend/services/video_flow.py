@@ -18,6 +18,7 @@ from backend.services.ai_provider import (
     edit_video,
     generate_portrait_image,
     image_to_video,
+    lock_setup_face,
     normalize_background_video_model,
     normalize_dress_video_model,
     normalize_provider,
@@ -77,11 +78,11 @@ MESH_DIR = ROOT / "public" / "mesh"
 WORK_DIR = ROOT / ".tmp" / "video-flow"
 STEP1_STYLE_MODEL = "seedream-v5-lite"
 PICTURE_CHOICE_COUNT = 3
-# Same woman and framing; only background light changes so the three takes are distinct.
+# Same woman, framing, and even light on her body. Only the background light changes.
 PICTURE_SCENERY_VARIATIONS = (
-    "bright open daylight and vivid colors",
-    "golden-hour side light and warmer tones",
-    "soft diffused light with richer background detail",
+    "bright daylight in the background only",
+    "warm sunset color in the background only",
+    "soft overcast light in the background only",
 )
 
 
@@ -101,7 +102,7 @@ def picture_take_prompts(
     count: int | None = None,
 ) -> list[str]:
     """Exact text for each still. Empty slots fall back to the theme plus that take's lighting."""
-    from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt
+    from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt, with_body_light
 
     take_count = clamp_picture_variation_count(count)
     raw = [str(item or "").strip() for item in (picture_prompts or [])]
@@ -111,7 +112,7 @@ def picture_take_prompts(
     resolved: list[str] = []
     for text, hint in zip(raw[:take_count], PICTURE_SCENERY_VARIATIONS[:take_count], strict=True):
         if text:
-            resolved.append(text)
+            resolved.append(with_body_light(text))
         elif shared:
             resolved.append(resolve_scenery_prompt(theme, hint, shared))
         else:
@@ -1264,7 +1265,7 @@ def save_flow_draft(
     ai_provider: str = "xai",
     source_image_model: str = "grok-imagine",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",
@@ -1564,13 +1565,12 @@ def _face_swap_photo_scratch_layer(
     tmp_out = layer_path.with_name(f"{layer_path.stem}_faceswap.png")
     try:
         print(f"Face swap: swapping Setup face onto {layer_path.name} …")
-        swap_face_on_image(
-            provider=provider,
-            image_model=image_model,
+        lock_setup_face(
             base_image=layer_path,
             face_image=face_path,
             out=tmp_out,
-            prompt=None,
+            provider=normalize_provider(provider),
+            image_model=normalize_source_image_model(image_model, provider=provider),
             aspect_ratio="9:16",
         )
         if not tmp_out.is_file():
@@ -1578,7 +1578,10 @@ def _face_swap_photo_scratch_layer(
         from PIL import Image
 
         rgb = Image.open(tmp_out).convert("RGB")
-        rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
+        if layer_path.suffix.lower() == ".png":
+            rgb.save(layer_path, format="PNG", optimize=True)
+        else:
+            rgb.save(layer_path, format="JPEG", quality=95, optimize=True)
         print(f"Face swap applied: {layer_path.name}")
     except Exception as exc:
         raise RuntimeError(
@@ -2803,20 +2806,15 @@ def build_picture_still(
         i2v_image = bikini_still
     if face_path is not None:
         face_still = paths["styled_face"]
-        face_base = i2v_image
-
-        def swap_face(provider: str, model: str) -> None:
-            swap_face_on_image(
-                provider=provider,
-                image_model=model,
-                base_image=face_base,
-                face_image=face_path,
-                out=face_still,
-                prompt=None,
-                aspect_ratio="9:16",
-            )
-
-        _run_step1_style_edit("face swap", source_model, swap_face)
+        print(f"Face swap: locking Setup face onto {Path(i2v_image).name} …")
+        lock_setup_face(
+            base_image=i2v_image,
+            face_image=face_path,
+            out=face_still,
+            provider=normalize_provider(ai_provider),
+            image_model=normalize_source_image_model(source_model, provider=ai_provider),
+            aspect_ratio="9:16",
+        )
         i2v_image = face_still
     if i2v_image != image:
         shutil.copy2(i2v_image, paths["styled_source"])
@@ -2853,7 +2851,17 @@ def build_picture_still(
                 out=dest,
                 variation="",
                 prompt=take_prompt,
+                face_image=face_path,
             )
+            # Scenery edits drift identity; hard-lock Setup face onto each take
+            # the same way photo-scratch does after layer generation.
+            if face_path is not None:
+                _face_swap_photo_scratch_layer(
+                    dest,
+                    face_path,
+                    provider=ai_provider,
+                    image_model=source_model,
+                )
         except RuntimeError as exc:
             print(f"Picture {index} failed: {exc}")
             errors.append(f"{index}: {exc}")
@@ -2891,7 +2899,7 @@ def run_video_flow_step(
     force: bool = False,
     provider: str = "xai",
     background_video_model: str = "grok-imagine",
-    dress_video_model: str = "wan-2.2-video-edit",
+    dress_video_model: str = "grok-imagine",
     compress_preset: str = "mobile",
     model_id: str = "",
     theme: str = "",

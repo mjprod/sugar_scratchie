@@ -330,7 +330,7 @@ def test_face_swap_photo_scratch_layer_raises_on_failure(tmp_path, monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("provider rejected swap")
 
-    monkeypatch.setattr(video_flow, "swap_face_on_image", boom)
+    monkeypatch.setattr(video_flow, "lock_setup_face", boom)
     with pytest.raises(RuntimeError, match="Face swap failed"):
         video_flow._face_swap_photo_scratch_layer(
             layer,

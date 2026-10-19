@@ -348,7 +348,7 @@ class VideoFlowRequest(BaseModel):
     provider: AiProvider = "xai"
     image_model: SourceImageModel = "grok-imagine"
     background_video_model: BackgroundVideoModel = "grok-imagine"
-    dress_video_model: DressVideoModel = "wan-2.2-video-edit"
+    dress_video_model: DressVideoModel = "grok-imagine"
     picture_prompt: str = ""
     picture_prompts: list[str] = Field(default_factory=list)
     picture_variation_count: int = Field(default=3, ge=1, le=3)

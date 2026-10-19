@@ -77,10 +77,31 @@ LEGACY_LOCKED_CAMERA_MOTION_PROMPT = (
     "Keep the exact same framing and subject size as the input image in every frame. "
     "Perfect loop, warm beach lighting."
 )
-FACE_SWAP_PROMPT = (
-    "Replace the face in <IMAGE_0> with the face from <IMAGE_1>. "
-    "Keep body, pose, outfit, background, and lighting identical."
-)
+
+def face_replace_prompt(*, seedream: bool) -> str:
+    """Put the second photo's face on the first photo's body.
+
+    Face refs are often selfies / lying-down shots with a different fringe and
+    hair shape. Transplanting that hair (especially bangs) looks pasted-on, so
+    only facial identity moves; keep the body's hair style and length.
+    """
+    body = "Figure 1" if seedream else "<IMAGE_0>"
+    face = "Figure 2" if seedream else "<IMAGE_1>"
+    return (
+        f"{body} is the body to keep. {face} is her real face, even if that photo shows her whole body. "
+        f"Replace only the face in {body} with the exact face from {face}: "
+        f"same eyes, eyebrows, nose, lips, jaw, cheekbones, and skin tone. "
+        f"She must be unmistakably the woman in {face} — not a lookalike and not the woman in {body}. "
+        f"Keep {body}'s hair style, part, length, and fringe exactly as they are — "
+        f"do not copy bangs, fringe, or hairstyle from {face}. "
+        f"You may nudge hair color slightly toward {face} if needed for identity. "
+        f"Do not blend or average faces. Do not keep facial features from {body}. "
+        f"Do not copy her body, pose, outfit, or background from {face}. "
+        f"Keep {body}'s body, pose, bikini, framing, lighting, and background."
+    )
+
+
+FACE_SWAP_PROMPT = face_replace_prompt(seedream=False)
 PROMPT_WITH_FACE_PREFIX = (
     "Full-body portrait photo of the person from <IMAGE_0>, matching their face and identity. "
 )
@@ -95,6 +116,8 @@ MAX_SHORT_SIDE = 720
 MAX_INLINE_MB = 18
 POLL_INTERVAL_S = 5
 POLL_TIMEOUT_S = 600
+# Video edits (Grok and WaveSpeed) often sit in queue past the 10-minute image poll.
+VIDEO_POLL_TIMEOUT_S = 1800
 API_TIMEOUT_S = 120
 API_MAX_RETRIES = 6
 API_RETRY_BASE_S = 2
@@ -571,7 +594,7 @@ def poll_video(request_id: str, key: str, *, label: str = "video generation") ->
     print(f"Request id: {request_id} - polling ...")
     started = time.time()
     while True:
-        if time.time() - started > POLL_TIMEOUT_S:
+        if time.time() - started > VIDEO_POLL_TIMEOUT_S:
             raise RuntimeError(f"Timed out waiting for {label}.")
         result = api_get(POLL_PATH.format(request_id=request_id), key)
         status = result.get("status")
@@ -785,15 +808,55 @@ def normalize_background_motion_prompt(prompt: str) -> str:
     return prompt.strip()
 
 
+# Even light on her body. Scene light stays in the background so the still stays easy to use.
+# Must match PICTURE_BODY_LIGHT in src/videoFlow/schema.ts.
+PICTURE_BODY_LIGHT = (
+    "BODY LIGHT — simple, even, soft light on her body. Her skin, bikini, and hair stay "
+    "brightly and evenly lit from the front. No hard shadows, no dark side of her body, no "
+    "dramatic side light, and no rim light on her. Do not relight her body to match the background."
+)
+
+# Older take lines that lit her body. Rewritten so a saved prompt still gets even body light.
+_LEGACY_TAKE_LIGHT = {
+    "bright open daylight and vivid colors": "bright daylight in the background only",
+    "golden-hour side light and warmer tones": "warm sunset color in the background only",
+    "soft diffused light with richer background detail": "soft overcast light in the background only",
+}
+
+
+def with_body_light(prompt: str) -> str:
+    """Keep simple even light on her body. Background light can still change."""
+    text = (prompt or "").strip()
+    if not text:
+        return text
+    text = text.replace(
+        "environment and matching lighting —",
+        "environment —",
+    )
+    for old, new in _LEGACY_TAKE_LIGHT.items():
+        text = text.replace(
+            f"Lighting for this take: {old}.",
+            f"Lighting for this take: {new}.",
+        )
+    if "BODY LIGHT" in text:
+        return text
+    marker = "INFLUENCER POSITION"
+    if marker in text:
+        head, tail = text.split(marker, 1)
+        return f"{head.rstrip()}\n\n{PICTURE_BODY_LIGHT}\n\n{marker}{tail}"
+    return f"{text}\n\n{PICTURE_BODY_LIGHT}"
+
+
 def scenery_edit_prompt(theme: str, variation: str = "") -> str:
     scenery = (theme or "").strip() or "warm beach"
     lighting = f" Lighting for this take: {variation.strip()}." if variation.strip() else ""
     text = (
         f"Replace the entire background behind the person with a vividly recognizable {scenery} "
-        f"environment and matching lighting — a clear {scenery} location/scene, not a vague hint. "
+        f"environment — a clear {scenery} location/scene, not a vague hint. "
         "Completely remove the original backdrop (city skyline, balcony, street, outdoors, studio, "
         "plain wall, or any other scene). Keep the same woman, face, identity, hair, skin tone, "
-        "body, pose, bikini/outfit, hands, and subject scale. Do not crop, zoom, "
+        "body, pose, bikini/outfit, hands, and subject scale. "
+        f"{PICTURE_BODY_LIGHT} Do not crop, zoom, "
         f"or reframe away from the influencer position. Only change the background scenery.{lighting}"
     )
     return with_influencer_position(text)
@@ -807,7 +870,7 @@ def resolve_scenery_prompt(theme: str, variation: str = "", prompt: str = "") ->
     hint = variation.strip()
     if hint and "Lighting for this take:" not in base:
         base = f"{base} Lighting for this take: {hint}."
-    return with_influencer_position(base)
+    return with_body_light(with_influencer_position(base))
 
 
 def motion_source_bikini_prompt(caption: str) -> str:
@@ -864,15 +927,36 @@ def edit_image_scenery(
     model: str | None = None,
     variation: str = "",
     prompt: str = "",
+    face_image: str | Path | None = None,
 ) -> Path:
     """Bake themed scenery into a still before image-to-video (I2V alone rarely replaces busy BGs)."""
     key = api_key()
     text = resolve_scenery_prompt(theme, variation, prompt)
+    images: list[str | Path] | None = None
+    if face_image is not None:
+        text = _scenery_prompt_with_face(text, seedream=False)
+        images = [image, face_image]
     take = f", {variation.strip()}" if variation.strip() else ""
     print(f"Editing scenery into still ({(theme or '').strip() or 'warm beach'}{take}) ...")
-    result = _edit_image(prompt=text, aspect_ratio=aspect_ratio, key=key, image=image, model=model)
+    result = _edit_image(
+        prompt=text,
+        aspect_ratio=aspect_ratio,
+        key=key,
+        images=images,
+        image=None if images else image,
+        model=model,
+    )
     _save_image_response(result, out)
     return out
+
+
+def _scenery_prompt_with_face(prompt: str, *, seedream: bool) -> str:
+    """The stock scenery line keeps the source face. Drop that when a face photo is attached."""
+    text = prompt.replace(
+        "face, identity, hair, skin tone, ",
+        "",
+    )
+    return f"{text}\n\n{face_replace_prompt(seedream=seedream)}"
 
 
 # (short label for the review UI, prompt text sent to the image model)
@@ -1149,10 +1233,13 @@ def photo_scratch_background_prompt_locked(prompt: str) -> str:
 def photo_scratch_face_ref_clause() -> str:
     """Identity clause added when a dedicated face reference is the LAST image."""
     return (
-        "FACE IDENTITY — the LAST reference image is a close-up of her exact face. "
+        "FACE IDENTITY — the LAST reference image is her exact face. "
         "Reproduce that face identically: same eyes, eyebrows, nose, mouth, jawline, "
-        "cheekbones, skin tone, and hair colour. Her face in the result must look like "
-        "the same real person as that face reference — not a lookalike. "
+        "cheekbones, and skin tone. "
+        "Keep the body's current hair style, part, length, and fringe — do not transplant "
+        "bangs or a different hairstyle from the face reference. "
+        "Her face in the result must be the same real person as that face reference — "
+        "not a lookalike, not a blend, and not a softer reinterpretation. "
     )
 
 
