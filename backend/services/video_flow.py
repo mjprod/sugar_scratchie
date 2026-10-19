@@ -1272,6 +1272,8 @@ def save_flow_draft(
     picture_prompt: str | None = None,
     picture_prompts: list[str] | None = None,
     picture_variation_count: int | None = None,
+    picture_compare_mode: str | None = None,
+    picture_models: list[str] | None = None,
 ) -> dict:
     work = work_dir(card_id)
     existing = read_flow_draft(card_id) or {}
@@ -1289,6 +1291,22 @@ def save_flow_draft(
             return [str(item or "").strip() for item in existing_list][:PICTURE_CHOICE_COUNT]
         return []
 
+    def saved_picture_models() -> list[str]:
+        if picture_models is not None:
+            return [str(item or "").strip() for item in picture_models][:PICTURE_CHOICE_COUNT]
+        existing_list = existing.get("picture_models")
+        if isinstance(existing_list, list):
+            return [str(item or "").strip() for item in existing_list][:PICTURE_CHOICE_COUNT]
+        return []
+
+    def saved_picture_compare_mode() -> str:
+        raw = (
+            picture_compare_mode
+            if picture_compare_mode is not None
+            else existing.get("picture_compare_mode")
+        )
+        return "models" if str(raw or "").strip() == "models" else "prompts"
+
     draft = {
         "image": str(image),
         "theme": saved_theme,
@@ -1299,6 +1317,8 @@ def save_flow_draft(
             if picture_variation_count is not None
             else existing.get("picture_variation_count")
         ),
+        "picture_compare_mode": saved_picture_compare_mode(),
+        "picture_models": saved_picture_models(),
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -2760,6 +2780,19 @@ def _write_picture_file(src: str | Path, dest: Path) -> None:
     raise RuntimeError(f"Source image not found: {src}")
 
 
+def _provider_for_source_image_model(image_model: str) -> str:
+    from backend.generation_models_store import resolve_spec
+
+    model = normalize_source_image_model(image_model)
+    try:
+        provider = str(resolve_spec("source_image", model).provider or "").strip().lower()
+    except Exception:
+        provider = ""
+    if provider == "wavespeed" or model == "seedream-v5-lite":
+        return "wavespeed"
+    return "xai"
+
+
 def build_picture_still(
     *,
     image: str | Path,
@@ -2777,6 +2810,14 @@ def build_picture_still(
     i2v_image: str | Path = image
     face_path = _optional_draft_image(draft, "face_image", "Face reference")
     bikini_path = _optional_draft_image(draft, "bikini_image", "Bikini model")
+    compare_mode = (
+        "models" if str(draft.get("picture_compare_mode") or "").strip() == "models" else "prompts"
+    )
+    picture_model_ids = [
+        str(item or "").strip()
+        for item in (draft.get("picture_models") or [])
+        if str(item or "").strip()
+    ]
     if bikini_path is not None:
         bikini_still = paths["styled_bikini"]
         bikini_caption = _caption_clothes_ref(str(bikini_path), {})
@@ -2829,6 +2870,9 @@ def build_picture_still(
         bake_theme,
         count=take_count,
     )
+    # Models mode: same prompt on every take; vary the image model instead.
+    if compare_mode == "models" and take_prompts:
+        take_prompts = [take_prompts[0]] * take_count
     paths["picture"].unlink(missing_ok=True)
     for extra in range(take_count + 1, PICTURE_CHOICE_COUNT + 1):
         picture_choice_path(work, extra).unlink(missing_ok=True)
@@ -2840,12 +2884,24 @@ def build_picture_still(
     ):
         dest = picture_choice_path(work, index)
         dest.unlink(missing_ok=True)
-        print(f"Picture {index}/{take_count} ({hint}) via {source_model}")
+        if compare_mode == "models":
+            take_model = normalize_source_image_model(
+                picture_model_ids[index - 1] if index - 1 < len(picture_model_ids) else source_model,
+                provider=ai_provider,
+            )
+            take_provider = _provider_for_source_image_model(take_model)
+        else:
+            take_model = source_model
+            take_provider = normalize_provider(ai_provider)
+        print(
+            f"Picture {index}/{take_count} ({hint}) via {take_provider}/{take_model}"
+            f"{' [models mode]' if compare_mode == 'models' else ''}"
+        )
         print(take_prompt)
         try:
             edit_image_scenery(
-                provider=ai_provider,
-                image_model=source_model,
+                provider=take_provider,
+                image_model=take_model,
                 image=i2v_image,
                 theme=bake_theme,
                 out=dest,
@@ -2859,8 +2915,8 @@ def build_picture_still(
                 _face_swap_photo_scratch_layer(
                     dest,
                     face_path,
-                    provider=ai_provider,
-                    image_model=source_model,
+                    provider=take_provider,
+                    image_model=take_model,
                 )
         except RuntimeError as exc:
             print(f"Picture {index} failed: {exc}")
@@ -2906,6 +2962,8 @@ def run_video_flow_step(
     picture_prompt: str = "",
     picture_prompts: list[str] | None = None,
     picture_variation_count: int | None = None,
+    picture_compare_mode: str | None = None,
+    picture_models: list[str] | None = None,
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -2948,6 +3006,8 @@ def run_video_flow_step(
         picture_prompt=picture_prompt,
         picture_prompts=picture_prompts,
         picture_variation_count=picture_variation_count,
+        picture_compare_mode=picture_compare_mode,
+        picture_models=picture_models,
     )
 
     # Re-read state in case approvals changed while the job was queued.

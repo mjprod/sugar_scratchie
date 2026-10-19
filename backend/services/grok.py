@@ -58,13 +58,18 @@ LEGACY_PORTRAIT_PROMPT = (
 )
 
 DEFAULT_BACKGROUND_MOTION_PROMPT = (
-    "Animate this portrait into a seamless looping boomerang video. She wears a bikini, "
-    "gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, "
-    "no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. "
-    "Keep the exact same framing and subject size as the input image in every frame. "
-    "Keep her face, identity, hair, and skin tone identical in every frame — same undertone, "
-    "same lightness, no tan/pale flicker, no color grading shifts on skin. "
-    "Perfect loop, warm beach lighting."
+    "Animate this approved portrait into a seamless looping boomerang video. "
+    "The background is already correct in the input still — keep that exact backdrop. "
+    "Do not replace the scenery or restage her. "
+    "She wears a bikini. Tiny sway, breathing, and hair motion only — she must not walk at all. "
+    "STATION LOCK — feet glued to the floor in their exact input positions. Zero steps. "
+    "No walk cycle, no stride, no approach, no walking in place. "
+    "Subject scale must not grow. Locked camera: no zoom, dolly, push-in, or pull-back. "
+    "Framing matches the input image exactly. "
+    "COLOR AND SKIN LOCK — her skin, hair, bikini color, white balance, exposure, and "
+    "saturation stay identical to the input still in every frame. Do not tan, pale, bronze, "
+    "warm, cool, or relight her. Background lights stay in the scenery only and must not "
+    "cast colored light onto her body. Perfect loop."
 )
 LEGACY_BACKGROUND_MOTION_PROMPT = (
     "Animate this portrait into a seamless looping boomerang video. She wears a bikini, "
@@ -142,25 +147,26 @@ ENHANCE_SYSTEM = (
 MOTION_ENHANCE_SYSTEM = (
     "You rewrite a short image-to-video motion instruction into a single precise prompt. "
     "Rules: (1) Keep the user's intended motion (sway, loop, boomerang, outfit notes) "
-    "but make camera and framing ironclad. (2) Explicitly forbid zoom in/out, dolly, "
-    "push-in, pull-back, orbit, and any walking toward or away from camera. (3) She "
-    "must stay on the same spot; subject size and framing must match the input image "
-    "in every frame. (4) COLOR AND SKIN LOCK is mandatory and must survive the rewrite. "
+    "but make camera and framing ironclad. She must NOT walk at all — rewrite any walking "
+    "into planted sway only. (2) Explicitly forbid zoom in/out, dolly, push-in, pull-back, "
+    "orbit, walking, stepping, striding, marching, shuffling, walking in place, and any "
+    "motion toward or away from camera. (3) STATION LOCK: feet glued to the floor; zero "
+    "steps; hips fixed; subject size and framing must match the input image in every frame. "
+    "(4) COLOR AND SKIN LOCK is mandatory and must survive the rewrite. "
     "Her skin undertone, lightness, hair color, and outfit color stay identical to the "
     "input portrait in every frame, including the loop back. No tan, pale, bronze, "
-    "sunburn, flicker, beauty filter, white-balance shift, exposure change, or saturation "
-    "change on her. Do NOT relight or color-grade her to match the new background. "
-    "If the instruction says 'matching lighting', that light belongs to the scenery only. "
-    "(5) Prefer a seamless looping boomerang "
-    "unless the user asked otherwise. (6) If the user asks for a theme, setting, location, or scenery "
-    "(e.g. nurse clinic, hospital room, police station, beach, neon city), KEEP and "
-    "STRENGTHEN the background only: place her in a clearly recognizable themed environment. Completely "
-    "replace ANY existing background — city skylines, balconies, streets, outdoors, busy "
-    "photos, studio, or plain walls — not only blank backdrops. Do NOT strip theme or "
-    "scenery requests. Do NOT invent unrelated wardrobe changes beyond what the user wrote "
-    "(bikini in step 1 stays a bikini). Do NOT warm, cool, or grade her body because the "
+    "sunburn, flicker, beauty filter, white-balance shift, exposure change, saturation "
+    "change, or colored scene light spilling onto her body. Do NOT relight or color-grade "
+    "her to match the background. If the instruction says 'matching lighting', that light "
+    "belongs to the scenery only. "
+    "(5) Prefer a seamless looping boomerang unless the user asked otherwise. "
+    "(6) The input still already has the final scenery (from Create picture). Keep that "
+    "backdrop. Do NOT restage her, walk her into a new location, or replace the background "
+    "unless the user explicitly asks to change scenery. Do NOT invent unrelated wardrobe "
+    "changes (bikini stays a bikini). Do NOT warm, cool, or grade her body because the "
     "scene is sunny or dramatic. (7) Output ONLY the rewritten prompt, one "
-    "paragraph, no preamble or quotes.")
+    "paragraph, no preamble or quotes."
+)
 
 # Appended after motion-prompt enhancement. "Matching lighting" was tanning her
 # to the new scene, so this lock is last and forbids relighting the subject.
@@ -170,17 +176,61 @@ MOTION_COLOR_LOCK = (
     "from start to end: no tan, no pale, no bronze, no sunburn, no flicker, no "
     "frame-to-frame shift. Do not relight her, color-grade her, warm her, cool her, or "
     "change exposure, white balance, or saturation on her skin, hair, or bikini to match "
-    "the new background. Scene light stays in the background only. Hair color and bikini "
-    "color stay exactly as in the input image."
+    "the new background. Scene lights and glows stay in the background only and must not "
+    "cast colored light onto her body. Hair color and bikini color stay exactly as in the "
+    "input image."
+)
+
+MOTION_STATION_LOCK = (
+    "STATION LOCK — she stays planted on the same spot in every frame. "
+    "Feet stay glued to the floor in their exact input positions. "
+    "She must not walk at all — not one step, stride, march, shuffle, or walk cycle. "
+    "No walking toward or away from camera. No walking in place. No approaching. "
+    "No orbit. Hips and feet stay fixed; only gentle sway, breathing, and hair motion. "
+    "Subject scale must not grow or shrink (growing means walking closer). "
+    "Locked camera: framing matches the input image exactly — no zoom, dolly, push-in, or pull-back."
+)
+
+# Always last. Enhance can dilute earlier wording; WAN spicy attends to the ending.
+MOTION_NO_WALK_SUFFIX = (
+    "NO WALKING — critical final rule. She does not walk at all. "
+    "Zero steps. Feet never leave their starting positions. "
+    "Forbidden: walking, stepping, striding, marching, shuffling, approaching the camera, "
+    "walking in place, or any walk-cycle hip/leg motion. "
+    "Allowed only: tiny sway, breathing, hair and fabric motion while planted. "
+    "If motion looks like walking, do not do that motion."
 )
 
 
 def append_motion_color_lock(prompt: str) -> str:
     text = prompt.rstrip()
-    marker = "COLOR AND SKIN LOCK — her color stays identical to the input portrait"
-    if marker in text:
+    if (
+        "COLOR AND SKIN LOCK — her color stays identical to the input portrait" in text
+        or "COLOR AND SKIN LOCK — her skin" in text
+    ):
         return text
-    return f"{text}\n\n{MOTION_COLOR_LOCK}"
+    return text + "\n\n" + MOTION_COLOR_LOCK
+
+
+def append_motion_station_lock(prompt: str) -> str:
+    text = prompt.rstrip()
+    if "STATION LOCK — she stays planted" in text:
+        return text
+    return text + "\n\n" + MOTION_STATION_LOCK
+
+
+def append_motion_no_walk(prompt: str) -> str:
+    text = prompt.rstrip()
+    marker = "NO WALKING — critical final rule"
+    if marker in text:
+        head = text.split(marker, 1)[0].rstrip()
+        return head + "\n\n" + MOTION_NO_WALK_SUFFIX
+    return text + "\n\n" + MOTION_NO_WALK_SUFFIX
+
+
+def append_motion_locks(prompt: str) -> str:
+    """Hard locks last so I2V models (especially WAN spicy) keep her planted and un-relit."""
+    return append_motion_no_walk(append_motion_station_lock(append_motion_color_lock(prompt)))
 
 
 DRESS_CAPTION_SYSTEM = (
@@ -794,15 +844,29 @@ def is_stock_portrait_prompt(prompt: str) -> bool:
 
 def is_stock_background_motion_prompt(prompt: str) -> bool:
     stripped = prompt.strip()
-    return not stripped or stripped in (
+    if not stripped:
+        return True
+    if stripped in (
         DEFAULT_BACKGROUND_MOTION_PROMPT,
         LEGACY_BACKGROUND_MOTION_PROMPT,
         LEGACY_LOCKED_CAMERA_MOTION_PROMPT,
-    )
+    ):
+        return True
+    # Older themed stock asked I2V to restage scenery (causes walking + scene lights).
+    if stripped.startswith("COLOR AND SKIN LOCK"):
+        return True
+    if (
+        "Place her in a clearly recognizable " in stripped
+        and "completely replace ANY existing background" in stripped
+    ):
+        return True
+    if "Animate this approved " in stripped and "background is already correct" in stripped:
+        return True
+    return False
 
 
 def normalize_background_motion_prompt(prompt: str) -> str:
-    """Upgrade legacy/empty motion prompts to the locked-camera default."""
+    """Upgrade legacy/empty/restage motion prompts to the animate-in-place default."""
     if is_stock_background_motion_prompt(prompt):
         return DEFAULT_BACKGROUND_MOTION_PROMPT
     return prompt.strip()
@@ -1686,7 +1750,7 @@ def image_to_video(
         print(f"Enhancing motion prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=MOTION_ENHANCE_SYSTEM)
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
-    final_prompt = append_motion_color_lock(final_prompt)
+    final_prompt = append_motion_locks(final_prompt)
     payload = {
         "model": model,
         "prompt": final_prompt,

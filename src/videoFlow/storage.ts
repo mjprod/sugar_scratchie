@@ -1,6 +1,10 @@
 import {
   backgroundMotionPromptForTheme,
   DEFAULT_BACKGROUND_MOTION_PROMPT,
+  normalizePictureModels,
+  pictureCompareModeOf,
+  type PictureCompareMode,
+  type PictureModels,
   DEFAULT_VIDEO_FLOW_JSON,
   dressPromptForTheme,
   isStockBackgroundMotionPromptText,
@@ -149,6 +153,8 @@ export type StoredVideoFlowDraft = {
   theme: string;
   picturePrompts: PicturePrompts;
   pictureVariationCount: PictureVariationCount;
+  pictureCompareMode: PictureCompareMode;
+  pictureModels: PictureModels;
   backgroundMotionPrompt: string;
   foregroundMotionPrompt: string;
   dressPrompt: string;
@@ -189,6 +195,8 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
       theme,
       picturePrompts: normalizePicturePrompts(rawPicturePrompts, theme, parsed.picturePrompt),
       pictureVariationCount: pictureVariationCountOf(parsed.pictureVariationCount),
+      pictureCompareMode: pictureCompareModeOf(parsed.pictureCompareMode),
+      pictureModels: normalizePictureModels(parsed.pictureModels, parsed.sourceImageModel),
       backgroundMotionPrompt: normalizeStoredMotionPrompt(parsed.backgroundMotionPrompt, theme),
       foregroundMotionPrompt: normalizeStoredMotionPrompt(
         parsed.foregroundMotionPrompt || parsed.backgroundMotionPrompt,
@@ -271,6 +279,8 @@ export function storedDraftFromApi(draft?: {
   picture_prompt?: string;
   picture_prompts?: string[];
   picture_variation_count?: number;
+  picture_compare_mode?: string;
+  picture_models?: string[];
   background_motion_prompt?: string;
   foreground_motion_prompt?: string;
   dress_prompt?: string;
@@ -300,6 +310,8 @@ export function storedDraftFromApi(draft?: {
     theme,
     picturePrompts: normalizePicturePrompts(draft.picture_prompts, theme, draft.picture_prompt),
     pictureVariationCount: pictureVariationCountOf(draft.picture_variation_count),
+    pictureCompareMode: pictureCompareModeOf(draft.picture_compare_mode),
+    pictureModels: normalizePictureModels(draft.picture_models, draft.source_image_model),
     backgroundMotionPrompt: draft.background_motion_prompt ?? "",
     foregroundMotionPrompt: draft.foreground_motion_prompt ?? "",
     dressPrompt: normalizeStoredDressPrompt(draft.dress_prompt, theme),

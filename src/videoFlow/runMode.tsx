@@ -50,6 +50,8 @@ import {
   stepToNode,
   type CompressPreset,
   type FlowNodeId,
+  type PictureCompareMode,
+  type PictureModels,
   type PicturePrompts,
   type PictureVariationCount,
   type VideoFlowJson,
@@ -66,6 +68,7 @@ import { dressModelTakesReferenceImage, isWavespeedDressVideoModel, type AiProvi
 import {
   findGenerationModel,
   GenerationModelSelect,
+  modelsForRole,
   useGenerationCatalog,
 } from "../shared/generationModels";
 
@@ -296,14 +299,37 @@ function PicturePromptFields({
   onPromptsChange,
   variationCount,
   onVariationCountChange,
+  compareMode,
+  onCompareModeChange,
+  pictureModels,
+  onPictureModelsChange,
 }: {
   prompts: PicturePrompts;
   onPromptsChange: (next: PicturePrompts) => void;
   variationCount: PictureVariationCount;
   onVariationCountChange: (count: PictureVariationCount) => void;
+  compareMode: PictureCompareMode;
+  onCompareModeChange: (mode: PictureCompareMode) => void;
+  pictureModels: PictureModels;
+  onPictureModelsChange: (next: PictureModels) => void;
 }) {
+  const { models } = useGenerationCatalog();
+  const imageModels = modelsForRole(models, "source_image");
+
   return (
     <Flex direction="column" gap="3">
+      <Field label="Compare">
+        <Select.Root
+          value={compareMode}
+          onValueChange={(value) => onCompareModeChange(value as PictureCompareMode)}
+        >
+          <Select.Trigger />
+          <Select.Content>
+            <Select.Item value="prompts">Different prompts · same model</Select.Item>
+            <Select.Item value="models">Same prompt · different models</Select.Item>
+          </Select.Content>
+        </Select.Root>
+      </Field>
       <Field label="Pictures">
         <Select.Root
           value={String(variationCount)}
@@ -319,19 +345,61 @@ function PicturePromptFields({
           </Select.Content>
         </Select.Root>
       </Field>
-      {Array.from({ length: variationCount }, (_, index) => (
-        <Field key={index} label={`Prompt ${index + 1}`}>
-          <TextArea
-            rows={6}
-            value={prompts[index] ?? ""}
-            onChange={(event) => {
-              const next = [...prompts] as PicturePrompts;
-              next[index] = event.currentTarget.value;
-              onPromptsChange(next);
-            }}
-          />
-        </Field>
-      ))}
+      {compareMode === "models" ? (
+        <>
+          <Field label="Shared prompt">
+            <TextArea
+              rows={8}
+              value={prompts[0] ?? ""}
+              onChange={(event) => {
+                const text = event.currentTarget.value;
+                onPromptsChange([text, text, text]);
+              }}
+            />
+          </Field>
+          {Array.from({ length: variationCount }, (_, index) => (
+            <Field key={index} label={`Model ${index + 1}`}>
+              <Select.Root
+                value={pictureModels[index] || imageModels[0]?.id || "grok-imagine"}
+                onValueChange={(value) => {
+                  const next = [...pictureModels] as PictureModels;
+                  next[index] = value;
+                  onPictureModelsChange(next);
+                }}
+              >
+                <Select.Trigger />
+                <Select.Content>
+                  {imageModels.map((model) => (
+                    <Select.Item key={model.id} value={model.id}>
+                      {model.label}
+                    </Select.Item>
+                  ))}
+                  {pictureModels[index] &&
+                  !imageModels.some((model) => model.id === pictureModels[index]) ? (
+                    <Select.Item value={pictureModels[index]}>
+                      {pictureModels[index]} (not in catalog)
+                    </Select.Item>
+                  ) : null}
+                </Select.Content>
+              </Select.Root>
+            </Field>
+          ))}
+        </>
+      ) : (
+        Array.from({ length: variationCount }, (_, index) => (
+          <Field key={index} label={`Prompt ${index + 1}`}>
+            <TextArea
+              rows={6}
+              value={prompts[index] ?? ""}
+              onChange={(event) => {
+                const next = [...prompts] as PicturePrompts;
+                next[index] = event.currentTarget.value;
+                onPromptsChange(next);
+              }}
+            />
+          </Field>
+        ))
+      )}
     </Flex>
   );
 }
@@ -1003,6 +1071,8 @@ type RunModeProps = {
   theme: string;
   picturePrompts: PicturePrompts;
   pictureVariationCount: PictureVariationCount;
+  pictureCompareMode: PictureCompareMode;
+  pictureModels: PictureModels;
   backgroundMotionPrompt: string;
   dressPrompt: string;
   dressReferenceImage: string;
@@ -1021,6 +1091,8 @@ type RunModeProps = {
   onApplyThemeToPrompts: () => void;
   onPicturePromptsChange: (value: PicturePrompts) => void;
   onPictureVariationCountChange: (value: PictureVariationCount) => void;
+  onPictureCompareModeChange: (value: PictureCompareMode) => void;
+  onPictureModelsChange: (value: PictureModels) => void;
   onBackgroundMotionPromptChange: (value: string) => void;
   onDressPromptChange: (value: string) => void;
   onDressReferenceImageChange: (value: string) => void;
@@ -2939,6 +3011,8 @@ export function RunMode(props: RunModeProps) {
     theme,
     picturePrompts,
     pictureVariationCount,
+    pictureCompareMode,
+    pictureModels,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -2957,6 +3031,8 @@ export function RunMode(props: RunModeProps) {
     onApplyThemeToPrompts,
     onPicturePromptsChange,
     onPictureVariationCountChange,
+    onPictureCompareModeChange,
+    onPictureModelsChange,
     onBackgroundMotionPromptChange,
     onDressPromptChange,
     onDressReferenceImageChange,
@@ -3311,6 +3387,8 @@ export function RunMode(props: RunModeProps) {
     theme,
     picture_prompts: picturePrompts,
     picture_variation_count: pictureVariationCount,
+    picture_compare_mode: pictureCompareMode,
+    picture_models: pictureModels,
     background_motion_prompt: backgroundMotionPrompt,
     foreground_motion_prompt: backgroundMotionPrompt,
     dress_prompt: dressPrompt,
@@ -3927,15 +4005,16 @@ export function RunMode(props: RunModeProps) {
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
             <Text color="gray" size="2">
-              Choose 1, 2, or 3. Changing the number remakes that many stills. Pick one as soon as
-              it appears — you do not have to wait for the rest. Every still keeps the influencer
-              position.
+              Choose 1, 2, or 3. Compare different prompts on one model, or the same prompt on
+              different image models. Pick one as soon as it appears — you do not have to wait for
+              the rest. Every still keeps the influencer position.
             </Text>
             {effectiveRunningStep === "picture" ? (
               <Callout.Root color="blue">
                 <Callout.Text>
-                  Making {pictureVariationCount} picture{pictureVariationCount === 1 ? "" : "s"}.
-                  Use a picture as soon as it shows up.
+                  Making {pictureVariationCount} picture{pictureVariationCount === 1 ? "" : "s"}
+                  {pictureCompareMode === "models" ? " across models" : ""}. Use a picture as soon
+                  as it shows up.
                 </Callout.Text>
               </Callout.Root>
             ) : null}
@@ -3944,6 +4023,10 @@ export function RunMode(props: RunModeProps) {
               onPromptsChange={onPicturePromptsChange}
               variationCount={pictureVariationCount}
               onVariationCountChange={handlePictureCountChange}
+              compareMode={pictureCompareMode}
+              onCompareModeChange={onPictureCompareModeChange}
+              pictureModels={pictureModels}
+              onPictureModelsChange={onPictureModelsChange}
             />
             {flowState?.steps.picture?.status === "approved" &&
             !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
@@ -4480,7 +4563,20 @@ export function RunMode(props: RunModeProps) {
                 ) : (
                   <MediaPreview
                     key={`${artifact}:${cardMediaRevision}`}
-                    label={artifact.split("/").pop() ?? "Result"}
+                    label={
+                      activeStep === "picture"
+                        ? (() => {
+                            const choice = pictureChoiceFromArtifact(artifact);
+                            if (choice == null) return artifact.split("/").pop() ?? "Result";
+                            if (pictureCompareMode === "models") {
+                              const modelId = pictureModels[choice - 1] || sourceImageModel;
+                              const model = findGenerationModel(models, "source_image", modelId);
+                              return model?.label || modelId || `Picture ${choice}`;
+                            }
+                            return `Prompt ${choice}`;
+                          })()
+                        : (artifact.split("/").pop() ?? "Result")
+                    }
                     type={previewMediaType(artifact)}
                     value={artifact}
                     zoomable={previewMediaType(artifact) === "image"}

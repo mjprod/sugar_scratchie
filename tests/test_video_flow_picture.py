@@ -233,3 +233,55 @@ def test_create_picture_face_locks_each_take_after_scenery(monkeypatch, tmp_path
     assert len(scenery_calls) == 2
     assert post_scenery_swaps == [work / "picture-1.png", work / "picture-2.png"]
     assert Image.open(work / "picture-1.png").getpixel((0, 0)) == (255, 0, 0)
+
+
+def test_create_picture_models_mode_uses_one_prompt_across_models(monkeypatch, tmp_path):
+    from PIL import Image
+
+    import backend.services.video_flow as video_flow
+
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (8, 8), (10, 20, 30)).save(source)
+    work = tmp_path / "work"
+    work.mkdir()
+    paths = {
+        "picture": work / "picture.png",
+        "styled_bikini": work / "styled-bikini.png",
+        "styled_face": work / "styled-face.png",
+        "styled_source": work / "styled-source.png",
+    }
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_scenery(**kwargs):
+        out = Path(kwargs["out"])
+        Image.new("RGB", (8, 8), (40, 40, 40)).save(out)
+        calls.append((str(kwargs["image_model"]), str(kwargs["provider"]), str(kwargs["prompt"])))
+        return out
+
+    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
+    monkeypatch.setattr(video_flow, "lock_setup_face", lambda **kwargs: Path(kwargs["out"]))
+
+    shared = "Keep her planted in a Police station. BODY LIGHT — even front light."
+    video_flow.build_picture_still(
+        image=source,
+        theme_text="Police",
+        source_model="grok-imagine",
+        ai_provider="xai",
+        draft={
+            "picture_compare_mode": "models",
+            "picture_models": ["grok-imagine", "seedream-v5-lite"],
+            "picture_prompts": [shared, "other unused", "other unused"],
+        },
+        paths=paths,
+        picture_prompts=[shared, "other unused", "other unused"],
+        picture_variation_count=2,
+    )
+
+    assert len(calls) == 2
+    assert calls[0][0] == "grok-imagine"
+    assert calls[1][0] == "seedream-v5-lite"
+    assert calls[0][2] == calls[1][2]
+    assert "other unused" not in calls[0][2]

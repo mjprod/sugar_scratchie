@@ -432,7 +432,7 @@ def image_to_video(
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
     elif enhance_motion_prompt and not xai_key_available():
         print("Motion prompt enhancement skipped — XAI_API_KEY not set; using locked-camera prompt as written.")
-    final_prompt = grok.append_motion_color_lock(final_prompt)
+    final_prompt = grok.append_motion_locks(final_prompt)
 
     spec = _spec("background_video", background_video_model)
     if spec.adapter == "wan_spicy_i2v":

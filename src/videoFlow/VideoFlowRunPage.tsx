@@ -23,6 +23,10 @@ export function VideoFlowRunPage() {
     setPicturePrompts,
     pictureVariationCount,
     setPictureVariationCount,
+    pictureCompareMode,
+    setPictureCompareMode,
+    pictureModels,
+    setPictureModels,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,
@@ -110,6 +114,8 @@ export function VideoFlowRunPage() {
             theme={theme}
             picturePrompts={picturePrompts}
             pictureVariationCount={pictureVariationCount}
+            pictureCompareMode={pictureCompareMode}
+            pictureModels={pictureModels}
             backgroundMotionPrompt={backgroundMotionPrompt}
             dressPrompt={dressPrompt}
             dressReferenceImage={dressReferenceImage}
@@ -128,6 +134,8 @@ export function VideoFlowRunPage() {
             onApplyThemeToPrompts={applyThemeToPrompts}
             onPicturePromptsChange={setPicturePrompts}
             onPictureVariationCountChange={setPictureVariationCount}
+            onPictureCompareModeChange={setPictureCompareMode}
+            onPictureModelsChange={setPictureModels}
             onBackgroundMotionPromptChange={setBackgroundMotionPrompt}
             onDressPromptChange={setDressPrompt}
             onDressReferenceImageChange={setDressReferenceImage}

@@ -352,6 +352,8 @@ class VideoFlowRequest(BaseModel):
     picture_prompt: str = ""
     picture_prompts: list[str] = Field(default_factory=list)
     picture_variation_count: int = Field(default=3, ge=1, le=3)
+    picture_compare_mode: Literal["prompts", "models"] = "prompts"
+    picture_models: list[str] = Field(default_factory=list)
 
 
 class GenerateSourceImageRequest(BaseModel):
@@ -2020,6 +2022,10 @@ def video_flow_draft_kwargs(request: VideoFlowRequest, *, image: Path | str) -> 
         "picture_prompt": request.picture_prompt,
         "picture_prompts": request.picture_prompts,
         "picture_variation_count": request.picture_variation_count,
+        "picture_compare_mode": (
+            request.picture_compare_mode if "picture_compare_mode" in request.model_fields_set else None
+        ),
+        "picture_models": request.picture_models if "picture_models" in request.model_fields_set else None,
     }
 
 
@@ -2317,6 +2323,8 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
             picture_prompt=request.picture_prompt,
             picture_prompts=request.picture_prompts,
             picture_variation_count=request.picture_variation_count,
+            picture_compare_mode=request.picture_compare_mode,
+            picture_models=request.picture_models,
         ),
     )
     return job.public()

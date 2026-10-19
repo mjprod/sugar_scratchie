@@ -130,12 +130,36 @@ export const PICTURE_TAKE_LIGHTING = [
 
 export type PictureTake = 1 | 2 | 3;
 export type PictureVariationCount = PictureTake;
+/** Compare scenery prompts on one model, or one prompt across image models. */
+export type PictureCompareMode = "prompts" | "models";
+export type PictureModels = [string, string, string];
+
+export const DEFAULT_PICTURE_MODELS: PictureModels = [
+  "grok-imagine",
+  "seedream-v5-lite",
+  "grok-imagine",
+];
 
 export function pictureVariationCountOf(value: unknown): PictureVariationCount {
   const count = Number(value);
   if (count === 1 || count === 2 || count === 3) return count;
   return 3;
 }
+
+export function pictureCompareModeOf(value: unknown): PictureCompareMode {
+  return value === "models" ? "models" : "prompts";
+}
+
+export function normalizePictureModels(value: unknown, fallbackModel = "grok-imagine"): PictureModels {
+  const defaults = DEFAULT_PICTURE_MODELS;
+  const raw = Array.isArray(value) ? value : [];
+  return [0, 1, 2].map((index) => {
+    const item = raw[index];
+    if (typeof item === "string" && item.trim()) return item.trim();
+    return defaults[index] || fallbackModel;
+  }) as PictureModels;
+}
+
 export type PicturePrompts = [string, string, string];
 
 export function picturePromptForTake(theme: string, take: PictureTake): string {
@@ -210,7 +234,22 @@ export function normalizePicturePrompts(
 
 export function backgroundMotionPromptForTheme(theme: string): string {
   const scenery = normalizeTheme(theme);
-  return `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation stay identical to the input portrait in every frame, including the loop back. Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the new scene. Scene light stays in the background only. Animate this portrait into a seamless looping boomerang video. Place her in a clearly recognizable ${scenery} environment — completely replace ANY existing background (city skyline, balcony, street, outdoors, studio, plain wall, or empty backdrop) with a vivid ${scenery} location/scene. Do not keep the original backdrop. Do not change her lighting to match that scene. She wears a bikini, gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. Keep subject scale and framing on her body consistent with the input image. Perfect loop, ${scenery} scenery throughout, with her colors frozen to the input still.`;
+  // Create picture already baked the themed still. I2V must only animate in place —
+  // restaging / "walk into the scene" makes WAN spicy walk and cast scene lights on her.
+  return (
+    `Animate this approved ${scenery} portrait into a seamless looping boomerang video. ` +
+    `The ${scenery} background is already correct in the input still — keep that exact backdrop. ` +
+    `Do not replace the scenery or restage her. ` +
+    `She wears a bikini. Tiny sway, breathing, and hair motion only — she must not walk at all. ` +
+    `STATION LOCK — feet glued to the floor in their exact input positions. Zero steps. ` +
+    `No walk cycle, no stride, no approach, no walking in place. Subject scale must not grow. ` +
+    `Locked camera: no zoom, dolly, push-in, or pull-back. Framing matches the input image exactly. ` +
+    `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation ` +
+    `stay identical to the input still in every frame, including the loop back. ` +
+    `Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the scene. ` +
+    `Background lights and glows stay in the scenery only and must not cast colored light onto her body. ` +
+    `Perfect loop.`
+  );
 }
 
 /** Pre-any-bg stock: only asked to replace blank/studio backdrops. */
@@ -267,6 +306,13 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
   const scenery = normalizeTheme(theme);
   if (!stripped) return true;
   if (stripped.startsWith("COLOR AND SKIN LOCK")) return true;
+  // Current stock: animate the Create-picture still in place (no restage / walk-in).
+  if (
+    stripped.includes("Animate this approved ") &&
+    stripped.includes("background is already correct")
+  ) {
+    return true;
+  }
   if (stripped.endsWith("setting with matching lighting.")) return true;
   // Previous stock: themed scenery plus "matching lighting", which recolored her skin.
   if (

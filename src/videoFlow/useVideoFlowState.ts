@@ -10,12 +10,17 @@ import {
   dressPromptForThemeWithReference,
   isStockBackgroundMotionPromptText,
   isStockDressPromptText,
+  DEFAULT_PICTURE_MODELS,
   defaultPicturePrompts,
   isStockPictureTakePrompt,
+  normalizePictureModels,
   normalizePicturePrompts,
   normalizeTheme,
+  pictureCompareModeOf,
   picturePromptForTake,
   pictureVariationCountOf,
+  type PictureCompareMode,
+  type PictureModels,
   type PicturePrompts,
   type PictureTake,
   type PictureVariationCount,
@@ -90,6 +95,8 @@ function draftPayload(
     theme: draft.theme || DEFAULT_THEME,
     picture_prompts: draft.picturePrompts,
     picture_variation_count: draft.pictureVariationCount,
+    picture_compare_mode: draft.pictureCompareMode,
+    picture_models: draft.pictureModels,
     background_motion_prompt:
       draft.backgroundMotionPrompt || flow.defaults.background_motion_prompt,
     foreground_motion_prompt:
@@ -152,6 +159,14 @@ export function useVideoFlowState() {
   );
   const [pictureVariationCount, setPictureVariationCount] = useState<PictureVariationCount>(
     hydrateFromStored ? pictureVariationCountOf(storedDraft?.pictureVariationCount) : 3,
+  );
+  const [pictureCompareMode, setPictureCompareMode] = useState<PictureCompareMode>(
+    hydrateFromStored ? pictureCompareModeOf(storedDraft?.pictureCompareMode) : "prompts",
+  );
+  const [pictureModels, setPictureModels] = useState<PictureModels>(
+    hydrateFromStored
+      ? normalizePictureModels(storedDraft?.pictureModels, storedDraft?.sourceImageModel)
+      : DEFAULT_PICTURE_MODELS,
   );
   const [picturePrompts, setPicturePrompts] = useState<PicturePrompts>(
     hydrateFromStored
@@ -341,6 +356,8 @@ export function useVideoFlowState() {
     setTheme(themeToApply);
     setPicturePrompts(picturePromptsToApply);
     setPictureVariationCount(pictureVariationCountOf(draft.pictureVariationCount));
+    setPictureCompareMode(pictureCompareModeOf(draft.pictureCompareMode));
+    setPictureModels(normalizePictureModels(draft.pictureModels, draft.sourceImageModel));
     setBackgroundMotionPrompt(motion);
     setDressPrompt(dress);
     setDressReferenceImage(dressRefToApply);
@@ -369,6 +386,8 @@ export function useVideoFlowState() {
       theme: themeToApply,
       picturePrompts: picturePromptsToApply,
       pictureVariationCount: pictureVariationCountOf(draft.pictureVariationCount),
+      pictureCompareMode: pictureCompareModeOf(draft.pictureCompareMode),
+      pictureModels: normalizePictureModels(draft.pictureModels, draft.sourceImageModel),
       backgroundMotionPrompt: motion,
       foregroundMotionPrompt: motion,
       dressPrompt: dress,
@@ -455,6 +474,8 @@ export function useVideoFlowState() {
         theme: DEFAULT_THEME,
         picturePrompts: defaultPicturePrompts(DEFAULT_THEME),
         pictureVariationCount: 3,
+        pictureCompareMode: "prompts",
+        pictureModels: DEFAULT_PICTURE_MODELS,
         backgroundMotionPrompt: flow.defaults.background_motion_prompt,
         foregroundMotionPrompt: flow.defaults.background_motion_prompt,
         dressPrompt: flow.defaults.dress_prompt,
@@ -555,6 +576,8 @@ export function useVideoFlowState() {
       theme,
       picturePrompts,
       pictureVariationCount,
+      pictureCompareMode,
+      pictureModels,
       backgroundMotionPrompt,
       foregroundMotionPrompt: backgroundMotionPrompt,
       dressPrompt,
@@ -609,6 +632,8 @@ export function useVideoFlowState() {
     theme,
     picturePrompts,
     pictureVariationCount,
+    pictureCompareMode,
+    pictureModels,
     backgroundMotionPrompt,
     dressPrompt,
     dressReferenceImage,
@@ -728,6 +753,10 @@ export function useVideoFlowState() {
     setPicturePrompts,
     pictureVariationCount,
     setPictureVariationCount,
+    pictureCompareMode,
+    setPictureCompareMode,
+    pictureModels,
+    setPictureModels,
     backgroundMotionPrompt,
     setBackgroundMotionPrompt,
     dressPrompt,
