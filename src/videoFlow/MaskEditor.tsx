@@ -14,8 +14,6 @@ const MASK_ZOOM_STEP = 0.5;
 const MASK_ZOOM_WHEEL_PIXELS = 100;
 /** Firefox reports wheel notches in lines; one notch is about this many pixels. */
 const MASK_WHEEL_LINE_PIXELS = 40;
-/** Gap that ends a wheel gesture, so inertia is not a new ⌘+zoom. */
-const MASK_WHEEL_GESTURE_GAP_MS = 120;
 
 function clampZoom(value: number) {
   const stepped = Math.round(value * 100) / 100;
@@ -149,10 +147,6 @@ export function MaskEditor({
   const pendingZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const zoomCarryRef = useRef(0);
   const zoomStepRef = useRef<(delta: number) => void>(() => {});
-  const lastStageWheelAtRef = useRef(0);
-  const wheelPredatesMetaRef = useRef(false);
-  const metaWheelPixelsRef = useRef(0);
-  const cancelMetaToggleRef = useRef<() => void>(() => {});
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -191,42 +185,37 @@ export function MaskEditor({
   }, [brushRadius]);
 
   useEffect(() => {
-    // "down" is a bare ⌘ press. OS shortcuts and ⌘+click never deliver the other
-    // key, so blur and pointer mark the press dirty and keyup does not toggle.
-    let metaGesture: "idle" | "down" | "dirty" = "idle";
-    let toggleFrame = 0;
+    let holdingErase = false;
 
     const editorVisible = () => {
       const root = rootRef.current;
       return root != null && root.getClientRects().length > 0;
     };
 
-    const clearToggleFrame = () => {
-      if (toggleFrame === 0) return;
-      window.cancelAnimationFrame(toggleFrame);
-      toggleFrame = 0;
+    const canHoldErase = (target: EventTarget | null) =>
+      editorVisible() && !isTypingTarget(target) && !isTypingTarget(document.activeElement);
+
+    const engageErase = () => {
+      if (holdingErase) return;
+      holdingErase = true;
+      brushRef.current.mode = "erase";
+      setBrushMode("erase");
     };
 
-    const dirtyMetaGesture = () => {
-      if (metaGesture === "down") metaGesture = "dirty";
-      clearToggleFrame();
+    const releaseErase = () => {
+      if (!holdingErase) return;
+      holdingErase = false;
+      brushRef.current.mode = "add";
+      setBrushMode("add");
     };
-    cancelMetaToggleRef.current = dirtyMetaGesture;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Meta") {
-        if (event.repeat || metaGesture === "dirty") return;
-        metaWheelPixelsRef.current = 0;
-        wheelPredatesMetaRef.current =
-          performance.now() - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
-        const usable = editorVisible() && !isTypingTarget(event.target) && !isTypingTarget(document.activeElement);
-        metaGesture = usable ? "down" : "dirty";
+        if (event.repeat || !canHoldErase(event.target)) return;
+        engageErase();
         return;
       }
-      if (event.metaKey || metaGesture === "down") {
-        metaGesture = "dirty";
-        clearToggleFrame();
-      }
+      if (event.metaKey || holdingErase) releaseErase();
       if (!editorVisible() || isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
@@ -248,53 +237,26 @@ export function MaskEditor({
 
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== "Meta") return;
-      const gesture = metaGesture;
-      metaGesture = "idle";
-      if (gesture !== "down") return;
-      if (!editorVisible() || isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
-      if (!document.hasFocus() || document.hidden) return;
-      clearToggleFrame();
-      toggleFrame = window.requestAnimationFrame(() => {
-        toggleFrame = 0;
-        if (!document.hasFocus() || document.hidden || !editorVisible()) return;
-        setBrushMode((mode) => (mode === "add" ? "erase" : "add"));
-      });
+      releaseErase();
     };
 
     const onBlur = () => {
-      dirtyMetaGesture();
-    };
-
-    const onFocus = () => {
-      // Cmd+Tab can drop the Meta keyup. Forget the press without toggling.
-      if (metaGesture === "idle") return;
-      metaGesture = "idle";
-      clearToggleFrame();
+      releaseErase();
     };
 
     const onVisibility = () => {
-      if (document.hidden) dirtyMetaGesture();
-    };
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
+      if (document.hidden) releaseErase();
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pointerdown", onPointerDown, true);
     return () => {
-      clearToggleFrame();
-      cancelMetaToggleRef.current = () => {};
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, []);
 
@@ -302,13 +264,6 @@ export function MaskEditor({
     const stage = stageRef.current;
     if (!stage) return undefined;
     const onWheel = (event: WheelEvent) => {
-      const now = performance.now();
-      const stillInPriorGesture =
-        wheelPredatesMetaRef.current &&
-        now - lastStageWheelAtRef.current < MASK_WHEEL_GESTURE_GAP_MS;
-      if (!stillInPriorGesture) wheelPredatesMetaRef.current = false;
-      lastStageWheelAtRef.current = now;
-
       // Keep the wheel on the canvas. At 100% and at the scroll edges the stage
       // cannot consume it, and the dashboard would scroll the editor away.
       event.preventDefault();
@@ -331,11 +286,6 @@ export function MaskEditor({
         zoomCarryRef.current = 0;
       }
       if (applied !== 0) zoomStepRef.current(applied);
-      // A full zoom step is a deliberate ⌘+wheel. Inertia and trackpad noise are not.
-      if (event.metaKey && !wheelPredatesMetaRef.current) {
-        metaWheelPixelsRef.current += Math.abs(wheelEventPixels(event, stage.clientHeight));
-        if (metaWheelPixelsRef.current >= MASK_ZOOM_WHEEL_PIXELS) cancelMetaToggleRef.current();
-      }
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
@@ -802,7 +752,7 @@ export function MaskEditor({
               Erase
             </Button>
             <Text color="gray" size="1">
-              ⌘ add / erase
+              hold ⌘ to erase
             </Text>
           </Flex>
         </Field>
