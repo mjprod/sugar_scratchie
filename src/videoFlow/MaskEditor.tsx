@@ -10,10 +10,21 @@ const BRUSH_RADIUS_KEY_STEP = 2;
 const MASK_ZOOM_MIN = 1;
 const MASK_ZOOM_MAX = 4;
 const MASK_ZOOM_STEP = 0.5;
+/** Pixel delta that matches one button or keyboard zoom step. */
+const MASK_ZOOM_WHEEL_PIXELS = 100;
+/** Firefox reports wheel notches in lines; one notch is about this many pixels. */
+const MASK_WHEEL_LINE_PIXELS = 40;
 
 function clampZoom(value: number) {
   const stepped = Math.round(value * 100) / 100;
   return Math.min(MASK_ZOOM_MAX, Math.max(MASK_ZOOM_MIN, stepped));
+}
+
+function wheelZoomDelta(event: WheelEvent, pagePixels: number) {
+  let pixels = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) pixels *= MASK_WHEEL_LINE_PIXELS;
+  else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) pixels *= pagePixels || 800;
+  return -(pixels / MASK_ZOOM_WHEEL_PIXELS) * MASK_ZOOM_STEP;
 }
 
 function isTypingTarget(target: EventTarget | null) {
@@ -113,6 +124,7 @@ export function MaskEditor({
   const viewZoomRef = useRef(1);
   const zoomPointerRef = useRef<{ x: number; y: number } | null>(null);
   const pendingZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const zoomCarryRef = useRef(0);
   const zoomStepRef = useRef<(delta: number) => void>(() => {});
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -152,24 +164,41 @@ export function MaskEditor({
   }, [brushRadius]);
 
   useEffect(() => {
-    let commandChord = false;
+    // "down" is a bare ⌘ press. OS shortcuts and ⌘+click never deliver the other
+    // key, so blur, pointer, and wheel mark the press dirty and keyup does not toggle.
+    let metaGesture: "idle" | "down" | "dirty" = "idle";
+    let toggleFrame = 0;
 
     const editorVisible = () => {
       const root = rootRef.current;
       return root != null && root.getClientRects().length > 0;
     };
 
+    const clearToggleFrame = () => {
+      if (toggleFrame === 0) return;
+      window.cancelAnimationFrame(toggleFrame);
+      toggleFrame = 0;
+    };
+
+    const dirtyMetaGesture = () => {
+      if (metaGesture === "down") metaGesture = "dirty";
+      clearToggleFrame();
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!editorVisible() || isTypingTarget(event.target)) return;
       if (event.key === "Meta") {
-        if (!event.repeat) commandChord = false;
+        if (event.repeat || metaGesture === "dirty") return;
+        const usable = editorVisible() && !isTypingTarget(event.target) && !isTypingTarget(document.activeElement);
+        metaGesture = usable ? "down" : "dirty";
         return;
       }
-      if (event.metaKey) {
-        commandChord = true;
+      if (event.metaKey || metaGesture === "down") {
+        metaGesture = "dirty";
+        clearToggleFrame();
+      }
+      if (!editorVisible() || isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
-      if (event.ctrlKey || event.altKey) return;
       if (event.key === "+" || event.key === "=" || event.key === "-" || event.key === "_") {
         event.preventDefault();
         const zoomIn = event.key === "+" || event.key === "=";
@@ -188,19 +217,58 @@ export function MaskEditor({
 
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== "Meta") return;
-      if (!editorVisible() || isTypingTarget(event.target)) return;
-      if (commandChord) {
-        commandChord = false;
-        return;
-      }
-      setBrushMode((mode) => (mode === "add" ? "erase" : "add"));
+      const gesture = metaGesture;
+      metaGesture = "idle";
+      if (gesture !== "down") return;
+      if (!editorVisible() || isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
+      if (!document.hasFocus() || document.hidden) return;
+      clearToggleFrame();
+      toggleFrame = window.requestAnimationFrame(() => {
+        toggleFrame = 0;
+        if (!document.hasFocus() || document.hidden || !editorVisible()) return;
+        setBrushMode((mode) => (mode === "add" ? "erase" : "add"));
+      });
+    };
+
+    const onBlur = () => {
+      dirtyMetaGesture();
+    };
+
+    const onFocus = () => {
+      // Cmd+Tab can drop the Meta keyup. Forget the press without toggling.
+      if (metaGesture === "idle") return;
+      metaGesture = "idle";
+      clearToggleFrame();
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) dirtyMetaGesture();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.metaKey || metaGesture === "down") dirtyMetaGesture();
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("wheel", onWheel, { capture: true, passive: true });
     return () => {
+      clearToggleFrame();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("wheel", onWheel, true);
     };
   }, []);
 
@@ -208,10 +276,21 @@ export function MaskEditor({
     const stage = stageRef.current;
     if (!stage) return undefined;
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY === 0) return;
+      // Pinch (ctrl) and Ctrl/⌘+wheel zoom. Plain wheel pans the overflow:auto stage.
+      if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0) return;
       event.preventDefault();
       zoomPointerRef.current = { x: event.clientX, y: event.clientY };
-      zoomStepRef.current(event.deltaY < 0 ? MASK_ZOOM_STEP : -MASK_ZOOM_STEP);
+      zoomCarryRef.current += wheelZoomDelta(event, stage.clientHeight);
+      const next = clampZoom(viewZoomRef.current + zoomCarryRef.current);
+      const applied = next - viewZoomRef.current;
+      zoomCarryRef.current -= applied;
+      if (
+        (next <= MASK_ZOOM_MIN && zoomCarryRef.current < 0) ||
+        (next >= MASK_ZOOM_MAX && zoomCarryRef.current > 0)
+      ) {
+        zoomCarryRef.current = 0;
+      }
+      if (applied !== 0) zoomStepRef.current(applied);
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
@@ -874,7 +953,7 @@ export function MaskEditor({
         )}
         <Text color="gray" size="1">
           Green cells are scratchable. Red are off. Backdrop is cover-fit so painting matches the
-          live scratch area.
+          live scratch area. Scroll to pan. Pinch or Ctrl/⌘-scroll to zoom.
         </Text>
       </Flex>
     </Grid>
