@@ -6,10 +6,10 @@ export function formatBalance(value: number | null) {
 
 /**
  * Compact balance for tight UI (wallet popover Dust, etc.).
-	 * 1,973 → "1.9K"; 17,907 → "17.9K"; 17,907,907 → "17.9M".
-	 * Always one decimal under 100 of a tier so 1,973 is not rounded to "2K".
-	 */
-	export function formatCompactBalance(value: number | null) {
+ * 1,973 → "1.9K"; 17,907 → "17.9K"; 17,907,907 → "17.9M".
+ * Always one decimal under 100 of a tier so 1,973 is not rounded to "2K".
+ */
+export function formatCompactBalance(value: number | null) {
 	  if (value == null || Number.isNaN(value)) return "--";
 	  const n = Math.abs(value);
 	  const sign = value < 0 ? "-" : "";
