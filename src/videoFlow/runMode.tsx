@@ -3485,11 +3485,10 @@ export function RunMode(props: RunModeProps) {
       cardId.trim() &&
       cardLabel.trim() &&
       (!needsSourceImage || image) &&
-      (!actionNeedsGrok || canUseGrok) &&
       (!actionNeedsWavespeed || canUseWavespeed) &&
       stepApiReady &&
+      !flowBusy &&
       !jobBusy,
-  );
 
   const canRemakeActionStep = Boolean(
     actionStep &&
