@@ -285,7 +285,10 @@ export function useVideoFlowState() {
 
   const selectionTokenRef = useRef(0);
   const desiredCardIdRef = useRef(cardId.trim());
-  const switchingCardRef = useRef(false);
+  // Stay "switching" until the boot selectProject applies the server draft.
+  // The persist effect otherwise runs first and stamps localStorage as newer.
+  const switchingCardRef = useRef(true);
+  const serverDraftAppliedRef = useRef(false);
   const draftSaveSeqRef = useRef(0);
   const draftAbortRef = useRef<AbortController | null>(null);
   const draftTimerRef = useRef(0);
@@ -301,6 +304,7 @@ export function useVideoFlowState() {
   });
   const lastSavedPromptFingerprint = useRef(initialPromptFingerprint);
   const latestPromptFingerprint = useRef(initialPromptFingerprint);
+  const mountPromptFingerprint = useRef(initialPromptFingerprint);
   const enhancePromptRef = useRef(enhancePrompt);
   enhancePromptRef.current = enhancePrompt;
   const [promptsDirty, setPromptsDirty] = useState(false);
@@ -480,6 +484,7 @@ export function useVideoFlowState() {
     });
     latestPromptFingerprint.current = appliedFingerprint;
     if (!localPromptsNewer) lastSavedPromptFingerprint.current = appliedFingerprint;
+    serverDraftAppliedRef.current = true;
     setPromptsDirty(appliedFingerprint !== lastSavedPromptFingerprint.current);
     writeStoredVideoFlowDraft({
       ...draft,
@@ -666,7 +671,11 @@ export function useVideoFlowState() {
         }
         if (list.length > 0) {
           void selectProject(list[0].card_id, list);
+          return;
         }
+        // Nothing on the server to load. Later edits can persist immediately.
+        switchingCardRef.current = false;
+        serverDraftAppliedRef.current = true;
       });
     return () => {
       cancelled = true;
@@ -767,8 +776,25 @@ export function useVideoFlowState() {
       sourceImageModel: fields.sourceImageModel,
       backgroundVideoModel: fields.backgroundVideoModel,
       dressVideoModel: fields.dressVideoModel,
-      localUpdatedAt: Date.now(),
     };
+    // A rewrite that did not change prompts must keep the previous stamp.
+    // Date.now() here made the boot draft look newer than the server copy.
+    const promptsChanged =
+      promptFingerprint({
+        picturePrompts: fields.picturePrompts,
+        backgroundMotionPrompt: fields.backgroundMotionPrompt,
+        dressPrompt: fields.dressPrompt,
+        dressReferenceImage: fields.dressReferenceImage,
+        backgroundVideoModel: fields.backgroundVideoModel,
+        dressVideoModel: fields.dressVideoModel,
+        enhancePrompt: fields.enhancePrompt,
+      }) !== lastSavedPromptFingerprint.current;
+    const existing = readStoredVideoFlowDraft();
+    draft.localUpdatedAt = promptsChanged
+      ? Date.now()
+      : existing?.cardId === id
+        ? existing.localUpdatedAt
+        : undefined;
     writeStoredVideoFlowDraft(draft);
     writeActiveProjectId(id);
     return draft;
@@ -858,11 +884,20 @@ export function useVideoFlowState() {
     });
     latestPromptFingerprint.current = fingerprint;
     setPromptsDirty(fingerprint !== lastSavedPromptFingerprint.current);
-    if (switchingCardRef.current) return;
+    const untouched = fingerprint === mountPromptFingerprint.current;
+    const awaitingServerDraft =
+      switchingCardRef.current || !serverDraftAppliedRef.current;
+    // The mount effect runs before selectProject. Writing here would stamp
+    // default or another card's prompts as newer and save them over the server.
+    // A real edit in that window is kept so the incoming draft can prefer it.
+    if (awaitingServerDraft) {
+      if (!untouched) rememberDraft();
+      return;
+    }
     rememberDraft();
     window.clearTimeout(draftTimerRef.current);
     draftTimerRef.current = window.setTimeout(() => {
-      if (switchingCardRef.current) return;
+      if (switchingCardRef.current || !serverDraftAppliedRef.current) return;
       if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
       void saveDraft().catch(() => undefined);
     }, 500);
