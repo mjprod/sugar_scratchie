@@ -70,7 +70,9 @@ function bootHand(modelId: string, cardId: string) {
   const key = `${modelId}\0${cardId}`;
   let pending = boots.get(key);
   if (!pending) {
-    pending = ensureMotionHand(modelId, cardId);
+    pending = ensureMotionHand(modelId, cardId).finally(() => {
+      boots.delete(key);
+    });
     boots.set(key, pending);
   }
   return pending;
