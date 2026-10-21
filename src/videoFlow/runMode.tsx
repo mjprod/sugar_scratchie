@@ -2859,9 +2859,12 @@ function CardPhotosPanel({
                   className="dashboard-textarea"
                   rows={3}
                   value={prompts[layer]}
-                  onChange={(event) =>
-                    setPrompts((prev) => ({ ...prev, [layer]: event.currentTarget.value }))
-                  }
+                  onChange={(event) => {
+                    // Read the value now. React applies this update during the
+                    // next render, after currentTarget has been cleared.
+                    const value = event.currentTarget.value;
+                    setPrompts((prev) => ({ ...prev, [layer]: value }));
+                  }}
                 />
               </label>
             ))}
