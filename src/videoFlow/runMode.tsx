@@ -3489,6 +3489,7 @@ export function RunMode(props: RunModeProps) {
       stepApiReady &&
       !flowBusy &&
       !jobBusy,
+  );
 
   const canRemakeActionStep = Boolean(
     actionStep &&
