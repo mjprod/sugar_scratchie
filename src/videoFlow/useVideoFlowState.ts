@@ -84,6 +84,38 @@ function draftSaveErrorMessage(caught: unknown): string {
   return `${DRAFT_SAVE_ERROR_PREFIX}: ${raw}`;
 }
 
+function isAbortError(caught: unknown): boolean {
+  return caught instanceof Error && caught.name === "AbortError";
+}
+
+type PromptSnapshot = {
+  picturePrompts: PicturePrompts;
+  backgroundMotionPrompt: string;
+  dressPrompt: string;
+  dressReferenceImage: string;
+  backgroundVideoModel: string;
+  dressVideoModel: string;
+  enhancePrompt: boolean;
+};
+
+function promptFingerprint(input: PromptSnapshot): string {
+  return JSON.stringify([
+    input.picturePrompts,
+    input.backgroundMotionPrompt,
+    input.dressPrompt,
+    input.dressReferenceImage,
+    input.backgroundVideoModel,
+    input.dressVideoModel,
+    input.enhancePrompt,
+  ]);
+}
+
+function serverUpdatedMs(updatedAt: number | undefined): number {
+  const stamp = updatedAt ?? 0;
+  if (!stamp) return 0;
+  return stamp > 10_000_000_000 ? stamp : stamp * 1000;
+}
+
 function draftPayload(
   draft: StoredVideoFlowDraft,
   flow: VideoFlowJson,
@@ -255,6 +287,24 @@ export function useVideoFlowState() {
   const desiredCardIdRef = useRef(cardId.trim());
   const switchingCardRef = useRef(false);
   const draftSaveSeqRef = useRef(0);
+  const draftAbortRef = useRef<AbortController | null>(null);
+  const draftTimerRef = useRef(0);
+  const latestPersistRef = useRef<Promise<void>>(Promise.resolve());
+  const initialPromptFingerprint = promptFingerprint({
+    picturePrompts,
+    backgroundMotionPrompt,
+    dressPrompt,
+    dressReferenceImage,
+    backgroundVideoModel,
+    dressVideoModel,
+    enhancePrompt,
+  });
+  const lastSavedPromptFingerprint = useRef(initialPromptFingerprint);
+  const latestPromptFingerprint = useRef(initialPromptFingerprint);
+  const enhancePromptRef = useRef(enhancePrompt);
+  enhancePromptRef.current = enhancePrompt;
+  const [promptsDirty, setPromptsDirty] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
 
@@ -275,7 +325,7 @@ export function useVideoFlowState() {
         : serverTheme || DEFAULT_THEME;
     const serverRef = (draft.dressReferenceImage ?? "").trim();
     const localRef = sameCard ? (local.dressReferenceImage ?? "").trim() : "";
-    const dressRefToApply = serverRef || localRef;
+    let dressRefToApply = serverRef || localRef;
     // Face identity reference: a server draft saved before the debounced POST
     // fires has an empty face_image — never let it wipe a freshly picked face.
     const serverFace = (draft.faceImage ?? "").trim();
@@ -309,8 +359,21 @@ export function useVideoFlowState() {
       themeToApply,
       undefined,
     );
+    // localStorage is written on each keystroke. A server draft fetched while
+    // that save is still in flight is older — keep the prompts the operator just typed.
+    const localUpdatedMs = sameCard ? (local?.localUpdatedAt ?? 0) : 0;
+    const localPromptsNewer = localUpdatedMs > serverUpdatedMs(draft.updatedAt) + 1500;
+    if (localPromptsNewer) dressRefToApply = localRef;
     const localPrompts = sameCard ? local?.picturePrompts : undefined;
-    if (localPrompts) {
+    if (localPromptsNewer && local) {
+      const localMotion = (local.backgroundMotionPrompt || local.foregroundMotionPrompt || "").trim();
+      const localDress = (local.dressPrompt || "").trim();
+      if (localMotion) motion = localMotion;
+      if (localDress) dress = localDress;
+      if (localPrompts?.some((text) => (text ?? "").trim())) {
+        picturePromptsToApply = normalizePicturePrompts(localPrompts, themeToApply);
+      }
+    } else if (localPrompts) {
       picturePromptsToApply = picturePromptsToApply.map((text, index) => {
         const take = (index + 1) as PictureTake;
         const localText = (localPrompts[index] ?? "").trim();
@@ -323,6 +386,24 @@ export function useVideoFlowState() {
         }
         return text;
       }) as PicturePrompts;
+    }
+    if (!localPromptsNewer && local) {
+      const localDress = (local.dressPrompt || "").trim();
+      if (
+        localDress &&
+        !isStockDressPromptText(localDress, themeToApply) &&
+        isStockDressPromptText(dress, themeToApply)
+      ) {
+        dress = localDress;
+      }
+      const localMotion = (local.backgroundMotionPrompt || local.foregroundMotionPrompt || "").trim();
+      if (
+        localMotion &&
+        !isStockBackgroundMotionPromptText(localMotion, themeToApply) &&
+        isStockBackgroundMotionPromptText(motion, themeToApply)
+      ) {
+        motion = localMotion;
+      }
     }
     // If we kept a local theme the server lacked, rewrite stock prompts to match.
     if (
@@ -378,8 +459,28 @@ export function useVideoFlowState() {
     setBaseImage(baseToApply);
     setAiProvider(draft.aiProvider);
     setSourceImageModel(draft.sourceImageModel);
-    setBackgroundVideoModel(draft.backgroundVideoModel);
-    setDressVideoModel(draft.dressVideoModel ?? DEFAULT_DRESS_VIDEO_MODEL);
+    const backgroundVideoModelToApply =
+      localPromptsNewer && local?.backgroundVideoModel
+        ? local.backgroundVideoModel
+        : draft.backgroundVideoModel;
+    const dressVideoModelToApply =
+      localPromptsNewer && local?.dressVideoModel
+        ? local.dressVideoModel
+        : (draft.dressVideoModel ?? DEFAULT_DRESS_VIDEO_MODEL);
+    setBackgroundVideoModel(backgroundVideoModelToApply);
+    setDressVideoModel(dressVideoModelToApply);
+    const appliedFingerprint = promptFingerprint({
+      picturePrompts: picturePromptsToApply,
+      backgroundMotionPrompt: motion,
+      dressPrompt: dress,
+      dressReferenceImage: dressRefToApply,
+      backgroundVideoModel: backgroundVideoModelToApply,
+      dressVideoModel: dressVideoModelToApply,
+      enhancePrompt: enhancePromptRef.current,
+    });
+    latestPromptFingerprint.current = appliedFingerprint;
+    if (!localPromptsNewer) lastSavedPromptFingerprint.current = appliedFingerprint;
+    setPromptsDirty(appliedFingerprint !== lastSavedPromptFingerprint.current);
     writeStoredVideoFlowDraft({
       ...draft,
       image: imageToApply,
@@ -395,6 +496,11 @@ export function useVideoFlowState() {
       faceImage: faceToApply,
       bikiniImage: bikiniToApply,
       baseImage: baseToApply,
+      backgroundVideoModel: backgroundVideoModelToApply,
+      dressVideoModel: dressVideoModelToApply,
+      localUpdatedAt: localPromptsNewer
+        ? localUpdatedMs
+        : serverUpdatedMs(draft.updatedAt) || Date.now(),
     });
     writeActiveProjectId(draft.cardId);
     switchingCardRef.current = false;
@@ -412,6 +518,7 @@ export function useVideoFlowState() {
       selectionTokenRef.current = token;
       desiredCardIdRef.current = id;
       switchingCardRef.current = true;
+      try {
       const catalog = projectList ?? projectsRef.current;
       const listed = catalog.find((entry) => entry.card_id === id);
       const label = listed?.draft?.card_label?.trim() || labelFromProjectId(id);
@@ -498,6 +605,9 @@ export function useVideoFlowState() {
         backgroundVideoModel: "grok-imagine",
         dressVideoModel: DEFAULT_DRESS_VIDEO_MODEL,
       });
+      } finally {
+        if (selectionTokenRef.current === token) switchingCardRef.current = false;
+      }
     },
     [applyVideoFlowDraft, flow.defaults],
   );
@@ -565,68 +675,198 @@ export function useVideoFlowState() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const id = cardId.trim();
-    if (!id) return;
-    // Skip while switching — otherwise we persist Shine 4's id with Shine 3's image.
-    if (switchingCardRef.current) return;
-    if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
+  const fieldsRef = useRef({
+    image,
+    theme,
+    picturePrompts,
+    pictureVariationCount,
+    pictureCompareMode,
+    pictureModels,
+    backgroundMotionPrompt,
+    dressPrompt,
+    dressReferenceImage,
+    cardId,
+    cardLabel,
+    modelId,
+    writeWebm,
+    compressPreset,
+    resolution,
+    tracker,
+    meshTune,
+    sourcePrompt,
+    faceImage,
+    bikiniImage,
+    baseImage,
+    aiProvider,
+    sourceImageModel,
+    backgroundVideoModel,
+    dressVideoModel,
+    enhancePrompt,
+    flow,
+  });
+  fieldsRef.current = {
+    image,
+    theme,
+    picturePrompts,
+    pictureVariationCount,
+    pictureCompareMode,
+    pictureModels,
+    backgroundMotionPrompt,
+    dressPrompt,
+    dressReferenceImage,
+    cardId,
+    cardLabel,
+    modelId,
+    writeWebm,
+    compressPreset,
+    resolution,
+    tracker,
+    meshTune,
+    sourcePrompt,
+    faceImage,
+    bikiniImage,
+    baseImage,
+    aiProvider,
+    sourceImageModel,
+    backgroundVideoModel,
+    dressVideoModel,
+    enhancePrompt,
+    flow,
+  };
+
+  const rememberDraft = useCallback((): StoredVideoFlowDraft | null => {
+    const fields = fieldsRef.current;
+    const id = fields.cardId.trim();
+    if (!id) return null;
+    if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return null;
     const draft: StoredVideoFlowDraft = {
-      image,
-      theme,
-      picturePrompts,
-      pictureVariationCount,
-      pictureCompareMode,
-      pictureModels,
-      backgroundMotionPrompt,
-      foregroundMotionPrompt: backgroundMotionPrompt,
-      dressPrompt,
-      dressReferenceImage,
+      image: fields.image,
+      theme: fields.theme,
+      picturePrompts: fields.picturePrompts,
+      pictureVariationCount: fields.pictureVariationCount,
+      pictureCompareMode: fields.pictureCompareMode,
+      pictureModels: fields.pictureModels,
+      backgroundMotionPrompt: fields.backgroundMotionPrompt,
+      foregroundMotionPrompt: fields.backgroundMotionPrompt,
+      dressPrompt: fields.dressPrompt,
+      dressReferenceImage: fields.dressReferenceImage,
       cardId: id,
-      cardLabel,
-      modelId,
-      writeWebm,
-      compressPreset,
-      resolution,
-      tracker,
-      meshTune,
+      cardLabel: fields.cardLabel,
+      modelId: fields.modelId,
+      writeWebm: fields.writeWebm,
+      compressPreset: fields.compressPreset,
+      resolution: fields.resolution,
+      tracker: fields.tracker,
+      meshTune: fields.meshTune,
       sourceMode: "upload",
-      sourcePrompt,
-      faceImage,
-      bikiniImage,
-      baseImage,
-      aiProvider,
-      sourceImageModel,
-      backgroundVideoModel,
-      dressVideoModel,
+      sourcePrompt: fields.sourcePrompt,
+      faceImage: fields.faceImage,
+      bikiniImage: fields.bikiniImage,
+      baseImage: fields.baseImage,
+      aiProvider: fields.aiProvider,
+      sourceImageModel: fields.sourceImageModel,
+      backgroundVideoModel: fields.backgroundVideoModel,
+      dressVideoModel: fields.dressVideoModel,
+      localUpdatedAt: Date.now(),
     };
     writeStoredVideoFlowDraft(draft);
     writeActiveProjectId(id);
+    return draft;
+  }, []);
 
-    // Persist theme (and other draft fields) to the server so reloads / Models
-    // don't wipe a typed theme that only lived in localStorage.
-    const timer = window.setTimeout(() => {
+  const saveDraft = useCallback(() => {
+    window.clearTimeout(draftTimerRef.current);
+    const id = fieldsRef.current.cardId.trim();
+    if (!id) {
+      const message = `${DRAFT_SAVE_ERROR_PREFIX}: enter a card id first.`;
+      setError(message);
+      return Promise.reject(new Error(message));
+    }
+    if (
+      switchingCardRef.current ||
+      (desiredCardIdRef.current && id !== desiredCardIdRef.current)
+    ) {
+      const message = `${DRAFT_SAVE_ERROR_PREFIX}: card is still loading.`;
+      setError(message);
+      return Promise.reject(new Error(message));
+    }
+    draftAbortRef.current?.abort();
+    const controller = new AbortController();
+    draftAbortRef.current = controller;
+    const seq = ++draftSaveSeqRef.current;
+    const draft = rememberDraft();
+    const liveFlow = fieldsRef.current.flow;
+    const liveEnhance = fieldsRef.current.enhancePrompt;
+    if (!draft) {
+      const message = `${DRAFT_SAVE_ERROR_PREFIX}: card is still loading.`;
+      setError(message);
+      return Promise.reject(new Error(message));
+    }
+    const fingerprint = promptFingerprint({
+      picturePrompts: draft.picturePrompts,
+      backgroundMotionPrompt: draft.backgroundMotionPrompt,
+      dressPrompt: draft.dressPrompt,
+      dressReferenceImage: draft.dressReferenceImage,
+      backgroundVideoModel: draft.backgroundVideoModel,
+      dressVideoModel: draft.dressVideoModel,
+      enhancePrompt: liveEnhance,
+    });
+    const task = (async () => {
+      setDraftSaving(true);
+      try {
+        await api(`/api/video-flow/${encodeURIComponent(draft.cardId)}/draft`, {
+          method: "POST",
+          body: JSON.stringify(draftPayload(draft, liveFlow, liveEnhance)),
+          signal: controller.signal,
+        });
+        if (seq !== draftSaveSeqRef.current) return;
+        lastSavedPromptFingerprint.current = fingerprint;
+        setPromptsDirty(latestPromptFingerprint.current !== fingerprint);
+        setError((current) => (current.startsWith(DRAFT_SAVE_ERROR_PREFIX) ? "" : current));
+      } catch (caught) {
+        if (seq !== draftSaveSeqRef.current || isAbortError(caught)) return;
+        const message = draftSaveErrorMessage(caught);
+        setError(message);
+        throw new Error(message);
+      } finally {
+        if (seq === draftSaveSeqRef.current) setDraftSaving(false);
+      }
+    })();
+    const waited = task.then(() => {
+      if (seq === draftSaveSeqRef.current) return;
+      return latestPersistRef.current;
+    });
+    latestPersistRef.current = waited.catch(() => undefined);
+    return waited;
+  }, [rememberDraft]);
+
+  useEffect(() => {
+    const id = cardId.trim();
+    if (!id) return;
+    // Skip a different card's fields while a switch is in progress — otherwise
+    // Shine 4's id would be saved with Shine 3's image. Keystrokes on the card
+    // you are already on still flush below once the switch finishes.
+    if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
+    const fingerprint = promptFingerprint({
+      picturePrompts,
+      backgroundMotionPrompt,
+      dressPrompt,
+      dressReferenceImage,
+      backgroundVideoModel,
+      dressVideoModel,
+      enhancePrompt,
+    });
+    latestPromptFingerprint.current = fingerprint;
+    setPromptsDirty(fingerprint !== lastSavedPromptFingerprint.current);
+    if (switchingCardRef.current) return;
+    rememberDraft();
+    window.clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = window.setTimeout(() => {
       if (switchingCardRef.current) return;
       if (desiredCardIdRef.current && id !== desiredCardIdRef.current) return;
-      const seq = ++draftSaveSeqRef.current;
-      const isLatestSave = () =>
-        seq === draftSaveSeqRef.current &&
-        !switchingCardRef.current &&
-        (!desiredCardIdRef.current || id === desiredCardIdRef.current);
-      void api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
-        method: "POST",
-        body: JSON.stringify(draftPayload(draft, flow, enhancePrompt)),
-      })
-        .then(() => {
-          if (!isLatestSave()) return;
-          setError((current) => (current.startsWith(DRAFT_SAVE_ERROR_PREFIX) ? "" : current));
-        })
-        .catch((caught: unknown) => {
-          if (!isLatestSave()) return;
-          setError(draftSaveErrorMessage(caught));
-        });
+      void saveDraft().catch(() => undefined);
     }, 500);
-    return () => window.clearTimeout(timer);
+    return () => window.clearTimeout(draftTimerRef.current);
   }, [
     image,
     theme,
@@ -656,6 +896,8 @@ export function useVideoFlowState() {
     dressVideoModel,
     flow,
     enhancePrompt,
+    rememberDraft,
+    saveDraft,
   ]);
 
   const updateTheme = useCallback(
@@ -804,6 +1046,9 @@ export function useVideoFlowState() {
     refreshJobs,
     refreshProjects,
     selectProject,
+    promptsDirty,
+    draftSaving,
+    saveDraft,
     applyFlowDefinition,
     applyVideoFlowDraft,
     applyJsonFromDesigner,

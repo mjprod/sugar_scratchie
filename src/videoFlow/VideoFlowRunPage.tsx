@@ -58,6 +58,9 @@ export function VideoFlowRunPage() {
     setBackgroundVideoModel,
     dressVideoModel,
     setDressVideoModel,
+    promptsDirty,
+    draftSaving,
+    saveDraft,
     error,
     setError,
     refreshHealth,
@@ -151,6 +154,9 @@ export function VideoFlowRunPage() {
             onBackgroundVideoModelChange={setBackgroundVideoModel}
             onDressVideoModelChange={setDressVideoModel}
             onEnhancePromptChange={setEnhancePrompt}
+            promptsDirty={promptsDirty}
+            draftSaving={draftSaving}
+            onSaveDraft={saveDraft}
             onRefreshJobs={refreshJobs}
             onRefreshAssets={async () => undefined}
             onError={setError}

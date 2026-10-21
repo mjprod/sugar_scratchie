@@ -348,14 +348,9 @@ export function isStockDressPromptText(prompt: string, theme: string): boolean {
   const legacyDressNoSkin =
     "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. No zoom or camera move.";
   if (!stripped) return true;
-  if (stripped.startsWith("Replace her entire bikini with a fitted emerald satin dress")) return true;
-  if (stripped.startsWith("Replace her entire bikini with a full dress-up outfit that matches the ")) {
-    return true;
-  }
-  if (stripped.startsWith("Replace her entire bikini with a glamorous ")) return true;
-  if (stripped.startsWith("Replace her entire bikini with a sexy glamorous ")) return true;
-  if (stripped.startsWith("Same woman, clothes only")) return true;
-  if (stripped.startsWith("Match the dress reference image outfit exactly")) return true;
+  // Exact templates only. A shared opening ("Same woman, clothes only…") used to
+  // count as stock, so a hand-edited costume was replaced with the theme template
+  // the next time the card draft loaded.
   return (
     stripped === legacyDressNoSkin ||
     stripped === LEGACY_DEFAULT_DRESS_PROMPT ||
