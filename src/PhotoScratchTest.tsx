@@ -120,7 +120,7 @@ const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 const SYMBOL_SCRATCH_REVEAL_THRESHOLD = 0.55;
 /** Lottie backing store matches the CSS marker so the find-bounce doesn't
  * upscale a soft 42px canvas. */
-const BODY_SYMBOL_ICON_PX = 72;
+const BODY_SYMBOL_ICON_PX = 44;
 
 type FlyingMatch = {
   id: number;

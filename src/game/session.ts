@@ -74,6 +74,16 @@ export function inferThemeFromLabel(label: string): string | null {
   return null;
 }
 
+/** Catalog theme for a single motion card (theme id, then label). */
+export function themeLabelForCard(card: {
+  theme_id?: string;
+  label: string;
+}): string {
+  const themeId = card.theme_id?.trim();
+  if (themeId) return inferThemeFromLabel(themeId) ?? normalizeTheme(themeId);
+  return inferThemeFromLabel(card.label) ?? normalizeTheme(card.label);
+}
+
 export function themeFromPhotoLabel(label: string): string {
   const raw = label.split(/[–—-]/)[0]?.trim() ?? label.trim();
   return normalizeTheme(raw || "warm beach");

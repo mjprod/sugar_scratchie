@@ -1,0 +1,1632 @@
+/* Color token still used by circle gradients; fade is an opacity crossfade. */
+@property --overlay-gradient-color-end {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: oklch(0.216 0.028 230.24);
+}
+
+.stage-packs {
+  /* Fill app-stage (parent owns viewport size). */
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+  display: block;
+  background: oklch(0 0 0);
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+/*
+ * Dual glow stacks: true crossfade (base out + next in).
+ * Each stack is isolated so color-dodge cores only blend within their own
+ * bloom/core pair — stacking two color-dodge layers was flashing bright.
+ * Transitions only run during .is-glow-fading so handoff snaps don't reverse-fade.
+ */
+.packs-glow-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: visible;
+  /* Contain mix-blend-mode: color-dodge to this stack only. */
+  isolation: isolate;
+  will-change: opacity;
+}
+
+.packs-glow-stack--base {
+  opacity: 1;
+}
+
+.packs-glow-stack--next {
+  opacity: 0;
+}
+
+/* prep: next is painted at 0 with no transition before the fade starts. */
+.stage-packs.is-glow-prep .packs-glow-stack--base {
+  opacity: 1;
+  transition: none;
+}
+
+.stage-packs.is-glow-prep .packs-glow-stack--next {
+  opacity: 0;
+  transition: none;
+}
+
+/* fading: equal-time out/in so midpoints stay ~constant brightness. */
+.stage-packs.is-glow-fading .packs-glow-stack--base,
+.stage-packs.is-glow-fading .packs-glow-stack--next {
+  transition: opacity 480ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/*
+ * Bottom glow stack — soft bloom + tighter overlay core.
+ * Color uses the live model cardOverlayColorEnd via
+ * --overlay-gradient-color-end on the parent glow stack.
+ * Homepage swipe circles are not shared and stay untouched.
+ */
+.packs-circle {
+  position: absolute;
+  left: 50%;
+  /* Under coverflow chrome (shell z-index: 2); above stage black. */
+  z-index: 1;
+  translate: -50% 50%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center,
+      color-mix(in oklab,
+        var(--overlay-gradient-color-end, oklch(0.216 0.028 230.24)) 95%,
+        transparent) 0%,
+      color-mix(in oklab,
+        var(--overlay-gradient-color-end, oklch(0.216 0.028 230.24)) 35%,
+        transparent) 42%,
+      color-mix(in oklab,
+        var(--overlay-gradient-color-end, oklch(0.216 0.028 230.24)) 0%,
+        transparent) 72%);
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Soft outer bloom (DEFAULT_SWIPE_CIRCLE_DESKTOP pose).
+ * Keep blur modest — large color-dodge discs under WebGL were a steady composite tax. */
+.packs-circle--bloom {
+  width: 94dvw;
+  height: 72dvw;
+  bottom: -4dvw;
+  filter: blur(14px);
+  opacity: 0.28;
+}
+
+/*
+ * Sharper, smaller core above the bloom.
+ * Same API color; soft screen blend (no color-dodge) keeps the hot center cheaper.
+ */
+.packs-circle--core {
+  z-index: 1;
+  width: 30dvw;
+  height: 36dvw;
+  bottom: -7dvw;
+  filter: blur(18px) hue-rotate(304deg);
+  opacity: 0.42;
+  mix-blend-mode: screen;
+}
+
+@media (max-width: 767px) {
+
+  /* Mobile bloom pose (DEFAULT_SWIPE_CIRCLE_MOBILE). */
+  .packs-circle--bloom {
+    width: 190dvw;
+    height: 170dvw;
+    bottom: -8dvw;
+    filter: blur(12px);
+    opacity: 0.26;
+  }
+
+  .packs-circle--core {
+    width: 44dvw;
+    height: 120dvw;
+    bottom: -20dvw;
+    opacity: 0.28;
+    mix-blend-mode: screen;
+    filter: blur(14px) hue-rotate(304deg);
+  }
+}
+
+.stage-packs .coverflow-shell {
+  position: absolute;
+  inset: 0;
+  /* Above packs-circle glow; keep shell clear so the glow shows through. */
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  display: block;
+  gap: 0;
+  background: transparent;
+  border: none;
+  box-sizing: border-box;
+}
+
+.stage-packs .coverflow-tools-bar.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.coverflow-stage__pack canvas {
+  background: transparent !important;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.coverflow-reveal-fan {
+  z-index: 2;
+}
+
+.coverflow-reveal-cta {
+  z-index: 10;
+  pointer-events: auto;
+  /* Sit lower under the fan so Scratch Now / Save stay clear of cards. */
+  --cta-play-y: 12dvh;
+}
+
+.coverflow-reveal-cta .motion-reveal__continue,
+.coverflow-reveal-cta .cta-button-glow,
+.coverflow-reveal-cta .cta-button {
+  pointer-events: auto;
+}
+
+/* Product: fixed compact phone/tilt control (was inheriting huge button chrome). */
+.stage-packs .coverflow-motion-toggle {
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 44px;
+  max-height: 44px;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid oklch(1 0 0 / 0.16);
+  background: oklch(0.189 0.012 254.12 / 0.55);
+  color: oklch(0.974 0.007 247.89);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  font-size: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.stage-packs .coverflow-motion-icon svg,
+.stage-packs .coverflow-motion-toggle svg {
+  width: 18px !important;
+  height: 18px !important;
+  display: block;
+}
+
+/* Enables animating the pack gradient color with transition. */
+@property --coverflow-gradient-color {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: oklch(0.34 0.097 133.87);
+}
+
+:root {
+  --ink-strong: oklch(0.249 0.034 246.14);
+  --ink-soft: oklch(0.396 0.044 246.59);
+  --panel: oklch(0.987 0.006 255.47 / 0.82);
+  --panel-strong: oklch(1 0 0 / 0.92);
+  --stroke: oklch(0.315 0.061 246.83 / 0.14);
+  --accent: oklch(0.54 0.095 215.01);
+  --accent-strong: oklch(0.447 0.079 215.47);
+  --error: oklch(0.516 0.167 25.21);
+  --bg-a: oklch(0.963 0.018 250.59);
+  --bg-b: oklch(0.977 0.028 88.75);
+  --bg-c: oklch(0.986 0.02 156.84);
+  --shadow:
+    0 24px 60px oklch(0.282 0.05 249.06 / 0.16),
+    0 6px 18px oklch(0.282 0.05 249.06 / 0.08);
+  --font-display: "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Consolas', 'Menlo', monospace;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-body);
+  color: var(--ink-soft);
+  background:
+    radial-gradient(circle at 10% 10%, oklch(0.835 0.103 229.51 / 0.35), transparent 35%),
+    radial-gradient(circle at 92% 84%, oklch(0.865 0.116 75.55 / 0.33), transparent 30%),
+    linear-gradient(145deg, var(--bg-a), var(--bg-b) 45%, var(--bg-c));
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.layout {
+  width: min(1240px, calc(100% - 2.4rem));
+  margin: 1.2rem auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+  margin-bottom: 0.55rem;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.9rem, 3.2vw, 2.8rem);
+  color: var(--ink-strong);
+  line-height: 1.1;
+}
+
+.subtitle {
+  margin-top: 0.55rem;
+  max-width: 70ch;
+}
+
+.model-viewer {
+  width: 100%;
+  height: clamp(250px, 50vh, 540px);
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 0%, oklch(1 0 0 / 0.6), oklch(0.867 0.032 246.73 / 0.35)),
+    linear-gradient(155deg, oklch(0.26 0.043 243.85), oklch(0.366 0.042 246.55) 52%, oklch(0.32 0.047 238.76));
+  position: relative;
+}
+
+.model-viewer canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.secondary-button {
+  border-radius: 999px;
+  padding: 0.72rem 1rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  text-align: center;
+  transition: transform 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+
+.secondary-button {
+  border: 1px solid oklch(0.249 0.034 246.14 / 0.18);
+  background: oklch(1 0 0 / 0.84);
+  color: var(--ink-strong);
+  cursor: pointer;
+}
+
+.secondary-button:hover {
+  transform: translateY(-1px);
+  background: oklch(1 0 0);
+}
+
+.coverflow-shell {
+  display: block;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.coverflow-nav {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  width: 100%;
+  max-width: none;
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.coverflow-nav-chevron.glass.glass-surface {
+  --glass-bg-opacity: 0;
+  background: var(--coverflow-chevron-surface);
+  border: 1px solid oklch(1 0 0 / 0.05);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.12),
+    0 8px 24px oklch(0 0 0 / 0.28);
+}
+
+@supports (-webkit-touch-callout: none) {
+  .coverflow-nav-chevron.glass {
+    --tw-glass-filter: ;
+    --tw-backdrop-blur: blur(var(--tw-glass-blur, 4px));
+    -webkit-backdrop-filter: blur(4px) saturate(1.5) brightness(0.35);
+    backdrop-filter: blur(4px) saturate(1.5) brightness(0.35);
+  }
+}
+
+.coverflow-nav-chevron.is-left {
+  left: 0.75rem;
+}
+
+.coverflow-nav-chevron.is-right {
+  right: 0.75rem;
+}
+
+.coverflow-nav-chevron:hover:not(:disabled) {
+  border-color: oklch(1 0 0 / 0.1);
+  background: linear-gradient(
+    180deg,
+    oklch(0.26 0 0 / 0.18) 0%,
+    oklch(0 0 0 / 0.1) 42%,
+    oklch(0.16 0 0 / 0.16) 100%
+  );
+  color: oklch(1 0 0);
+}
+
+.coverflow-stage canvas {
+  position: relative;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  background: transparent !important;
+}
+
+/* Desktop-only label under the centered 3D pack. */
+.coverflow-desktop-under-label {
+  position: absolute;
+  left: 50%;
+  z-index: 4;
+  transform: translate(-50%, 0);
+  opacity: 1;
+  filter: blur(0);
+  pointer-events: none;
+  text-align: center;
+  /* Wide enough for uppercase + letter-spaced collection names on one line. */
+  max-width: none;
+  width: max-content;
+  transition:
+    opacity 320ms ease,
+    transform 360ms ease,
+    filter 360ms ease;
+  will-change: opacity, transform, filter;
+}
+
+/* When the pack becomes active, this under-label fades up/away
+   so it doesn't compete with the Buy Pack label above the button. */
+.coverflow-desktop-under-label.is-active-hidden {
+  opacity: 0;
+  transform: translate(-50%, -18px);
+  filter: blur(6px);
+}
+
+/* Shared pack-label type: active + inactive use the same classes. */
+.coverflow-pack-label__collection,
+.coverflow-desktop-under-label-text,
+.coverflow-active-pack-label__collection {
+  margin: 0 auto 0.15rem;
+  color: oklch(1 0 0);
+  font-family: sans-serif;
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 2px oklch(0 0 0 / 0.45);
+  /* Keep "{Name} Collection" on a single line. */
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.coverflow-pack-label__pack,
+.coverflow-desktop-under-label-text-pack,
+.coverflow-active-pack-label__pack {
+  margin: 0;
+  color: oklch(1 0 0);
+  font-family: sans-serif;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 2px oklch(0 0 0 / 0.45);
+  white-space: pre-line;
+}
+
+.coverflow-pack-flag {
+  display: inline-block;
+  margin-right: 0.15rem;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.pack-style-controls {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.9fr) minmax(0, 1.4fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .pack-style-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Pack-attached HUD (drei Html) — screen-space size stays constant. */
+.coverflow-pack-html {
+  pointer-events: none !important;
+}
+
+.coverflow-pack-html > div {
+  pointer-events: none;
+  /* Keep rem-based type/CTA at a stable root size. */
+  font-size: 16px;
+}
+
+/*
+ * Short-height frosted glass (browser height < 550px).
+ * Glass lives on ::before so content filter animations stay independent.
+ * Class-driven (is-short-glass) so padding/opacity can ease instead of snapping.
+ */
+.coverflow-pack-html-label,
+.coverflow-active-stack--html {
+  position: relative;
+  isolation: isolate;
+  /* Reserve glass padding structure always so layout doesn't jump hard. */
+  border-radius: 16px;
+  padding: 0;
+  transition:
+    padding 420ms ease,
+    box-shadow 420ms ease,
+    gap 420ms ease;
+}
+
+.coverflow-pack-html-label .coverflow-pack-label__collection,
+.coverflow-pack-html-label .coverflow-pack-label__pack,
+.coverflow-pack-html-label .coverflow-pack-label__price {
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateY(10px);
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease,
+    filter 180ms ease;
+  will-change: opacity, transform, filter;
+}
+
+/* First load / focus / return-from-active enter — snappier soft settle. */
+.coverflow-pack-html-label.is-visible {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0.15rem);
+  transition:
+    opacity 360ms ease,
+    transform 380ms ease,
+    filter 380ms ease;
+  transition-delay: 20ms;
+}
+
+.coverflow-pack-html-label.is-visible .coverflow-pack-label__collection {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0);
+  transition:
+    opacity 360ms ease,
+    transform 380ms ease,
+    filter 380ms ease;
+  transition-delay: 30ms;
+}
+
+.coverflow-pack-html-label.is-visible .coverflow-pack-label__pack {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0);
+  transition:
+    opacity 320ms ease,
+    transform 340ms ease,
+    filter 340ms ease;
+  transition-delay: 70ms;
+}
+
+.coverflow-pack-html-label.is-visible .coverflow-pack-label__price {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0);
+  transition:
+    opacity 300ms ease,
+    transform 320ms ease,
+    filter 320ms ease;
+  transition-delay: 100ms;
+}
+
+/* Active / leave-center: fade up + blur out (mirrors active-stack exit). */
+.coverflow-pack-html-label.is-active-hidden,
+.coverflow-pack-html--browse.is-active-hidden .coverflow-pack-html-label {
+  opacity: 0;
+  transform: translateY(-14px);
+  filter: blur(8px);
+  transition:
+    opacity 420ms ease,
+    transform 480ms ease,
+    filter 480ms ease;
+  transition-delay: 0ms;
+}
+
+.coverflow-pack-html-label.is-active-hidden .coverflow-pack-label__collection,
+.coverflow-pack-html-label.is-active-hidden .coverflow-pack-label__pack,
+.coverflow-pack-html-label.is-active-hidden .coverflow-pack-label__price,
+.coverflow-pack-html--browse.is-active-hidden
+  .coverflow-pack-html-label
+  .coverflow-pack-label__collection,
+.coverflow-pack-html--browse.is-active-hidden
+  .coverflow-pack-html-label
+  .coverflow-pack-label__pack,
+.coverflow-pack-html--browse.is-active-hidden
+  .coverflow-pack-html-label
+  .coverflow-pack-label__price {
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateY(-8px);
+  transition:
+    opacity 360ms ease,
+    transform 400ms ease,
+    filter 400ms ease;
+}
+
+/* Single unit: title + pack Nº + CTA, parented to the pack bottom. */
+.coverflow-active-stack {
+  position: relative;
+  left: auto;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--active-stack-gap, 1rem);
+  width: max-content;
+  max-width: none;
+  transform-origin: center top;
+  opacity: 0;
+  filter: blur(8px);
+  pointer-events: none;
+  transition:
+    opacity 420ms ease,
+    transform 420ms ease,
+    filter 420ms ease;
+  will-change: opacity, transform, filter;
+}
+
+.coverflow-active-stack--html {
+  /* Html center anchors mid-content; nudge so stack sits under pack bottom. */
+  transform: translateY(calc(0.35rem + 12px));
+}
+
+.coverflow-active-stack--html.is-visible {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0.6rem);
+  transition:
+    opacity 520ms ease,
+    transform 520ms ease,
+    filter 520ms ease;
+  transition-delay: 40ms;
+}
+
+/* Exit path when is-visible is removed (active → inactive). */
+.coverflow-active-stack--html:not(.is-visible) {
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(calc(0.35rem + 10px));
+  transition:
+    opacity 420ms ease,
+    transform 480ms ease,
+    filter 480ms ease;
+  transition-delay: 0ms;
+}
+
+/* Hex CTA bloom uses large margins in the lab; collapse them under packs. */
+.coverflow-buy-pack-cta {
+  position: relative;
+  left: auto;
+  z-index: 1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  overflow: visible;
+  transform: translateY(10px);
+  transform-origin: center bottom;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(6px);
+  transition:
+    opacity 360ms ease,
+    transform 360ms ease,
+    filter 360ms ease,
+    box-shadow 250ms ease;
+  transition-delay: 0ms;
+  will-change: opacity, transform, filter;
+}
+
+.coverflow-buy-pack-cta__primary {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* Buy Pack confirm — portaled fixed layer (keeps Daily Reward background intact).
+   Layout:
+     row1  [Buy label] [X]
+     row2  [- 1 +] [Buy]   ← two sibling divs
+     row3  -or-
+     row4  [Add to Pocket]
+*/
+.coverflow-buy-confirm.is-portaled {
+  position: relative;
+  box-sizing: border-box;
+  align-items: stretch;
+  width: 14.25rem;
+  min-width: 14.25rem;
+  max-width: min(14.25rem, calc(100vw - 2rem));
+  gap: 0.55rem;
+  padding: 0.75rem 0.8rem 0.8rem;
+  transform-origin: top center;
+  animation-name: coverflow-buy-confirm-enter;
+  pointer-events: auto;
+}
+
+.coverflow-buy-confirm__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.coverflow-buy-confirm__action-row.has-qty .coverflow-buy-confirm__buy-wrap {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  justify-self: end;
+}
+
+.coverflow-buy-confirm__action-row.is-buy-only .coverflow-buy-confirm__buy-wrap {
+  display: grid;
+  place-items: center;
+  width: 100%;
+}
+
+/* Full-row Buy + close overrides live after
+   .coverflow-cart-remove-confirm__btn so width/display win. */
+
+.coverflow-buy-confirm.is-portaled.is-leaving {
+  animation-name: coverflow-buy-confirm-leave;
+}
+
+.coverflow-buy-confirm.is-portaled::before {
+  top: -6px;
+  bottom: auto;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* Positive confirm styles still apply when portaled (no longer nested under CTA). */
+.coverflow-buy-confirm.is-portaled .coverflow-buy-confirm__buy,
+.coverflow-buy-confirm.is-portaled .coverflow-cart-remove-confirm__btn.is-confirm {
+  border-color: oklch(0.88 0.25 151.94);
+  background: oklch(0.88 0.25 151.96 / 0.19);
+  color: oklch(0.88 0.25 151.94);
+}
+
+.coverflow-buy-confirm.is-portaled .coverflow-buy-confirm__buy:hover,
+.coverflow-buy-confirm.is-portaled .coverflow-cart-remove-confirm__btn.is-confirm:hover {
+  background: oklch(0.88 0.25 151.96 / 0.32);
+  border-color: oklch(0.88 0.25 151.94);
+  color: oklch(0.88 0.25 151.94);
+}
+
+@keyframes coverflow-buy-confirm-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px) scale(0.84);
+    animation-timing-function: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  }
+  16% {
+    opacity: 0.75;
+    transform: translateX(-50%) translateY(-11px) scale(0.76);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  58% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(4px) scale(1.06);
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes coverflow-buy-confirm-leave {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    animation-timing-function: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  }
+  18% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(5px) scale(1.06);
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.78);
+  }
+}
+
+.coverflow-buy-confirm__qty-btn svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.coverflow-buy-confirm__pocket {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.35rem;
+  margin: 0.1rem 0 0;
+  padding: 0.35rem 0.65rem;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: oklch(1 0 0 / 0.92);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 120ms ease;
+}
+
+.coverflow-buy-confirm__pocket:hover {
+  background: oklch(1 0 0 / 0.14);
+  border-color: oklch(1 0 0 / 0.24);
+  color: oklch(1 0 0);
+  transform: scale(1.02);
+}
+
+/* Positive confirm (buy) — green check instead of destructive red. */
+.coverflow-buy-pack-cta .coverflow-buy-confirm .coverflow-buy-confirm__buy,
+.coverflow-buy-pack-cta .coverflow-buy-confirm .coverflow-cart-remove-confirm__btn.is-confirm {
+  border-color: oklch(0.88 0.25 151.94);
+  background: oklch(0.88 0.25 151.96 / 0.19);
+  color: oklch(0.88 0.25 151.94);
+}
+
+.coverflow-buy-pack-cta .coverflow-buy-confirm .coverflow-buy-confirm__buy:hover,
+.coverflow-buy-pack-cta .coverflow-buy-confirm .coverflow-cart-remove-confirm__btn.is-confirm:hover {
+  background: oklch(0.88 0.25 151.96 / 0.32);
+  border-color: oklch(0.88 0.25 151.94);
+  color: oklch(0.88 0.25 151.94);
+}
+
+.coverflow-buy-confirm__or-line {
+  flex: 1 1 auto;
+  height: 1px;
+  background: oklch(0 0 0);
+  box-shadow: 1px 1px 1px oklch(1 0 0 / 0.1);
+}
+
+/* Outline Add to Pocket — own row under X / Check. */
+.coverflow-buy-confirm__pocket-row {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.1rem;
+}
+
+.coverflow-buy-confirm__pocket {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  width: 100%;
+  min-height: 2.35rem;
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: oklch(1 0 0 / 0.92);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease,
+    transform 120ms ease;
+}
+
+.coverflow-buy-confirm__pocket:hover:not(:disabled) {
+  border-color: oklch(1 0 0 / 0.34);
+  background: none;
+  transform: translateY(-1px);
+}
+
+.coverflow-buy-confirm__pocket:disabled,
+.coverflow-buy-confirm__pocket[aria-disabled='true'] {
+  cursor: default;
+  opacity: 1;
+  color: oklch(0.88 0.25 151.94);
+  border-color: oklch(0.88 0.25 151.94 / 0.45);
+  background: none;
+  pointer-events: none;
+}
+
+.coverflow-buy-pack-cta.is-buy-confirm-open {
+  z-index: 5;
+}
+
+/* Beat tw-glass .glass-surface so the dialog stays readable over pack art. */
+.buy-pack-qty-modal__panel.glass.glass-surface {
+  --glass-bg-opacity: 0;
+  border: 1px solid oklch(1 0 0 / 0.18);
+  background: oklch(0.17 0.018 300 / 0.96);
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  box-shadow:
+    0 24px 48px oklch(0 0 0 / 0.55),
+    inset 0 1px 0 oklch(1 0 0 / 0.14);
+}
+
+.buy-pack-qty-modal__buy .cta-button-glow,
+.buy-pack-qty-modal__buy .cta-button {
+  width: 100%;
+  height: 100%;
+}
+
+.buy-pack-qty-modal__buy .cta-button__label {
+  gap: 0.12em;
+}
+
+.buy-pack-qty-modal__buy .cta-button__title {
+  font-size: 0.95em;
+  letter-spacing: 0.01em;
+}
+
+.buy-pack-qty-modal__buy .cta-button__cost {
+  gap: 0.2em;
+  font-size: 0.88em;
+}
+
+.coverflow-buy-pack-cta .cta-button-glow,
+.coverflow-buy-pack-cta .cta-button-glow.cta-button-glow--hex {
+  margin: 0;
+}
+
+.coverflow-buy-pack-cta .cta-button {
+  pointer-events: none;
+}
+
+.coverflow-buy-pack-cta .cta-button__title-row {
+  gap: 0.32em;
+}
+
+.coverflow-buy-pack-cta .cta-button__leading-icon {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+/* Taller hex: keep title + cost centered without collapsing the stroke ring.
+   (Do not override .cta-button__inner inset — that ring IS the border.) */
+.coverflow-buy-pack-cta .cta-button__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1em;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.coverflow-buy-pack-cta .cta-button__title-row,
+.coverflow-buy-pack-cta .cta-button__cost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/*
+  In Pocket: black chrome (plate, aurora, stroke, glow) at 30%.
+  Title + checkmark stay fully opaque; diamond cost fades with the chrome.
+*/
+.coverflow-buy-pack-cta .cta-button:disabled,
+.coverflow-buy-pack-cta .cta-button.is-disabled,
+.coverflow-buy-pack-cta .cta-button-glow.is-disabled,
+.coverflow-buy-pack-cta .cta-button-glow:has(> .border-glow-inner .cta-button:disabled),
+.coverflow-buy-pack-cta .cta-button-glow:has(> .border-glow-inner .cta-button.is-disabled) {
+  filter: none;
+  opacity: 1;
+}
+
+/*
+  Add Pack → In Pocket: anticipate (scale down), punch up, settle.
+  Gold chrome holds through the scale; In Pocket color eases in after.
+*/
+@keyframes coverflow-buy-cta-confirm {
+  0% {
+    transform: scale(1);
+    animation-timing-function: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  }
+  16% {
+    transform: scale(0.9);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  52% {
+    transform: scale(1.1);
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.coverflow-buy-pack-cta.is-confirming .cta-button {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .coverflow-cart-remove-confirm,
+  .coverflow-cart-remove-confirm.is-leaving {
+    animation: none;
+  }
+}
+
+/* Staggered entrance inside the active stack: label first, then CTA. */
+.coverflow-active-stack.is-visible .coverflow-active-pack-label {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0);
+  transition:
+    opacity 680ms ease,
+    transform 680ms ease,
+    filter 680ms ease;
+  transition-delay: 90ms;
+}
+
+.coverflow-active-stack.is-visible .coverflow-buy-pack-cta {
+  pointer-events: auto;
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0);
+  transition:
+    opacity 520ms ease,
+    transform 520ms ease,
+    filter 520ms ease,
+    box-shadow 250ms ease;
+  transition-delay: 240ms;
+}
+
+@media (max-width: 980px) {
+
+  .coverflow-buy-pack-cta .cta-button__aurora,
+  .coverflow-buy-pack-cta .cta-button__aurora-fallback,
+  .coverflow-buy-pack-cta .cta-button__aurora-fallback::before,
+  .coverflow-buy-pack-cta .cta-button__aurora-fallback::after,
+  .coverflow-buy-pack-cta .cta-button__face {
+    display: none !important;
+  }
+}
+
+/* Reverse stagger on exit (active → inactive). */
+.coverflow-active-stack:not(.is-visible) .coverflow-active-pack-label {
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateY(8px);
+  transition:
+    opacity 360ms ease,
+    transform 400ms ease,
+    filter 400ms ease;
+  transition-delay: 40ms;
+}
+
+.coverflow-active-stack:not(.is-visible) .coverflow-buy-pack-cta {
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateY(10px);
+  transition:
+    opacity 320ms ease,
+    transform 360ms ease,
+    filter 360ms ease,
+    box-shadow 200ms ease;
+  transition-delay: 0ms;
+}
+
+.coverflow-cart-remove > span {
+  display: block;
+  line-height: 1;
+  transform: translateY(-0.04em);
+}
+
+.coverflow-cart-remove-confirm {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 7.5rem;
+  padding: 0.7rem 0.8rem 0.75rem;
+  border: 1px solid oklch(1 0 0 / 0.1);
+  border-radius: 1.15rem;
+  background: linear-gradient(
+    180deg,
+    oklch(0.2 0 0 / 0.92) 0%,
+    oklch(0.12 0 0 / 0.94) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.1),
+    0 12px 28px oklch(0 0 0 / 0.42);
+  color: oklch(1 0 0 / 0.92);
+  transform: translateX(-50%);
+  transform-origin: top center;
+  pointer-events: auto;
+  animation: coverflow-confirm-enter 480ms both;
+}
+
+.coverflow-cart-remove-confirm.is-leaving {
+  pointer-events: none;
+  animation: coverflow-confirm-leave 360ms both;
+}
+
+@keyframes coverflow-confirm-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px) scale(0.84);
+    animation-timing-function: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  }
+  16% {
+    opacity: 0.75;
+    transform: translateX(-50%) translateY(-11px) scale(0.76);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  58% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(4px) scale(1.06);
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes coverflow-confirm-leave {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    animation-timing-function: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  }
+  18% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(5px) scale(1.06);
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.78);
+  }
+}
+
+.coverflow-cart-remove-confirm::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid oklch(1 0 0 / 0.1);
+  border-left: 1px solid oklch(1 0 0 / 0.1);
+  background: oklch(0.19 0 0 / 0.94);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.coverflow-cart-remove-confirm__label {
+  margin: 0;
+  color: oklch(1 0 0 / 0.78);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.coverflow-cart-remove-confirm__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.coverflow-cart-remove-confirm__btn {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid oklch(1 0 0 / 0.12);
+  border-radius: 999px;
+  background: oklch(1 0 0 / 0.06);
+  color: oklch(1 0 0 / 0.9);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 120ms ease;
+}
+
+.coverflow-cart-remove-confirm__btn svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex-shrink: 0;
+}
+
+.coverflow-cart-remove-confirm__btn.is-confirm {
+  border-color: oklch(0.72 0.16 25 / 0.45);
+  background: oklch(0.48 0.14 25 / 0.28);
+  color: oklch(0.9 0.08 25);
+}
+
+.coverflow-cart-remove-confirm__btn.is-confirm:hover {
+  background: oklch(0.52 0.15 25 / 0.4);
+}
+
+.coverflow-cart-remove-confirm__btn.is-cancel {
+  border-color: oklch(1 0 0 / 0.16);
+  background: oklch(1 0 0 / 0.08);
+  color: oklch(1 0 0 / 0.72);
+}
+
+.coverflow-cart-remove-confirm__btn.is-cancel:hover {
+  border-color: oklch(1 0 0 / 0.24);
+  background: oklch(1 0 0 / 0.14);
+  color: oklch(1 0 0 / 0.9);
+}
+
+/* Confirm CTA — circle check in the 1fr column (beats icon-btn defaults). */
+.coverflow-buy-confirm .coverflow-buy-confirm__buy.coverflow-cart-remove-confirm__btn {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 2.35rem;
+  height: 2.35rem;
+  min-width: 2.35rem;
+  min-height: 2.35rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 999px;
+  aspect-ratio: 1 / 1;
+}
+
+.coverflow-buy-confirm__action-row.has-qty
+  .coverflow-buy-confirm__buy.coverflow-cart-remove-confirm__btn {
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  aspect-ratio: auto;
+}
+
+.coverflow-buy-confirm__action-row.is-buy-only
+  .coverflow-buy-confirm__buy.coverflow-cart-remove-confirm__btn {
+  width: 2.35rem;
+  height: 2.35rem;
+  justify-self: center;
+}
+
+.coverflow-buy-confirm .coverflow-buy-confirm__buy.coverflow-cart-remove-confirm__btn:hover {
+  transform: scale(1.04);
+}
+
+.coverflow-buy-confirm .coverflow-buy-confirm__buy.coverflow-cart-remove-confirm__btn:active {
+  transform: scale(0.96);
+}
+
+/* Header close — circle outline, no fill. Staggered after dialog enter. */
+.coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn,
+.coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn.is-cancel {
+  position: relative;
+  width: 2.3125rem; /* 1.85rem * 1.25 */
+  height: 2.3125rem;
+  min-width: 2.3125rem;
+  padding: 0;
+  border: 1px solid oklch(1 0 0 / 0.14);
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(0.2 0 0 / 0.72) 0%, oklch(0.12 0 0 / 0.94) 100%);
+  box-shadow: none;
+  color: oklch(1 0 0 / 0.78);
+  margin-top: -24px;
+  right: -26px;
+  opacity: 0;
+  transform: scale(0.72);
+  transform-origin: center;
+  /* Dialog enter is 480ms — start close at 260ms. */
+  animation: coverflow-buy-confirm-close-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) 260ms both;
+}
+
+.coverflow-buy-confirm.is-leaving
+  .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn,
+.coverflow-buy-confirm.is-leaving
+  .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn.is-cancel {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes coverflow-buy-confirm-close-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.58);
+    animation-timing-function: cubic-bezier(0.22, 0.9, 0.32, 1);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.14);
+    animation-timing-function: cubic-bezier(0.34, 1.4, 0.64, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn,
+  .coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn.is-cancel {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn:hover,
+.coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn.is-cancel:hover {
+  border-color: oklch(1 0 0 / 0.42);
+  background: linear-gradient(180deg, oklch(0.28 0 0 / 0.88) 0%, oklch(0.16 0 0 / 0.96) 100%);
+  color: oklch(1 0 0 / 0.95);
+  transform: scale(1.06);
+}
+
+.coverflow-buy-confirm .coverflow-buy-confirm__close.coverflow-cart-remove-confirm__btn:active {
+  background: linear-gradient(180deg, oklch(0.16 0 0 / 0.9) 0%, oklch(0.1 0 0 / 0.98) 100%);
+  transform: scale(0.96);
+}
+
+.cart-continue > * {
+  pointer-events: auto;
+}
+
+.cart-continue__cta .cta-button__leading-icon {
+  width: auto;
+  height: auto;
+}
+
+.coverflow-pack-html-label .coverflow-cart-remove-wrap,
+.coverflow-pack-html-label .coverflow-cart-remove,
+.coverflow-pack-html-label .coverflow-cart-remove-confirm {
+  pointer-events: auto;
+}
+
+.coverflow-active-stack.is-visible .coverflow-cart-remove-wrap,
+.coverflow-active-stack.is-visible .coverflow-cart-remove,
+.coverflow-active-stack.is-visible .coverflow-cart-remove-confirm {
+  pointer-events: auto;
+}
+
+@media (max-width: 980px) {
+
+		  .coverflow-pack-html--remove .coverflow-cart-remove-confirm::before {
+		    top: -6px;
+		    bottom: auto;
+		    transform: translateX(-50%) rotate(45deg);
+		  }
+
+/* Mobile hex CTA: keep the taller centered title + cost stack. */
+		  .coverflow-buy-pack-cta .cta-button__label {
+		    gap: 0.12em;
+        height: 100%;
+        justify-content: center;
+		  }
+	}
+
+/* Buy Pack button styles */
+.btn-180 {
+  border: 1px solid oklch(0.545 0.218 16.03);
+  padding: 8px 20px;
+  font-size: 14px;
+  text-transform: none;
+  border-radius: 60px;
+  outline: none;
+  transform: translateY(0px);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    inset 0 30px 30px -15px oklch(1 0 0 / 0.1),
+    inset 0 0 0 1px oklch(1 0 0 / 0.3),
+    inset 0 1px 20px oklch(0 0 0 / 0),
+    0 3px 0 oklch(0.45 0.18 16.47),
+    0 3px 2px oklch(0 0 0 / 0.2),
+    0 5px 10px oklch(0 0 0 / 0.1),
+    0 10px 20px oklch(0 0 0 / 0.1);
+  background: oklch(0.545 0.218 16.03);
+  color: white;
+  text-shadow: 0 1px 0 oklch(0 0 0 / 0.3);
+  transition: 250ms all;
+  font-family: Arial, Helvetica, sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 700;
+}
+
+.btn-180-label {
+  position: relative;
+  z-index: 1;
+}
+
+/* Light sweep clipped to the pill button shape.
+   Only starts when the pack is active / button is visible.
+   Sweep runs for ~1.8s, then waits 2.5s before the next pass. */
+.btn-180::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 95%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(110deg,
+      transparent 0%,
+      transparent 18%,
+      oklch(1 0 0 / 0.05) 36%,
+      oklch(1 0 0 / 0.2) 50%,
+      oklch(1 0 0 / 0.05) 64%,
+      transparent 82%,
+      transparent 100%);
+  transform: translateX(-160%) skewX(-18deg);
+  animation: none;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Start the first sweep when the active pack button becomes visible. */
+.coverflow-active-action.is-visible .btn-180::before {
+  animation: btn-180-sweep 4300ms linear infinite;
+}
+
+.btn-180>* {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes btn-180-sweep {
+  0% {
+    transform: translateX(-160%) skewX(-18deg);
+  }
+
+  /* ~1.8s of travel within the 4.3s cycle, then 2.5s pause */
+  41.8% {
+    transform: translateX(280%) skewX(-18deg);
+  }
+
+  41.9%,
+  100% {
+    transform: translateX(280%) skewX(-18deg);
+  }
+}
+
+.btn-180:active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 16px 2px -15px oklch(0 0 0 / 0),
+    inset 0 0 0 1px oklch(1 0 0 / 0.15),
+    inset 0 1px 20px oklch(0 0 0 / 0.1),
+    0 0 0 oklch(0.641 0.25 13.45),
+    0 0 0 2px oklch(0.641 0.25 13.45),
+    0 0 0 oklch(0 0 0 / 0),
+    0 0 0 oklch(0 0 0 / 0);
+}
+
+.btn-180:active::before {
+  animation-play-state: paused;
+}
+
+.btn-180:disabled {
+  pointer-events: none;
+  opacity: 0.65;
+  color: oklch(0.593 0 0);
+  background: oklch(0.894 0 0);
+  box-shadow: none;
+  text-shadow: none;
+  border: none;
+}
+
+.btn-180:disabled::before {
+  display: none;
+}
+
+.coverflow-gesture-debug {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  color: oklch(0.907 0.019 242.98 / 0.8);
+  font-size: 0.8rem;
+}
+
+.coverflow-caption {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: center;
+  text-align: center;
+  min-height: 2.6rem;
+}
+
+.coverflow-tools-bar {
+  display: flex;
+  justify-content: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.coverflow-tools-open {
+  min-height: 2.75rem;
+  padding-inline: 1.1rem;
+  font-size: 0.95rem;
+}
+
+.coverflow-motion-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 44px;
+  max-height: 44px;
+  padding: 0;
+  line-height: 0;
+  font-size: 0;
+  border-radius: 999px;
+}
+
+.coverflow-motion-toggle.is-active {
+  border-color: oklch(0.798 0.104 207.84 / 0.55);
+  box-shadow: 0 0 0 1px oklch(0.798 0.104 207.84 / 0.25);
+  color: oklch(0.963 0.028 216.4);
+}
+
+.coverflow-motion-toggle.is-disabled-look {
+  opacity: 0.55;
+}
+
+.coverflow-motion-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.card-title {
+  font-family: var(--font-display);
+  color: oklch(0.974 0.007 247.89);
+  font-weight: 650;
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(90vw, 42rem);
+}
+
+.card-subtitle {
+  font-size: 0.8rem;
+  color: oklch(0.907 0.019 242.98 / 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coverflow-empty {
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  border: 1px dashed oklch(1 0 0 / 0.16);
+  background: oklch(1 0 0 / 0.03);
+  color: oklch(0.907 0.019 242.98 / 0.72);
+  padding: 1rem;
+  text-align: center;
+}
+
+@media (max-width: 980px) {
+  .layout {
+    width: calc(100% - 1.2rem);
+    margin: 0.6rem auto;
+  }
+
+  .model-viewer {
+    height: min(64vh, 500px);
+  }
+}
+
+/* Buy confirm: no iOS/mobile text selection on qty / or / pocket */
+.coverflow-buy-confirm,
+.coverflow-buy-confirm * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+

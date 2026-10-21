@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
@@ -70,6 +70,27 @@ const GatedPictureFlowPage = withOperatorGate(PictureFlowPage);
 const GatedVideoFlowDesignerPage = withOperatorGate(VideoFlowDesignerPage);
 const GatedVideoFlowRunPage = withOperatorGate(VideoFlowRunPage);
 const GatedVideoFlowHubPage = withOperatorGate(VideoFlowHubPage);
+const DashboardPlayerGame = lazy(() =>
+  import("./dashGame/DashboardPlayerGame").then((m) => ({
+    default: m.DashboardPlayerGame,
+  })),
+);
+
+function HomePage() {
+  const params = new URLSearchParams(
+    typeof window === "undefined" ? "" : window.location.search,
+  );
+  const model = params.get("model")?.trim();
+  const card = params.get("card")?.trim();
+  if (model && card) {
+    return (
+      <Suspense fallback={null}>
+        <DashboardPlayerGame />
+      </Suspense>
+    );
+  }
+  return <ScratchPrototype />;
+}
 
 function pickApp(pathname: string) {
   const path = normalizePath(pathname);
@@ -87,7 +108,7 @@ function pickApp(pathname: string) {
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;
-  return ScratchPrototype;
+  return HomePage;
 }
 
 function readLocation() {

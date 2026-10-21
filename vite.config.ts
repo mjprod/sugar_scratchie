@@ -24,6 +24,12 @@ function writeMeshIndex() {
 
 export default defineConfig(({ mode: _mode }) => {
   return {
+  resolve: {
+    alias: {
+      "@": resolve("src/dashGame"),
+    },
+    dedupe: ["react", "react-dom"],
+  },
   plugins: [
     react(),
     basicSsl(),
