@@ -658,6 +658,10 @@ function FairyDustCursorImpl({
         left: 0,
         width: canvasSize.width,
         height: canvasSize.height,
+        // Operator `.stage canvas` (max-width 700px) centers every canvas with
+        // translate(-50%, -50%). This overlay is sized to the stage and draws
+        // in stage pixels, so that shift piles coins in the upper left.
+        transform: "none",
         pointerEvents: "none",
         zIndex: 9999,
       }}

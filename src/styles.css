@@ -623,6 +623,24 @@ textarea:focus-visible {
   overflow: visible !important;
 }
 
+/* Cursor coins are drawn in stage pixels. The mobile `.stage canvas` cover
+   rule must not translate this overlay, or coins spawn half a stage away. */
+.stage canvas.fairy-dust-cursor {
+  position: absolute !important;
+  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  pointer-events: none !important;
+}
+
 /* Full-bar clip mask: same box + pill radius as the scratchable symbol bar.
    Peels/Lotties inside cannot paint outside the gray pill. */
 .lottie-clipper {
@@ -3079,7 +3097,11 @@ textarea:focus-visible {
     width: 100dvw;
   }
 
-  .stage canvas {
+  /* Letterbox only the stage picture. A blanket `.stage canvas` rule
+     used to hit every UI canvas (foil, flakes, cursor coins) and shift
+     them by half the stage. */
+  .stage canvas.game-stage-canvas,
+  .stage canvas.photo-scratch-fg-layer {
     height: max(100dvh, 100dvw * 672 / 390);
     left: 50%;
     position: absolute;
