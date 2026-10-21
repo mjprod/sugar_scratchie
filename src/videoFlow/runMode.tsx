@@ -1109,6 +1109,9 @@ type RunModeProps = {
   onBackgroundVideoModelChange: (value: BackgroundVideoModel) => void;
   onDressVideoModelChange: (value: DressVideoModel) => void;
   onEnhancePromptChange: (value: boolean) => void;
+  promptsDirty: boolean;
+  draftSaving: boolean;
+  onSaveDraft: () => Promise<void>;
   onRefreshJobs: () => Promise<void>;
   onRefreshAssets: () => Promise<void>;
   onError: (message: string) => void;
@@ -2995,6 +2998,35 @@ function CardPhotosPanel({
   );
 }
 
+function PromptSaveRow({
+  dirty,
+  saving,
+  onSave,
+}: {
+  dirty: boolean;
+  saving: boolean;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <Flex align="center" gap="2" wrap="wrap">
+      <Button
+        disabled={saving}
+        size="1"
+        type="button"
+        variant={dirty ? "solid" : "soft"}
+        onClick={() => void onSave().catch(() => undefined)}
+      >
+        {saving ? "Saving…" : "Save prompts"}
+      </Button>
+      <Text color={dirty ? "orange" : "gray"} size="1">
+        {dirty
+          ? "Unsaved — Save or Re-run so the next generation uses this text."
+          : "Prompts saved on this card."}
+      </Text>
+    </Flex>
+  );
+}
+
 export function RunMode(props: RunModeProps) {
   const { models } = useGenerationCatalog();
   const {
@@ -3049,6 +3081,9 @@ export function RunMode(props: RunModeProps) {
     onBackgroundVideoModelChange,
     onDressVideoModelChange,
     onEnhancePromptChange,
+    promptsDirty,
+    draftSaving,
+    onSaveDraft,
     onRefreshJobs,
     onRefreshAssets,
     onError,
@@ -3441,6 +3476,18 @@ export function RunMode(props: RunModeProps) {
       !jobBusy,
   );
 
+  const canRegenerateActionStep = Boolean(
+    actionStep &&
+      !actionIsInteractive &&
+      cardId.trim() &&
+      cardLabel.trim() &&
+      (!needsSourceImage || image) &&
+      (!actionNeedsGrok || canUseGrok) &&
+      (!actionNeedsWavespeed || canUseWavespeed) &&
+      stepApiReady &&
+      !jobBusy,
+  );
+
   const canRemakeActionStep = Boolean(
     actionStep &&
       cardId.trim() &&
@@ -3538,6 +3585,7 @@ export function RunMode(props: RunModeProps) {
     setFlowBusy(true);
     onError("");
     try {
+      await onSaveDraft();
       await api<JobInfo>("/api/jobs/video-flow/step", {
         method: "POST",
         body: JSON.stringify({
@@ -3646,11 +3694,6 @@ export function RunMode(props: RunModeProps) {
     } finally {
       setFlowBusy(false);
     }
-  }
-
-  async function rejectFocusClip() {
-    if (!actionStep) return;
-    await rejectStep(actionStep);
   }
 
   function stepListStatus(step: VideoFlowStepKey): FlowNodeRuntime {
@@ -3805,15 +3848,11 @@ export function RunMode(props: RunModeProps) {
                     </Button>
                   )}
                   <Button
-                    disabled={flowBusy || (actionStep === "picture" && jobBusy)}
+                    disabled={!canRegenerateActionStep}
                     type="button"
                     color="red"
                     variant="soft"
-                    onClick={() =>
-                      actionStep === "picture"
-                        ? void runStep("picture", true)
-                        : void rejectFocusClip()
-                    }
+                    onClick={() => actionStep && void runStep(actionStep, true)}
                   >
                     {actionStep === "picture" ? "Generate again" : "Re-run step"}
                   </Button>
@@ -4029,6 +4068,7 @@ export function RunMode(props: RunModeProps) {
               pictureModels={pictureModels}
               onPictureModelsChange={onPictureModelsChange}
             />
+            <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             {flowState?.steps.picture?.status === "approved" &&
             !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
               <Callout.Root color="blue">
@@ -4084,6 +4124,7 @@ export function RunMode(props: RunModeProps) {
                 onChange={(event) => onBackgroundMotionPromptChange(event.currentTarget.value)}
               />
             </Field>
+            <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             <Text color="gray" size="2">
               Theme scenery is baked in Create picture. This step only animates that approved
               still. Locked camera + skin continuity are enhanced when XAI_API_KEY is set. Click
@@ -4137,6 +4178,7 @@ export function RunMode(props: RunModeProps) {
                 onChange={(event) => onDressPromptChange(event.currentTarget.value)}
               />
             </Field>
+            <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
               Apply theme to dress prompt
             </Button>

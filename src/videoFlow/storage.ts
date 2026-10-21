@@ -1,12 +1,14 @@
 import {
   backgroundMotionPromptForTheme,
   DEFAULT_BACKGROUND_MOTION_PROMPT,
+  DEFAULT_THEME,
   normalizePictureModels,
   pictureCompareModeOf,
   type PictureCompareMode,
   type PictureModels,
   DEFAULT_VIDEO_FLOW_JSON,
   dressPromptForTheme,
+  dressPromptForThemeWithReference,
   isStockBackgroundMotionPromptText,
   isStockDressPromptText,
   INFLUENCER_POSITION,
@@ -142,10 +144,15 @@ function normalizeStoredMotionPrompt(prompt: string | undefined, theme: string):
 
 function normalizeStoredDressPrompt(prompt: string | undefined, theme: string): string {
   const scenery = normalizeTheme(theme);
-  if (isStockDressPromptText(prompt ?? "", scenery)) {
-    return dressPromptForTheme(scenery);
+  const stripped = (prompt ?? "").trim();
+  if (!isStockDressPromptText(stripped, scenery)) return stripped;
+  if (
+    stripped === dressPromptForThemeWithReference(scenery) ||
+    stripped === dressPromptForThemeWithReference(DEFAULT_THEME)
+  ) {
+    return dressPromptForThemeWithReference(scenery);
   }
-  return (prompt ?? "").trim();
+  return dressPromptForTheme(scenery);
 }
 
 export type StoredVideoFlowDraft = {
@@ -176,6 +183,10 @@ export type StoredVideoFlowDraft = {
   sourceImageModel: SourceImageModel;
   backgroundVideoModel: BackgroundVideoModel;
   dressVideoModel: DressVideoModel;
+  /** Client clock (ms) when this browser last wrote the draft locally. */
+  localUpdatedAt?: number;
+  /** Server `updated_at` in unix seconds, when this draft came from the API. */
+  updatedAt?: number;
 };
 
 const DRAFT_STORAGE_KEY = "sugar-scratchie:video-flow-draft";
@@ -223,6 +234,8 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
       sourceImageModel: parseSourceImageModel(parsed.sourceImageModel, parsed.aiProvider),
       backgroundVideoModel: parseBackgroundVideoModel(parsed.backgroundVideoModel),
       dressVideoModel: parseDressVideoModel(parsed.dressVideoModel),
+      localUpdatedAt:
+        typeof parsed.localUpdatedAt === "number" ? parsed.localUpdatedAt : undefined,
     };
   } catch {
     return null;
@@ -302,6 +315,7 @@ export function storedDraftFromApi(draft?: {
   source_image_model?: string;
   background_video_model?: string;
   dress_video_model?: string;
+  updated_at?: number;
 }): StoredVideoFlowDraft | null {
   if (!draft?.card_id) return null;
   const theme = normalizeTheme(draft.theme);
@@ -337,5 +351,6 @@ export function storedDraftFromApi(draft?: {
     sourceImageModel: parseSourceImageModel(draft.source_image_model, draft.ai_provider),
     backgroundVideoModel: parseBackgroundVideoModel(draft.background_video_model),
     dressVideoModel: parseDressVideoModel(draft.dress_video_model),
+    updatedAt: typeof draft.updated_at === "number" ? draft.updated_at : undefined,
   };
 }

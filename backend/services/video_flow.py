@@ -3187,6 +3187,8 @@ def run_video_flow_step(
         from backend.generation_models_store import model_label, resolve_spec
 
         print(f"Dress video: {model_label('dress_video', dress_model)}")
+        print("Dress prompt:")
+        print(dress_prompt)
         identity_still: Path | None = None
         try:
             identity_still = extract_video_still(
