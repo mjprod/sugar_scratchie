@@ -6,6 +6,78 @@ import {
   resetFairyDustPerfPeak,
   type ParticleType,
 } from "./cursorFx/FairyDustCursor";
+import { shouldUpdateChestFollow } from "./game/chestFollowGate";
+import {
+  CURSOR_FX_EMIT_MODE,
+  CURSOR_FX_FALL_GRAVITY,
+  CURSOR_FX_FALL_VELOCITY,
+  STACKED_COIN_BURST_STAGGER_MS,
+  celebrateBurstCount,
+  celebrateDurationMs,
+  crossedProgressMilestones,
+  resolveCursorFxDeviceProfile,
+  stackedCelebrateBurstCounts,
+} from "./game/cursorFxCelebrate";
+import {
+  fairyDustSpawnMinDistancePx,
+  shouldSampleFabricAlpha,
+  shouldSpawnFairyDust,
+} from "./game/fairyDustSpawnPolicy";
+import { finaleHaptics, playFinaleBoomSound, playFinaleChargeSound } from "./game/finaleFx";
+import {
+  chargeAmount,
+  explosionOrigin,
+  finaleHidesForeground,
+  finalePhaseAt,
+  finaleTimeline,
+  garmentRevealSatisfied,
+  shouldExplodeGarment,
+  type FinalePhase,
+  type FinaleTimeline,
+} from "./game/garmentExplosion";
+import { MatchFlight } from "./game/MatchFlight";
+import {
+  clearPendingScratchMove,
+  createScratchInputCoalesce,
+  notePendingScratchMove,
+  takePendingScratchMove,
+} from "./game/scratchInputCoalesce";
+import {
+  clearScratchMarks,
+  createScratchMarksRing,
+  pushScratchMark,
+  scratchMarksSome,
+} from "./game/scratchMarksRing";
+import {
+  createScratchCoverage,
+  createStrokeFreshness,
+  noteStrokeStamp,
+  resetScratchCoverage,
+  resetStrokeFreshness,
+  SCRATCH_COVERAGE_SIZE,
+  stampScratchCoverage,
+} from "./game/scratchCoverage";
+import {
+  createFabricAlphaCache,
+  createSymbolScratchProbeCache,
+  isSymbolNearAnyStroke,
+  isSymbolNearStroke,
+  readCachedFabricAlpha,
+  readCachedSymbolScratchAmount,
+  writeCachedFabricAlpha,
+  writeCachedSymbolScratchAmount,
+} from "./game/scratchProbeCache";
+import {
+  resolveAutoScratchBudget,
+  resolveManualScratchBudget,
+  STAMP_SCRATCH_RADIUS_UV,
+} from "./game/scratchStampBudget";
+import {
+  createVideoSyncState,
+  decideVideoSync,
+  shortestMediaDrift,
+  type VideoSyncState,
+} from "./game/videoSync";
 import { loadLottieUrlSource } from "./cursorFx/loadLottieSource";
 import { fetchModels, type ModelInfo } from "./shared/models";
 import { fetchCatalogMotionCards } from "./shared/catalog";
@@ -39,9 +111,11 @@ import {
   loadGameSession,
   navigateTo,
   recordMotionCardResult,
+  startMotionSession,
   themeForMotionCard,
   type GameSession,
 } from "./game/gameSession";
+import { themeLabelForCard } from "./game/session";
 import {
   InitialCountdown,
   isCountdownSoundUnlocked,
@@ -264,12 +338,6 @@ function DebugHud() {
   );
 }
 
-type ScratchMark = {
-  u: number;
-  v: number;
-  radius: number;
-};
-
 // A coin that animates from the scratch origin up to a symbol slot in the top
 // bar each time a new symbol ("coin") is earned. Positions are stage-relative
 // pixels; the CSS keyframe arcs the coin from `from*` to `to*`.
@@ -290,7 +358,6 @@ type FlyingCoin = {
 
 const COIN_FLIGHT_DURATION_MS = 620;
 const COIN_FLIGHT_STAGGER_MS = 80;
-const MATCH_FLIGHT_DURATION_MS = 1250;
 const MATCH_FLIGHT_STAGGER_MS = 90;
 // A card pairs the reveal (bottom) video, the green-screen foreground video, and
 // the tracked mesh generated from that foreground. Switching cards swaps all
@@ -303,6 +370,7 @@ type Card = {
   mesh: string;
   chromaKey: boolean;
   model_id?: string;
+  theme_id?: string;
   sort_order?: number;
   photos?: Array<{ id: string; src: string }>;
 };
@@ -393,7 +461,6 @@ async function loadCards(): Promise<Card[]> {
 
 const MESH_INDEX_SRC = "/mesh/index.json";
 const MESH_DIRECTORY_SRC = "/mesh";
-const DEFAULT_MESH_FILE = "tracked-mesh.json";
 const SYMBOL_SLOT_COUNT = SYMBOL_POINT_COUNT;
 const SYMBOL_REVEAL_STEP_MANUAL = 0.056;
 const SYMBOL_REVEAL_STEP_AUTO = 0.083;
@@ -414,7 +481,7 @@ const SYMBOL_REVEAL_UV_RADIUS = 0.06;
 const SYMBOL_SCRATCH_REVEAL_THRESHOLD = 0.55;
 /** Lottie backing store matches the CSS marker so the find-bounce doesn't
  * upscale a soft 42px canvas. */
-const BODY_SYMBOL_ICON_PX = 72;
+const BODY_SYMBOL_ICON_PX = 44;
 
 type ScratchZoomSettings = {
   enabled: boolean;
@@ -769,16 +836,11 @@ try {
 }
 
 const AUTO_SCRATCH_STORAGE_KEY = "sugar-scratchie:auto-scratch";
-const SCRATCH_RADIUS = 0.045;
-// Max canvas-space step between manual scratch stamps so fast swipes stay continuous.
-const MANUAL_SCRATCH_PATH_STEP = SCRATCH_RADIUS * 0.65 * CANVAS_HEIGHT;
-const MANUAL_SCRATCH_MAX_POINTS = 40;
+const SCRATCH_RADIUS = STAMP_SCRATCH_RADIUS_UV;
 const AUTO_SCRATCH_RADIUS = 0.092;
 const AUTO_SCRATCH_DIAGONAL_LINES = 18;
 // Step along each ↘ stroke (top-left → bottom-right) so brush circles overlap.
 const AUTO_SCRATCH_PATH_STEP_UV = AUTO_SCRATCH_RADIUS * 0.72;
-const AUTO_SCRATCH_FILL_BATCH = 36;
-const AUTO_SCRATCH_MAX_PER_FRAME = 32;
 
 type AutoScratchSettings = {
   enabled: boolean;
@@ -812,7 +874,7 @@ function loadAutoScratchSettings(): AutoScratchSettings {
   }
 }
 
-const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v7";
+const CURSOR_FX_STORAGE_KEY = "sugar-scratchie:cursor-fx-v8";
 const LEGACY_CURSOR_FX_STORAGE_KEYS = [
   "sugar-scratchie:cursor-fx",
   "sugar-scratchie:cursor-fx-v1",
@@ -821,7 +883,25 @@ const LEGACY_CURSOR_FX_STORAGE_KEYS = [
   "sugar-scratchie:cursor-fx-v4",
   "sugar-scratchie:cursor-fx-v5",
   "sugar-scratchie:cursor-fx-v6",
+  "sugar-scratchie:cursor-fx-v7",
 ];
+
+function detectCursorFxDeviceProfile() {
+  if (typeof window === "undefined") {
+    return resolveCursorFxDeviceProfile({
+      reducedMotion: false,
+      coarsePointer: false,
+      narrowViewport: false,
+    });
+  }
+  return resolveCursorFxDeviceProfile({
+    reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+    narrowViewport: window.matchMedia("(max-width: 700px)").matches,
+  });
+}
+
+const CURSOR_FX_DEVICE = detectCursorFxDeviceProfile();
 
 type CursorFxSettings = {
   fairyDust: boolean;
@@ -832,15 +912,14 @@ type CursorFxSettings = {
 };
 
 const CURSOR_FX_DEFAULTS: CursorFxSettings = {
-  fairyDust: true,
-  particleSize: 64,
-  particleCount: 5,
-  gravity: 0.1,
-  // Slightly longer life so a scratch leaves a denser coin trail.
+  fairyDust: CURSOR_FX_DEVICE.fairyDust,
+  particleSize: CURSOR_FX_DEVICE.particleSize,
+  particleCount: CURSOR_FX_DEVICE.particleCount,
+  gravity: CURSOR_FX_FALL_GRAVITY,
   fadeSpeed: 0.96,
 };
 
-const CURSOR_FX_INITIAL_VELOCITY = { min: 0.5, max: 1.5 };
+const CURSOR_FX_INITIAL_VELOCITY = CURSOR_FX_FALL_VELOCITY;
 /** Skip diamond-coin spawn on keyed-out / empty pixels. */
 const CURSOR_FX_MESH_ALPHA_MIN = 0.12;
 
@@ -865,7 +944,7 @@ function loadCursorFxSettings(): CursorFxSettings {
       particleSize: clampValue(
         Number(parsed.particleSize) || CURSOR_FX_DEFAULTS.particleSize,
         10,
-        64,
+        96,
       ),
       particleCount: clampValue(
         Number(parsed.particleCount) || CURSOR_FX_DEFAULTS.particleCount,
@@ -875,7 +954,7 @@ function loadCursorFxSettings(): CursorFxSettings {
       gravity: clampValue(
         Number(parsed.gravity) || CURSOR_FX_DEFAULTS.gravity,
         0,
-        0.1,
+        0.3,
       ),
       fadeSpeed: clampValue(
         Number(parsed.fadeSpeed) || CURSOR_FX_DEFAULTS.fadeSpeed,
@@ -920,7 +999,7 @@ const CHEST_ANCHOR_UV = { x: 0.5, y: 0.4 };
 const CHEST_TARGET_UV = { x: 0.5, y: 0.4 };
 const CHEST_FOLLOW_STRENGTH = 0.7;
 const CHEST_CAM_MAX = Math.min(0.05, PRESENT_ZOOM - 1);
-const CHEST_SMOOTH = 0.08;
+const CHEST_SMOOTH = 0.14;
 
 // Show a pulsar on one unfound body mark at a time once this many (or fewer)
 // remain, but only after the player has been idle for HINT_IDLE_MS. Hold each
@@ -947,32 +1026,13 @@ function pickNextUnfoundSymbol(
 // get its current canvas-pixel location (the mesh UV grid is regular 0..1).
 // sampleMeshUvToWorld lives in meshGeometry.ts
 
-// Drift past this (seconds) is a genuine discontinuity (loop wrap) and is
-// corrected immediately with a hard seek. Seeks stall the decoder, and on
-// Safari, whose currentTime is coarse, a low threshold makes us seek constantly
-// (every stale reading crosses it) which reads as continuous lag — so keep it
-// high.
-const HARD_SEEK_DRIFT = 0.45;
+const videoSyncState = new WeakMap<HTMLVideoElement, VideoSyncState>();
 
-// Smaller but persistent drift (a startup offset between the two play() calls,
-// a decode stall, tab-suspend catch-up) is closed with a rare one-shot seek:
-// drift must hold past SOFT_SEEK_DRIFT for SOFT_SEEK_CONFIRM_MS before we act,
-// and corrections are spaced by SOFT_SEEK_COOLDOWN_MS so a single stale
-// currentTime reading (Safari updates at ~4 Hz) can't cause a seek storm.
-// 0.05s catches a 2-frame offset at 24fps (2×0.042=0.083s) and at 30fps
-// (2×0.033=0.067s), which 0.09s would silently ignore.
-// 150ms confirm is long enough to outlast one Safari polling interval (~250ms)
-// while still snapping within the first visible loop.
-const SOFT_SEEK_DRIFT = 0.05;
-const SOFT_SEEK_CONFIRM_MS = 150;
-const SOFT_SEEK_COOLDOWN_MS = 2000;
-
-const videoSyncState = new WeakMap<
-  HTMLVideoElement,
-  { driftSince: number; lastSeekAt: number }
->();
-
-function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
+function syncVideoTime(
+  source: HTMLVideoElement,
+  target: HTMLVideoElement,
+  opts?: { isScratching?: boolean },
+) {
   if (source.paused && !target.paused) {
     target.pause();
   }
@@ -989,49 +1049,31 @@ function syncVideoTime(source: HTMLVideoElement, target: HTMLVideoElement) {
     return;
   }
 
-  // A seek hasn't landed yet (Safari resolves seeks asynchronously, and its
-  // currentTime lags during one). Acting now would compare against a stale time
-  // and pile on more seeks — a seek storm that looks like a hard stutter.
   if (target.seeking) return;
-
-  // Let the foreground free-run at 1×. Continuously steering playbackRate
-  // knocks Safari's video decoder off its smooth-decode path, which starves the
-  // foreground to a few fps and makes it fall behind — the opposite of what the
-  // steering is trying to do. Corrections below are seeks only, and rare.
   if (target.playbackRate !== 1) target.playbackRate = 1;
 
   const targetTime = foregroundTimeFromBottom(source, target);
-  const drift = targetTime - target.currentTime;
+  const duration = target.duration;
+  const actualTime = target.currentTime;
+  const drift = shortestMediaDrift(targetTime, actualTime, duration);
   const now = performance.now();
   let state = videoSyncState.get(target);
   if (!state) {
-    state = { driftSince: 0, lastSeekAt: 0 };
+    state = createVideoSyncState();
     videoSyncState.set(target, state);
   }
 
-  // A genuine discontinuity (loop wrap): snap immediately.
-  if (Math.abs(drift) > HARD_SEEK_DRIFT) {
+  const decision = decideVideoSync({
+    drift,
+    now,
+    state,
+    desiredTime: targetTime,
+    actualTime,
+    duration,
+    isScratching: opts?.isScratching,
+  });
+  if (decision.action === "seek") {
     target.currentTime = targetTime;
-    state.driftSince = 0;
-    state.lastSeekAt = now;
-    return;
-  }
-
-  // Sub-wrap drift: require it to persist before correcting, and never correct
-  // more often than the cooldown, so coarse/stale readings can't cause a storm.
-  if (Math.abs(drift) > SOFT_SEEK_DRIFT) {
-    if (state.driftSince === 0) {
-      state.driftSince = now;
-    } else if (
-      now - state.driftSince >= SOFT_SEEK_CONFIRM_MS &&
-      now - state.lastSeekAt >= SOFT_SEEK_COOLDOWN_MS
-    ) {
-      target.currentTime = targetTime;
-      state.driftSince = 0;
-      state.lastSeekAt = now;
-    }
-  } else {
-    state.driftSince = 0;
   }
 }
 
@@ -1215,7 +1257,29 @@ export function ScratchPrototype() {
   /** After claim, FG is paused + rVFC-unhooked so it stops decoding. */
   const fgParkedRef = useRef(false);
   const glRendererRef = useRef<GarmentGLRenderer | null>(null);
-  const marksRef = useRef<ScratchMark[]>([]);
+  const marksRef = useRef(createScratchMarksRing());
+  const scratchCoverageRef = useRef(createScratchCoverage());
+  const strokeFreshnessRef = useRef(createStrokeFreshness());
+  const lastStampUvRef = useRef<{ u: number; v: number } | null>(null);
+  const strokeFreshRef = useRef(false);
+  const scratchInputCoalesceRef = useRef(createScratchInputCoalesce());
+  const fabricAlphaCacheRef = useRef(createFabricAlphaCache());
+  const symbolScratchProbeCacheRef = useRef(
+    createSymbolScratchProbeCache(SYMBOL_SLOT_COUNT),
+  );
+  const probeFrameIdRef = useRef(0);
+  const celebrateProgressRef = useRef(0);
+  const celebrateUntilRef = useRef(0);
+  const celebrateTimerRef = useRef<number | null>(null);
+  const coinBurstTimersRef = useRef<number[]>([]);
+  const finaleStartRef = useRef<number | null>(null);
+  const finaleTimelineRef = useRef<FinaleTimeline | null>(null);
+  const finalePhaseRef = useRef<FinalePhase | null>(null);
+  const garmentExplodedRef = useRef(false);
+  const finaleOriginRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2 });
+  const finaleBurstKeyRef = useRef(0);
+  const advanceGarmentFinaleRef = useRef<(phase: FinalePhase) => void>(() => undefined);
+  const addScratchRef = useRef<(clientX: number, clientY: number) => void>(() => undefined);
   const hoverPointRef = useRef<Vec2 | null>(null);
   const lastScratchWorldRef = useRef<Vec2 | null>(null);
   const drawingRef = useRef(false);
@@ -1237,7 +1301,9 @@ export function ScratchPrototype() {
   const [cards, setCards] = useState<Card[]>(DEFAULT_CARDS);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [cardsReady, setCardsReady] = useState(false);
-  const [selectedMeshFile, setSelectedMeshFile] = useState(DEFAULT_CARDS[1].mesh);
+  // Empty until the active card resolves. A placeholder mesh from another
+  // clip warps this garment and shows the background through the holes.
+  const [selectedMeshFile, setSelectedMeshFile] = useState("");
   const [meshReloadToken, setMeshReloadToken] = useState(0);
   const [activeModelId, setActiveModelId] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -1477,6 +1543,17 @@ export function ScratchPrototype() {
     peak: 0,
     avgFrameMs: 0,
   });
+  const [cursorFxCelebrate, setCursorFxCelebrate] = useState(false);
+  const [cursorFxBurstNonce, setCursorFxBurstNonce] = useState(0);
+  const [cursorFxBurstCount, setCursorFxBurstCount] = useState(12);
+  const cursorFxRef = useRef(cursorFx);
+  cursorFxRef.current = cursorFx;
+  const [finalePhase, setFinalePhase] = useState<FinalePhase | null>(null);
+  const [finaleBurst, setFinaleBurst] = useState<{
+    key: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
@@ -1553,9 +1630,13 @@ export function ScratchPrototype() {
   }
 
   function isBodyScratchLocked() {
+    if (finaleStartRef.current !== null || garmentExplodedRef.current) {
+      return true;
+    }
     if (gameMode && !entryReadyRef.current) return true;
     if (introActiveRef.current || introCoverRef.current) return true;
     if (gameMode && !handStartIntroDoneRef.current) return true;
+    if (gameMode && !handCountdownDoneRef.current) return true;
     return (
       useBodySymbolsRef.current &&
       (topBarPhaseRef.current === "center" || introGateActiveRef.current)
@@ -1677,7 +1758,14 @@ export function ScratchPrototype() {
       introActiveRef.current = false;
       setIntroCover(false);
       introCoverRef.current = false;
+      setGameVideosReady(false);
       setHandStartIntroResolved(true);
+      handStartCountdownOverIntroRef.current = true;
+      setHandStartCountdownPending(true);
+      setIntroGateActive(true);
+      introGateActiveRef.current = true;
+      setShowIntroCountdown(true);
+      showIntroCountdownRef.current = true;
       return;
     }
     setIntroVideoUrl(url);
@@ -1925,6 +2013,13 @@ export function ScratchPrototype() {
     let lastFrameTime = performance.now();
 
     const render = () => {
+      probeFrameIdRef.current += 1;
+      if (drawingRef.current) {
+        const pending = takePendingScratchMove(scratchInputCoalesceRef.current);
+        if (pending) addScratchRef.current(pending.x, pending.y);
+      } else {
+        clearPendingScratchMove(scratchInputCoalesceRef.current);
+      }
       const now = performance.now();
       const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
       lastFrameTime = now;
@@ -1972,8 +2067,10 @@ export function ScratchPrototype() {
           CHEST_CAM_MAX,
         );
       }
-      camera.x += (targetCamX - camera.x) * CHEST_SMOOTH;
-      camera.y += (targetCamY - camera.y) * CHEST_SMOOTH;
+      if (shouldUpdateChestFollow({ isScratching: drawingRef.current })) {
+        camera.x += (targetCamX - camera.x) * CHEST_SMOOTH;
+        camera.y += (targetCamY - camera.y) * CHEST_SMOOTH;
+      }
 
       const autoSettings = autoScratchRef.current;
       // Never auto-finish while body-symbol hunt is still in progress — otherwise a
@@ -1989,13 +2086,16 @@ export function ScratchPrototype() {
         gameResultPendingRef.current === null
       ) {
         const path = autoPathRef.current;
+        const autoBudget = resolveAutoScratchBudget({
+          coarsePointer: CURSOR_FX_DEVICE.coarsePointer,
+        });
         if (path.length > 0 && autoPathIndexRef.current < path.length) {
           autoPathProgressRef.current += autoSettings.speed * dt;
           let scratched = 0;
           while (
             autoPathProgressRef.current >= 1 &&
             autoPathIndexRef.current < path.length &&
-            scratched < AUTO_SCRATCH_MAX_PER_FRAME
+            scratched < autoBudget.maxPerFrame
           ) {
             autoPathProgressRef.current -= 1;
             const pt = path[autoPathIndexRef.current];
@@ -2026,7 +2126,7 @@ export function ScratchPrototype() {
           let filled = 0;
           for (
             let i = 0;
-            i < samples.length && filled < AUTO_SCRATCH_FILL_BATCH;
+            i < samples.length && filled < autoBudget.fillBatch;
             i += 1
           ) {
             if (revealed[i]) continue;
@@ -2050,7 +2150,9 @@ export function ScratchPrototype() {
         bottomVideo.readyState >= 2 &&
         foregroundVideo.readyState >= 2
       ) {
-        syncVideoTime(bottomVideo, foregroundVideo);
+        syncVideoTime(bottomVideo, foregroundVideo, {
+          isScratching: drawingRef.current,
+        });
       }
 
       if (bottomVideo) {
@@ -2082,15 +2184,30 @@ export function ScratchPrototype() {
       const canClaim =
         !useBodySymbolsRef.current ||
         revealedSymbolsRef.current >= SYMBOL_SLOT_COUNT;
+      const finaleStart = finaleStartRef.current;
+      const finaleTl = finaleTimelineRef.current;
+      let finaleHide: boolean | null = null;
+      if (finaleStart !== null && finaleTl) {
+        const elapsed = now - finaleStart;
+        const phase = finalePhaseAt(elapsed, finaleTl);
+        renderer.setForegroundCharge(chargeAmount(elapsed, finaleTl));
+        if (phase !== finalePhaseRef.current) {
+          advanceGarmentFinaleRef.current(phase);
+        }
+        finaleHide = finaleHidesForeground(phase);
+      } else {
+        renderer.setForegroundCharge(0);
+      }
       const hideForeground =
-        claimedRef.current ||
-        (canClaim &&
-          isGarmentFullyRevealed(
-            progressRef.current,
-            revealedCountRef.current,
-            sampleCount,
-            autoMode,
-          ));
+        finaleHide ??
+        (claimedRef.current ||
+          (canClaim &&
+            isGarmentFullyRevealed(
+              progressRef.current,
+              revealedCountRef.current,
+              sampleCount,
+              autoMode,
+            )));
       if (hideForeground && !claimedRef.current) {
         claimedRef.current = true;
         setClaimed(true);
@@ -2306,7 +2423,26 @@ export function ScratchPrototype() {
         }
 
         if (isGameModeUrl()) {
-          const session = loadGameSession();
+          let session = loadGameSession();
+          if (session?.phase !== "motion" && fromUrl) {
+            const entry = loaded.find((card) => card.id === fromUrl);
+            if (entry) {
+              session = startMotionSession([
+                {
+                  id: entry.id,
+                  label: entry.label,
+                  bottom: entry.bottom,
+                  foreground: entry.foreground,
+                  mesh: entry.mesh,
+                  chromaKey: entry.chromaKey,
+                  model_id: modelFromUrl || entry.model_id,
+                  theme_id: entry.theme_id,
+                  sort_order: entry.sort_order,
+                  theme: themeLabelForCard(entry),
+                },
+              ]);
+            }
+          }
           if (session?.phase === "motion") {
             setGameSession(session);
             setCompletedCardIds(session.completedMotionIds);
@@ -2410,16 +2546,8 @@ export function ScratchPrototype() {
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         if (isCancelled || !data) return;
-        const files = parseMeshIndex(data);
-        setMeshFiles(files);
-        setSelectedMeshFile(
-          (currentFile) =>
-            currentFile ||
-            (files.includes(DEFAULT_MESH_FILE)
-              ? DEFAULT_MESH_FILE
-              : files[0]) ||
-            "",
-        );
+        // Dropdown list only — the active card owns selectedMeshFile.
+        setMeshFiles(parseMeshIndex(data));
       })
       .catch(() => undefined);
 
@@ -2440,12 +2568,20 @@ export function ScratchPrototype() {
       `${MESH_DIRECTORY_SRC}/${encodeURIComponent(selectedMeshFile)}?v=${meshReloadToken}`,
       { cache: "no-store" },
     )
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (isCancelled || !data) return;
-        setTrackedMesh(parseTrackedMesh(data));
+      .then((response) => {
+        const type = response.headers.get("content-type") ?? "";
+        if (!response.ok || !type.includes("json")) return null;
+        return response.json();
       })
-      .catch(() => undefined);
+      .then((data) => {
+        if (isCancelled) return;
+        // A missing file is served as the SPA HTML shell (200). Drop any mesh
+        // left over from a previous card instead of warping this clip with it.
+        setTrackedMesh(data ? parseTrackedMesh(data) : null);
+      })
+      .catch(() => {
+        if (!isCancelled) setTrackedMesh(null);
+      });
 
     return () => {
       isCancelled = true;
@@ -2460,7 +2596,21 @@ export function ScratchPrototype() {
       return;
     }
     setSelectedMeshFile(card.mesh);
-    marksRef.current = [];
+    clearScratchMarks(marksRef.current);
+    resetScratchCoverage(scratchCoverageRef.current);
+    resetStrokeFreshness(strokeFreshnessRef.current);
+    lastStampUvRef.current = null;
+    strokeFreshRef.current = false;
+    celebrateProgressRef.current = 0;
+    finaleStartRef.current = null;
+    finaleTimelineRef.current = null;
+    finalePhaseRef.current = null;
+    garmentExplodedRef.current = false;
+    glRendererRef.current?.clearExplosion();
+    glRendererRef.current?.setForegroundCharge(0);
+    setFinalePhase(null);
+    setFinaleBurst(null);
+    setCursorFxCelebrate(false);
     glRendererRef.current?.clearScratch();
     glRendererRef.current?.clearFlakes();
     glRendererRef.current?.resetForeground();
@@ -2507,8 +2657,15 @@ export function ScratchPrototype() {
   useEffect(() => {
     const samples = buildRevealSamples(trackedMesh);
     revealSamplesRef.current = samples;
+    scratchCoverageRef.current = createScratchCoverage(
+      SCRATCH_COVERAGE_SIZE,
+      trackedMesh?.garment,
+      trackedMesh?.cols ?? 0,
+      trackedMesh?.rows ?? 0,
+    );
     const revealed = samples.map((p) =>
-      marksRef.current.some(
+      scratchMarksSome(
+        marksRef.current,
         (m) => Math.hypot((m.u - p.x) / m.radius, (m.v - p.y) / m.radius) <= 1,
       ),
     );
@@ -2821,8 +2978,13 @@ export function ScratchPrototype() {
       (topBarPhase !== "center" && !introGateActive && !symbolsHuntComplete));
   // Also require an active stroke that actually hit the mesh — coins stay
   // glued to fabric, not the empty canvas around it.
-  const cursorFxSpawnActive =
-    cursorFxPlayWindow && isScratching && cursorOnMesh;
+  const cursorFxSpawnActive = shouldSpawnFairyDust({
+    playWindow: cursorFxPlayWindow,
+    celebrate: cursorFxCelebrate,
+    isScratching,
+    cursorOnMesh,
+    coarsePointer: CURSOR_FX_DEVICE.coarsePointer,
+  });
 
   // Drop a persisted/stale auto-scratch enable while the hunt is still locked.
   useEffect(() => {
@@ -2850,7 +3012,12 @@ export function ScratchPrototype() {
   }
 
   function resetScratch() {
-    marksRef.current = [];
+    clearScratchMarks(marksRef.current);
+    resetScratchCoverage(scratchCoverageRef.current);
+    resetStrokeFreshness(strokeFreshnessRef.current);
+    lastStampUvRef.current = null;
+    strokeFreshRef.current = false;
+    celebrateProgressRef.current = 0;
     lastScratchWorldRef.current = null;
     glRendererRef.current?.clearScratch();
     glRendererRef.current?.clearFlakes();
@@ -2986,15 +3153,19 @@ export function ScratchPrototype() {
 
   function tryResolveGame() {
     if (gameResultPendingRef.current !== null) return;
+    if (finaleStartRef.current !== null) return;
     const autoMode = autoScratchRef.current.enabled;
     const sampleCount = revealSamplesRef.current.length;
     if (
-      !isGarmentFullyRevealed(
-        progressRef.current,
-        revealedCountRef.current,
-        sampleCount,
-        autoMode,
-      )
+      !garmentRevealSatisfied({
+        exploded: garmentExplodedRef.current,
+        fullyRevealed: isGarmentFullyRevealed(
+          progressRef.current,
+          revealedCountRef.current,
+          sampleCount,
+          autoMode,
+        ),
+      })
     ) {
       return;
     }
@@ -3266,8 +3437,177 @@ export function ScratchPrototype() {
 
     claimedTopSlotsRef.current = claimed;
     if (coins.length > 0) {
+      for (const coin of coins) {
+        const marker = bodyMarkerRefs.current[coin.bodyIndex ?? -1];
+        if (!marker) continue;
+        marker.classList.remove("is-symbol-pop");
+        void marker.offsetWidth;
+        marker.classList.add("is-symbol-pop");
+      }
       setFlyingCoins((current) => [...current, ...coins]);
     }
+  }
+
+  function clearCelebrateTimers() {
+    if (celebrateTimerRef.current !== null) {
+      window.clearTimeout(celebrateTimerRef.current);
+      celebrateTimerRef.current = null;
+    }
+    for (const id of coinBurstTimersRef.current) window.clearTimeout(id);
+    coinBurstTimersRef.current = [];
+  }
+
+  function maybeCelebrateScratchProgress(nextProgress: number) {
+    const milestones = crossedProgressMilestones(
+      celebrateProgressRef.current,
+      nextProgress,
+    );
+    celebrateProgressRef.current = nextProgress;
+    if (milestones.length === 0) return;
+    const crossed = milestones[milestones.length - 1] ?? 1;
+    let reducedMotion = false;
+    try {
+      reducedMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      reducedMotion = false;
+    }
+    if (!cursorFxRef.current.fairyDust || reducedMotion) return;
+    const coarse = CURSOR_FX_DEVICE.coarsePointer;
+    const bursts = stackedCelebrateBurstCounts(milestones, coarse);
+    const celebrateMs = celebrateDurationMs(coarse);
+    const showerMs = Math.max(0, bursts.length - 1) * STACKED_COIN_BURST_STAGGER_MS;
+    celebrateUntilRef.current = performance.now() + celebrateMs + showerMs;
+    setCursorFxCelebrate(true);
+    setCursorFxBurstCount(bursts[0] ?? celebrateBurstCount(crossed, coarse));
+    setCursorFxBurstNonce((n) => n + 1);
+    clearCelebrateTimers();
+    for (let i = 1; i < bursts.length; i += 1) {
+      const count = bursts[i] ?? 0;
+      const id = window.setTimeout(() => {
+        coinBurstTimersRef.current = coinBurstTimersRef.current.filter(
+          (timerId) => timerId !== id,
+        );
+        setCursorFxBurstCount(count);
+        setCursorFxBurstNonce((n) => n + 1);
+      }, i * STACKED_COIN_BURST_STAGGER_MS);
+      coinBurstTimersRef.current.push(id);
+    }
+    celebrateTimerRef.current = window.setTimeout(() => {
+      celebrateTimerRef.current = null;
+      if (performance.now() >= celebrateUntilRef.current) {
+        setCursorFxCelebrate(false);
+      }
+    }, celebrateMs + showerMs + 40);
+  }
+
+  function resetGarmentFinale() {
+    finaleStartRef.current = null;
+    finaleTimelineRef.current = null;
+    finalePhaseRef.current = null;
+    garmentExplodedRef.current = false;
+    glRendererRef.current?.clearExplosion();
+    glRendererRef.current?.setForegroundCharge(0);
+    setFinalePhase(null);
+    setFinaleBurst(null);
+  }
+
+  function fireGarmentBurst(timeline: FinaleTimeline) {
+    garmentExplodedRef.current = true;
+    const renderer = glRendererRef.current;
+    const origin = finaleOriginRef.current;
+    renderer?.setForegroundCharge(0);
+    if (!timeline.reducedMotion) {
+      renderer?.explodeForeground(origin.x, origin.y);
+    }
+    setClaimed(true);
+    if (soundEnabledRef.current) playFinaleBoomSound();
+    if (timeline.reducedMotion) return;
+    finaleHaptics("burst");
+    const stagePoint = worldToStagePoint(origin);
+    const stage = stageRef.current;
+    finaleBurstKeyRef.current += 1;
+    setFinaleBurst({
+      key: finaleBurstKeyRef.current,
+      x: stagePoint?.x ?? (stage?.clientWidth ?? 0) / 2,
+      y: stagePoint?.y ?? (stage?.clientHeight ?? 0) / 2,
+    });
+    if (cursorFxRef.current.fairyDust) {
+      const celebrateMs = celebrateDurationMs(CURSOR_FX_DEVICE.coarsePointer);
+      celebrateUntilRef.current = Math.max(
+        celebrateUntilRef.current,
+        performance.now() + celebrateMs,
+      );
+      setCursorFxCelebrate(true);
+      setCursorFxBurstCount(
+        celebrateBurstCount(10, CURSOR_FX_DEVICE.coarsePointer),
+      );
+      setCursorFxBurstNonce((n) => n + 1);
+    }
+  }
+
+  function advanceGarmentFinale(phase: FinalePhase) {
+    finalePhaseRef.current = phase;
+    const timeline = finaleTimelineRef.current;
+    if (!timeline) return;
+    if (phase !== "charge" && !garmentExplodedRef.current) {
+      fireGarmentBurst(timeline);
+    }
+    setFinalePhase(phase === "done" ? null : phase);
+    if (phase === "done") {
+      finaleStartRef.current = null;
+      setFinaleBurst(null);
+      tryResolveGameRef.current();
+    }
+  }
+  advanceGarmentFinaleRef.current = advanceGarmentFinale;
+
+  function startGarmentFinale(newlyRevealed: readonly number[]): boolean {
+    if (
+      !shouldExplodeGarment({
+        useBodySymbols: useBodySymbolsRef.current,
+        found: revealedSymbolsRef.current,
+        total: SYMBOL_SLOT_COUNT,
+        alreadyStarted:
+          finaleStartRef.current !== null || garmentExplodedRef.current,
+        packRevealBlocked: false,
+      })
+    ) {
+      return false;
+    }
+    const sample = trackedSampleRef.current;
+    const bodyPoints = trackedMeshRef.current?.symbolPoints;
+    finaleOriginRef.current = explosionOrigin(
+      newlyRevealed.map((index) => {
+        const point = bodyPoints?.[index];
+        return sample && point
+          ? sampleMeshUvToWorld(sample, point.u, point.v)
+          : null;
+      }),
+      { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2 },
+    );
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timeline = finaleTimeline({
+      reducedMotion: reducedMotion || !glRendererRef.current,
+    });
+    finaleTimelineRef.current = timeline;
+    finalePhaseRef.current = null;
+    finaleStartRef.current = performance.now();
+    clearPendingScratchMove(scratchInputCoalesceRef.current);
+    resetStrokeFreshness(strokeFreshnessRef.current);
+    lastStampUvRef.current = null;
+    strokeFreshRef.current = false;
+    drawingRef.current = false;
+    setIsScratching(false);
+    claimedRef.current = true;
+    if (!timeline.reducedMotion && soundEnabledRef.current) {
+      playFinaleChargeSound(timeline.burstAtMs / 1000);
+      finaleHaptics("charge");
+    }
+    return true;
   }
 
   function applyScratchAtUv(
@@ -3276,16 +3616,35 @@ export function ScratchPrototype() {
     radius: number,
     worldPoint?: Vec2 | null,
     finalize = true,
-  ) {
-    if (gameResultPendingRef.current !== null) return;
+    strokeUvs?: ReadonlyArray<{ u: number; v: number }>,
+  ): number {
+    if (gameResultPendingRef.current !== null) return 0;
     if (isBodyScratchLocked()) {
-      return;
+      return 0;
     }
 
     if (finalize) huntHintActivityAtRef.current = performance.now();
 
-    marksRef.current = [...marksRef.current, { u, v, radius }].slice(-180);
+    pushScratchMark(marksRef.current, u, v, radius);
     glRendererRef.current?.paintScratch(u, v, radius);
+    const freshCells = stampScratchCoverage(
+      scratchCoverageRef.current,
+      u,
+      v,
+      radius,
+    );
+    const prevStamp = lastStampUvRef.current;
+    strokeFreshRef.current = noteStrokeStamp(
+      strokeFreshnessRef.current,
+      freshCells,
+      prevStamp ? Math.hypot(u - prevStamp.u, v - prevStamp.v) : 0,
+      radius,
+      scratchCoverageRef.current.size,
+    );
+    lastStampUvRef.current = { u, v };
+    if (worldPoint && freshCells > 0 && autoScratchRef.current.flakes) {
+      glRendererRef.current?.spawnFlakes(worldPoint.x, worldPoint.y);
+    }
 
     const samples = revealSamplesRef.current;
     const revealed = revealedRef.current;
@@ -3300,16 +3659,13 @@ export function ScratchPrototype() {
         revealedCountRef.current += 1;
       }
     }
-    if (!finalize) return;
-
-    if (autoScratchRef.current.flakes && worldPoint) {
-      glRendererRef.current?.spawnFlakes(worldPoint.x, worldPoint.y);
-    }
+    if (!finalize) return freshCells;
 
     const nextProgress = samples.length
       ? revealedCountRef.current / samples.length
       : 0;
     progressRef.current = nextProgress;
+    maybeCelebrateScratchProgress(nextProgress);
     setProgress(nextProgress);
     const autoMode = autoScratchRef.current.enabled;
     if (useBodySymbolsRef.current && trackedMeshRef.current?.symbolPoints) {
@@ -3317,22 +3673,43 @@ export function ScratchPrototype() {
       const newlyRevealed: number[] = [];
       const revealedBefore = revealedPointsRef.current.slice();
       const renderer = glRendererRef.current;
+      const probeFrame = probeFrameIdRef.current;
+      const symbolProbeCache = symbolScratchProbeCacheRef.current;
       for (let index = 0; index < bodyPoints.length; index += 1) {
         if (revealedPointsRef.current[index]) continue;
-        const distance = Math.hypot(
-          u - bodyPoints[index].u,
-          v - bodyPoints[index].v,
+        const nearStroke = strokeUvs
+          ? isSymbolNearAnyStroke(
+              strokeUvs,
+              bodyPoints[index].u,
+              bodyPoints[index].v,
+              SYMBOL_REVEAL_UV_RADIUS,
+            )
+          : isSymbolNearStroke(
+              u,
+              v,
+              bodyPoints[index].u,
+              bodyPoints[index].v,
+              SYMBOL_REVEAL_UV_RADIUS,
+            );
+        if (!nearStroke) continue;
+        let amount = readCachedSymbolScratchAmount(
+          symbolProbeCache,
+          probeFrame,
+          index,
+          SYMBOL_SCRATCH_REVEAL_THRESHOLD,
         );
-        if (distance > SYMBOL_REVEAL_UV_RADIUS) continue;
-        // Must have actually punched the clothing at this UV — proximity alone
-        // used to pop icons on top of still-blue foil.
-        if (
-          !renderer ||
-          renderer.scratchAmountAt(bodyPoints[index].u, bodyPoints[index].v) <
-            SYMBOL_SCRATCH_REVEAL_THRESHOLD
-        ) {
-          continue;
+        if (amount === null) {
+          amount = renderer
+            ? renderer.scratchAmountAt(bodyPoints[index].u, bodyPoints[index].v)
+            : 0;
+          writeCachedSymbolScratchAmount(
+            symbolProbeCache,
+            probeFrame,
+            index,
+            amount,
+          );
         }
+        if (amount < SYMBOL_SCRATCH_REVEAL_THRESHOLD) continue;
         revealedPointsRef.current[index] = true;
         newlyRevealed.push(index);
       }
@@ -3361,7 +3738,10 @@ export function ScratchPrototype() {
           soundEnabledRef.current,
         );
         spawnBodyMatchFlights(newlyRevealed);
-        if (nextSymbolCount >= SYMBOL_SLOT_COUNT) {
+        if (
+          nextSymbolCount >= SYMBOL_SLOT_COUNT &&
+          !startGarmentFinale(newlyRevealed)
+        ) {
           beginFinishAutoScratch();
         }
       }
@@ -3385,17 +3765,22 @@ export function ScratchPrototype() {
       revealedSymbolsRef.current >= SYMBOL_SLOT_COUNT;
     if (
       canClaimGarment &&
-      isGarmentFullyRevealed(
-        nextProgress,
-        revealedCountRef.current,
-        samples.length,
-        autoMode,
-      )
+      finaleStartRef.current === null &&
+      garmentRevealSatisfied({
+        exploded: garmentExplodedRef.current,
+        fullyRevealed: isGarmentFullyRevealed(
+          nextProgress,
+          revealedCountRef.current,
+          samples.length,
+          autoMode,
+        ),
+      })
     ) {
       claimedRef.current = true;
       setClaimed(true);
     }
     tryResolveGame();
+    return freshCells;
   }
   applyScratchAtUvRef.current = applyScratchAtUv;
 
@@ -3410,28 +3795,37 @@ export function ScratchPrototype() {
     if (!trackedSample) return;
 
     const last = lastScratchWorldRef.current;
+    const manualBudget = resolveManualScratchBudget({
+      coarsePointer: CURSOR_FX_DEVICE.coarsePointer,
+    });
     const strokePoints =
       last !== null
         ? densifyStrokeSegment(
             last,
             point,
-            MANUAL_SCRATCH_PATH_STEP,
-            MANUAL_SCRATCH_MAX_POINTS,
+            manualBudget.pathStep,
+            manualBudget.maxPoints,
           )
         : [point];
 
-    let applied = false;
-    for (let i = 0; i < strokePoints.length; i += 1) {
-      const strokePoint = strokePoints[i];
+    const appliedStamps: { u: number; v: number }[] = [];
+    for (const strokePoint of strokePoints) {
       const uv = trackedWorldToUv(trackedSample, strokePoint);
       if (!uv) continue;
-      const isLast = i === strokePoints.length - 1;
+      appliedStamps.push({ u: uv.x, v: uv.y });
+    }
+
+    let applied = false;
+    for (let i = 0; i < appliedStamps.length; i += 1) {
+      const stamp = appliedStamps[i]!;
+      const isLast = i === appliedStamps.length - 1;
       applyScratchAtUv(
-        uv.x,
-        uv.y,
+        stamp.u,
+        stamp.v,
         SCRATCH_RADIUS,
         isLast ? point : null,
         isLast,
+        isLast ? appliedStamps : undefined,
       );
       applied = true;
     }
@@ -3439,12 +3833,32 @@ export function ScratchPrototype() {
     if (applied) lastScratchWorldRef.current = point;
 
     const uvAtPointer = trackedWorldToUv(trackedSample, point);
-    const fabricAlpha =
-      glRendererRef.current?.foregroundAlphaAt(point.x, point.y) ?? -1;
-    const onFabric = fabricAlpha < 0 || fabricAlpha >= CURSOR_FX_MESH_ALPHA_MIN;
+    const probeFrame = probeFrameIdRef.current;
+    let fabricAlpha = readCachedFabricAlpha(fabricAlphaCacheRef.current, probeFrame);
+    if (
+      fabricAlpha === null &&
+      shouldSampleFabricAlpha({
+        fairyDust: cursorFxRef.current.fairyDust,
+        coarsePointer: CURSOR_FX_DEVICE.coarsePointer,
+        isScratching: drawingRef.current,
+      })
+    ) {
+      const sampled =
+        glRendererRef.current?.foregroundAlphaAt(point.x, point.y) ?? -1;
+      fabricAlpha = writeCachedFabricAlpha(
+        fabricAlphaCacheRef.current,
+        probeFrame,
+        sampled,
+      );
+    }
+    const onFabric =
+      fabricAlpha === null ||
+      fabricAlpha < 0 ||
+      fabricAlpha >= CURSOR_FX_MESH_ALPHA_MIN;
     const onMesh = applied && uvAtPointer !== null && onFabric;
     setCursorOnMesh((prev) => (prev === onMesh ? prev : onMesh));
   }
+  addScratchRef.current = addScratch;
 
   function setVideoTime(time: number) {
     const bottomVideo = bottomVideoRef.current;
@@ -3639,7 +4053,7 @@ export function ScratchPrototype() {
         Particle size ({cursorFx.particleSize})
         <input
           disabled={!cursorFx.fairyDust}
-          max={64}
+          max={96}
           min={10}
           onChange={(event) =>
             updateCursorFx({ particleSize: Number(event.currentTarget.value) })
@@ -3667,7 +4081,7 @@ export function ScratchPrototype() {
         Gravity ({cursorFx.gravity.toFixed(3)})
         <input
           disabled={!cursorFx.fairyDust}
-          max={0.1}
+          max={0.3}
           min={0}
           onChange={(event) =>
             updateCursorFx({ gravity: Number(event.currentTarget.value) })
@@ -3862,12 +4276,19 @@ export function ScratchPrototype() {
       {cursorFx.fairyDust ? (
         <FairyDustCursor
           particleTypes={cursorFxParticleTypes}
-          particleSize={cursorFx.particleSize}
+          particleSize={cursorFx.particleSize * CURSOR_FX_DEVICE.displaySizeMul}
           particleCount={cursorFx.particleCount}
           gravity={cursorFx.gravity}
           fadeSpeed={cursorFx.fadeSpeed}
           initialVelocity={CURSOR_FX_INITIAL_VELOCITY}
+          emitMode={CURSOR_FX_EMIT_MODE}
           spawnEnabled={cursorFxSpawnActive}
+          spawnMinDistance={fairyDustSpawnMinDistancePx(
+            CURSOR_FX_DEVICE.coarsePointer,
+          )}
+          burstNonce={cursorFxBurstNonce}
+          burstCount={cursorFxBurstCount}
+          spawnGate={() => strokeFreshRef.current}
         />
       ) : null}
       <section className="prototype">
@@ -3875,6 +4296,10 @@ export function ScratchPrototype() {
           ref={stageRef}
           className={`stage${gameResult ? " is-game-over" : ""}${
             topBarPhase === "showcase" ? " is-showcase-phase" : ""
+          }${finalePhase === "charge" ? " is-finale-charge" : ""}${
+            finalePhase === "burst" || finalePhase === "hold"
+              ? " is-finale-burst"
+              : ""
           }${
             useBodySymbols &&
             matchStartUnlocked &&
@@ -3972,10 +4397,10 @@ export function ScratchPrototype() {
           />
           {!useBodySymbols && matchStartUnlocked ? (
             <div
-              className={`symbol-bar${revealedSymbols >= SYMBOL_SLOT_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
+              className={`symbol-bar${revealedSymbols >= TOP_SYMBOL_COUNT ? " is-symbols-complete" : ""}${claimed ? " is-fully-revealed" : ""}`}
               aria-label="Game symbols"
             >
-              {sessionSymbols.map((typeId, index) => (
+              {topSymbols.slice(0, TOP_SYMBOL_COUNT).map((typeId, index) => (
                 <div
                   key={index}
                   ref={(el) => {
@@ -4064,38 +4489,48 @@ export function ScratchPrototype() {
             </div>
           ))
             : flyingCoins.map((coin) => (
-            <div
+            <MatchFlight
               key={coin.id}
-              className="flying-coin is-match-fly"
-              style={
-                {
-                  "--coin-from-x": `${coin.fromX}px`,
-                  "--coin-from-y": `${coin.fromY}px`,
-                  "--coin-mid-x": `${coin.midX}px`,
-                  "--coin-mid-y": `${coin.midY}px`,
-                  "--coin-to-x": `${coin.toX}px`,
-                  "--coin-to-y": `${coin.toY}px`,
-                  animationDuration: `${MATCH_FLIGHT_DURATION_MS}ms`,
-                  animationDelay: `${coin.delayMs}ms`,
-                } as CSSProperties
-              }
-              onAnimationEnd={(event) => {
-                if (event.target !== event.currentTarget) return;
-                removeFlyingCoin(coin.id);
-              }}
-              aria-hidden="true"
-            >
-              <span className="flying-coin-spin">
-                <span
-                  className="flying-coin-plane flying-coin-plane--back"
-                  aria-hidden="true"
-                />
-                <span className="flying-coin-face flying-coin-plane flying-coin-plane--mid">
-                  <GameSymbolIcon typeId={coin.typeId} size={68} paused />
-                </span>
-              </span>
-            </div>
+              typeId={coin.typeId}
+              fromX={coin.fromX}
+              fromY={coin.fromY}
+              toX={coin.toX}
+              toY={coin.toY}
+              delayMs={coin.delayMs}
+              onArrive={() => removeFlyingCoin(coin.id)}
+            />
           ))}
+          {finaleBurst ? (
+            <div key={finaleBurst.key} className="finale-burst" aria-hidden="true">
+              <div
+                className="finale-flash"
+                style={
+                  {
+                    "--finale-x": `${finaleBurst.x}px`,
+                    "--finale-y": `${finaleBurst.y}px`,
+                  } as CSSProperties
+                }
+              />
+              <div
+                className="finale-shockwave"
+                style={
+                  {
+                    "--finale-x": `${finaleBurst.x}px`,
+                    "--finale-y": `${finaleBurst.y}px`,
+                  } as CSSProperties
+                }
+              />
+              <div
+                className="finale-shockwave is-late"
+                style={
+                  {
+                    "--finale-x": `${finaleBurst.x}px`,
+                    "--finale-y": `${finaleBurst.y}px`,
+                  } as CSSProperties
+                }
+              />
+            </div>
+          ) : null}
           <video
             ref={bottomVideoRef}
             className="source-video"
@@ -4152,9 +4587,18 @@ export function ScratchPrototype() {
                 event.clientY,
               );
               if (!drawingRef.current) return;
-              addScratch(event.clientX, event.clientY);
+              notePendingScratchMove(
+                scratchInputCoalesceRef.current,
+                event.clientX,
+                event.clientY,
+              );
             }}
             onPointerUp={() => {
+              const pending = takePendingScratchMove(scratchInputCoalesceRef.current);
+              if (pending) addScratch(pending.x, pending.y);
+              resetStrokeFreshness(strokeFreshnessRef.current);
+              lastStampUvRef.current = null;
+              strokeFreshRef.current = false;
               drawingRef.current = false;
               setIsScratching(false);
               setCursorOnMesh(false);
@@ -4162,6 +4606,10 @@ export function ScratchPrototype() {
               clearScratchZoom();
             }}
             onPointerLeave={() => {
+              clearPendingScratchMove(scratchInputCoalesceRef.current);
+              resetStrokeFreshness(strokeFreshnessRef.current);
+              lastStampUvRef.current = null;
+              strokeFreshRef.current = false;
               drawingRef.current = false;
               setIsScratching(false);
               setCursorOnMesh(false);
@@ -4170,6 +4618,10 @@ export function ScratchPrototype() {
               clearScratchZoom();
             }}
             onPointerCancel={() => {
+              clearPendingScratchMove(scratchInputCoalesceRef.current);
+              resetStrokeFreshness(strokeFreshnessRef.current);
+              lastStampUvRef.current = null;
+              strokeFreshRef.current = false;
               drawingRef.current = false;
               setIsScratching(false);
               setCursorOnMesh(false);

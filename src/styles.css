@@ -201,16 +201,17 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 3px;
   width: fit-content;
   max-width: calc(100% - 56px);
   margin-inline: auto;
-  padding: 6px 10px;
+  padding: 7px 8px;
   border-radius: 999px;
-  background: rgba(20, 18, 16, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  background: rgb(0 0 0 / 62%);
+  border: 1px solid rgb(249 157 118 / 55%);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 25%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -622,6 +623,24 @@ textarea:focus-visible {
   overflow: visible !important;
 }
 
+/* Cursor coins are drawn in stage pixels. The mobile `.stage canvas` cover
+   rule must not translate this overlay, or coins spawn half a stage away. */
+.stage canvas.fairy-dust-cursor {
+  position: absolute !important;
+  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  pointer-events: none !important;
+}
+
 /* Full-bar clip mask: same box + pill radius as the scratchable symbol bar.
    Peels/Lotties inside cannot paint outside the gray pill. */
 .lottie-clipper {
@@ -692,8 +711,8 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 33px;
-  height: 33px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.06);
@@ -1159,21 +1178,26 @@ textarea:focus-visible {
   animation-fill-mode: both;
 }
 
-/* Body match: light 2.5D — one glow plate + paused symbol (no blend modes). */
+/* Body match: light 2.5D — one glow plate + paused symbol (no blend modes).
+   Only the in-place anticipation is CSS; MatchFlight drops this animation and
+   drives the travel arc per frame from there. */
 .flying-coin.is-match-fly {
   z-index: 12;
-  width: 84px;
-  height: 84px;
+  width: 42px;
+  height: 42px;
+  overflow: visible;
   background: transparent;
   border: none;
   box-shadow: none;
   perspective: 760px;
   perspective-origin: 50% 42%;
-  animation-name: matchFly;
+  animation-name: matchAnticipate;
+  animation-duration: var(--match-anticipate-ms);
+  animation-delay: var(--match-delay-ms);
   animation-timing-function: cubic-bezier(0.22, 0.9, 0.28, 1);
 }
 
-/* Virtual camera / rig — orbits so layered planes parallax. */
+/* Virtual camera / rig — orbits so layered planes parallax. Spans both phases. */
 .flying-coin.is-match-fly .flying-coin-spin {
   position: relative;
   display: grid;
@@ -1184,8 +1208,8 @@ textarea:focus-visible {
   will-change: transform;
   animation-name: matchFlySpin;
   animation-timing-function: cubic-bezier(0.28, 0.15, 0.3, 1);
-  animation-duration: inherit;
-  animation-delay: inherit;
+  animation-duration: var(--match-sequence-ms);
+  animation-delay: var(--match-delay-ms);
   animation-fill-mode: both;
 }
 
@@ -1208,7 +1232,8 @@ textarea:focus-visible {
   transform: translateZ(-14px) scale(1.02);
 }
 
-/* Art plane — only Lottie in the stack (paused). */
+/* Art plane — only Lottie in the stack (paused). Shake lives here so it
+   composites with the parent's scale instead of fighting matchAnticipate. */
 .flying-coin.is-match-fly .flying-coin-face {
   position: relative;
   z-index: 1;
@@ -1218,6 +1243,11 @@ textarea:focus-visible {
   height: 100%;
   border-radius: 50%;
   transform: translateZ(0);
+  animation-name: tilt-n-move-shaking;
+  animation-duration: var(--match-shake-cycle-ms);
+  animation-delay: calc(var(--match-delay-ms) + var(--match-shake-start-ms));
+  animation-iteration-count: var(--match-shake-cycles);
+  animation-timing-function: ease-in-out;
 }
 
 .flying-coin.is-match-fly::before {
@@ -1233,8 +1263,9 @@ textarea:focus-visible {
   );
   z-index: -1;
   pointer-events: none;
-  animation: matchFlyGlow 1250ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
-  animation-delay: inherit;
+  animation: matchFlyGlow var(--match-sequence-ms)
+    cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation-delay: var(--match-delay-ms);
 }
 
 @keyframes coinFly {
@@ -1309,50 +1340,92 @@ textarea:focus-visible {
   }
 }
 
-@keyframes matchFly {
-  /* Appear + surge toward camera — transform/opacity only (no CSS filter). */
+/* Anticipation only — stays put at the find and hands off at scale 1. */
+@keyframes matchAnticipate {
   0% {
     transform: translate(var(--coin-from-x), var(--coin-from-y))
       translate(-50%, -50%) scale(0.35);
     opacity: 0;
   }
-  7% {
+  6% {
     opacity: 1;
     transform: translate(var(--coin-from-x), var(--coin-from-y))
-      translate(-50%, -50%) scale(1.05);
+      translate(-50%, -50%) scale(1);
   }
-  18% {
+  22% {
     transform: translate(var(--coin-from-x), var(--coin-from-y))
-      translate(-50%, -50%) scale(2.2);
-  }
-  /* Settle and hold in front. */
-  30% {
-    transform: translate(var(--coin-from-x), var(--coin-from-y))
-      translate(-50%, -50%) scale(1.78);
-  }
-  40% {
-    transform: translate(var(--coin-from-x), var(--coin-from-y))
-      translate(-50%, -50%) scale(1.72);
+      translate(-50%, -50%) scale(1);
     opacity: 1;
   }
-  /* Anticipation squash, then launch upward. */
-  46% {
+  39% {
     transform: translate(var(--coin-from-x), var(--coin-from-y))
-      translate(-50%, -50%) scale(1.42);
-  }
-  68% {
-    transform: translate(var(--coin-mid-x), var(--coin-mid-y))
-      translate(-50%, -50%) scale(1.08);
+      translate(-50%, -50%) scale(3);
     opacity: 1;
   }
-  88% {
-    transform: translate(var(--coin-to-x), var(--coin-to-y))
-      translate(-50%, -50%) scale(0.55);
-    opacity: 0.95;
+  78% {
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(3);
+    opacity: 1;
   }
   100% {
-    transform: translate(var(--coin-to-x), var(--coin-to-y))
-      translate(-50%, -50%) scale(0.32);
+    transform: translate(var(--coin-from-x), var(--coin-from-y))
+      translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes tilt-n-move-shaking {
+  0% {
+    transform: translateZ(0) rotate(0deg);
+  }
+  25% {
+    transform: translateZ(0) rotate(5deg);
+  }
+  50% {
+    transform: translateZ(0) rotate(0deg);
+  }
+  75% {
+    transform: translateZ(0) rotate(-5deg);
+  }
+  100% {
+    transform: translateZ(0) rotate(0deg);
+  }
+}
+
+.match-trail {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.match-trail-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 230, 150, 1) 0%,
+    rgba(255, 210, 90, 0.7) 55%,
+    transparent 75%
+  );
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: matchTrailFade var(--match-trail-ms) ease-out forwards;
+}
+
+@keyframes matchTrailFade {
+  0% {
+    transform: translate(var(--dot-x), var(--dot-y)) translate(-50%, -50%)
+      scale(1);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(var(--dot-x), var(--dot-y)) translate(-50%, -50%)
+      scale(0.3);
     opacity: 0;
   }
 }
@@ -1366,7 +1439,8 @@ textarea:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flying-coin {
+  .flying-coin,
+  .match-trail {
     display: none;
   }
 }
@@ -1665,8 +1739,8 @@ textarea:focus-visible {
   .symbol-bar {
     top: max(12px, env(safe-area-inset-top));
     max-width: calc(100% - 32px);
-    gap: 4px;
-    padding: 5px 8px;
+    gap: 3px;
+    padding: 7px 8px;
   }
 
   .top-symbol-bar {
@@ -1684,8 +1758,8 @@ textarea:focus-visible {
   }
 
   .symbol-slot {
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
   }
 
   .stage-coach {
@@ -3023,7 +3097,11 @@ textarea:focus-visible {
     width: 100dvw;
   }
 
-  .stage canvas {
+  /* Letterbox only the stage picture. A blanket `.stage canvas` rule
+     used to hit every UI canvas (foil, flakes, cursor coins) and shift
+     them by half the stage. */
+  .stage canvas.game-stage-canvas,
+  .stage canvas.photo-scratch-fg-layer {
     height: max(100dvh, 100dvw * 672 / 390);
     left: 50%;
     position: absolute;
@@ -3077,6 +3155,10 @@ textarea:focus-visible {
     border: 1px solid rgba(255, 220, 140, 0.28);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+  }
+
+  .stage:has(.symbol-bar) .mobile-game-badge {
+    display: none;
   }
 
   .mobile-game-link {
@@ -3275,13 +3357,38 @@ dd {
   align-items: center;
   justify-content: center;
   /* Keep in sync with BODY_SYMBOL_ICON_PX in ScratchPrototype / PhotoScratchTest. */
-  width: 72px;
-  height: 72px;
-  margin: -36px 0 0 -36px;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
   border: none;
   background: transparent;
   overflow: hidden;
   pointer-events: none;
+}
+
+.body-symbol-marker.is-symbol-pop {
+  z-index: 8;
+  overflow: visible;
+  animation: symbol-found-pop 1400ms cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+@keyframes symbol-found-pop {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  28% {
+    transform: scale(5);
+    filter: brightness(1.5);
+  }
+  62% {
+    transform: scale(5);
+    filter: brightness(1.35);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
 }
 
 .body-symbol-marker.is-revealed {
@@ -6005,4 +6112,99 @@ dd {
   min-width: 0;
   padding: 10px 12px;
   width: 100%;
+}
+
+.stage.is-finale-charge .game-stage-canvas {
+  animation: finale-tremble 1000ms linear both;
+  scale: 1.06;
+  transition: scale 1000ms cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+@keyframes finale-tremble {
+  0% { translate: 0 0; }
+  20% { translate: 0.5px -0.5px; }
+  40% { translate: 1px 1px; }
+  60% { translate: 2px 0.5px; }
+  80% { translate: 2.5px -1.5px; }
+  100% { translate: -3px -2px; }
+}
+
+.stage.is-finale-burst .game-stage-canvas {
+  animation: finale-shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  scale: 1;
+  transition: scale 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes finale-shake {
+  0% { translate: 0 0; }
+  20% { translate: 9px -8px; }
+  40% { translate: 6px 6px; }
+  60% { translate: -4px 3px; }
+  80% { translate: 2px -2px; }
+  100% { translate: 0 0; }
+}
+
+.finale-burst {
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+.finale-flash {
+  animation: finale-flash 280ms ease-out both;
+  background: radial-gradient(
+    circle at var(--finale-x, 50%) var(--finale-y, 50%),
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 220, 140, 0.6) 22%,
+    rgba(255, 220, 140, 0) 62%
+  );
+  inset: 0;
+  position: absolute;
+}
+
+@keyframes finale-flash {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.finale-shockwave {
+  animation: finale-shockwave 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  border: 3px solid rgba(255, 220, 120, 0.9);
+  border-radius: 50%;
+  height: 40px;
+  left: var(--finale-x, 50%);
+  margin: -20px 0 0 -20px;
+  position: absolute;
+  top: var(--finale-y, 50%);
+  width: 40px;
+}
+
+.finale-shockwave.is-late {
+  animation-delay: 110ms;
+  border-width: 2px;
+}
+
+@keyframes finale-shockwave {
+  0% { opacity: 1; transform: scale(0.2); }
+  100% { opacity: 0; transform: scale(16); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage.is-finale-charge .game-stage-canvas,
+  .stage.is-finale-burst .game-stage-canvas {
+    animation: none;
+    scale: none;
+    transition: none;
+  }
+
+  .body-symbol-marker.is-symbol-pop {
+    animation: none;
+  }
+
+  .finale-shockwave {
+    display: none;
+  }
 }
