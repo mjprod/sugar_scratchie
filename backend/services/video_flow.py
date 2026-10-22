@@ -106,14 +106,6 @@ def with_uploaded_image_tokens(
     are moved onto those phrases. A photo with no file is left out.
     """
     text = re.sub(r"(?:\s+@image[1-4]\b)+$", "", prompt or "", flags=re.IGNORECASE).strip()
-    # Drop the ghost run. "this same woman" contains "Same woman", so tagging
-    # that inner phrase stacks " in @image1 in @image3" forever.
-    text = re.sub(
-        r"(\bin\s+@image[1-4]\b)(?:\s+in\s+@image[1-4]\b)+",
-        r"\1",
-        text,
-        flags=re.IGNORECASE,
-    )
     if has_main and re.search(r"behind the person(?! in @image1\b)", text, re.IGNORECASE):
         text = re.sub(
             r"behind the person(?! in @image1\b)",
@@ -122,11 +114,9 @@ def with_uploaded_image_tokens(
             count=1,
             flags=re.IGNORECASE,
         )
-    if has_main and re.search(
-        r"(?<!this )(?<!the )Same woman(?! in @image1\b)", text, re.IGNORECASE
-    ):
+    if has_main and re.search(r"Same woman(?! in @image1\b)", text, re.IGNORECASE):
         text = re.sub(
-            r"(?<!this )(?<!the )Same woman(?! in @image1\b)",
+            r"Same woman(?! in @image1\b)",
             "Same woman in @image1",
             text,
             count=1,
@@ -1243,9 +1233,6 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
     if "mesh" in state["approved"]:
         ensure_active_mesh_snapshotted(work, card_id)
     write_state(work, state)
-    if _should_skip_grok_boomerang(card_id, state):
-        _record_boomerang_skip(card_id)
-        state = read_state(work)
     previews = preview_paths(work, card_id, state, probe_videos=probe_videos)
     steps = {
         step: {
@@ -2699,23 +2686,8 @@ def apply_boomerang_step(
     return flow_state(card_id)
 
 
-def _should_skip_grok_boomerang(card_id: str, state: dict) -> bool:
-    """The Boomerang step is hidden. A skipped or missing cut is approved so Create card unlocks.
-
-    A forward-and-reverse cut that was already rendered stays put.
-    """
-    if "dress" not in state["approved"] or "boomerang" in state["approved"]:
-        return False
-    if not step_unlocked(state, "boomerang"):
-        return False
-    report = read_boomerang_report(work_dir(card_id))
-    if report and not report.get("skipped"):
-        return False
-    return True
-
-
-def _record_boomerang_skip(card_id: str, *, card_label: str = "") -> None:
-    """Keep the Video edit clips unchanged and write a skipped boomerang report."""
+def skip_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
+    """Keep the Video edit clips unchanged so Create card can run."""
     work, _state = _require_boomerang_unlocked(card_id)
     report = read_boomerang_report(work)
     if report and not report.get("skipped"):
@@ -2725,18 +2697,9 @@ def _record_boomerang_skip(card_id: str, *, card_label: str = "") -> None:
         _clear_boomerang_backups(work, card_id)
     record_step_started(work, "boomerang")
     _write_boomerang_report(work, _skipped_boomerang_report())
-    state = read_state(work)
-    if "boomerang" not in state["approved"]:
-        state["approved"].append("boomerang")
-        record_step_approved(work, "boomerang")
-        write_state(work, state)
+    _drop_boomerang_approval_before_card(work)
     record_step_finished(work, "boomerang")
     print(f"Boomerang skipped for {card_id}")
-
-
-def skip_boomerang_step(card_id: str, *, card_label: str = "") -> dict:
-    """Keep the Video edit clips unchanged so Create card can run."""
-    _record_boomerang_skip(card_id, card_label=card_label)
     return flow_state(card_id)
 
 

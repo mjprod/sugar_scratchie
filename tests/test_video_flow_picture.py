@@ -66,21 +66,7 @@ def test_uploaded_photos_are_named_in_the_prompt():
     assert "Same woman in @image1" in dress
     assert "entire bikini in @image2" in dress
     assert "this same woman in @image3" in dress
-    assert "in @image1 in @image3" not in dress
     assert not dress.endswith("@image3")
-    assert with_uploaded_image_tokens(dress, has_main=True, has_bikini=True, has_picked=True) == dress
-
-    ghost = (
-        "Same woman in @image1, clothes only. Replace her entire bikini in @image2 with a costume "
-        "worn on this same woman in @image3 in @image1 in @image3 in @image1 in @image3."
-    )
-    cleaned = with_uploaded_image_tokens(
-        ghost, has_main=True, has_bikini=True, has_picked=True
-    )
-    assert cleaned.count("@image1") == 1
-    assert cleaned.count("@image3") == 1
-    assert "this same woman in @image3" in cleaned
-    assert " in @image1 in @image3" not in cleaned
 
     uniform = with_uploaded_image_tokens(
         "Replace her entire bikini with a Police costume worn on this same woman.",

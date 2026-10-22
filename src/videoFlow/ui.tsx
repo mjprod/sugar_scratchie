@@ -209,7 +209,6 @@ export function MediaPreview({
           <video
             className="dashboard-preview-media"
             controls
-            loop
             muted
             onError={() => setHasError(true)}
             playsInline

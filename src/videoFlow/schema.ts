@@ -164,13 +164,12 @@ export type PicturePrompts = [string, string, string];
 export function withoutImageTokens(prompt: string): string {
   return prompt
     .replace(/behind the person in @image1\b/gi, "behind the person")
-    .replace(/(?<!this )(?<!the )Same woman in @image1\b/gi, "Same woman")
+    .replace(/Same woman in @image1\b/gi, "Same woman")
     .replace(/entire bikini in @image2\b/gi, "entire bikini")
     .replace(/bikini in @image2\b/gi, "bikini/outfit")
     .replace(/this same woman in @image3\b/gi, "this same woman")
     .replace(/dress reference image @image4\b/gi, "dress reference image")
     .replace(/costume in @image4\b/gi, "costume")
-    .replace(/(?:\s+in\s+@image\d+\b)+/gi, "")
     .replace(/\s*@image\d+\b/gi, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
@@ -188,17 +187,11 @@ export function ensureImageTokens(prompt: string, tokens: readonly string[]): st
   const want3 = tokens.some((token) => token.toLowerCase() === "@image3");
   const want4 = tokens.some((token) => token.toLowerCase() === "@image4");
   let body = prompt.replace(/(?:\s+@image[1-4]\b)+$/i, "").trim();
-  // "this same woman in @image3" also contains "Same woman". Tagging that inner
-  // phrase inserts @image1 in front of @image3, and the next pass does it again.
-  body = body.replace(/(\bin\s+@image[1-4]\b)(?:\s+in\s+@image[1-4]\b)+/gi, "$1");
   if (want1 && /behind the person(?! in @image1\b)/i.test(body)) {
     body = body.replace(/behind the person(?! in @image1\b)/i, "behind the person in @image1");
   }
-  if (want1 && /(?<!this )(?<!the )Same woman(?! in @image1\b)/i.test(body)) {
-    body = body.replace(
-      /(?<!this )(?<!the )Same woman(?! in @image1\b)/i,
-      "Same woman in @image1",
-    );
+  if (want1 && /Same woman(?! in @image1\b)/i.test(body)) {
+    body = body.replace(/Same woman(?! in @image1\b)/i, "Same woman in @image1");
   }
   if (want2 && body.includes("bikini/outfit")) {
     body = body.replace("bikini/outfit", "bikini in @image2");
@@ -309,20 +302,18 @@ export function backgroundMotionPromptForTheme(theme: string): string {
   // Create picture already baked the themed still. I2V must only animate in place —
   // restaging / "walk into the scene" makes WAN spicy walk and cast scene lights on her.
   return (
-    `Animate this approved ${scenery} portrait (@image3). ` +
-    `The last frame matches the first frame and the motion returns to the opening still. ` +
-    `Do not reverse the clip, rewind it, or play it backwards. ` +
-    `The ${scenery} background is already correct in @image3 — keep that exact backdrop. ` +
+    `Animate this approved ${scenery} portrait into a seamless looping boomerang video. ` +
+    `The ${scenery} background is already correct in the input still — keep that exact backdrop. ` +
     `Do not replace the scenery or restage her. ` +
     `She wears a bikini. Tiny sway, breathing, and hair motion only — she must not walk at all. ` +
     `STATION LOCK — feet glued to the floor in their exact input positions. Zero steps. ` +
     `No walk cycle, no stride, no approach, no walking in place. Subject scale must not grow. ` +
-    `Locked camera: no zoom, dolly, push-in, or pull-back. Framing matches @image3 exactly. ` +
+    `Locked camera: no zoom, dolly, push-in, or pull-back. Framing matches the input image exactly. ` +
     `COLOR AND SKIN LOCK — her skin, hair color, bikini color, white balance, exposure, and saturation ` +
-    `stay identical to @image3 in every frame. ` +
+    `stay identical to the input still in every frame, including the loop back. ` +
     `Do not tan, pale, bronze, warm, cool, or relight her. Do not color-grade her body to match the scene. ` +
     `Background lights and glows stay in the scenery only and must not cast colored light onto her body. ` +
-    `Do not reverse, rewind, or boomerang.`
+    `Perfect loop.`
   );
 }
 

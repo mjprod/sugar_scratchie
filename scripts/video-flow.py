@@ -16,10 +16,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backend.services.grok import DEFAULT_BACKGROUND_MOTION_PROMPT  # noqa: E402
 from backend.services.video_flow import video_flow  # noqa: E402
 
-DEFAULT_BACKGROUND_PROMPT = DEFAULT_BACKGROUND_MOTION_PROMPT
+DEFAULT_BACKGROUND_PROMPT = (
+    "Animate this portrait into a seamless looping boomerang video. She wears a bikini, "
+    "gentle swaying body motion only. She stays on the same spot. Locked camera: no zoom in, "
+    "no zoom out, no dolly, no push-in, no pull-back, no walking toward or away from camera. "
+    "Keep the exact same framing and subject size as the input image in every frame. "
+    "Keep her face, identity, hair, and skin tone identical in every frame — same undertone, "
+    "same lightness, no tan/pale flicker, no color grading shifts on skin. "
+    "Perfect loop, warm beach lighting."
+)
 DEFAULT_DRESS_PROMPT = (
     "Replace her entire bikini with a fitted emerald satin dress (top and bottom). "
     "Keep the exact same beach background, scenery, lighting, camera, framing, subject "

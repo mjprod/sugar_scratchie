@@ -451,7 +451,7 @@ def image_to_video(
     background_video_model: BackgroundVideoModel = "grok-imagine",
     enhance_motion_prompt: bool = True,
 ) -> None:
-    final_prompt = grok.motion_prompt_for_model(grok.normalize_background_motion_prompt(prompt))
+    final_prompt = grok.normalize_background_motion_prompt(prompt)
     if enhance_motion_prompt and xai_key_available():
         print(f"Enhancing motion prompt via {grok.chat_model()} ...")
         final_prompt = grok.enhance_prompt(

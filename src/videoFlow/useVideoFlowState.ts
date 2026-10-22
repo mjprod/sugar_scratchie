@@ -405,9 +405,6 @@ export function useVideoFlowState() {
         motion = localMotion;
       }
     }
-    if (isStockBackgroundMotionPromptText(motion, themeToApply)) {
-      motion = backgroundMotionPromptForTheme(themeToApply);
-    }
     // If we kept a local theme the server lacked, rewrite stock prompts to match.
     if (
       themeToApply !== serverTheme &&
