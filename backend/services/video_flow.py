@@ -114,8 +114,14 @@ def with_uploaded_image_tokens(
             count=1,
             flags=re.IGNORECASE,
         )
-    if has_main and re.search(r"Same woman(?! in @image1\b)", text):
-        text = re.sub(r"Same woman(?! in @image1\b)", "Same woman in @image1", text, count=1)
+    if has_main and re.search(r"Same woman(?! in @image1\b)", text, re.IGNORECASE):
+        text = re.sub(
+            r"Same woman(?! in @image1\b)",
+            "Same woman in @image1",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
     if has_bikini and "bikini/outfit" in text:
         text = text.replace("bikini/outfit", "bikini in @image2", 1)
     if has_bikini and re.search(r"entire bikini(?! in @image2\b)", text, re.IGNORECASE):
