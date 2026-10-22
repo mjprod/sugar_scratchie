@@ -1552,14 +1552,28 @@ def edit_photo_scratch_layer(
     bikini_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
     model: str | None = None,
+    named_images: list[str | Path] | None = None,
 ) -> Path:
     """Image-edit the Flow source girl (optionally onto a background) for a photo-scratch layer.
 
     Reference order: ENVIRONMENT first (if any), then WOMAN, then BIKINI (if any), then
     FACE last (if any) — models attend to the scene instead of cloning the source wall,
     and the face ref pins her identity across regenerations.
+
+    ``named_images`` is the @image list already rewritten into ``<IMAGE_n>`` tokens.
     """
     key = api_key()
+    if named_images:
+        print(f"Editing photo-scratch layer ({len(named_images)} named refs) ...")
+        result = _edit_image(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            key=key,
+            images=list(named_images),
+            model=model,
+        )
+        _save_image_response(result, out)
+        return out
     images: list[str | Path] = []
     labels: list[str] = []
     if background_image is not None:
