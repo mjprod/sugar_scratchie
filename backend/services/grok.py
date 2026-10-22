@@ -58,18 +58,20 @@ LEGACY_PORTRAIT_PROMPT = (
 )
 
 DEFAULT_BACKGROUND_MOTION_PROMPT = (
-    "Animate this approved portrait into a seamless looping boomerang video. "
-    "The background is already correct in the input still — keep that exact backdrop. "
+    "Animate this approved portrait (@image3). "
+    "The last frame matches the first frame and the motion returns to the opening still. "
+    "Do not reverse the clip, rewind it, or play it backwards. "
+    "The background is already correct in @image3 — keep that exact backdrop. "
     "Do not replace the scenery or restage her. "
     "She wears a bikini. Tiny sway, breathing, and hair motion only — she must not walk at all. "
     "STATION LOCK — feet glued to the floor in their exact input positions. Zero steps. "
     "No walk cycle, no stride, no approach, no walking in place. "
     "Subject scale must not grow. Locked camera: no zoom, dolly, push-in, or pull-back. "
-    "Framing matches the input image exactly. "
+    "Framing matches @image3 exactly. "
     "COLOR AND SKIN LOCK — her skin, hair, bikini color, white balance, exposure, and "
-    "saturation stay identical to the input still in every frame. Do not tan, pale, bronze, "
+    "saturation stay identical to @image3 in every frame. Do not tan, pale, bronze, "
     "warm, cool, or relight her. Background lights stay in the scenery only and must not "
-    "cast colored light onto her body. Perfect loop."
+    "cast colored light onto her body. Do not reverse, rewind, or boomerang."
 )
 LEGACY_BACKGROUND_MOTION_PROMPT = (
     "Animate this portrait into a seamless looping boomerang video. She wears a bikini, "
@@ -146,7 +148,7 @@ ENHANCE_SYSTEM = (
 
 MOTION_ENHANCE_SYSTEM = (
     "You rewrite a short image-to-video motion instruction into a single precise prompt. "
-    "Rules: (1) Keep the user's intended motion (sway, loop, boomerang, outfit notes) "
+    "Rules: (1) Keep the user's intended motion (sway, loop, outfit notes) "
     "but make camera and framing ironclad. She must NOT walk at all — rewrite any walking "
     "into planted sway only. (2) Explicitly forbid zoom in/out, dolly, push-in, pull-back, "
     "orbit, walking, stepping, striding, marching, shuffling, walking in place, and any "
@@ -154,12 +156,13 @@ MOTION_ENHANCE_SYSTEM = (
     "steps; hips fixed; subject size and framing must match the input image in every frame. "
     "(4) COLOR AND SKIN LOCK is mandatory and must survive the rewrite. "
     "Her skin undertone, lightness, hair color, and outfit color stay identical to the "
-    "input portrait in every frame, including the loop back. No tan, pale, bronze, "
+    "input portrait in every frame. No tan, pale, bronze, "
     "sunburn, flicker, beauty filter, white-balance shift, exposure change, saturation "
     "change, or colored scene light spilling onto her body. Do NOT relight or color-grade "
     "her to match the background. If the instruction says 'matching lighting', that light "
     "belongs to the scenery only. "
-    "(5) Prefer a seamless looping boomerang unless the user asked otherwise. "
+    "(5) The last frame matches the first frame and the motion returns to the opening "
+    "still. Do not reverse, rewind, boomerang, or play the motion backwards. "
     "(6) The input still already has the final scenery (from Create picture). Keep that "
     "backdrop. Do NOT restage her, walk her into a new location, or replace the background "
     "unless the user explicitly asks to change scenery. Do NOT invent unrelated wardrobe "
@@ -172,13 +175,13 @@ MOTION_ENHANCE_SYSTEM = (
 # to the new scene, so this lock is last and forbids relighting the subject.
 MOTION_COLOR_LOCK = (
     "COLOR AND SKIN LOCK — her color stays identical to the input portrait in every "
-    "frame, including the loop back to the first frame. Same skin undertone and lightness "
-    "from start to end: no tan, no pale, no bronze, no sunburn, no flicker, no "
-    "frame-to-frame shift. Do not relight her, color-grade her, warm her, cool her, or "
-    "change exposure, white balance, or saturation on her skin, hair, or bikini to match "
-    "the new background. Scene lights and glows stay in the background only and must not "
-    "cast colored light onto her body. Hair color and bikini color stay exactly as in the "
-    "input image."
+    "frame. Same skin undertone and lightness from start to end: no tan, no pale, no "
+    "bronze, no sunburn, no flicker, no frame-to-frame shift. Do not relight her, "
+    "color-grade her, warm her, cool her, or change exposure, white balance, or "
+    "saturation on her skin, hair, or bikini to match the new background. Scene lights "
+    "and glows stay in the background only and must not cast colored light onto her "
+    "body. Hair color and bikini color stay exactly as in the input image. Do not "
+    "reverse, rewind, or boomerang."
 )
 
 MOTION_STATION_LOCK = (
@@ -312,8 +315,17 @@ def vision_model() -> str:
     return os.environ.get("XAI_VISION_MODEL", chat_model())
 
 
+# grok-imagine-video-1.5 accepts last_frame. The same still as the first frame
+# makes the clip start and end together. It is not a forward-then-reverse boomerang.
+SEAMLESS_LOOP_MODEL = "grok-imagine-video-1.5"
+
+
+def pins_seamless_loop(model: str) -> bool:
+    return model.strip() == SEAMLESS_LOOP_MODEL
+
+
 def video_generation_model() -> str:
-    return os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video-1.5")
+    return os.environ.get("XAI_VIDEO_MODEL", SEAMLESS_LOOP_MODEL)
 
 
 def video_edit_model(requested: str | None = None) -> str:
@@ -870,11 +882,67 @@ def is_stock_background_motion_prompt(prompt: str) -> bool:
     return False
 
 
+def _is_current_motion_prompt(prompt: str) -> bool:
+    return "Animate this approved " in prompt and "background is already correct" in prompt
+
+
+def ensure_motion_image_token(prompt: str) -> str:
+    """Name the approved still @image3. Foot positions stay worded as input positions."""
+    text = (prompt or "").strip()
+    if re.search(r"@image3\b", text, flags=re.IGNORECASE):
+        return text
+    text = re.sub(
+        r"(approved\s+(?:\S+\s+)?portrait)(?!\s*\(@image3\))",
+        r"\1 (@image3)",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\bin the input still\b", "in @image3", text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r"\bthe input image\b", "@image3", text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r"\bthe input still\b", "@image3", text, count=1, flags=re.IGNORECASE)
+    return text
+
+
+def motion_prompt_for_model(prompt: str) -> str:
+    """@image3 is the still already attached as this video's input image."""
+    return re.sub(r"@image3\b", "the input image", prompt or "", flags=re.IGNORECASE)
+
+
+def strip_boomerang_wording(prompt: str) -> str:
+    """Drop a request to play the clip backwards. Matching first and last frames stays."""
+    text = prompt or ""
+    text = text.replace(" into a seamless looping boomerang video.", ".")
+    text = re.sub(r" +", " ", text)
+    text = re.sub(r" \.", ".", text)
+    return text.strip()
+
+
+def ensure_matching_ends(prompt: str) -> str:
+    """The clip must open and close on the same still, without playing backwards."""
+    text = (prompt or "").strip()
+    if "last frame matches the first frame" in text.lower():
+        return text
+    line = (
+        "The last frame matches the first frame and the motion returns to the opening still. "
+        "Do not reverse, rewind, or play the clip backwards."
+    )
+    return f"{text}\n\n{line}" if text else line
+
+
 def normalize_background_motion_prompt(prompt: str) -> str:
-    """Upgrade legacy/empty/restage motion prompts to the animate-in-place default."""
-    if is_stock_background_motion_prompt(prompt):
+    """Upgrade legacy/empty/restage motion prompts to the animate-in-place default.
+
+    A current animate-in-place prompt is kept, including its theme, and @image3
+    is added when the approved still is not named yet. The last frame is required
+    to match the first. A backwards boomerang is not.
+    """
+    stripped = strip_boomerang_wording((prompt or "").strip())
+    if _is_current_motion_prompt(stripped):
+        return ensure_matching_ends(ensure_motion_image_token(stripped))
+    if is_stock_background_motion_prompt(prompt or ""):
         return DEFAULT_BACKGROUND_MOTION_PROMPT
-    return prompt.strip()
+    return ensure_matching_ends(stripped)
 
 
 # Even light on her body. Scene light stays in the background so the still stays easy to use.
@@ -1764,17 +1832,21 @@ def image_to_video(
     enhance: bool = True,
 ) -> None:
     key = api_key()
-    final_prompt = normalize_background_motion_prompt(prompt)
+    final_prompt = motion_prompt_for_model(normalize_background_motion_prompt(prompt))
     if enhance:
         print(f"Enhancing motion prompt via {chat_model()} ...")
         final_prompt = enhance_prompt(final_prompt, key, system=MOTION_ENHANCE_SYSTEM)
         print(f"Enhanced motion prompt:\n  {final_prompt}\n")
     final_prompt = append_motion_locks(final_prompt)
+    image_media = media_value(image, "image/png")
     payload = {
         "model": model,
         "prompt": final_prompt,
-        image_field: media_value(image, "image/png"),
+        image_field: image_media,
     }
+    if pins_seamless_loop(model):
+        payload["last_frame"] = image_media
+        print("Seamless loop: last frame pinned to the same still as the first frame.")
     if resolution:
         payload["resolution"] = resolution
 
