@@ -391,6 +391,14 @@ PHOTO_SCRATCH_PENDING_FIELDS = {
 }
 
 
+class PhotoScratchImageChoice(BaseModel):
+    """One Grok or Seedream still waiting for the operator to pick it."""
+
+    model: str
+    label: str
+    src: str
+
+
 class PhotoScratchSlot(BaseModel):
     id: str
     label: str
@@ -400,6 +408,9 @@ class PhotoScratchSlot(BaseModel):
     pending_bg: str | None = None
     pending_bikini: str | None = None
     pending_clothes: str | None = None
+    pending_bg_choices: list[PhotoScratchImageChoice] = Field(default_factory=list)
+    pending_bikini_choices: list[PhotoScratchImageChoice] = Field(default_factory=list)
+    pending_clothes_choices: list[PhotoScratchImageChoice] = Field(default_factory=list)
     # Optional per-layer custom AI prompts for this slot.
     prompt_background: str | None = None
     prompt_bikini: str | None = None
@@ -446,6 +457,28 @@ PHOTO_SCRATCH_PROMPT_FIELDS = {
     "bikini": "prompt_bikini",
     "clothes": "prompt_clothes",
 }
+
+PHOTO_SCRATCH_CHOICE_FIELDS = {
+    "background": "pending_bg_choices",
+    "bikini": "pending_bikini_choices",
+    "clothes": "pending_clothes_choices",
+}
+
+
+def _photo_choice_list(root: Path, raw: object) -> list[PhotoScratchImageChoice]:
+    if not isinstance(raw, list):
+        return []
+    choices: list[PhotoScratchImageChoice] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        src = version_public_src(root, _optional_str(item.get("src")))
+        model = _optional_str(item.get("model"))
+        if not src or not model:
+            continue
+        label = _optional_str(item.get("label")) or model
+        choices.append(PhotoScratchImageChoice(model=model, label=label, src=src))
+    return choices
 
 
 def _optional_str(value: object) -> str | None:
@@ -924,6 +957,9 @@ def list_photo_scratch_slots(
                 pending_bg=version_public_src(root, entry.get("pending_bg")),
                 pending_bikini=version_public_src(root, entry.get("pending_bikini")),
                 pending_clothes=version_public_src(root, entry.get("pending_clothes")),
+                pending_bg_choices=_photo_choice_list(root, entry.get("pending_bg_choices")),
+                pending_bikini_choices=_photo_choice_list(root, entry.get("pending_bikini_choices")),
+                pending_clothes_choices=_photo_choice_list(root, entry.get("pending_clothes_choices")),
                 prompt_background=_optional_str(entry.get("prompt_background")),
                 prompt_bikini=_optional_str(entry.get("prompt_bikini")),
                 prompt_clothes=_optional_str(entry.get("prompt_clothes")),
@@ -1048,10 +1084,16 @@ def _save_photo_scratch_slots(
         "zoom_tx",
         "zoom_ty",
     }
-    data = [
-        {k: v for k, v in slot.dict().items() if v is not None and k not in skip}
-        for slot in slots
-    ]
+    data = []
+    for slot in slots:
+        item = {}
+        for key, value in slot.dict().items():
+            if key in skip or value is None:
+                continue
+            if isinstance(value, list) and len(value) == 0:
+                continue
+            item[key] = value
+        data.append(item)
     _write_photo_scratch_index(cards_dir, card_id, data)
 
 
@@ -1143,12 +1185,56 @@ def set_photo_scratch_pending_layer(
     _save_photo_scratch_slots(cards_dir, card_id, slots)
 
 
-def approve_photo_scratch_layer(
-    cards_dir: Path, card_id: str, slot_id: str, layer_type: str, theme: str = ""
-) -> PhotoScratchSlot:
-    """Promote pending_<layer> → the approved layer field."""
+def set_photo_scratch_pending_choices(
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    layer_type: str,
+    choices: list[dict[str, str]],
+    theme: str = "",
+) -> None:
+    """Store the Grok and Seedream stills for one layer. The first stays on pending_*."""
     fields = PHOTO_SCRATCH_PENDING_FIELDS.get(layer_type)
-    if fields is None:
+    choice_field = PHOTO_SCRATCH_CHOICE_FIELDS.get(layer_type)
+    if fields is None or choice_field is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
+        )
+    _, pending_field = fields
+    slots = list_photo_scratch_slots(cards_dir, card_id, theme)
+    slot = _get_slot(slots, slot_id)
+    if slot is None:
+        return
+    stored = [
+        PhotoScratchImageChoice(
+            model=str(item.get("model") or "").strip(),
+            label=str(item.get("label") or "").strip() or str(item.get("model") or "").strip(),
+            src=str(item.get("src") or "").strip(),
+        )
+        for item in choices
+        if str(item.get("src") or "").strip() and str(item.get("model") or "").strip()
+    ]
+    setattr(slot, choice_field, stored)
+    setattr(slot, pending_field, stored[0].src if stored else None)
+    _save_photo_scratch_slots(cards_dir, card_id, slots)
+
+
+def approve_photo_scratch_layer(
+    cards_dir: Path,
+    card_id: str,
+    slot_id: str,
+    layer_type: str,
+    theme: str = "",
+    choice: str = "",
+) -> PhotoScratchSlot:
+    """Promote one pending still into the approved layer field.
+
+    When Grok and Seedream both finished, ``choice`` is the model id to keep.
+    """
+    fields = PHOTO_SCRATCH_PENDING_FIELDS.get(layer_type)
+    choice_field = PHOTO_SCRATCH_CHOICE_FIELDS.get(layer_type)
+    if fields is None or choice_field is None:
         raise HTTPException(
             status_code=400,
             detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
@@ -1158,11 +1244,25 @@ def approve_photo_scratch_layer(
     slot = _get_slot(slots, slot_id)
     if slot is None:
         raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
+    choices: list[PhotoScratchImageChoice] = list(getattr(slot, choice_field) or [])
     pending = getattr(slot, pending_field)
-    if not pending:
+    picked = ""
+    if choices:
+        wanted = choice.strip()
+        match = next((item for item in choices if item.model == wanted), None)
+        if match is None and not wanted and len(choices) == 1:
+            match = choices[0]
+        if match is None:
+            labels = " or ".join(item.label or item.model for item in choices)
+            raise HTTPException(status_code=400, detail=f"Pick one picture: {labels}")
+        picked = match.src
+    elif pending:
+        picked = pending
+    else:
         raise HTTPException(status_code=400, detail=f"No pending {layer_type} to approve")
-    setattr(slot, approved_field, pending)
+    setattr(slot, approved_field, picked)
     setattr(slot, pending_field, None)
+    setattr(slot, choice_field, [])
     _save_photo_scratch_slots(cards_dir, card_id, slots)
     return slot
 
@@ -1178,11 +1278,14 @@ def reject_photo_scratch_layer(
             detail=f"Layer must be one of: {', '.join(sorted(PHOTO_SCRATCH_PENDING_FIELDS))}",
         )
     _, pending_field = fields
+    choice_field = PHOTO_SCRATCH_CHOICE_FIELDS.get(layer_type)
     slots = list_photo_scratch_slots(cards_dir, card_id, theme)
     slot = _get_slot(slots, slot_id)
     if slot is None:
         raise HTTPException(status_code=404, detail=f"Slot not found: {slot_id}")
     setattr(slot, pending_field, None)
+    if choice_field:
+        setattr(slot, choice_field, [])
     _save_photo_scratch_slots(cards_dir, card_id, slots)
     return slot
 

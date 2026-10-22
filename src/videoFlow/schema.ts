@@ -2,7 +2,6 @@ export type FlowNodeId =
   | "source"
   | "picture"
   | "background"
-  | "trim"
   | "dress"
   | "boomerang"
   | "compress"
@@ -16,7 +15,6 @@ export type FlowNodeKind = "input" | "grok" | "process" | "output";
 export type VideoFlowStepKey =
   | "picture"
   | "background"
-  | "trim"
   | "dress"
   | "boomerang"
   | "compress"
@@ -162,6 +160,73 @@ export function normalizePictureModels(value: unknown, fallbackModel = "grok-ima
 
 export type PicturePrompts = [string, string, string];
 
+/** Drop @imageN names so a stock prompt with those names still matches the template. */
+export function withoutImageTokens(prompt: string): string {
+  return prompt
+    .replace(/behind the person in @image1\b/gi, "behind the person")
+    .replace(/Same woman in @image1\b/gi, "Same woman")
+    .replace(/entire bikini in @image2\b/gi, "entire bikini")
+    .replace(/bikini in @image2\b/gi, "bikini/outfit")
+    .replace(/this same woman in @image3\b/gi, "this same woman")
+    .replace(/dress reference image @image4\b/gi, "dress reference image")
+    .replace(/costume in @image4\b/gi, "costume")
+    .replace(/\s*@image\d+\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+/**
+ * Name the uploaded photos on the woman and her bikini.
+ * @image3 is the picture the operator picked. @image4 is the theme uniform.
+ * A trailing tag list is moved onto those phrases instead of sitting after the framing lock.
+ */
+export function ensureImageTokens(prompt: string, tokens: readonly string[]): string {
+  const want1 = tokens.some((token) => token.toLowerCase() === "@image1");
+  const want2 = tokens.some((token) => token.toLowerCase() === "@image2");
+  const want3 = tokens.some((token) => token.toLowerCase() === "@image3");
+  const want4 = tokens.some((token) => token.toLowerCase() === "@image4");
+  let body = prompt.replace(/(?:\s+@image[1-4]\b)+$/i, "").trim();
+  if (want1 && /behind the person(?! in @image1\b)/i.test(body)) {
+    body = body.replace(/behind the person(?! in @image1\b)/i, "behind the person in @image1");
+  }
+  if (want1 && /Same woman(?! in @image1\b)/.test(body)) {
+    body = body.replace(/Same woman(?! in @image1\b)/, "Same woman in @image1");
+  }
+  if (want2 && body.includes("bikini/outfit")) {
+    body = body.replace("bikini/outfit", "bikini in @image2");
+  }
+  if (want2 && /entire bikini(?! in @image2\b)/i.test(body)) {
+    body = body.replace(/entire bikini(?! in @image2\b)/i, "entire bikini in @image2");
+  }
+  if (want3 && /this same woman(?! in @image3\b)/i.test(body)) {
+    body = body.replace(/this same woman(?! in @image3\b)/i, "this same woman in @image3");
+  }
+  if (want4 && !/@image4\b/i.test(body)) {
+    if (/dress reference image(?! @image4\b)/i.test(body)) {
+      body = body.replace(/dress reference image(?! @image4\b)/i, "dress reference image @image4");
+    } else if (/costume(?! in @image4\b)/i.test(body)) {
+      body = body.replace(/costume(?! in @image4\b)/i, "costume in @image4");
+    }
+  }
+  const missing: string[] = [];
+  if (want1 && !/@image1\b/i.test(body)) missing.push("@image1");
+  if (want2 && !/@image2\b/i.test(body)) missing.push("@image2");
+  if (want3 && !/@image3\b/i.test(body)) missing.push("@image3");
+  if (want4 && !/@image4\b/i.test(body)) missing.push("@image4");
+  if (missing.length === 0) return body;
+  const lead = missing.join(" ");
+  return body ? `${lead}\n\n${body}` : lead;
+}
+
+/** Tokens for the photos the operator has uploaded. */
+export function pictureImageTokens(image: string, bikiniImage: string): string[] {
+  const tokens: string[] = [];
+  if (image.trim()) tokens.push("@image1");
+  if (bikiniImage.trim()) tokens.push("@image2");
+  return tokens;
+}
+
 export function picturePromptForTake(theme: string, take: PictureTake): string {
   const scenery = picturePromptForTheme(theme);
   const marker = `\n\n${INFLUENCER_POSITION}`;
@@ -177,7 +242,7 @@ export function defaultPicturePrompts(theme: string): PicturePrompts {
 }
 
 export function isStockPictureTakePrompt(prompt: string, theme: string, take: PictureTake): boolean {
-  const stripped = prompt.trim();
+  const stripped = withoutImageTokens(prompt);
   if (!stripped) return true;
   const scenery = normalizeTheme(theme);
   const legacyTake = `${legacyPicturePromptForTheme(scenery)} Lighting for this take: ${LEGACY_SIDE_LIGHT_TAKES[take - 1]}.`;
@@ -343,7 +408,7 @@ export function isStockBackgroundMotionPromptText(prompt: string, theme: string)
 
 /** True when the dress prompt is still a stock/legacy template (safe to overwrite from theme). */
 export function isStockDressPromptText(prompt: string, theme: string): boolean {
-  const stripped = prompt.trim();
+  const stripped = withoutImageTokens(prompt);
   const scenery = normalizeTheme(theme);
   const legacyDressNoSkin =
     "Replace her entire bikini with a fitted emerald satin dress (top and bottom). Keep the exact same beach background, scenery, lighting, camera, framing, subject scale, and motion frame-for-frame — only change the outfit. No zoom or camera move.";
@@ -400,12 +465,11 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Create a themed still from the source image and approve it, then animate that picture. Fix white edge frames, then a dress edit on the same frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
+    "Create a themed still from the source image and approve it, then animate that picture. A dress edit runs on those frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
   version: 1,
   pipeline: [
     "picture",
     "background",
-    "trim",
     "dress",
     "boomerang",
     "card",
@@ -413,8 +477,8 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     "symbols",
     "compress",
   ],
-  reviewSteps: ["picture", "background", "trim", "dress", "boomerang"],
-  canvas: { width: 2020, height: 200 },
+  reviewSteps: ["picture", "background", "dress", "boomerang"],
+  canvas: { width: 1860, height: 200 },
   nodes: [
     {
       id: "source",
@@ -455,27 +519,15 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "video", label: "video" }],
     },
     {
-      id: "trim",
-      kind: "process",
-      title: "Fix frames",
-      subtitle: "Delete white frames",
-      description: "Drop near-white flash frames from the start/end of the bikini clip before dress-up",
-      x: 560,
-      y: 56,
-      step: "trim",
-      inputs: [{ id: "video", label: "background" }],
-      outputs: [{ id: "video", label: "video" }],
-    },
-    {
       id: "dress",
       kind: "grok",
       title: "Video edit",
       subtitle: "Foreground dress",
       description: "Dress edit on the approved background clip — same scenery, same frames",
-      x: 720,
+      x: 620,
       y: 56,
       step: "dress",
-      inputs: [{ id: "video", label: "trimmed" }],
+      inputs: [{ id: "video", label: "background" }],
       outputs: [{ id: "video", label: "video" }],
     },
     {
@@ -485,7 +537,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       subtitle: "Forward + reverse",
       description:
         "Play the first N seconds of both clips forward, then the same frames backwards — or keep them as-is",
-      x: 900,
+      x: 800,
       y: 56,
       step: "boomerang",
       inputs: [
@@ -500,7 +552,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Create card",
       subtitle: "public/cards/",
       description: "Publish the boomerang (or original) clips under public/cards/<id>/, or import both videos by hand",
-      x: 1080,
+      x: 980,
       y: 56,
       step: "card",
       inputs: [
@@ -515,7 +567,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Generate mesh",
       subtitle: "Garment tracking",
       description: "Track the foreground for garment-local scratching",
-      x: 1260,
+      x: 1160,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -527,7 +579,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Place symbols",
       subtitle: "12 mesh points",
       description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 1440,
+      x: 1340,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -539,7 +591,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Finalize",
       subtitle: "390∶672 delivery",
       description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
-      x: 1620,
+      x: 1520,
       y: 56,
       step: "compress",
       inputs: [
@@ -554,7 +606,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Flow output",
       subtitle: "Scratch card",
       description: "Playable card in the scratch prototype",
-      x: 1800,
+      x: 1700,
       y: 56,
       step: null,
       inputs: [{ id: "mesh", label: "mesh" }],
@@ -564,9 +616,8 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   wires: [
     { from: "source", to: "picture" },
     { from: "picture", to: "background" },
-    { from: "background", to: "trim" },
-    { from: "trim", to: "dress" },
-    { from: "trim", to: "boomerang" },
+    { from: "background", to: "dress" },
+    { from: "background", to: "boomerang" },
     { from: "dress", to: "boomerang" },
     { from: "boomerang", to: "card" },
     { from: "card", to: "mesh" },
@@ -591,7 +642,6 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
 const STEP_IDS = new Set<VideoFlowStepKey>([
   "picture",
   "background",
-  "trim",
   "dress",
   "boomerang",
   "card",
@@ -603,7 +653,6 @@ const NODE_IDS = new Set<FlowNodeId>([
   "source",
   "picture",
   "background",
-  "trim",
   "dress",
   "boomerang",
   "compress",
@@ -617,7 +666,7 @@ export function stringifyVideoFlowJson(flow: VideoFlowJson): string {
   return `${JSON.stringify(flow, null, 2)}\n`;
 }
 
-/** Upgrade flows saved before symbols / trim steps existed. */
+/** Upgrade older saved flows and drop the retired Fix frames step. */
 function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> {
   let pipeline = Array.isArray(flow.pipeline) ? [...flow.pipeline] : [];
   let nodes = Array.isArray(flow.nodes) ? [...flow.nodes] : [];
@@ -654,16 +703,16 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
     changed = true;
   }
 
-  if (!pipeline.includes("trim") && pipeline.includes("background")) {
-    const backgroundIndex = pipeline.indexOf("background");
-    pipeline.splice(backgroundIndex + 1, 0, "trim");
-    if (!nodes.some((node) => node?.id === "trim")) {
-      const trimNode = DEFAULT_VIDEO_FLOW_JSON.nodes.find((node) => node.id === "trim");
-      if (trimNode) nodes.push(trimNode);
-    }
-    if (!reviewSteps.includes("trim")) {
-      reviewSteps = [...reviewSteps, "trim"];
-    }
+  const savedSteps = pipeline as string[];
+  const savedReviews = reviewSteps as string[];
+  if (
+    savedSteps.includes("trim") ||
+    nodes.some((node) => (node?.id as string | undefined) === "trim") ||
+    savedReviews.includes("trim")
+  ) {
+    pipeline = savedSteps.filter((step) => step !== "trim") as VideoFlowStepKey[];
+    nodes = nodes.filter((node) => (node?.id as string | undefined) !== "trim");
+    reviewSteps = savedReviews.filter((step) => step !== "trim") as VideoFlowStepKey[];
     changed = true;
   }
 
