@@ -304,7 +304,11 @@ def test_scenery_edit_sends_the_new_face(monkeypatch, tmp_path):
 
 
 def test_create_picture_face_locks_each_take_after_scenery(monkeypatch, tmp_path):
-    """Setup face reference must hard-swap onto every take after scenery bake."""
+    """Setup face reference must hard-swap onto every take after the still is baked.
+
+    A source photo is named @image1, so each take is a named-ref edit, not a
+    scenery-only edit.
+    """
     from PIL import Image
 
     import backend.services.video_flow as video_flow
@@ -342,7 +346,12 @@ def test_create_picture_face_locks_each_take_after_scenery(monkeypatch, tmp_path
             post_scenery_swaps.append(Path(base))
         return out
 
-    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
+    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_scenery)
+    monkeypatch.setattr(
+        video_flow,
+        "edit_image_scenery",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
+    )
     monkeypatch.setattr(video_flow, "lock_setup_face", fake_lock)
 
     video_flow.build_picture_still(
@@ -386,7 +395,12 @@ def test_create_picture_models_mode_uses_one_prompt_across_models(monkeypatch, t
         calls.append((str(kwargs["image_model"]), str(kwargs["provider"]), str(kwargs["prompt"])))
         return out
 
-    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
+    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_scenery)
+    monkeypatch.setattr(
+        video_flow,
+        "edit_image_scenery",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
+    )
     monkeypatch.setattr(video_flow, "lock_setup_face", lambda **kwargs: Path(kwargs["out"]))
 
     shared = "Keep her planted in a Police station. BODY LIGHT — even front light."
@@ -438,7 +452,12 @@ def test_create_picture_is_always_grok_and_seedream(monkeypatch, tmp_path):
         calls.append(str(kwargs["image_model"]))
         return out
 
-    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
+    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_scenery)
+    monkeypatch.setattr(
+        video_flow,
+        "edit_image_scenery",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
+    )
 
     video_flow.build_picture_still(
         image=source,
