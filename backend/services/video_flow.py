@@ -1743,6 +1743,15 @@ def _photo_still_routes() -> list[tuple[str, str, str]]:
     return routes
 
 
+def _theme_uniform_path(clothes_ref: str | None, card_id: str) -> Path | None:
+    """Photo for @image4: this slot's clothes reference, else the dress-step uniform."""
+    path = _local_image_path(clothes_ref)
+    if path is not None:
+        return path
+    saved = read_flow_draft(card_id) or {}
+    return _optional_draft_image(saved, "dress_reference_image", "Theme uniform")
+
+
 def _local_image_path(src: str | Path | None) -> Path | None:
     """Workspace file for an uploaded photo. URLs and missing files are skipped."""
     if src is None:
@@ -2028,6 +2037,28 @@ def run_generate_photo_scratch_layer(
                         f"{final_prompt} Pose and framing for this card: {pose_hint}. "
                         f"{photo_scratch_placement_clause(placement_hint)}"
                     )
+                uniform = _theme_uniform_path(slot.clothes_ref, card_id)
+                if layer_type == "clothes" and uniform is not None:
+                    # A tagged top prompt still has to see the uniform. Naming it
+                    # @image4 attaches the file; the caption path below is only
+                    # for a reference that is not a local image.
+                    final_prompt = with_uploaded_image_tokens(
+                        final_prompt,
+                        has_main=bool(re.search(r"@image1\b", final_prompt, re.IGNORECASE)),
+                        has_bikini=bool(re.search(r"@image2\b", final_prompt, re.IGNORECASE)),
+                        has_picked=bool(re.search(r"@image3\b", final_prompt, re.IGNORECASE)),
+                        has_uniform=True,
+                    )
+                    print(f"Photo-scratch top {slot.id}: theme uniform @image4 ({uniform.name})")
+                elif layer_type == "clothes" and (slot.clothes_ref or "").strip():
+                    outfit = _caption_clothes_ref(slot.clothes_ref or "", clothes_captions)
+                    if outfit:
+                        final_prompt = (
+                            f"{final_prompt} CRITICAL — the outfit must match the clothes reference "
+                            f"exactly: {outfit}"
+                        )
+                        final_prompt = re.sub(r"@image4\b", "", final_prompt, flags=re.IGNORECASE)
+                        final_prompt = re.sub(r"[ \t]{2,}", " ", final_prompt).strip()
                 picked = work_dir(card_id) / "picture.png"
                 _, named_images = bind_prompt_images(
                     final_prompt,
@@ -2035,6 +2066,7 @@ def run_generate_photo_scratch_layer(
                         1: girl_path if layer_type != "background" else _local_image_path(source_image),
                         2: bikini_still,
                         3: picked if _image_file_ready(picked) else None,
+                        4: uniform,
                     },
                 )
             elif layer_type == "bikini":
