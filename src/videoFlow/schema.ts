@@ -190,8 +190,8 @@ export function ensureImageTokens(prompt: string, tokens: readonly string[]): st
   if (want1 && /behind the person(?! in @image1\b)/i.test(body)) {
     body = body.replace(/behind the person(?! in @image1\b)/i, "behind the person in @image1");
   }
-  if (want1 && /Same woman(?! in @image1\b)/.test(body)) {
-    body = body.replace(/Same woman(?! in @image1\b)/, "Same woman in @image1");
+  if (want1 && /Same woman(?! in @image1\b)/i.test(body)) {
+    body = body.replace(/Same woman(?! in @image1\b)/i, "Same woman in @image1");
   }
   if (want2 && body.includes("bikini/outfit")) {
     body = body.replace("bikini/outfit", "bikini in @image2");
