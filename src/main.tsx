@@ -16,6 +16,7 @@ import { UsersPage } from "./UsersPage";
 import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
+import { LiteFlowPage } from "./videoFlow/lite/LiteFlowPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
@@ -69,6 +70,7 @@ const GatedSymbolsPage = withOperatorGate(SymbolsPage);
 const GatedPictureFlowPage = withOperatorGate(PictureFlowPage);
 const GatedVideoFlowDesignerPage = withOperatorGate(VideoFlowDesignerPage);
 const GatedVideoFlowRunPage = withOperatorGate(VideoFlowRunPage);
+const GatedVideoFlowLitePage = withOperatorGate(LiteFlowPage);
 const GatedVideoFlowHubPage = withOperatorGate(VideoFlowHubPage);
 const DashboardPlayerGame = lazy(() =>
   import("./dashGame/DashboardPlayerGame").then((m) => ({
@@ -97,6 +99,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/login") return DashboardLoginPage;
   if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
+  if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/themes") return GatedThemesPage;

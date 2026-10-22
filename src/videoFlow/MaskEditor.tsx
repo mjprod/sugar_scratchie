@@ -354,6 +354,24 @@ export function MaskEditor({
   }, [meshFetchUrl, reloadToken]);
 
   useEffect(() => {
+    if (stillMode) return undefined;
+    const video = videoRef.current;
+    if (!video) return undefined;
+    let cancelled = false;
+    void video.play().then(
+      () => {
+        if (!cancelled) setPlaying(true);
+      },
+      () => {
+        if (!cancelled) setPlaying(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [meshReady, stillMode, videoSrc]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !meshReady) return undefined;
@@ -899,13 +917,16 @@ export function MaskEditor({
               />
             ) : (
               <video
-                ref={videoRef}
+                autoPlay
                 className="mask-editor-video"
                 loop
                 muted
                 playsInline
                 preload="auto"
+                ref={videoRef}
                 src={videoSrc}
+                onPause={() => setPlaying(false)}
+                onPlay={() => setPlaying(true)}
               />
             )}
             <canvas
