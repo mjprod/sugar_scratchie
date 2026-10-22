@@ -329,6 +329,7 @@ function BoomerangPanel({
   cardLabel,
   report,
   cardApproved,
+  seamlessLoop,
   busy,
   onBusy,
   onError,
@@ -339,6 +340,7 @@ function BoomerangPanel({
   cardLabel: string;
   report: BoomerangReport | null;
   cardApproved: boolean;
+  seamlessLoop: boolean;
   busy: boolean;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
@@ -373,42 +375,73 @@ function BoomerangPanel({
     }
   }
 
+  if (seamlessLoop && !applied) {
+    return (
+      <Flex direction="column" gap="3">
+        <Callout.Root color="blue">
+          <Callout.Text size="2">
+            This clip is not reversed. It plays forward only.
+            {cardApproved ? null : (
+              <>
+                {" "}
+                <strong>Continue</strong> to Create card.
+              </>
+            )}
+          </Callout.Text>
+        </Callout.Root>
+      </Flex>
+    );
+  }
+
   return (
     <Flex direction="column" gap="3">
       <Callout.Root color="blue">
         <Callout.Text size="2">
-          Plays the first N seconds of the bikini clip and the dress clip forward, then the same
-          frames backwards. <strong>Create card</strong> publishes the version you approve here.
-          Keep the clips as-is when this card should stay a straight loop.
+          {seamlessLoop ? (
+            <>
+              This card still uses a forward-and-reverse boomerang. Undo it so the clip plays
+              forward only.
+            </>
+          ) : (
+            <>
+              Plays the first N seconds of the bikini clip and the dress clip forward, then the same
+              frames backwards. <strong>Create card</strong> publishes the version you approve here.
+              Keep the clips as-is when this card should stay a straight loop.
+            </>
+          )}
         </Callout.Text>
       </Callout.Root>
       <Flex align="end" gap="3" wrap="wrap">
-        <Field label="Forward seconds">
-          <TextField.Root
-            type="number"
-            min={BOOMERANG_MIN_SECONDS}
-            max={BOOMERANG_MAX_SECONDS}
-            step={0.5}
-            value={seconds}
-            onChange={(event) => setSeconds(event.currentTarget.value)}
-          />
-        </Field>
-        <Button
-          disabled={disabled || !secondsValid}
-          type="button"
-          onClick={() => void post("boomerang", { seconds: parsedSeconds })}
-        >
-          {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
-          {applied ? "Re-make boomerang" : "Make boomerang"}
-        </Button>
-        <Button
-          disabled={disabled}
-          type="button"
-          variant="soft"
-          onClick={() => void post("boomerang", { skip: true, seconds: BOOMERANG_DEFAULT_SECONDS })}
-        >
-          Keep as-is
-        </Button>
+        {seamlessLoop ? null : (
+          <>
+            <Field label="Forward seconds">
+              <TextField.Root
+                type="number"
+                min={BOOMERANG_MIN_SECONDS}
+                max={BOOMERANG_MAX_SECONDS}
+                step={0.5}
+                value={seconds}
+                onChange={(event) => setSeconds(event.currentTarget.value)}
+              />
+            </Field>
+            <Button
+              disabled={disabled || !secondsValid}
+              type="button"
+              onClick={() => void post("boomerang", { seconds: parsedSeconds })}
+            >
+              {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
+              {applied ? "Re-make boomerang" : "Make boomerang"}
+            </Button>
+            <Button
+              disabled={disabled}
+              type="button"
+              variant="soft"
+              onClick={() => void post("boomerang", { skip: true, seconds: BOOMERANG_DEFAULT_SECONDS })}
+            >
+              Keep as-is
+            </Button>
+          </>
+        )}
         {applied ? (
           <Button
             disabled={disabled}
@@ -455,13 +488,19 @@ function BoomerangPanel({
   );
 }
 
+const HIDDEN_RUN_STEPS = new Set<VideoFlowStepKey>(["boomerang"]);
+
 function nextPipelineStep(
   flow: VideoFlowJson,
   current: VideoFlowStepKey,
 ): VideoFlowStepKey | null {
-  const index = flow.pipeline.indexOf(current);
-  if (index < 0 || index >= flow.pipeline.length - 1) return null;
-  return flow.pipeline[index + 1] ?? null;
+  let index = flow.pipeline.indexOf(current);
+  while (index >= 0 && index < flow.pipeline.length - 1) {
+    index += 1;
+    const step = flow.pipeline[index];
+    if (step && !HIDDEN_RUN_STEPS.has(step)) return step;
+  }
+  return null;
 }
 
 function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | null): string {
@@ -3004,6 +3043,10 @@ export function RunMode(props: RunModeProps) {
   const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
   const actionIsInteractive =
     actionStep === "symbols" || actionStep === "boomerang";
+  const grokSeamlessLoop =
+    backgroundVideoModel === "grok-imagine" ||
+    backgroundVideoModel === "grok-imagine-video" ||
+    backgroundVideoModel === "grok-imagine-video-1.5";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -3326,6 +3369,13 @@ export function RunMode(props: RunModeProps) {
     return nodeId ? nodeStates[nodeId] ?? "locked" : "locked";
   }
 
+  useEffect(() => {
+    if (activeNode !== "boomerang") return;
+    const next = nextPipelineStep(flow, "boomerang");
+    const nodeId = next ? stepToNodeMap[next] : stepToNodeMap.dress;
+    if (nodeId) setActiveNode(nodeId);
+  }, [activeNode, flow, stepToNodeMap]);
+
   function selectStep(step: VideoFlowStepKey | "source") {
     if (step === "source") {
       setMeshFocusOverride(true);
@@ -3359,7 +3409,7 @@ export function RunMode(props: RunModeProps) {
               <span>Source image & card id</span>
             </span>
           </button>
-          {flow.pipeline.map((step, index) => {
+          {flow.pipeline.filter((step) => !HIDDEN_RUN_STEPS.has(step)).map((step, index) => {
             const status = stepListStatus(step);
             const node = flow.nodes.find((entry) => entry.step === step);
             const badge = flowStepBadge(status);
@@ -3509,7 +3559,9 @@ export function RunMode(props: RunModeProps) {
                 <Heading size="4">{activeMeta.title}</Heading>
               </Flex>
               <Text color="gray" size="2">
-                {activeMeta.description}
+                {activeNode === "boomerang" && grokSeamlessLoop
+                  ? "This clip plays forward. It is not reversed into a boomerang."
+                  : activeMeta.description}
               </Text>
             </div>
 
@@ -3518,8 +3570,9 @@ export function RunMode(props: RunModeProps) {
             <Callout.Text>
               {activeStep === "boomerang" ? (
                 <>
-                  This step is finished. Use the controls below to make a boomerang or keep the
-                  clips as-is.
+                  {grokSeamlessLoop
+                    ? "This step is finished. The clip plays forward and is not reversed."
+                    : "This step is finished. Use the controls below to make a boomerang or keep the clips as-is."}
                   {cardApproved ? " Changing the clips means you should run Finalize again." : null}
                 </>
               ) : activeStep === "picture" ? (
@@ -3742,8 +3795,9 @@ export function RunMode(props: RunModeProps) {
             <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             <Text color="gray" size="2">
               Theme scenery is baked in Create picture. This step only animates that approved
-              still. Locked camera + skin continuity are enhanced when XAI_API_KEY is set. Click
-              Apply theme on Setup if the prompt still looks like the old blank-wall wording.
+              still. @image3 is that picture. Locked camera + skin continuity are enhanced when
+              XAI_API_KEY is set. Click Apply theme on Setup if the prompt still looks like the
+              old blank-wall wording.
             </Text>
           </Flex>
         ) : null}
@@ -3871,6 +3925,7 @@ export function RunMode(props: RunModeProps) {
             cardLabel={cardLabel.trim()}
             report={flowState?.boomerang ?? null}
             cardApproved={cardApproved}
+            seamlessLoop={grokSeamlessLoop}
             busy={importBusy || jobBusy}
             onBusy={setImportBusy}
             onError={onError}
@@ -3981,7 +4036,9 @@ export function RunMode(props: RunModeProps) {
               <>
                 <Text color="gray" size="2">
                   Card already published. Re-importing replaces both videos and keeps mesh ready.
-                  Change the loop on the Boomerang step.
+                  {grokSeamlessLoop
+                    ? "The clip plays forward and is not reversed."
+                    : "Change the loop on the Boomerang step."}
                 </Text>
               </>
             ) : cardApproved && !cardArtifactsReady ? (
@@ -4276,13 +4333,17 @@ export function RunMode(props: RunModeProps) {
                 ? actionStep === "picture"
                   ? " — pick Grok or Seedream"
                   : actionStep === "boomerang"
-                    ? " — make a boomerang or keep the clips, then continue"
+                    ? grokSeamlessLoop
+                      ? " — the clip plays forward; continue to Create card"
+                      : " — make a boomerang or keep the clips, then continue"
                     : " — watch the clip, then continue"
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
                   ? actionStep === "boomerang"
-                    ? " — make a boomerang or keep the clips as-is"
+                    ? grokSeamlessLoop
+                      ? " — the clip plays forward; continue to Create card"
+                      : " — make a boomerang or keep the clips as-is"
                     : actionIsInteractive
                       ? " — place points on the mesh, then save"
                       : " — ready to run"
@@ -4351,6 +4412,20 @@ export function RunMode(props: RunModeProps) {
                   : "Run step"}
             </Button>
           ) : null}
+
+          {activeNode !== "source" && actionStatus === "approved" && actionStep
+            ? (() => {
+                const next = nextPipelineStep(flow, actionStep);
+                const nextStatus = next ? flowState?.steps[next]?.status : undefined;
+                if (!next || nextStatus === "locked") return null;
+                return (
+                  <Button disabled={flowBusy} type="button" onClick={() => selectStep(next)}>
+                    <Check {...iconProps} />
+                    Continue
+                  </Button>
+                );
+              })()
+            : null}
 
           {activeNode !== "source" && actionStatus === "approved" && actionStep && actionStep !== "boomerang" ? (
             <Button

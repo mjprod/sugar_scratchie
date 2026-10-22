@@ -320,3 +320,36 @@ def test_dress_remake_drops_boomerang_backups(card_id, published_card):
     assert video_flow.read_boomerang_report(work) is None
     assert not (work / "background-pre-boomerang.mp4").exists()
     assert not (work / "foreground-dressed.mp4").exists()
+
+
+@needs_ffmpeg
+def test_grok_flow_skips_boomerang_so_create_card_can_continue(card_id):
+    work = work_dir(card_id)
+    _make_clip(work / "background-raw.mp4")
+    _make_clip(work / "foreground-dressed.mp4")
+    write_state(work, {"approved": ["background", "trim", "dress"]})
+
+    flow = video_flow.flow_state(card_id)
+
+    assert flow["boomerang"]["skipped"] is True
+    assert flow["steps"]["boomerang"]["status"] == "approved"
+    assert flow["steps"]["card"]["status"] == "ready"
+    assert probe_video_timing(work / "background-raw.mp4")["frames"] == SOURCE_SECONDS * FPS
+
+
+@needs_ffmpeg
+def test_wavespeed_flow_keeps_boomerang_choice(card_id):
+    work = work_dir(card_id)
+    _make_clip(work / "background-raw.mp4")
+    _make_clip(work / "foreground-dressed.mp4")
+    write_state(work, {"approved": ["background", "trim", "dress"]})
+    (work / "draft.json").write_text(
+        json.dumps({"background_video_model": "wan-2.2-spicy"}) + "\n",
+        encoding="utf-8",
+    )
+
+    flow = video_flow.flow_state(card_id)
+
+    assert flow["boomerang"]["skipped"] is True
+    assert flow["steps"]["boomerang"]["status"] == "approved"
+    assert flow["steps"]["card"]["status"] == "ready"
