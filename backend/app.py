@@ -178,6 +178,7 @@ from backend.services.video_flow import (
     VideoFlowStep,
     STEP_ORDER,
     apply_boomerang_step,
+    apply_trim_step,
     approve_flow_step,
     flow_state,
     import_dress_clip,
@@ -187,6 +188,7 @@ from backend.services.video_flow import (
     read_flow_draft,
     reject_flow_step,
     reset_boomerang_step,
+    reset_trim_step,
     skip_boomerang_step,
     run_generate_photo_scratch_backgrounds,
     run_generate_photo_scratch_layer,
@@ -194,6 +196,7 @@ from backend.services.video_flow import (
     run_mesh_candidate_generation,
     run_video_flow_step,
     save_flow_draft,
+    trim_step_info,
     validate_step_enqueue,
     video_flow as run_video_flow,
 )
@@ -373,6 +376,12 @@ class VideoFlowStepAction(BaseModel):
     step: VideoFlowStep
     mesh_tracker: Literal["bootstapir", "cotracker", "blend"] | None = None
     picture_choice: int | None = Field(default=None, ge=1, le=3)
+
+
+class VideoFlowTrimRequest(BaseModel):
+    drop_start: int | None = Field(default=None, ge=0, le=60)
+    drop_end: int | None = Field(default=None, ge=0, le=60)
+    auto: bool = False
 
 
 class VideoFlowBoomerangRequest(BaseModel):
@@ -1237,9 +1246,8 @@ def approve_photo_scratch_layer_endpoint(
     slot_id: str,
     layer: Literal["background", "bikini", "clothes"] = "background",
     theme: str = "",
-    choice: str = "",
 ) -> dict:
-    slot = approve_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme, choice)
+    slot = approve_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
     return slot.dict()
 
 
@@ -1803,7 +1811,8 @@ def preview_file(path: str) -> FileResponse:
     target = workspace_path(path, must_exist=True)
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    # Work-dir clips are rewritten in place — never let the browser keep a stale frame.
+    # Work-dir clips are rewritten in place during trim — never let the browser
+    # keep a stale first frame after Fix frames.
     headers = (
         {"Cache-Control": "no-store, max-age=0"}
         if target.suffix.lower() in {".mp4", ".webm", ".mov"}
@@ -2150,6 +2159,45 @@ def reject_video_flow_step(card_id: str, request: VideoFlowStepAction) -> dict:
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
         raise HTTPException(status_code=400, detail="Invalid card id")
     result = reject_flow_step(card_id, request.step)
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.get("/api/video-flow/{card_id}/trim")
+def get_video_flow_trim(card_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        return trim_step_info(card_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/video-flow/{card_id}/trim")
+def post_video_flow_trim(card_id: str, request: VideoFlowTrimRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = apply_trim_step(
+            card_id,
+            drop_start=request.drop_start,
+            drop_end=request.drop_end,
+            auto=request.auto,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.post("/api/video-flow/{card_id}/trim/reset")
+def post_video_flow_trim_reset(card_id: str) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    try:
+        result = reset_trim_step(card_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     cancel_stale_video_flow_jobs(card_id)
     return result
 

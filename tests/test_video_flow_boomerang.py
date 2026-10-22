@@ -179,6 +179,7 @@ def test_boomerang_backfill_keeps_later_steps(card_id):
     assert read_state(work)["approved"] == [
         "picture",
         "background",
+        "trim",
         "dress",
         "boomerang",
         "card",
@@ -302,11 +303,25 @@ def test_dress_reject_restores_missing_work_clip(card_id, published_card):
 
     (work / "background-raw.mp4").unlink()
     (work / "foreground-dressed.mp4").unlink()
+    (work / "background-source.mp4").unlink(missing_ok=True)
 
     video_flow.reject_flow_step(card_id, "dress")
 
     assert probe_video_timing(work / "background-raw.mp4")["frames"] == original_frames
     assert not (work / "foreground-dressed.mp4").exists()
+    assert not (work / "background-pre-boomerang.mp4").exists()
+
+
+@needs_ffmpeg
+def test_trim_reject_restores_missing_source_from_backup(card_id, published_card):
+    work = published_card["work"]
+    video_flow.apply_boomerang_step(card_id, card_label="Test", seconds=2)
+    (work / "background-raw.mp4").unlink()
+    (work / "background-source.mp4").unlink(missing_ok=True)
+
+    video_flow.reject_flow_step(card_id, "trim")
+
+    assert probe_video_timing(work / "background-raw.mp4")["frames"] == SOURCE_SECONDS * FPS
     assert not (work / "background-pre-boomerang.mp4").exists()
 
 

@@ -36,7 +36,6 @@ import {
   setPhotoScratchSlotPrompt,
   slotLayerPrompt,
   uploadPhotoScratchLayer,
-  type PhotoScratchImageChoice,
   type PhotoScratchLayerType,
   type PhotoScratchSlot,
   type PhotoScratchVariationCatalog,
@@ -47,7 +46,6 @@ import { fetchThemes, type ThemeInfo } from "../shared/themes";
 import { flowStepBadge, type FlowNodeRuntime } from "./flowCanvas";
 import {
   COMPRESS_PRESETS,
-  DEFAULT_THEME,
   nodeToStep,
   stepToNode,
   type CompressPreset,
@@ -58,9 +56,7 @@ import {
   type PictureVariationCount,
   type VideoFlowJson,
   type VideoFlowStepKey,
-  ensureImageTokens,
   normalizePicturePrompts,
-  pictureImageTokens,
 } from "./schema";
 import type { CompressReport } from "./projects";
 import { MaskEditor } from "./MaskEditor";
@@ -68,10 +64,11 @@ import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
-import { isWavespeedDressVideoModel, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageModel } from "./storage";
+import { dressModelTakesReferenceImage, isWavespeedDressVideoModel, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageModel } from "./storage";
 import {
   findGenerationModel,
   GenerationModelSelect,
+  modelsForRole,
   useGenerationCatalog,
 } from "../shared/generationModels";
 
@@ -86,11 +83,8 @@ function ThemeSelect({
 }) {
   const trimmed = value.trim();
   const matched = themes.find((entry) => entry.label.toLowerCase() === trimmed.toLowerCase());
-  // The built-in default is not a catalog theme. Leave the menu on real themes only.
-  const orphanDefault =
-    Boolean(trimmed) && !matched && trimmed.toLowerCase() === DEFAULT_THEME.toLowerCase();
-  const selectValue = matched?.label ?? (orphanDefault ? "" : trimmed || themes[0]!.label);
-  const showLegacy = Boolean(trimmed && !matched && !orphanDefault);
+  const selectValue = matched?.label ?? (trimmed || themes[0]!.label);
+  const showLegacy = Boolean(trimmed && !matched);
 
   return (
     <>
@@ -271,6 +265,7 @@ function flowStepFromJobCommand(command: string[]): VideoFlowStepKey | null {
   if (
     step === "picture" ||
     step === "background" ||
+    step === "trim" ||
     step === "dress" ||
     step === "boomerang" ||
     step === "compress" ||
@@ -294,32 +289,370 @@ function pictureChoiceFromArtifact(path: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-const IMAGE_TOKEN_HELP =
-  "@image1 is the main photo, @image2 is the bikini, @image3 is the picture you picked, @image4 is the theme uniform.";
+const PICTURE_COUNT_OPTIONS = [
+  { value: "1", label: "1" },
+  { value: "2", label: "2" },
+  { value: "3", label: "3" },
+] as const;
 
 function PicturePromptFields({
   prompts,
   onPromptsChange,
+  variationCount,
+  onVariationCountChange,
+  compareMode,
+  onCompareModeChange,
+  pictureModels,
+  onPictureModelsChange,
 }: {
   prompts: PicturePrompts;
   onPromptsChange: (next: PicturePrompts) => void;
+  variationCount: PictureVariationCount;
+  onVariationCountChange: (count: PictureVariationCount) => void;
+  compareMode: PictureCompareMode;
+  onCompareModeChange: (mode: PictureCompareMode) => void;
+  pictureModels: PictureModels;
+  onPictureModelsChange: (next: PictureModels) => void;
 }) {
+  const { models } = useGenerationCatalog();
+  const imageModels = modelsForRole(models, "source_image");
+
   return (
     <Flex direction="column" gap="3">
-      <Text color="gray" size="2">
-        Makes two pictures from this prompt: Grok and Seedream. {IMAGE_TOKEN_HELP} A
-        name with no photo uploaded yet is skipped, and the two pictures still run.
-      </Text>
-      <Field label="Prompt">
-        <TextArea
-          rows={8}
-          value={prompts[0] ?? ""}
-          onChange={(event) => {
-            const text = event.currentTarget.value;
-            onPromptsChange([text, text, text]);
-          }}
-        />
+      <Field label="Compare">
+        <Select.Root
+          value={compareMode}
+          onValueChange={(value) => onCompareModeChange(value as PictureCompareMode)}
+        >
+          <Select.Trigger />
+          <Select.Content>
+            <Select.Item value="prompts">Different prompts · same model</Select.Item>
+            <Select.Item value="models">Same prompt · different models</Select.Item>
+          </Select.Content>
+        </Select.Root>
       </Field>
+      <Field label="Pictures">
+        <Select.Root
+          value={String(variationCount)}
+          onValueChange={(value) => onVariationCountChange(Number(value) as PictureVariationCount)}
+        >
+          <Select.Trigger />
+          <Select.Content>
+            {PICTURE_COUNT_OPTIONS.map((option) => (
+              <Select.Item key={option.value} value={option.value}>
+                {option.label}
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select.Root>
+      </Field>
+      {compareMode === "models" ? (
+        <>
+          <Field label="Shared prompt">
+            <TextArea
+              rows={8}
+              value={prompts[0] ?? ""}
+              onChange={(event) => {
+                const text = event.currentTarget.value;
+                onPromptsChange([text, text, text]);
+              }}
+            />
+          </Field>
+          {Array.from({ length: variationCount }, (_, index) => (
+            <Field key={index} label={`Model ${index + 1}`}>
+              <Select.Root
+                value={pictureModels[index] || imageModels[0]?.id || "grok-imagine"}
+                onValueChange={(value) => {
+                  const next = [...pictureModels] as PictureModels;
+                  next[index] = value;
+                  onPictureModelsChange(next);
+                }}
+              >
+                <Select.Trigger />
+                <Select.Content>
+                  {imageModels.map((model) => (
+                    <Select.Item key={model.id} value={model.id}>
+                      {model.label}
+                    </Select.Item>
+                  ))}
+                  {pictureModels[index] &&
+                  !imageModels.some((model) => model.id === pictureModels[index]) ? (
+                    <Select.Item value={pictureModels[index]}>
+                      {pictureModels[index]} (not in catalog)
+                    </Select.Item>
+                  ) : null}
+                </Select.Content>
+              </Select.Root>
+            </Field>
+          ))}
+        </>
+      ) : (
+        Array.from({ length: variationCount }, (_, index) => (
+          <Field key={index} label={`Prompt ${index + 1}`}>
+            <TextArea
+              rows={6}
+              value={prompts[index] ?? ""}
+              onChange={(event) => {
+                const next = [...prompts] as PicturePrompts;
+                next[index] = event.currentTarget.value;
+                onPromptsChange(next);
+              }}
+            />
+          </Field>
+        ))
+      )}
+    </Flex>
+  );
+}
+
+type TrimDetection = {
+  frames: number;
+  fps: number;
+  duration: number;
+  drop_start: number;
+  drop_end: number;
+  suggested: boolean;
+};
+
+type TrimApplied = {
+  drop_start: number;
+  drop_end: number;
+  frames_before: number | null;
+  frames_after: number | null;
+  auto?: boolean;
+  detected_start?: number;
+  detected_end?: number;
+};
+
+type TrimStepInfo = {
+  source: string;
+  clip: string;
+  detection: TrimDetection;
+  applied: TrimApplied | null;
+  status: string;
+  revised_at?: number;
+};
+
+function TrimFramesPanel({
+  cardId,
+  busy,
+  onBusy,
+  onError,
+  onState,
+}: {
+  cardId: string;
+  busy: boolean;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string) => void;
+  onState: (state: VideoFlowState) => void;
+}) {
+  const [info, setInfo] = useState<TrimStepInfo | null>(null);
+  const [dropStart, setDropStart] = useState(0);
+  const [dropEnd, setDropEnd] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
+
+  async function refresh() {
+    if (!cardId) return;
+    setLoading(true);
+    onError("");
+    try {
+      const next = await api<TrimStepInfo>(`/api/video-flow/${encodeURIComponent(cardId)}/trim`);
+      setInfo(next);
+      if (next.applied) {
+        setDropStart(next.applied.drop_start);
+        setDropEnd(next.applied.drop_end);
+      } else {
+        setDropStart(next.detection.drop_start);
+        setDropEnd(next.detection.drop_end);
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when card changes
+  }, [cardId]);
+
+  async function apply(body: { drop_start?: number; drop_end?: number; auto?: boolean }) {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.applied?.drop_start ?? next.trim.detection.drop_start);
+        setDropEnd(next.trim.applied?.drop_end ?? next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  async function reset() {
+    onBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState & { trim?: TrimStepInfo }>(
+        `/api/video-flow/${encodeURIComponent(cardId)}/trim/reset`,
+        { method: "POST", body: "{}" },
+      );
+      onState(next);
+      if (next.trim) {
+        setInfo(next.trim);
+        setDropStart(next.trim.detection.drop_start);
+        setDropEnd(next.trim.detection.drop_end);
+      } else {
+        await refresh();
+      }
+      setPreviewKey((value) => value + 1);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  const clip = info?.clip || info?.source || "";
+  const detection = info?.detection;
+
+  return (
+    <Flex direction="column" gap="4">
+      <Callout.Root color="blue">
+        <Callout.Text size="2">
+          Image-to-video often flashes a white frame at the start or end. Drop those frames here
+          before Video edit, or keep the clip as-is if it looks clean.
+        </Callout.Text>
+      </Callout.Root>
+
+      {clip ? (
+        <MediaPreview
+          key={`${clip}:${previewKey}:${info?.revised_at ?? 0}`}
+          label="Bikini clip (edit before dress-up)"
+          type="video"
+          value={clip}
+          cacheBust={info?.revised_at ?? previewKey}
+        />
+      ) : (
+        <Text color="gray" size="2">
+          {loading ? "Scanning frames…" : "No background clip yet — approve step 1 first."}
+        </Text>
+      )}
+
+      {detection ? (
+        <Callout.Root color={detection.suggested ? "amber" : "green"}>
+          <Callout.Text size="2">
+            {detection.suggested ? (
+              <>
+                Detected a bright flash: drop <strong>{detection.drop_start}</strong> frame
+                {detection.drop_start === 1 ? "" : "s"} from the start and{" "}
+                <strong>{detection.drop_end}</strong> from the end (
+                {detection.frames} frames · {detection.fps.toFixed(1)} fps). Click{" "}
+                <strong>Delete white frames</strong> to apply.
+              </>
+            ) : (
+              <>
+                No bright flash at the edges ({detection.frames} frames ·{" "}
+                {detection.fps.toFixed(1)} fps). You can still drop frames manually if the loop
+                looks wrong.
+              </>
+            )}
+          </Callout.Text>
+        </Callout.Root>
+      ) : null}
+
+      <Grid columns="2" gap="3">
+        <Field label="Drop start frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropStart)}
+            onChange={(event) => setDropStart(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+        <Field label="Drop end frames">
+          <TextField.Root
+            type="number"
+            min={0}
+            max={60}
+            value={String(dropEnd)}
+            onChange={(event) => setDropEnd(Math.max(0, Number(event.currentTarget.value) || 0))}
+          />
+        </Field>
+      </Grid>
+
+      <Flex gap="2" wrap="wrap" align="center">
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          onClick={() => void apply({ auto: true })}
+        >
+          Delete white frames
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: dropStart, drop_end: dropEnd, auto: false })}
+        >
+          Apply trim
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="soft"
+          onClick={() => void apply({ drop_start: 0, drop_end: 0, auto: false })}
+        >
+          Keep as-is
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="outline"
+          onClick={() => void reset()}
+        >
+          <RotateCcw {...iconProps} />
+          Reset to original
+        </Button>
+        <Button
+          disabled={busy || loading || !cardId}
+          type="button"
+          variant="ghost"
+          onClick={() => void refresh()}
+        >
+          Re-scan
+        </Button>
+      </Flex>
+
+      {info?.applied ? (
+        <Text color="gray" size="2">
+          Applied: drop start {info.applied.drop_start}, end {info.applied.drop_end}
+          {typeof info.applied.frames_before === "number" &&
+          typeof info.applied.frames_after === "number"
+            ? ` · ${info.applied.frames_before} → ${info.applied.frames_after} frames`
+            : ""}
+          . Continue when the loop looks right.
+        </Text>
+      ) : (
+        <Text color="gray" size="2">
+          Apply a trim (or Keep as-is), preview the clip, then continue to Video edit.
+        </Text>
+      )}
     </Flex>
   );
 }
@@ -803,24 +1136,6 @@ const PENDING_FIELD: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
   clothes: "pending_clothes",
 };
 
-const CHOICE_FIELD: Record<PhotoScratchLayerType, keyof PhotoScratchSlot> = {
-  background: "pending_bg_choices",
-  bikini: "pending_bikini_choices",
-  clothes: "pending_clothes_choices",
-};
-
-function pendingChoices(
-  slot: PhotoScratchSlot,
-  layer: PhotoScratchLayerType,
-): PhotoScratchImageChoice[] {
-  const choices = slot[CHOICE_FIELD[layer]];
-  if (Array.isArray(choices) && choices.length > 0) return choices;
-  const pending = slot[PENDING_FIELD[layer]];
-  return typeof pending === "string" && pending
-    ? [{ model: "", label: "", src: pending }]
-    : [];
-}
-
 /** Slots with neither approved nor pending for this layer (top-up targets). */
 function slotsNeedingLayer(
   slots: PhotoScratchSlot[],
@@ -843,6 +1158,17 @@ function slotsEligibleForLayer(
     if (layer === "clothes") return Boolean(s.bikini);
     return true;
   });
+}
+
+/** Per-layer AI defaults: bikini → WaveSpeed/Seedream; background & top → x.ai. */
+function defaultProviderForLayer(layer: PhotoScratchLayerType): {
+  provider: AiProvider;
+  imageModel: SourceImageModel;
+} {
+  if (layer === "bikini") {
+    return { provider: "wavespeed", imageModel: "seedream-v5-lite" };
+  }
+  return { provider: "xai", imageModel: "grok-imagine" };
 }
 
 function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
@@ -1324,18 +1650,17 @@ function CardPhotosPanel({
   cardId,
   theme,
   image,
-  bikiniImage = "",
-  uniformImage = "",
   onError,
 }: {
   cardId: string;
   theme: string;
   /** Flow Setup source image path — used so bikini/clothes match the same girl. */
   image: string;
-  bikiniImage?: string;
-  uniformImage?: string;
+  aiProvider?: string;
+  sourceImageModel?: string;
   onError: (message: string) => void;
 }) {
+  const { models } = useGenerationCatalog();
   const [slots, setSlots] = useState<PhotoScratchSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [panelError, setPanelError] = useState("");
@@ -1348,6 +1673,11 @@ function CardPhotosPanel({
   const catalogSaveFlight = useRef<Promise<void> | null>(null);
   const catalogSaveQueued = useRef<PhotoScratchVariationCatalog | null>(null);
   const [slotConfig, setSlotConfig] = useState<VariationDraft[]>([]);
+  // Local provider/model for Photo Scratch AI (independent of Video Flow Setup).
+  // Defaults to x.ai; bikini batch uses WaveSpeed/Seedream unless the user overrides.
+  const [psProvider, setPsProvider] = useState<AiProvider>("xai");
+  const [psImageModel, setPsImageModel] = useState<SourceImageModel>("seedream-v5-lite");
+  const [psProviderTouched, setPsProviderTouched] = useState(false);
   const [prompts, setPrompts] = useState<Record<PhotoScratchLayerType, string>>(() => ({
     bikini: defaultPhotoScratchPrompt("bikini", theme),
     clothes: defaultPhotoScratchPrompt("clothes", theme),
@@ -1420,6 +1750,20 @@ function CardPhotosPanel({
     const existing = slots.find((s) => s.clothes_ref)?.clothes_ref ?? "";
     if (existing) setClothesRefDraft(existing);
   }, [slots]);
+
+  // Keep the provider dropdown honest: show the default for the next generatable layer
+  // (bikini → WaveSpeed/Seedream; background/top → x.ai) until the user overrides.
+  useEffect(() => {
+    if (psProviderTouched) return;
+    const focus =
+      PHOTO_SCRATCH_LAYER_ORDER.find((layer) => {
+        if (slotsEligibleForLayer(slots, layer).length > 0) return true;
+        return slots.some((s) => Boolean(s[PENDING_FIELD[layer]]));
+      }) ?? "background";
+    const next = defaultProviderForLayer(focus);
+    setPsProvider((prev) => (prev === next.provider ? prev : next.provider));
+    setPsImageModel((prev) => (prev === next.imageModel ? prev : next.imageModel));
+  }, [slots, psProviderTouched]);
 
   // When theme changes, refresh prompts that still match the previous defaults.
   useEffect(() => {
@@ -1495,6 +1839,19 @@ function CardPhotosPanel({
     clothes: "tops",
     background: "backgrounds",
   };
+
+  function resolvePsAi(layer: PhotoScratchLayerType): {
+    provider: AiProvider;
+    imageModel: SourceImageModel;
+  } {
+    if (psProviderTouched) {
+      return {
+        provider: psProvider,
+        imageModel: psProvider === "wavespeed" ? psImageModel : "grok-imagine",
+      };
+    }
+    return defaultProviderForLayer(layer);
+  }
 
   const refreshSlots = async (silent = false) => {
     const id = cardId.trim();
@@ -1733,6 +2090,7 @@ function CardPhotosPanel({
         placement: row?.placement ?? "",
       };
     });
+    const { provider, imageModel } = resolvePsAi(layer);
     const token = (genTokenRef.current[layer] ?? 0) + 1;
     genTokenRef.current[layer] = token;
     const single = Boolean(onlySlotId);
@@ -1769,8 +2127,8 @@ function CardPhotosPanel({
             id,
             layer,
             theme,
-            "xai",
-            "grok-imagine",
+            provider,
+            imageModel,
             image.trim(),
             slot.id,
             requestPrompt(layer),
@@ -1827,10 +2185,10 @@ function CardPhotosPanel({
     await startGenerate(layer);
   }
 
-  async function handleApprove(slotId: string, layer: PhotoScratchLayerType, model = "") {
+  async function handleApprove(slotId: string, layer: PhotoScratchLayerType) {
     setPanelError("");
     try {
-      const updated = await approvePhotoScratchLayer(cardId.trim(), slotId, layer, theme, model);
+      const updated = await approvePhotoScratchLayer(cardId.trim(), slotId, layer, theme);
       setSlots((prev) => prev.map((s) => (s.id === slotId ? updated : s)));
     } catch (caught) {
       reportError(caught);
@@ -1909,7 +2267,7 @@ function CardPhotosPanel({
   }
 
   const pendingByLayer = (layer: PhotoScratchLayerType) =>
-    slots.filter((s) => pendingChoices(s, layer).length > 0);
+    slots.filter((s) => Boolean(s[PENDING_KEY[layer]]));
 
   const hasAnyPending =
     pendingByLayer("background").length > 0 ||
@@ -2009,54 +2367,48 @@ function CardPhotosPanel({
             ) : null}
             <Grid columns={{ initial: "2", sm: "3", md: "5" }} gap="3">
               {slots.map((slot) => {
-                const choices = pendingChoices(slot, layer);
+                const pendingSrc = slot[pendingKey] as string | undefined;
                 const approvedSrc = slot[approvedKey] as string | undefined;
-                if (choices.length > 0) {
+                if (pendingSrc) {
                   return (
                     <Box key={`${layer}-${slot.id}`}>
-                      <Grid columns={choices.length > 1 ? "2" : "1"} gap="1">
-                        {choices.map((choice) => (
-                          <Box key={choice.model || choice.src}>
-                            <Box style={{ position: "relative", borderRadius: 8, overflow: "hidden" }}>
-                              <img
-                                alt={choice.label || slot.label}
-                                src={choice.src}
-                                style={{
-                                  width: "100%",
-                                  display: "block",
-                                  aspectRatio: "9/16",
-                                  objectFit: "cover",
-                                }}
-                              />
-                            </Box>
-                            <Text as="div" size="1" color="gray" mt="1" mb="1">
-                              {slot.label}
-                              {choice.label ? ` · ${choice.label}` : ""}
-                            </Text>
-                            <Button
-                              size="1"
-                              type="button"
-                              style={{ width: "100%" }}
-                              onClick={() => void handleApprove(slot.id, layer, choice.model)}
-                            >
-                              <Check {...iconProps} />
-                              Use
-                            </Button>
-                          </Box>
-                        ))}
-                      </Grid>
-                      <Button
-                        color="red"
-                        mt="1"
-                        size="1"
-                        type="button"
-                        variant="soft"
-                        style={{ width: "100%" }}
-                        onClick={() => void handleReject(slot.id, layer)}
-                      >
-                        <X {...iconProps} />
-                        Skip
-                      </Button>
+                      <Box style={{ position: "relative", borderRadius: 8, overflow: "hidden" }}>
+                        <img
+                          alt={slot.label}
+                          src={pendingSrc}
+                          style={{
+                            width: "100%",
+                            display: "block",
+                            aspectRatio: "9/16",
+                            objectFit: "cover",
+                          }}
+                        />
+                      </Box>
+                      <Text as="div" size="1" color="gray" mt="1" mb="1">
+                        {slot.label}
+                      </Text>
+                      <Flex gap="1">
+                        <Button
+                          size="1"
+                          type="button"
+                          style={{ flex: 1 }}
+                          onClick={() => void handleApprove(slot.id, layer)}
+                        >
+                          <Check {...iconProps} />
+                          Use
+                        </Button>
+                        <Button
+                          color="red"
+                          size="1"
+                          type="button"
+                          variant="soft"
+                          style={{ flex: 1 }}
+                          onClick={() => void handleReject(slot.id, layer)}
+                        >
+                          <X {...iconProps} />
+                          Skip
+                        </Button>
+                      </Flex>
                     </Box>
                   );
                 }
@@ -2352,27 +2704,59 @@ function CardPhotosPanel({
         </Box>
       ) : null}
 
-      <Text color="gray" size="1" mb="3" as="p">
-        Each picture is made twice: Grok and Seedream. Pick one. {IMAGE_TOKEN_HELP}{" "}
-        Main photo {image.trim() ? "is set" : "is missing — add it in Setup"}. Bikini{" "}
-        {bikiniImage.trim() || slots.some((slot) => slot.bikini) ? "is set" : "is not set yet"}.
-        Theme uniform{" "}
-        {uniformImage.trim() || slots.some((slot) => slot.clothes_ref)
-          ? "is set"
-          : "is not set yet"}
-        .
-      </Text>
+      <Flex align="end" gap="3" mb="4" wrap="wrap">
+        <Box style={{ minWidth: 160 }}>
+          <Text as="div" size="1" weight="medium" mb="1">
+            AI provider
+          </Text>
+          <Select.Root
+            value={psProvider}
+            onValueChange={(value) => {
+              const next = value as AiProvider;
+              setPsProviderTouched(true);
+              setPsProvider(next);
+              if (next === "wavespeed") setPsImageModel("seedream-v5-lite");
+            }}
+          >
+            <Select.Trigger />
+            <Select.Content>
+              <Select.Item value="xai">x.ai</Select.Item>
+              <Select.Item value="wavespeed">WaveSpeed</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </Box>
+        {psProvider === "wavespeed" ? (
+          <Box style={{ minWidth: 200 }}>
+            <Text as="div" size="1" weight="medium" mb="1">
+              Image model
+            </Text>
+            <GenerationModelSelect
+              role="source_image"
+              value={psImageModel}
+              models={models}
+              onValueChange={(value) => {
+                setPsProviderTouched(true);
+                setPsImageModel(value);
+              }}
+            />
+          </Box>
+        ) : null}
+        <Text color="gray" size="1" style={{ maxWidth: 400 }}>
+          Dropdown follows the next step (bikini → WaveSpeed + Seedream; backgrounds & tops →
+          x.ai). Change it to override all layers. If x.ai blocks, switch to WaveSpeed.
+        </Text>
+      </Flex>
 
       <Flex align="end" gap="3" mb="4" wrap="wrap">
         <Box style={{ flex: "1 1 320px", minWidth: 0 }}>
           <Text as="div" size="1" weight="medium" mb="1">
-            Theme uniform
+            Clothes reference (optional)
           </Text>
           <FilePathPicker
             accept="image/*"
-            placeholder="Upload a uniform photo or paste a path"
+            placeholder="Upload a clothes photo or paste a path"
             preview="image"
-            previewLabel="Theme uniform"
+            previewLabel="Clothes reference"
             previewSize="compact"
             value={clothesRefDraft}
             onChange={setClothesRefDraft}
@@ -2725,25 +3109,11 @@ export function RunMode(props: RunModeProps) {
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
 
   useEffect(() => {
-    const tokens = pictureImageTokens(image, bikiniImage);
-    const next = normalizePicturePrompts(picturePrompts, theme).map((text) =>
-      ensureImageTokens(text, tokens),
-    ) as PicturePrompts;
+    const next = normalizePicturePrompts(picturePrompts, theme);
     if (next.some((text, index) => text !== picturePrompts[index])) {
       onPicturePromptsChange(next);
     }
-  }, [bikiniImage, image, onPicturePromptsChange, picturePrompts, theme]);
-
-  const picturePicked = Boolean(
-    flowState?.picture_choice || flowState?.approved?.includes("picture"),
-  );
-  useEffect(() => {
-    const tokens = pictureImageTokens(image, bikiniImage);
-    if (picturePicked) tokens.push("@image3");
-    if (dressReferenceImage.trim()) tokens.push("@image4");
-    const next = ensureImageTokens(dressPrompt, tokens);
-    if (next !== dressPrompt) onDressPromptChange(next);
-  }, [bikiniImage, dressPrompt, dressReferenceImage, image, onDressPromptChange, picturePicked]);
+  }, [onPicturePromptsChange, picturePrompts, theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2994,6 +3364,9 @@ export function RunMode(props: RunModeProps) {
   const dressOnWavespeed = dressModel
     ? dressModel.provider === "wavespeed"
     : isWavespeedDressVideoModel(dressVideoModel);
+  const dressTakesReference = dressModel
+    ? dressModel.takes_reference_image
+    : dressModelTakesReferenceImage(dressVideoModel);
   const actionNeedsGrok =
     (actionStep === "dress" && !dressOnWavespeed) ||
     (actionStep === "background" && !backgroundOnWavespeed);
@@ -3003,7 +3376,7 @@ export function RunMode(props: RunModeProps) {
   const canUseBackgroundVideo = backgroundOnWavespeed ? canUseWavespeed : canUseGrok;
   const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
   const actionIsInteractive =
-    actionStep === "symbols" || actionStep === "boomerang";
+    actionStep === "symbols" || actionStep === "trim" || actionStep === "boomerang";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -3052,9 +3425,9 @@ export function RunMode(props: RunModeProps) {
     image,
     theme,
     picture_prompts: picturePrompts,
-    picture_variation_count: 2,
-    picture_compare_mode: "models",
-    picture_models: ["grok-imagine", "seedream-v5-lite", "grok-imagine"],
+    picture_variation_count: pictureVariationCount,
+    picture_compare_mode: pictureCompareMode,
+    picture_models: pictureModels,
     background_motion_prompt: backgroundMotionPrompt,
     foreground_motion_prompt: backgroundMotionPrompt,
     dress_prompt: dressPrompt,
@@ -3093,15 +3466,12 @@ export function RunMode(props: RunModeProps) {
   const needsSourceImage =
     actionStep === "picture" || actionStep === "background" || actionStep === "dress";
 
-  const needsUniform = actionStep === "dress";
-
   const canRunActionStep = Boolean(
     actionStep &&
       !actionIsInteractive &&
       cardId.trim() &&
       cardLabel.trim() &&
       (!needsSourceImage || image) &&
-      (!needsUniform || dressReferenceImage.trim()) &&
       (!actionNeedsGrok || canUseGrok) &&
       (!actionNeedsWavespeed || canUseWavespeed) &&
       stepApiReady &&
@@ -3115,7 +3485,6 @@ export function RunMode(props: RunModeProps) {
       cardId.trim() &&
       cardLabel.trim() &&
       (!needsSourceImage || image) &&
-      (!needsUniform || dressReferenceImage.trim()) &&
       (!actionNeedsWavespeed || canUseWavespeed) &&
       stepApiReady &&
       !flowBusy &&
@@ -3127,7 +3496,6 @@ export function RunMode(props: RunModeProps) {
       cardId.trim() &&
       cardLabel.trim() &&
       (!needsSourceImage || image) &&
-      (!needsUniform || dressReferenceImage.trim()) &&
       (!actionNeedsGrok || canUseGrok) &&
       (!actionNeedsWavespeed || canUseWavespeed) &&
       stepApiReady &&
@@ -3236,6 +3604,16 @@ export function RunMode(props: RunModeProps) {
     } finally {
       setFlowBusy(false);
     }
+  }
+
+  function handlePictureCountChange(count: PictureVariationCount) {
+    onPictureVariationCountChange(count);
+    if (count === pictureVariationCount) return;
+    const pictureStatus = flowState?.steps.picture?.status;
+    const hasPictures = (flowState?.steps.picture?.artifacts ?? []).some(Boolean);
+    if (!hasPictures && pictureStatus !== "approved" && pictureStatus !== "review") return;
+    if (effectiveRunningStep === "picture") return;
+    void runStep("picture", true, count);
   }
 
   async function generateMeshCandidate() {
@@ -3435,6 +3813,7 @@ export function RunMode(props: RunModeProps) {
           {actionStatus === "review" &&
           actionStep &&
           reviewSteps.has(actionStep) &&
+          actionStep !== "trim" &&
           actionStep !== "boomerang" ? (
             <Callout.Root color="amber" className="flow-review-panel" mb="4">
               <Callout.Text weight="bold">
@@ -3549,7 +3928,7 @@ export function RunMode(props: RunModeProps) {
         {activeNode === "source" ? (
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
-            <Field label="Main image (@image1)">
+            <Field label="Source image path or URL">
               <FilePathPicker
                 accept="image/*"
                 placeholder="Pick an image or paste a path/URL"
@@ -3563,7 +3942,7 @@ export function RunMode(props: RunModeProps) {
               />
             </Field>
 
-            <Field label="Bikini (@image2, optional — dress her in this swimsuit)">
+            <Field label="Bikini model (optional — dress her in this swimsuit)">
               <Flex direction="column" gap="1">
                 <FilePathPicker
                   accept="image/*"
@@ -3645,7 +4024,7 @@ export function RunMode(props: RunModeProps) {
                 Apply theme to prompts
               </Button>
               <Text color="gray" size="2">
-                Rewrites the picture prompt, background scenery, and dress costume from the theme.
+                Rewrites the three picture prompts, background scenery, and dress costume from the theme.
                 With a dress reference image attached, the dress prompt matches that reference.
                 Hand-edited prompts stay until you click Apply.
               </Text>
@@ -3669,26 +4048,35 @@ export function RunMode(props: RunModeProps) {
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
             <Text color="gray" size="2">
-              Makes two pictures, Grok and Seedream, from the prompt below. {IMAGE_TOKEN_HELP}{" "}
-              Pick one as soon as it appears. Every still keeps the influencer position.
+              Choose 1, 2, or 3. Compare different prompts on one model, or the same prompt on
+              different image models. Pick one as soon as it appears — you do not have to wait for
+              the rest. Every still keeps the influencer position.
             </Text>
             {effectiveRunningStep === "picture" ? (
               <Callout.Root color="blue">
                 <Callout.Text>
-                  Making 2 pictures — Grok and Seedream. Use one as soon as it shows up.
+                  Making {pictureVariationCount} picture{pictureVariationCount === 1 ? "" : "s"}
+                  {pictureCompareMode === "models" ? " across models" : ""}. Use a picture as soon
+                  as it shows up.
                 </Callout.Text>
               </Callout.Root>
             ) : null}
             <PicturePromptFields
               prompts={picturePrompts}
               onPromptsChange={onPicturePromptsChange}
+              variationCount={pictureVariationCount}
+              onVariationCountChange={handlePictureCountChange}
+              compareMode={pictureCompareMode}
+              onCompareModeChange={onPictureCompareModeChange}
+              pictureModels={pictureModels}
+              onPictureModelsChange={onPictureModelsChange}
             />
             <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             {flowState?.steps.picture?.status === "approved" &&
             !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
               <Callout.Root color="blue">
                 <Callout.Text>
-                  This card was animated before the picture step existed. Remake to generate the two
+                  This card was animated before the picture step existed. Remake to generate three
                   stills, pick one, then run image-to-video again.
                 </Callout.Text>
               </Callout.Root>
@@ -3732,7 +4120,7 @@ export function RunMode(props: RunModeProps) {
                 </Select.Content>
               </Select.Root>
             </Field>
-            <Field label="Bikini background prompt (animates the approved picture)">
+            <Field label="Bikini background prompt (animates the approved picture — approve before fix frames)">
               <TextArea
                 className="dashboard-textarea"
                 value={backgroundMotionPrompt}
@@ -3748,11 +4136,21 @@ export function RunMode(props: RunModeProps) {
           </Flex>
         ) : null}
 
+        {activeNode === "trim" ? (
+          <TrimFramesPanel
+            cardId={cardId.trim()}
+            busy={jobBusy}
+            onBusy={setFlowBusy}
+            onError={onError}
+            onState={applyFlowState}
+          />
+        ) : null}
+
         {!showStepLoading && activeNode === "dress" ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="orange">
               <Callout.Text size="2">
-                Step 3 edits your approved bikini clip in place. x.ai Grok scans every
+                Step 3 edits your approved (trimmed) bikini clip in place. x.ai Grok scans every
                 frame of that video for moderation — a modest dress prompt can still fail. Use a{" "}
                 <strong>WaveSpeed</strong> video edit model to avoid that scan, or upload your own
                 dress video below.
@@ -3782,31 +4180,37 @@ export function RunMode(props: RunModeProps) {
                 value={dressPrompt}
                 onChange={(event) => onDressPromptChange(event.currentTarget.value)}
               />
-              <Text color="gray" size="1">
-                {IMAGE_TOKEN_HELP}
-              </Text>
             </Field>
             <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             <Button type="button" size="1" variant="soft" onClick={onApplyThemeToPrompts}>
               Apply theme to dress prompt
             </Button>
-            <Field label="Theme uniform (@image4)">
+            <Field
+              label={
+                dressTakesReference
+                  ? `Dress reference image (optional — sent to the model as ${dressModel?.reference_token || "Image 1"})`
+                  : "Dress reference image (optional — captioned into prompt for WAN 2.2 & Grok)"
+              }
+            >
               <FilePathPicker
                 accept="image/*"
                 placeholder="Pick a dress photo or paste a path/URL"
                 preview="image"
-                previewLabel="Theme uniform"
+                previewLabel="Dress reference"
                 previewSize="compact"
                 value={dressReferenceImage}
                 onChange={onDressReferenceImageChange}
                 onError={onError}
               />
             </Field>
-            <Text color={dressReferenceImage.trim() ? "gray" : "orange"} size="2">
-              {dressReferenceImage.trim()
-                ? "Required. The dress prompt names this photo @image4."
-                : "Required. Upload the theme uniform (@image4) before running this step."}
-            </Text>
+            {dressReferenceImage.trim() ? (
+              <Text color="gray" size="2">
+                {dressModelTakesReferenceImage(dressVideoModel)
+                  ? "The image is attached to the edit and the prompt tells the model to copy that outfit."
+                  : "Reference is captioned and appended after prompt enhance so the outfit match wins."}{" "}
+                Click Apply theme if the dress prompt still looks generic.
+              </Text>
+            ) : null}
             <label className="checkbox-label">
               <Checkbox
                 checked={enhancePrompt}
@@ -3858,7 +4262,7 @@ export function RunMode(props: RunModeProps) {
               </Button>
               {!dressUnlocked ? (
                 <Text color="gray" size="2">
-                  Approve the bikini clip first.
+                  Approve Fix frames first.
                 </Text>
               ) : null}
             </Flex>
@@ -4165,7 +4569,7 @@ export function RunMode(props: RunModeProps) {
 
         {(() => {
           if (showStepLoading) return null;
-          if (!activeStep || activeStep === "symbols" || activeStep === "mesh") {
+          if (!activeStep || activeStep === "symbols" || activeStep === "mesh" || activeStep === "trim") {
             return null;
           }
           const stepStatus = flowState?.steps[activeStep]?.status;
@@ -4194,9 +4598,12 @@ export function RunMode(props: RunModeProps) {
           const pictureLabel = (artifact: string) => {
             const choice = pictureChoiceFromArtifact(artifact);
             if (choice == null) return artifact.split("/").pop() ?? "Result";
-            if (choice === 1) return "Grok";
-            if (choice === 2) return "Seedream";
-            return `Picture ${choice}`;
+            if (pictureCompareMode === "models") {
+              const modelId = pictureModels[choice - 1] || sourceImageModel;
+              const model = findGenerationModel(models, "source_image", modelId);
+              return model?.label || modelId || `Picture ${choice}`;
+            }
+            return `Prompt ${choice}`;
           };
           const pictureChoices =
             activeStep === "picture"
@@ -4267,23 +4674,27 @@ export function RunMode(props: RunModeProps) {
         <Flex direction="column" gap="3" style={{ flex: 1 }}>
           {activeNode === "source" ? (
             <Text size="2">
-              Setup — open Create picture. It makes a Grok still and a Seedream still.
+              Setup — open Create picture, choose 1, 2, or 3 variations, then make the stills.
             </Text>
           ) : actionStep && flowState ? (
             <Text size="2" weight="medium">
               {flowState.steps[actionStep].label}
               {actionStatus === "review" && reviewSteps.has(actionStep)
                 ? actionStep === "picture"
-                  ? " — pick Grok or Seedream"
-                  : actionStep === "boomerang"
-                    ? " — make a boomerang or keep the clips, then continue"
-                    : " — watch the clip, then continue"
+                  ? " — pick one of the three pictures"
+                  : actionStep === "trim"
+                    ? " — drop white frames or keep the clip, then continue"
+                    : actionStep === "boomerang"
+                      ? " — make a boomerang or keep the clips, then continue"
+                      : " — watch the clip, then continue"
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
-                  ? actionStep === "boomerang"
-                    ? " — make a boomerang or keep the clips as-is"
-                    : actionIsInteractive
+                  ? actionStep === "trim"
+                    ? " — delete white frames (or keep as-is) in the Fix frames panel"
+                    : actionStep === "boomerang"
+                      ? " — make a boomerang or keep the clips as-is"
+                      : actionIsInteractive
                       ? " — place points on the mesh, then save"
                       : " — ready to run"
                   : actionStatus === "approved"
@@ -4307,9 +4718,9 @@ export function RunMode(props: RunModeProps) {
         <Flex align="center" gap="2" wrap="wrap">
           {actionStatus === "review" &&
           actionStep &&
-          (!reviewSteps.has(actionStep) || actionStep === "boomerang") ? (
+          (!reviewSteps.has(actionStep) || actionStep === "trim" || actionStep === "boomerang") ? (
             <Button disabled={flowBusy} type="button" onClick={() => void approveFocusClip()}>
-              {actionStep === "boomerang" ? <Check {...iconProps} /> : null}
+              {actionStep === "trim" || actionStep === "boomerang" ? <Check {...iconProps} /> : null}
               Continue
             </Button>
           ) : null}
@@ -4377,11 +4788,11 @@ export function RunMode(props: RunModeProps) {
 
       {cardId.trim() ? (
         <CardPhotosPanel
-          bikiniImage={bikiniImage}
           cardId={cardId.trim()}
-          image={image}
           theme={theme}
-          uniformImage={dressReferenceImage}
+          image={image}
+          aiProvider={aiProvider}
+          sourceImageModel={sourceImageModel}
           onError={onError}
         />
       ) : null}

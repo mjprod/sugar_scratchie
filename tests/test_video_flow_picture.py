@@ -11,7 +11,6 @@ import pytest
 from backend.services.grok import INFLUENCER_POSITION, resolve_scenery_prompt, scenery_edit_prompt
 from backend.services.video_flow import (
     picture_take_prompts,
-    with_uploaded_image_tokens,
     WORK_DIR,
     approve_flow_step,
     first_ready_picture_choice,
@@ -29,53 +28,6 @@ def card_id() -> Generator[str, None, None]:
     value = f"test_picture_{uuid.uuid4().hex[:10]}"
     yield value
     shutil.rmtree(WORK_DIR / value, ignore_errors=True)
-
-
-def test_uploaded_photos_are_named_in_the_prompt():
-    stock = (
-        "Replace the entire background behind the person with a beach. "
-        "Keep bikini/outfit. Her scale stays identical. @image1 @image2"
-    )
-    both = with_uploaded_image_tokens(stock, has_main=True, has_bikini=True)
-    assert "behind the person in @image1" in both
-    assert "bikini in @image2" in both
-    assert not both.endswith("@image2")
-    assert "identical. @image1" not in both
-
-    main = with_uploaded_image_tokens(
-        "Replace the entire background behind the person with a beach.",
-        has_main=True,
-        has_bikini=False,
-    )
-    assert "behind the person in @image1" in main
-    assert "@image2" not in main
-
-    custom = with_uploaded_image_tokens("Keep her pose.", has_main=True, has_bikini=True)
-    assert custom.startswith("@image1 @image2\n\nKeep her pose.")
-    assert with_uploaded_image_tokens("Use @image1 only.", has_main=True, has_bikini=False) == (
-        "Use @image1 only."
-    )
-    assert with_uploaded_image_tokens("No photos.", has_main=False, has_bikini=False) == "No photos."
-
-    dress = with_uploaded_image_tokens(
-        "Same woman, clothes only. Replace her entire bikini with a costume worn on this same woman.",
-        has_main=True,
-        has_bikini=True,
-        has_picked=True,
-    )
-    assert "Same woman in @image1" in dress
-    assert "entire bikini in @image2" in dress
-    assert "this same woman in @image3" in dress
-    assert not dress.endswith("@image3")
-
-    uniform = with_uploaded_image_tokens(
-        "Replace her entire bikini with a Police costume worn on this same woman.",
-        has_main=False,
-        has_bikini=False,
-        has_uniform=True,
-    )
-    assert "costume in @image4" in uniform
-    assert not uniform.endswith("@image4")
 
 
 def test_each_picture_take_keeps_its_own_prompt():
@@ -139,7 +91,7 @@ def test_saved_side_light_prompt_keeps_even_light_on_her_body():
 def test_picture_backfill_keeps_later_steps(card_id: str):
     work = work_dir(card_id)
     write_state(work, {"approved": ["background", "trim", "dress"]})
-    assert read_state(work)["approved"] == ["picture", "background", "dress"]
+    assert read_state(work)["approved"] == ["picture", "background", "trim", "dress"]
 
 
 def test_background_stays_locked_until_picture_is_approved(card_id: str):
@@ -410,162 +362,3 @@ def test_create_picture_models_mode_uses_one_prompt_across_models(monkeypatch, t
     assert calls[1][0] == "seedream-v5-lite"
     assert calls[0][2] == calls[1][2]
     assert "other unused" not in calls[0][2]
-
-
-def test_create_picture_is_always_grok_and_seedream(monkeypatch, tmp_path):
-    from PIL import Image
-
-    import backend.services.video_flow as video_flow
-
-    monkeypatch.setenv("XAI_API_KEY", "test-key")
-    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
-
-    source = tmp_path / "source.png"
-    Image.new("RGB", (8, 8), (10, 20, 30)).save(source)
-    work = tmp_path / "work"
-    work.mkdir()
-    paths = {
-        "picture": work / "picture.png",
-        "styled_bikini": work / "styled-bikini.png",
-        "styled_face": work / "styled-face.png",
-        "styled_source": work / "styled-source.png",
-    }
-    calls: list[str] = []
-
-    def fake_scenery(**kwargs):
-        out = Path(kwargs["out"])
-        Image.new("RGB", (8, 8), (40, 40, 40)).save(out)
-        calls.append(str(kwargs["image_model"]))
-        return out
-
-    monkeypatch.setattr(video_flow, "edit_image_scenery", fake_scenery)
-
-    video_flow.build_picture_still(
-        image=source,
-        theme_text="Police",
-        source_model="grok-imagine",
-        ai_provider="xai",
-        draft={},
-        paths=paths,
-        picture_prompts=["Keep her in the station."],
-        picture_variation_count=3,
-    )
-
-    assert calls == ["grok-imagine", "seedream-v5-lite"]
-
-
-def test_create_picture_at_image_sends_named_photos(monkeypatch, tmp_path):
-    from PIL import Image
-
-    import backend.services.video_flow as video_flow
-
-    monkeypatch.setenv("XAI_API_KEY", "test-key")
-    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
-
-    source = tmp_path / "source.png"
-    bikini = tmp_path / "bikini.png"
-    uniform = tmp_path / "uniform.png"
-    for path, color in ((source, (1, 1, 1)), (bikini, (2, 2, 2)), (uniform, (3, 3, 3))):
-        Image.new("RGB", (8, 8), color).save(path)
-    work = tmp_path / "work"
-    work.mkdir()
-    paths = {
-        "picture": work / "picture.png",
-        "styled_bikini": work / "styled-bikini.png",
-        "styled_face": work / "styled-face.png",
-        "styled_source": work / "styled-source.png",
-    }
-    seen: list[tuple[str, list[Path]]] = []
-
-    def fake_edit(**kwargs):
-        out = Path(kwargs["out"])
-        Image.new("RGB", (8, 8), (9, 9, 9)).save(out)
-        if kwargs.get("images"):
-            seen.append((str(kwargs["image_model"]), list(kwargs["images"])))
-        return out
-
-    monkeypatch.setattr(video_flow, "_caption_clothes_ref", lambda ref, cache: "red bikini")
-    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_edit)
-    monkeypatch.setattr(
-        video_flow,
-        "edit_image_scenery",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
-    )
-
-    picked = work / "picture.png"
-    Image.new("RGB", (8, 8), (4, 4, 4)).save(picked)
-    video_flow.build_picture_still(
-        image=source,
-        theme_text="Police",
-        source_model="grok-imagine",
-        ai_provider="xai",
-        draft={"bikini_image": str(bikini), "dress_reference_image": str(uniform)},
-        paths=paths,
-        picture_prompts=["Dress @image1 in @image2. Keep the picked still @image3."],
-        picture_variation_count=1,
-    )
-
-    prepared = paths["styled_source"]
-    assert len(seen) == 2
-    assert seen[0][0] == "grok-imagine"
-    assert seen[1][0] == "seedream-v5-lite"
-    assert seen[0][1][0] == prepared
-    assert seen[0][1][1] == bikini
-    assert seen[0][1][2].name == "picked-picture.png"
-    assert uniform not in seen[0][1]
-
-
-def test_create_picture_skips_image3_until_a_picture_is_picked(monkeypatch, tmp_path):
-    from PIL import Image
-
-    import backend.services.video_flow as video_flow
-
-    monkeypatch.setenv("XAI_API_KEY", "test-key")
-    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
-
-    source = tmp_path / "source.png"
-    bikini = tmp_path / "bikini.png"
-    for path, color in ((source, (1, 1, 1)), (bikini, (2, 2, 2))):
-        Image.new("RGB", (8, 8), color).save(path)
-    work = tmp_path / "work"
-    work.mkdir()
-    paths = {
-        "picture": work / "picture.png",
-        "styled_bikini": work / "styled-bikini.png",
-        "styled_face": work / "styled-face.png",
-        "styled_source": work / "styled-source.png",
-    }
-    seen: list[tuple[str, str, list[Path]]] = []
-
-    def fake_edit(**kwargs):
-        out = Path(kwargs["out"])
-        Image.new("RGB", (8, 8), (9, 9, 9)).save(out)
-        if kwargs.get("images"):
-            seen.append((str(kwargs["image_model"]), str(kwargs["prompt"]), list(kwargs["images"])))
-        return out
-
-    monkeypatch.setattr(video_flow, "_caption_clothes_ref", lambda ref, cache: "red bikini")
-    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_edit)
-    monkeypatch.setattr(
-        video_flow,
-        "edit_image_scenery",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
-    )
-
-    video_flow.build_picture_still(
-        image=source,
-        theme_text="Egypt",
-        source_model="grok-imagine",
-        ai_provider="xai",
-        draft={"bikini_image": str(bikini), "dress_reference_image": ""},
-        paths=paths,
-        picture_prompts=["Keep her in Egypt. @image1 @image2 @image3"],
-        picture_variation_count=1,
-    )
-
-    prepared = paths["styled_source"]
-    assert len(seen) == 2
-    assert "@image3" not in seen[0][1]
-    assert "@image1" in seen[0][1] and "@image2" in seen[0][1]
-    assert seen[0][2] == [prepared, bikini]
-    assert seen[1][2] == [prepared, bikini]
