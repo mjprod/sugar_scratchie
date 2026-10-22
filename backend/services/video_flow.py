@@ -1744,10 +1744,15 @@ def _photo_still_routes() -> list[tuple[str, str, str]]:
 
 
 def _theme_uniform_path(clothes_ref: str | None, card_id: str) -> Path | None:
-    """Photo for @image4: this slot's clothes reference, else the dress-step uniform."""
-    path = _local_image_path(clothes_ref)
-    if path is not None:
-        return path
+    """Local photo for @image4.
+
+    A slot clothes reference wins, including a remote URL: that URL is captioned
+    by the caller, not replaced by the dress-step file. The dress uniform is
+    used only when this slot has no clothes reference of its own.
+    """
+    ref = str(clothes_ref or "").strip()
+    if ref:
+        return _local_image_path(ref)
     saved = read_flow_draft(card_id) or {}
     return _optional_draft_image(saved, "dress_reference_image", "Theme uniform")
 

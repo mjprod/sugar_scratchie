@@ -135,10 +135,15 @@ def test_tagged_top_prompt_captions_a_remote_uniform(tmp_path: Path, monkeypatch
 
     root = tmp_path.resolve()
     girl = root / "girl.png"
+    dress = root / "dress.png"
     bikini = root / "public" / "cards" / "demo" / "photo-scratch" / "bikini.jpg"
     girl.write_bytes(b"girl")
+    dress.write_bytes(b"dress")
     bikini.parent.mkdir(parents=True)
     bikini.write_bytes(b"bikini")
+    work = root / "work" / "demo"
+    work.mkdir(parents=True)
+    (work / "draft.json").write_text(json.dumps({"dress_reference_image": str(dress)}))
     monkeypatch.setattr(video_flow, "ROOT", root)
     monkeypatch.setattr(video_flow, "CARDS_DIR", root / "public" / "cards")
     monkeypatch.setattr(video_flow, "WORK_DIR", root / "work")
@@ -172,6 +177,7 @@ def test_tagged_top_prompt_captions_a_remote_uniform(tmp_path: Path, monkeypatch
 
     assert "navy police minidress" in seen["prompt"]
     assert "@image4" not in seen["prompt"]
+    assert dress not in seen["images"]
     assert seen["images"] == [girl]
 
 
