@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from backend.storage import publish_file
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "add-garment-mask.py"
 
@@ -110,6 +112,7 @@ def generate_garment_mask(
             )
         data["source"] = str(video.relative_to(ROOT))
         mesh_path.write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
+        publish_file(mesh_path)
         print(f"Updated mesh source to {data['source']}", flush=True)
 
     previous = {
@@ -164,6 +167,7 @@ def generate_garment_mask(
     _shrink_to_cap(data, max_coverage)
     data["garmentSource"] = "auto-detect"
     mesh_path.write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
+    publish_file(mesh_path)
 
     garment = data.get("garment") or []
     total = len(garment)

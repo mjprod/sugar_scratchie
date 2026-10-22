@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_engine, get_session, ping_db
+from backend.storage import publish_file
 from backend.auth.operator import OperatorAuthMiddleware
 from backend.logging_config import configure_logging
 from backend.middleware.request_timing import RequestTimingMiddleware
@@ -1859,6 +1860,7 @@ def save_garment_mask(request: SaveGarmentRequest) -> dict:
             if isinstance(frame, dict):
                 frame["vis"] = list(data["garment"])
     path.write_text(json.dumps(data, separators=(",", ":")) + "\n")
+    publish_file(path)
     return {
         "ok": True,
         "file": name,

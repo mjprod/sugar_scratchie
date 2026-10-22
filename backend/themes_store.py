@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.cards import versioned_public_url
+from backend.storage import delete_public, publish_file
 from backend.db.models import Theme
 
 THEME_COLOR_KEYS = (
@@ -342,6 +343,7 @@ def delete_theme(db: Session, themes_dir: Path, theme_id: str) -> None:
     db.flush()
     theme_dir = themes_dir / slug
     if theme_dir.is_dir():
+        delete_public(theme_dir)
         shutil.rmtree(theme_dir, ignore_errors=True)
 
 
@@ -387,9 +389,11 @@ async def upload_theme_intro(
     for old_ext in INTRO_EXTENSIONS:
         old = theme_dir / f"intro{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
     target = theme_dir / f"intro{ext}"
     target.write_bytes(data)
+    publish_file(target)
     return get_theme(db, themes_dir, theme.id)
 
 
@@ -409,6 +413,7 @@ async def upload_default_bgm(public_dir: Path, upload: UploadFile) -> str:
     path = default_bgm_path(public_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    publish_file(path)
     url = find_default_bgm(public_dir)
     if not url:
         raise HTTPException(status_code=500, detail="Failed to store default background music")
@@ -419,6 +424,7 @@ def delete_default_bgm(public_dir: Path) -> None:
     path = default_bgm_path(public_dir)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Default background music not found")
+    delete_public(path)
     path.unlink()
 
 
@@ -432,7 +438,9 @@ async def upload_theme_bgm(
     data = await _read_mp3(upload)
     theme_dir = themes_dir / theme.id
     theme_dir.mkdir(parents=True, exist_ok=True)
-    (theme_dir / "bgm.mp3").write_bytes(data)
+    bgm_path = theme_dir / "bgm.mp3"
+    bgm_path.write_bytes(data)
+    publish_file(bgm_path)
     return get_theme(db, themes_dir, theme.id)
 
 
@@ -441,6 +449,7 @@ def delete_theme_bgm(db: Session, themes_dir: Path, theme_id: str) -> ThemeInfo:
     path = themes_dir / theme.id / "bgm.mp3"
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"Background music not found for theme: {theme.id}")
+    delete_public(path)
     path.unlink()
     return get_theme(db, themes_dir, theme.id)
 
@@ -452,6 +461,7 @@ def delete_theme_intro(db: Session, themes_dir: Path, theme_id: str) -> ThemeInf
     for ext in INTRO_EXTENSIONS:
         path = theme_dir / f"intro{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     if not removed:

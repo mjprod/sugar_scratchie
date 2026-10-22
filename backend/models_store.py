@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.cards import public_url, versioned_public_url
+from backend.storage import delete_public, publish_file
 from backend.cards_store import delete_card_standalone, list_cards_standalone
 from backend.db.models import Creator
 
@@ -551,6 +552,7 @@ def delete_model(
     db.flush()
     model_dir = models_dir / slug
     if model_dir.is_dir():
+        delete_public(model_dir)
         shutil.rmtree(model_dir, ignore_errors=True)
 
 
@@ -605,9 +607,11 @@ def write_optimized_still(
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{stem}.webp"
     target.write_bytes(encoded)
+    publish_file(target)
     for old_ext in AVATAR_EXTENSIONS - {".webp"}:
         old = target_dir / f"{stem}{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
     return target
 
@@ -659,8 +663,11 @@ async def upload_model_flag_svg(
     for old_ext in FLAG_EXTENSIONS:
         old = model_dir / f"flag{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
-    (model_dir / f"flag{ext}").write_bytes(data)
+    flag_path = model_dir / f"flag{ext}"
+    flag_path.write_bytes(data)
+    publish_file(flag_path)
     return _row_to_info(row, models_dir)
 
 
@@ -671,6 +678,7 @@ def delete_model_flag_svg(db: Session, models_dir: Path, model_id: str) -> Model
     for ext in FLAG_EXTENSIONS:
         path = model_dir / f"flag{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     if not removed:
@@ -700,8 +708,11 @@ async def upload_model_video(
     for old_ext in VIDEO_EXTENSIONS:
         old = model_dir / f"{stem}{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
-    (model_dir / f"{stem}{ext}").write_bytes(data)
+    video_path = model_dir / f"{stem}{ext}"
+    video_path.write_bytes(data)
+    publish_file(video_path)
     return _row_to_info(row, models_dir)
 
 
@@ -737,8 +748,11 @@ async def upload_model_poster(
     for old_ext in AVATAR_EXTENSIONS:
         old = model_dir / f"{stem}{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
-    (model_dir / f"{stem}{ext}").write_bytes(data)
+    poster_path = model_dir / f"{stem}{ext}"
+    poster_path.write_bytes(data)
+    publish_file(poster_path)
     return _row_to_info(row, models_dir)
 
 
@@ -792,6 +806,7 @@ def delete_model_theme_avatar(
     for ext in AVATAR_EXTENSIONS:
         path = theme_dir / f"avatar{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     if not removed:

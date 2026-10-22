@@ -12,6 +12,7 @@ from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.services.video_prep import hd_variant_path
+from backend.storage import delete_public, local_media_rel, public_media_url, publish_file
 
 
 CARD_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -129,7 +130,7 @@ def public_url(workspace_path: str) -> str:
         path_part = path_part.removeprefix("public/")
     parts = [part for part in path_part.split("/") if part]
     encoded = "/".join(quote(part) for part in parts)
-    return f"/{encoded}{suffix}"
+    return public_media_url(encoded, suffix)
 
 
 def media_mtime_version(path: Path) -> int:
@@ -164,10 +165,11 @@ def version_public_src(root: Path, src: str | None) -> str | None:
     base = strip_media_query(src)
     if not base:
         return None
-    path = _resolve_public_media(root, base)
+    rel = local_media_rel(base)
+    path = _resolve_public_media(root, rel)
     if not path.is_file():
         return base
-    url = base if base.startswith("/") else public_url(base)
+    url = public_url(rel)
     version = media_mtime_version(path)
     if version > 0:
         return f"{url}?v={version}"
@@ -197,6 +199,7 @@ def remove_card_trailer_poster_files(card_dir: Path) -> bool:
     for ext in PHOTO_EXTENSIONS:
         path = card_dir / f"{TRAILER_POSTER_STEM}{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     return removed
@@ -217,6 +220,7 @@ def remove_card_motion_poster_files(card_dir: Path) -> bool:
     for ext in PHOTO_EXTENSIONS:
         path = card_dir / f"{MOTION_POSTER_STEM}{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     return removed
@@ -243,6 +247,7 @@ def resolve_source(root: Path, value: str) -> Path:
 def copy_video(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
+    publish_file(target)
 
 
 def card_paths(root: Path, cards_dir: Path, card_id: str) -> tuple[Path, Path]:
@@ -1267,14 +1272,10 @@ def slot_layer_prompt(slot: PhotoScratchSlot, layer: str) -> str:
 
 def _resolve_public_media(root: Path, src: str) -> Path:
     """Map a public URL like /cards/id/photo-scratch/... to a filesystem path."""
-    trimmed = strip_media_query(src)
-    if trimmed.startswith("/"):
-        trimmed = trimmed[1:]
+    trimmed = local_media_rel(strip_media_query(src)).lstrip("/")
     if trimmed.startswith("public/"):
-        path = root / trimmed
-    else:
-        path = root / "public" / trimmed
-    return path
+        return root / trimmed
+    return root / "public" / trimmed
 
 
 def match_photo_scratch_slot(

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from backend.storage import publish_file
+
 SYMBOL_POINT_COUNT = 12
 
 
@@ -22,6 +24,7 @@ def _load_mesh(mesh_path: Path) -> dict[str, Any]:
 def _write_mesh(mesh_path: Path, data: dict[str, Any]) -> None:
     mesh_path.parent.mkdir(parents=True, exist_ok=True)
     mesh_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    publish_file(mesh_path)
 
 
 def _normalize_points(raw: list[Any]) -> list[dict[str, float]]:

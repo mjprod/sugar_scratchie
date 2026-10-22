@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import HTTPException
 
 from backend.cards import CreateCardRequest, UpdateCardRequest, card_paths
+from backend.storage import delete_public, publish_file
 from backend.services.ai_provider import (
     edit_clothes_layer,
     edit_image_scenery,
@@ -227,6 +228,7 @@ def publish_mesh_choice(work: Path, card_id: str, tracker: MeshTracker) -> Path:
     dst = MESH_DIR / f"{card_id}.json"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+    publish_file(dst)
     print(f"Published mesh: {tracker} -> {dst.name}")
     return dst
 
@@ -718,6 +720,7 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         for tracker in MESH_TRACKERS:
             mesh_candidate_path(work, tracker).unlink(missing_ok=True)
         mesh_out = MESH_DIR / f"{card_id}.json"
+        delete_public(mesh_out)
         mesh_out.unlink(missing_ok=True)
 
     if step == "symbols":

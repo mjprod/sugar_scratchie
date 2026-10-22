@@ -11,6 +11,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.storage import delete_public, publish_file
 from backend.cards import (
     CARD_ID_PATTERN,
     ORIGINAL_BACKGROUND,
@@ -533,8 +534,10 @@ def delete_card(
         db.flush()
 
     if card_dir.exists():
+        delete_public(card_dir)
         shutil.rmtree(card_dir)
     if mesh_path.is_file():
+        delete_public(mesh_path)
         mesh_path.unlink()
     if work_dir.exists():
         shutil.rmtree(work_dir)
@@ -561,7 +564,9 @@ async def upload_card_photo(
     photo_id = uuid.uuid4().hex[:12]
     photos_dir = card_photos_dir(cards_dir, card_id)
     photos_dir.mkdir(parents=True, exist_ok=True)
-    (photos_dir / f"{photo_id}{ext}").write_bytes(data)
+    photo_path = photos_dir / f"{photo_id}{ext}"
+    photo_path.write_bytes(data)
+    publish_file(photo_path)
     src = public_url(f"cards/{card_id}/photos/{photo_id}{ext}")
     photos = [*card.photos, PhotoInfo(id=photo_id, src=src)]
     row = db.get(MotionCard, card_id)
@@ -589,6 +594,7 @@ def delete_card_photo(
     photos_dir = card_photos_dir(cards_dir, card_id)
     for path in photos_dir.glob(f"{photo_id}.*"):
         if path.is_file():
+            delete_public(path)
             path.unlink()
     remaining = [entry for entry in card.photos if entry.id != photo_id]
     row = db.get(MotionCard, card_id)
@@ -623,8 +629,11 @@ async def upload_card_trailer(
     for old_ext in TRAILER_EXTENSIONS:
         old = card_dir / f"trailer{old_ext}"
         if old.exists():
+            delete_public(old)
             old.unlink()
-    (card_dir / f"trailer{ext}").write_bytes(data)
+    trailer_path = card_dir / f"trailer{ext}"
+    trailer_path.write_bytes(data)
+    publish_file(trailer_path)
     write_cards_index(db, root, cards_dir, mesh_dir)
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 
@@ -650,7 +659,9 @@ async def upload_card_trailer_poster(
     card_dir = cards_dir / card_id
     card_dir.mkdir(parents=True, exist_ok=True)
     remove_card_trailer_poster_files(card_dir)
-    (card_dir / f"{TRAILER_POSTER_STEM}{ext}").write_bytes(data)
+    poster_path = card_dir / f"{TRAILER_POSTER_STEM}{ext}"
+    poster_path.write_bytes(data)
+    publish_file(poster_path)
     write_cards_index(db, root, cards_dir, mesh_dir)
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 
@@ -676,7 +687,9 @@ async def upload_card_motion_poster(
     card_dir = cards_dir / card_id
     card_dir.mkdir(parents=True, exist_ok=True)
     remove_card_motion_poster_files(card_dir)
-    (card_dir / f"{MOTION_POSTER_STEM}{ext}").write_bytes(data)
+    poster_path = card_dir / f"{MOTION_POSTER_STEM}{ext}"
+    poster_path.write_bytes(data)
+    publish_file(poster_path)
     write_cards_index(db, root, cards_dir, mesh_dir)
     return get_card(db, root, cards_dir, mesh_dir, card_id)
 
@@ -696,6 +709,7 @@ def delete_card_trailer(
     for ext in TRAILER_EXTENSIONS:
         path = card_dir / f"trailer{ext}"
         if path.is_file():
+            delete_public(path)
             path.unlink()
             removed = True
     if not removed:

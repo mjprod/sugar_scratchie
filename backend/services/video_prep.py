@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from backend.services.grok import probe_video
+from backend.storage import delete_public, publish_file
 
 CompressPreset = Literal["mobile", "hd", "master"]
 
@@ -1008,7 +1009,9 @@ def hd_variant_size() -> tuple[int, int]:
 
 def remove_hd_variants(*clips: Path) -> None:
     for clip in clips:
-        hd_variant_path(clip).unlink(missing_ok=True)
+        hd = hd_variant_path(clip)
+        delete_public(hd)
+        hd.unlink(missing_ok=True)
 
 
 def write_hd_variants(
@@ -1040,6 +1043,7 @@ def write_hd_variants(
         tmps.append((tmp, hd_variant_path(dst)))
     for tmp, out in tmps:
         shutil.move(str(tmp), str(out))
+        publish_file(out)
     return {
         "written": True,
         "width": width,

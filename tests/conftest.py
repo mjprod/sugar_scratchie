@@ -16,6 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Developer's .env may point at MinIO. Keep catalog URLs relative unless a test opts in.
+for _s3_key in (
+    "S3_ENDPOINT",
+    "S3_REGION",
+    "S3_BUCKET",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "S3_PUBLIC_BASE_URL",
+):
+    os.environ[_s3_key] = ""
+
 DEFAULT_TEST_DATABASE_URL = (
     "postgresql+psycopg://sugar:sugar@127.0.0.1:5433/sugar_test"
 )
