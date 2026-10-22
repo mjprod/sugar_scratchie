@@ -476,6 +476,12 @@ export async function deleteCardPhoto(cardId: string, photoId: string): Promise<
 
 export type PhotoScratchLayerType = "background" | "bikini" | "clothes";
 
+export type PhotoScratchImageChoice = {
+  model: string;
+  label: string;
+  src: string;
+};
+
 export type PhotoScratchSlot = {
   id: string;
   label: string;
@@ -485,6 +491,9 @@ export type PhotoScratchSlot = {
   pending_bg?: string;
   pending_bikini?: string;
   pending_clothes?: string;
+  pending_bg_choices?: PhotoScratchImageChoice[];
+  pending_bikini_choices?: PhotoScratchImageChoice[];
+  pending_clothes_choices?: PhotoScratchImageChoice[];
   /** Optional per-slot prompts for each layer. */
   prompt_background?: string;
   prompt_bikini?: string;
@@ -728,9 +737,11 @@ export async function approvePhotoScratchLayer(
   slotId: string,
   layer: PhotoScratchLayerType,
   theme = "",
+  choice = "",
 ): Promise<PhotoScratchSlot> {
   const search = new URLSearchParams({ layer });
   if (theme.trim()) search.set("theme", theme.trim());
+  if (choice.trim()) search.set("choice", choice.trim());
   return api<PhotoScratchSlot>(
     `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/approve-layer?${search}`,
     { method: "POST" },

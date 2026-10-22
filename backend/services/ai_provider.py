@@ -340,6 +340,7 @@ def edit_photo_scratch_layer(
     face_image: str | Path | None = None,
     bikini_image: str | Path | None = None,
     aspect_ratio: str = "9:16",
+    images: list[str | Path] | None = None,
 ) -> Path:
     """Keep the Flow source girl's identity while building bikini/clothes photo-scratch layers.
 
@@ -349,6 +350,35 @@ def edit_photo_scratch_layer(
     back to x.ai moderation.
     """
     route = source_image_route(provider, image_model)
+    if images:
+        from backend.services.image_refs import rewrite_image_tokens
+
+        seedream = route == "seedream-v5-lite" or provider == "wavespeed"
+        text = rewrite_image_tokens(prompt, style="seedream" if seedream else "grok")
+        if seedream:
+            payload = {
+                "prompt": text,
+                "images": [wavespeed.media_url(img, "image/png") for img in images],
+                "size": wavespeed.aspect_ratio_to_seedream_size(aspect_ratio),
+                "output_format": "png",
+                "enable_base64_output": False,
+                "enable_sync_mode": False,
+            }
+            wavespeed.run_image_task(
+                wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
+                payload,
+                out,
+                label="seedream photo-scratch edit",
+            )
+            return out
+        return grok.edit_photo_scratch_layer(
+            prompt=text,
+            out=out,
+            source_image=images[0],
+            aspect_ratio=aspect_ratio,
+            model=_stored_xai_model("source_image", image_model) or None,
+            named_images=images,
+        )
     needs_multi = (
         background_image is not None or face_image is not None or bikini_image is not None
     )

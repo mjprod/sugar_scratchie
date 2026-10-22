@@ -2172,10 +2172,23 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.picture-pick-card .dashboard-preview-media,
 .picture-pick-card .dashboard-preview-media-button {
   aspect-ratio: 9 / 16;
-  max-height: 420px;
+  display: block;
+  margin-inline: auto;
+  position: relative;
+  width: min(100%, calc(420px * 9 / 16));
+}
+
+.picture-pick-card .dashboard-preview-media {
+  aspect-ratio: auto;
+  background: none;
+  height: 100%;
+  inset: 0;
+  max-height: none;
+  object-fit: cover;
+  position: absolute;
+  width: 100%;
 }
 
 .dashboard-preview-media-button {

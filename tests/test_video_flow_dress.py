@@ -64,7 +64,7 @@ def test_import_dress_requires_operator(client, card_id):
     assert response.status_code == 401
 
 
-def test_import_dress_requires_fix_frames_approved(client, dashboard_headers, card_id):
+def test_import_dress_requires_background_approved(client, dashboard_headers, card_id):
     response = client.post(
         f"/api/video-flow/{card_id}/import-dress",
         json={"foreground": "package.json"},
@@ -114,7 +114,7 @@ def test_import_dress_happy_path_moves_to_review_and_resets_downstream(
     assert response.status_code == 200, response.text
 
     result = response.json()
-    assert result["approved"] == ["picture", "background", "trim"]
+    assert result["approved"] == ["picture", "background"]
     assert result["steps"]["dress"]["status"] == "review"
     assert result["steps"]["card"]["status"] == "locked"
     assert result["steps"]["mesh"]["status"] == "locked"
