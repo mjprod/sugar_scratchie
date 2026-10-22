@@ -175,6 +175,50 @@ def test_tagged_top_prompt_captions_a_remote_uniform(tmp_path: Path, monkeypatch
     assert seen["images"] == [girl]
 
 
+def test_unbound_image_tokens_are_dropped_and_the_slot_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import backend.cards as cards
+    import backend.services.video_flow as video_flow
+    from backend.cards import PhotoScratchSlot
+
+    root = tmp_path.resolve()
+    girl = root / "girl.png"
+    girl.write_bytes(b"girl")
+    monkeypatch.setattr(video_flow, "ROOT", root)
+    monkeypatch.setattr(video_flow, "CARDS_DIR", root / "public" / "cards")
+    monkeypatch.setattr(video_flow, "WORK_DIR", root / "work")
+
+    slot = PhotoScratchSlot(
+        id="slot_01",
+        label="1",
+        prompt_bikini="Keep this woman @image1 in the bikini @image2 from the picture @image3.",
+    )
+    monkeypatch.setattr(cards, "list_photo_scratch_slots", lambda *_args, **_kwargs: [slot])
+    monkeypatch.setattr(cards, "set_photo_scratch_pending_choices", lambda *_args, **_kwargs: None)
+    seen: dict = {}
+
+    def capture(**kwargs):
+        seen["prompt"] = kwargs["prompt"]
+        seen["images"] = kwargs["named_images"]
+        return [{"model": "grok-imagine", "label": "Grok", "src": "/cards/demo/x.jpg"}]
+
+    monkeypatch.setattr(video_flow, "_render_photo_choices", capture)
+    video_flow.run_generate_photo_scratch_layer(
+        card_id="demo",
+        layer_type="bikini",
+        source_image=str(girl),
+        slot_id="slot_01",
+        theme="Police",
+        approve=False,
+    )
+
+    assert seen["images"] == [girl]
+    assert "@image1" in seen["prompt"]
+    assert "@image2" not in seen["prompt"]
+    assert "@image3" not in seen["prompt"]
+
+
 def test_clothes_prompt_uses_outfit_caption_instead_of_theme_costume():
     prompt = photo_scratch_clothes_prompt("Police", "warm amber tones", outfit="red satin gown")
     assert "red satin gown" in prompt

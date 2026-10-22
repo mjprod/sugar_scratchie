@@ -1886,7 +1886,12 @@ def run_generate_photo_scratch_layer(
         set_photo_scratch_pending_choices,
         slot_layer_prompt,
     )
-    from backend.services.image_refs import bind_prompt_images, image_slots
+    from backend.services.image_refs import (
+        SLOT_NAMES,
+        bind_prompt_images,
+        drop_unbound_image_tokens,
+        image_slots,
+    )
 
     if layer_type not in PHOTO_SCRATCH_LAYER_NAMES:
         raise RuntimeError(f"Unknown photo-scratch layer: {layer_type}")
@@ -2060,15 +2065,28 @@ def run_generate_photo_scratch_layer(
                         final_prompt = re.sub(r"@image4\b", "", final_prompt, flags=re.IGNORECASE)
                         final_prompt = re.sub(r"[ \t]{2,}", " ", final_prompt).strip()
                 picked = work_dir(card_id) / "picture.png"
-                _, named_images = bind_prompt_images(
-                    final_prompt,
-                    {
-                        1: girl_path if layer_type != "background" else _local_image_path(source_image),
-                        2: bikini_still,
-                        3: picked if _image_file_ready(picked) else None,
-                        4: uniform,
-                    },
-                )
+                available = {
+                    1: girl_path if layer_type != "background" else _local_image_path(source_image),
+                    2: bikini_still,
+                    3: picked if _image_file_ready(picked) else None,
+                    4: uniform,
+                }
+                # @image2 and @image3 are absent until that photo exists. Drop
+                # the name and keep generating, same as Create picture.
+                trimmed, dropped = drop_unbound_image_tokens(final_prompt, available)
+                for number in dropped:
+                    name = SLOT_NAMES.get(number, f"@image{number}")
+                    print(
+                        f"Photo-scratch {layer_type} {slot.id} names @image{number}, "
+                        f"but there is no {name} yet — continuing without it."
+                    )
+                if image_slots(trimmed):
+                    final_prompt = trimmed
+                    _, named_images = bind_prompt_images(final_prompt, available)
+                else:
+                    custom = trimmed
+            if named_images is not None:
+                pass
             elif layer_type == "bikini":
                 assert girl_path is not None
                 bg_path = (
