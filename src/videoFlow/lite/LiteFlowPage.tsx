@@ -132,6 +132,7 @@ export function LiteFlowPage() {
   const [finishFailure, setFinishFailure] = useState<
     "boomerang" | "card" | "mesh" | "symbols" | "compress" | null
   >(null);
+  const [autoBlocked, setAutoBlocked] = useState<(typeof AUTO_STEPS)[number] | null>(null);
   const [catalogReady, setCatalogReady] = useState(false);
 
   const epochRef = useRef(0);
@@ -269,11 +270,17 @@ export function LiteFlowPage() {
   }, [cardJobs, flowState, pendingStep]);
 
   useEffect(() => {
+    if (
+      autoBlocked &&
+      (flowState?.complete || flowState?.steps[autoBlocked]?.status === "approved")
+    ) {
+      setAutoBlocked(null);
+    }
     if (!finishFailure || !flowState) return;
     if (flowState.complete || flowState.steps[finishFailure]?.status === "approved") {
       setFinishFailure(null);
     }
-  }, [finishFailure, flowState]);
+  }, [autoBlocked, finishFailure, flowState]);
 
   const saveDraft = useCallback(async (id: string) => {
     const fields = fieldsRef.current;
@@ -346,7 +353,7 @@ export function LiteFlowPage() {
       else if (flowState.steps.symbols?.status !== "approved") step = "symbols";
       else if (flowState.steps.compress?.status !== "approved") step = "compress";
     }
-    if (!step) return;
+    if (!step || autoBlocked === step) return;
     const token = `${cardId}:${step}`;
     if (liteHeld.has(token)) return;
     liteHeld.add(token);
@@ -355,13 +362,15 @@ export function LiteFlowPage() {
         if (step === "symbols") await placeSymbols();
         else await enqueue(step, false);
       } catch (caught) {
+        liteHeld.delete(token);
+        setAutoBlocked(step);
         setPendingStep(null);
         if (step !== "background" && step !== "dress") setFinishFailure(step);
         setError("Something went wrong.");
         console.error(errorText(caught));
       }
     })();
-  }, [cardId, costume, enqueue, flowState, pendingStep, placeSymbols, runningJob]);
+  }, [autoBlocked, cardId, costume, enqueue, flowState, pendingStep, placeSymbols, runningJob]);
 
   async function startPictures() {
     const girl = modelId.trim();
@@ -457,10 +466,18 @@ export function LiteFlowPage() {
       setError("Add the costume photo.");
       return;
     }
+    setAutoBlocked(null);
+    setFinishFailure(null);
     for (const name of ["picture", ...AUTO_STEPS]) liteHeld.delete(`${id}:${name}`);
     try {
       await enqueue(step, true);
     } catch (caught) {
+      if ((AUTO_STEPS as readonly string[]).includes(step)) {
+        setAutoBlocked(step as (typeof AUTO_STEPS)[number]);
+      }
+      if (step !== "picture" && step !== "background" && step !== "dress") {
+        setFinishFailure(step as "boomerang" | "card" | "mesh" | "symbols" | "compress");
+      }
       setPendingStep(null);
       setError("Something went wrong.");
       console.error(errorText(caught));
@@ -480,6 +497,7 @@ export function LiteFlowPage() {
     if (status === "approved") return "approved";
     if (status === "review") return "review";
     if (latestFailed && latestJob?.command[1] === step && status === "ready") return "failed";
+    if (autoBlocked === step && status === "ready") return "failed";
     if (locked || status === "locked" || status === "missing") return "locked";
     return "ready";
   }
@@ -904,8 +922,13 @@ export function LiteFlowPage() {
                       onClick={() => {
                         const id = cardId.trim();
                         if (!id) return;
+                        setAutoBlocked(null);
+                        setFinishFailure(null);
                         liteHeld.delete(`${id}:symbols`);
                         void placeSymbols().catch(() => {
+                          liteHeld.delete(`${id}:symbols`);
+                          setAutoBlocked("symbols");
+                          setFinishFailure("symbols");
                           setPendingStep(null);
                           setError("Something went wrong.");
                         });
@@ -973,11 +996,14 @@ export function LiteFlowPage() {
                         const step = gameFailedStep;
                         const id = cardId.trim();
                         if (!id) return;
+                        setAutoBlocked(null);
                         setFinishFailure(null);
                         setError("");
                         liteHeld.delete(`${id}:${step}`);
                         if (step === "symbols") {
                           void placeSymbols().catch(() => {
+                            liteHeld.delete(`${id}:${step}`);
+                            setAutoBlocked("symbols");
                             setPendingStep(null);
                             setFinishFailure("symbols");
                             setError("Something went wrong.");
@@ -985,6 +1011,8 @@ export function LiteFlowPage() {
                           return;
                         }
                         void enqueue(step, true).catch(() => {
+                          liteHeld.delete(`${id}:${step}`);
+                          setAutoBlocked(step);
                           setPendingStep(null);
                           setFinishFailure(step);
                           setError("Something went wrong.");
