@@ -58,6 +58,10 @@ export function VideoFlowRunPage() {
     setBackgroundVideoModel,
     dressVideoModel,
     setDressVideoModel,
+    overlapPrompt,
+    setOverlapPrompt,
+    overlapPromptEnabled,
+    setOverlapPromptEnabled,
     promptsDirty,
     draftSaving,
     saveDraft,
@@ -112,6 +116,8 @@ export function VideoFlowRunPage() {
             sourceImageModel={sourceImageModel}
             backgroundVideoModel={backgroundVideoModel}
             dressVideoModel={dressVideoModel}
+            overlapPrompt={overlapPrompt}
+            overlapPromptEnabled={overlapPromptEnabled}
             enhancePrompt={enhancePrompt}
             image={image}
             theme={theme}
@@ -153,6 +159,8 @@ export function VideoFlowRunPage() {
             onBikiniImageChange={setBikiniImage}
             onBackgroundVideoModelChange={setBackgroundVideoModel}
             onDressVideoModelChange={setDressVideoModel}
+            onOverlapPromptChange={setOverlapPrompt}
+            onOverlapPromptEnabledChange={setOverlapPromptEnabled}
             onEnhancePromptChange={setEnhancePrompt}
             promptsDirty={promptsDirty}
             draftSaving={draftSaving}

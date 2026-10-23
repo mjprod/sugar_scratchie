@@ -183,6 +183,9 @@ export type StoredVideoFlowDraft = {
   sourceImageModel: SourceImageModel;
   backgroundVideoModel: BackgroundVideoModel;
   dressVideoModel: DressVideoModel;
+  /** Create picture sends only this text when overlapPromptEnabled is on and it is non-empty. */
+  overlapPrompt: string;
+  overlapPromptEnabled: boolean;
   /** Client clock (ms) when this browser last wrote the draft locally. */
   localUpdatedAt?: number;
   /** Server `updated_at` in unix seconds, when this draft came from the API. */
@@ -234,6 +237,8 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
       sourceImageModel: parseSourceImageModel(parsed.sourceImageModel, parsed.aiProvider),
       backgroundVideoModel: parseBackgroundVideoModel(parsed.backgroundVideoModel),
       dressVideoModel: parseDressVideoModel(parsed.dressVideoModel),
+      overlapPrompt: parsed.overlapPrompt ?? "",
+      overlapPromptEnabled: parsed.overlapPromptEnabled === true,
       localUpdatedAt:
         typeof parsed.localUpdatedAt === "number" ? parsed.localUpdatedAt : undefined,
     };
@@ -315,6 +320,8 @@ export function storedDraftFromApi(draft?: {
   source_image_model?: string;
   background_video_model?: string;
   dress_video_model?: string;
+  overlap_prompt?: string;
+  overlap_prompt_enabled?: boolean;
   updated_at?: number;
 }): StoredVideoFlowDraft | null {
   if (!draft?.card_id) return null;
@@ -351,6 +358,8 @@ export function storedDraftFromApi(draft?: {
     sourceImageModel: parseSourceImageModel(draft.source_image_model, draft.ai_provider),
     backgroundVideoModel: parseBackgroundVideoModel(draft.background_video_model),
     dressVideoModel: parseDressVideoModel(draft.dress_video_model),
+    overlapPrompt: draft.overlap_prompt ?? "",
+    overlapPromptEnabled: draft.overlap_prompt_enabled === true,
     updatedAt: typeof draft.updated_at === "number" ? draft.updated_at : undefined,
   };
 }

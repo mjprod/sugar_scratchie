@@ -300,11 +300,21 @@ const IMAGE_TOKEN_HELP =
 
 function PicturePromptFields({
   prompts,
+  overlapPrompt,
+  overlapEnabled,
   onPromptsChange,
+  onOverlapPromptChange,
+  onOverlapEnabledChange,
 }: {
   prompts: PicturePrompts;
+  overlapPrompt: string;
+  overlapEnabled: boolean;
   onPromptsChange: (next: PicturePrompts) => void;
+  onOverlapPromptChange: (next: string) => void;
+  onOverlapEnabledChange: (next: boolean) => void;
 }) {
+  const overlapText = overlapPrompt.trim();
+  const overlapSends = overlapEnabled && overlapText.length > 0;
   return (
     <Flex direction="column" gap="3">
       <Text color="gray" size="2">
@@ -321,6 +331,28 @@ function PicturePromptFields({
           }}
         />
       </Field>
+      <label className="checkbox-label">
+        <Checkbox
+          checked={overlapEnabled}
+          onCheckedChange={(checked) => onOverlapEnabledChange(checked === true)}
+        />
+        Overlap prompt
+      </label>
+      <Field label="OVERLAP PROMPT">
+        <TextArea
+          rows={6}
+          value={overlapPrompt}
+          placeholder="Type the text to send when Overlap prompt is on"
+          onChange={(event) => onOverlapPromptChange(event.currentTarget.value)}
+        />
+      </Field>
+      <Text color={overlapSends ? "orange" : "gray"} size="1">
+        {overlapSends
+          ? "Overlap prompt is on. Create picture sends only this text."
+          : overlapEnabled
+            ? "Overlap prompt is on. Type the text to send. The prompt above is used until this has text."
+            : "Turn this on to send only the overlap text. The prompt above stays saved."}
+      </Text>
     </Flex>
   );
 }
@@ -774,6 +806,8 @@ type RunModeProps = {
   sourceImageModel: SourceImageModel;
   backgroundVideoModel: BackgroundVideoModel;
   dressVideoModel: DressVideoModel;
+  overlapPrompt: string;
+  overlapPromptEnabled: boolean;
   enhancePrompt: boolean;
   image: string;
   theme: string;
@@ -815,6 +849,8 @@ type RunModeProps = {
   onBikiniImageChange: (value: string) => void;
   onBackgroundVideoModelChange: (value: BackgroundVideoModel) => void;
   onDressVideoModelChange: (value: DressVideoModel) => void;
+  onOverlapPromptChange: (value: string) => void;
+  onOverlapPromptEnabledChange: (value: boolean) => void;
   onEnhancePromptChange: (value: boolean) => void;
   promptsDirty: boolean;
   draftSaving: boolean;
@@ -2698,6 +2734,8 @@ export function RunMode(props: RunModeProps) {
     sourceImageModel,
     backgroundVideoModel,
     dressVideoModel,
+    overlapPrompt,
+    overlapPromptEnabled,
     enhancePrompt,
     image,
     theme,
@@ -2739,6 +2777,8 @@ export function RunMode(props: RunModeProps) {
     onBikiniImageChange,
     onBackgroundVideoModelChange,
     onDressVideoModelChange,
+    onOverlapPromptChange,
+    onOverlapPromptEnabledChange,
     onEnhancePromptChange,
     promptsDirty,
     draftSaving,
@@ -3115,6 +3155,8 @@ export function RunMode(props: RunModeProps) {
     imageModel: sourceImageModel,
     backgroundVideoModel,
     dressVideoModel,
+    overlapPrompt,
+    overlapPromptEnabled,
   });
 
   const stepApiReady =
@@ -3720,7 +3762,9 @@ export function RunMode(props: RunModeProps) {
             <InfluencerPositionGuide />
             <Text color="gray" size="2">
               Makes two pictures, Grok and Seedream, from the prompt below. {IMAGE_TOKEN_HELP}{" "}
-              Pick one as soon as it appears. Every still keeps the influencer position.
+              {overlapPromptEnabled && overlapPrompt.trim()
+                ? "Overlap prompt is on, so only that text is sent."
+                : "Pick one as soon as it appears. Every still keeps the influencer position."}
             </Text>
             {effectiveRunningStep === "picture" ? (
               <Callout.Root color="blue">
@@ -3731,7 +3775,11 @@ export function RunMode(props: RunModeProps) {
             ) : null}
             <PicturePromptFields
               prompts={picturePrompts}
+              overlapPrompt={overlapPrompt}
+              overlapEnabled={overlapPromptEnabled}
               onPromptsChange={onPicturePromptsChange}
+              onOverlapPromptChange={onOverlapPromptChange}
+              onOverlapEnabledChange={onOverlapPromptEnabledChange}
             />
             <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
             {flowState?.steps.picture?.status === "approved" &&
