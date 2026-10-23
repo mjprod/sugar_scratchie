@@ -124,6 +124,20 @@ def test_empty_picture_takes_use_theme_lighting():
     assert "golden-hour" not in prompts[1]
 
 
+def test_overlap_prompt_replaces_the_picture_prompt():
+    overlap = "Stack the two photos. Leave the framing alone."
+    prompts = picture_take_prompts(
+        ["Replace the background.\n\nINFLUENCER POSITION — required framing."],
+        "shared scenery prompt",
+        "Firegirl",
+        count=2,
+        overlap_prompt=overlap,
+    )
+    assert prompts == [overlap, overlap]
+    assert "BODY LIGHT" not in prompts[0]
+    assert "INFLUENCER POSITION" not in prompts[0]
+
+
 def test_operator_picture_prompt_keeps_their_text_and_adds_lighting():
     from backend.services.grok import PICTURE_BODY_LIGHT
 
@@ -602,3 +616,56 @@ def test_create_picture_skips_image3_until_a_picture_is_picked(monkeypatch, tmp_
     assert "@image1" in seen[0][1] and "@image2" in seen[0][1]
     assert seen[0][2] == [prepared, bikini]
     assert seen[1][2] == [prepared, bikini]
+
+
+def test_overlap_prompt_is_sent_unchanged(monkeypatch, tmp_path):
+    from PIL import Image
+
+    import backend.services.video_flow as video_flow
+
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+
+    source = tmp_path / "source.png"
+    bikini = tmp_path / "bikini.png"
+    for path, color in ((source, (1, 1, 1)), (bikini, (2, 2, 2))):
+        Image.new("RGB", (8, 8), color).save(path)
+    work = tmp_path / "work"
+    work.mkdir()
+    paths = {
+        "picture": work / "picture.png",
+        "styled_bikini": work / "styled-bikini.png",
+        "styled_face": work / "styled-face.png",
+        "styled_source": work / "styled-source.png",
+    }
+    overlap = "Overlap only. Do not add framing or body light."
+    seen: list[str] = []
+
+    def fake_edit(**kwargs):
+        out = Path(kwargs["out"])
+        Image.new("RGB", (8, 8), (9, 9, 9)).save(out)
+        prompt = str(kwargs.get("prompt") or "")
+        if prompt == overlap:
+            seen.append(prompt)
+        return out
+
+    monkeypatch.setattr(video_flow, "_caption_clothes_ref", lambda ref, cache: "red bikini")
+    monkeypatch.setattr(video_flow, "edit_photo_scratch_layer", fake_edit)
+    monkeypatch.setattr(
+        video_flow,
+        "edit_image_scenery",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scenery edit should not run")),
+    )
+
+    video_flow.build_picture_still(
+        image=source,
+        theme_text="Police",
+        source_model="grok-imagine",
+        ai_provider="xai",
+        draft={"bikini_image": str(bikini)},
+        paths=paths,
+        picture_prompts=["Replace the entire background.\n\nINFLUENCER POSITION — required framing."],
+        overlap_prompt=overlap,
+    )
+
+    assert seen == [overlap, overlap]

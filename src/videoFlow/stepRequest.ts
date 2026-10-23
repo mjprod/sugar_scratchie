@@ -36,6 +36,9 @@ export type FlowStepInput = {
   imageModel: string;
   backgroundVideoModel: string;
   dressVideoModel: string;
+  /** When set, Create picture can send this text alone. Omitted callers leave the saved value. */
+  overlapPrompt?: string;
+  overlapPromptEnabled?: boolean;
 };
 
 /** The job body for picture, moving clip, and outfit. Run and Lite both use this. */
@@ -73,5 +76,11 @@ export function flowStepBody(input: FlowStepInput) {
     background_video_model: input.backgroundVideoModel,
     dress_video_model: input.dressVideoModel,
     picture_prompt: picturePrompts[0] ?? "",
+    ...(input.overlapPromptEnabled === undefined
+      ? {}
+      : {
+          overlap_prompt: input.overlapPrompt ?? "",
+          overlap_prompt_enabled: input.overlapPromptEnabled,
+        }),
   };
 }

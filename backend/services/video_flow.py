@@ -187,11 +187,18 @@ def picture_take_prompts(
     theme: str,
     *,
     count: int | None = None,
+    overlap_prompt: str = "",
 ) -> list[str]:
-    """Exact text for each still. Empty slots fall back to the theme plus that take's lighting."""
+    """Exact text for each still. Empty slots fall back to the theme plus that take's lighting.
+
+    A non-empty overlap prompt is sent as typed. Nothing else is added to it.
+    """
     from backend.services.grok import resolve_scenery_prompt, scenery_edit_prompt, with_body_light
 
     take_count = clamp_picture_variation_count(count)
+    overlap = (overlap_prompt or "").strip()
+    if overlap:
+        return [overlap] * take_count
     raw = [str(item or "").strip() for item in (picture_prompts or [])]
     while len(raw) < take_count:
         raw.append("")
@@ -1372,6 +1379,8 @@ def save_flow_draft(
     picture_variation_count: int | None = None,
     picture_compare_mode: str | None = None,
     picture_models: list[str] | None = None,
+    overlap_prompt: str | None = None,
+    overlap_prompt_enabled: bool | None = None,
 ) -> dict:
     work = work_dir(card_id)
     existing = read_flow_draft(card_id) or {}
@@ -1417,6 +1426,12 @@ def save_flow_draft(
         ),
         "picture_compare_mode": saved_picture_compare_mode(),
         "picture_models": saved_picture_models(),
+        "overlap_prompt": setup_field(overlap_prompt, "overlap_prompt"),
+        "overlap_prompt_enabled": (
+            bool(overlap_prompt_enabled)
+            if overlap_prompt_enabled is not None
+            else bool(existing.get("overlap_prompt_enabled"))
+        ),
         "background_motion_prompt": background_motion_prompt,
         "foreground_motion_prompt": foreground_motion_prompt,
         "dress_prompt": dress_prompt,
@@ -3009,6 +3024,7 @@ def build_picture_still(
     picture_prompt: str = "",
     picture_prompts: list[str] | None = None,
     picture_variation_count: int | None = None,
+    overlap_prompt: str = "",
 ) -> Path:
     """Bikini, face, and three themed scenery takes. The operator picks one."""
     work = paths["picture"].parent
@@ -3069,18 +3085,25 @@ def build_picture_still(
     # wait until the operator picks one before animating.
     bake_theme = theme_text.strip() or "warm beach"
     take_count = clamp_picture_variation_count(picture_variation_count)
+    overlap = (overlap_prompt or "").strip()
     take_prompts = picture_take_prompts(
         picture_prompts,
         picture_prompt,
         bake_theme,
         count=take_count,
+        overlap_prompt=overlap,
     )
     # Two stills: Grok and Seedream, one prompt. No third generator.
     take_count = 2
-    shared_prompt = with_uploaded_image_tokens(
-        take_prompts[0] if take_prompts else "",
-        has_main=bool(str(image).strip()),
-        has_bikini=bikini_path is not None,
+    # Overlap is sent exactly as typed: no photo-name inserts, body light, or framing lock.
+    shared_prompt = (
+        overlap
+        if overlap
+        else with_uploaded_image_tokens(
+            take_prompts[0] if take_prompts else "",
+            has_main=bool(str(image).strip()),
+            has_bikini=bikini_path is not None,
+        )
     )
     take_prompts = [shared_prompt, shared_prompt]
     compare_mode = "models"
@@ -3159,6 +3182,15 @@ def build_picture_still(
                         images=named,
                         aspect_ratio="9:16",
                     )
+                elif overlap:
+                    edit_photo_scratch_layer(
+                        provider=take_provider,
+                        image_model=take_model,
+                        prompt=trimmed or take_prompt,
+                        out=dest,
+                        source_image=prepared or i2v_image,
+                        aspect_ratio="9:16",
+                    )
                 else:
                     edit_image_scenery(
                         provider=take_provider,
@@ -3170,6 +3202,16 @@ def build_picture_still(
                         prompt=trimmed or take_prompt,
                         face_image=face_path,
                     )
+            elif overlap:
+                prepared = _local_image_path(i2v_image) or _local_image_path(image)
+                edit_photo_scratch_layer(
+                    provider=take_provider,
+                    image_model=take_model,
+                    prompt=take_prompt,
+                    out=dest,
+                    source_image=prepared or i2v_image,
+                    aspect_ratio="9:16",
+                )
             else:
                 edit_image_scenery(
                     provider=take_provider,
@@ -3236,6 +3278,8 @@ def run_video_flow_step(
     picture_variation_count: int | None = None,
     picture_compare_mode: str | None = None,
     picture_models: list[str] | None = None,
+    overlap_prompt: str | None = None,
+    overlap_prompt_enabled: bool | None = None,
 ) -> None:
     del foreground_motion_prompt, provider
     tune = mesh_tune_from_dict(mesh_tune)
@@ -3280,6 +3324,8 @@ def run_video_flow_step(
         picture_variation_count=picture_variation_count,
         picture_compare_mode=picture_compare_mode,
         picture_models=picture_models,
+        overlap_prompt=overlap_prompt,
+        overlap_prompt_enabled=overlap_prompt_enabled,
     )
 
     # Re-read state in case approvals changed while the job was queued.
@@ -3357,6 +3403,19 @@ def run_video_flow_step(
                 picture_variation_count
                 if picture_variation_count is not None
                 else draft.get("picture_variation_count")
+            ),
+            overlap_prompt=(
+                (
+                    overlap_prompt
+                    if overlap_prompt is not None
+                    else str(draft.get("overlap_prompt") or "")
+                ).strip()
+                if (
+                    bool(overlap_prompt_enabled)
+                    if overlap_prompt_enabled is not None
+                    else bool(draft.get("overlap_prompt_enabled"))
+                )
+                else ""
             ),
         )
     elif step == "background":

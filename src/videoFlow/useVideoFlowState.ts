@@ -96,6 +96,8 @@ type PromptSnapshot = {
   backgroundVideoModel: string;
   dressVideoModel: string;
   enhancePrompt: boolean;
+  overlapPrompt: string;
+  overlapPromptEnabled: boolean;
 };
 
 function promptFingerprint(input: PromptSnapshot): string {
@@ -107,6 +109,8 @@ function promptFingerprint(input: PromptSnapshot): string {
     input.backgroundVideoModel,
     input.dressVideoModel,
     input.enhancePrompt,
+    input.overlapPrompt,
+    input.overlapPromptEnabled,
   ]);
 }
 
@@ -153,6 +157,8 @@ function draftPayload(
     image_model: draft.sourceImageModel,
     background_video_model: draft.backgroundVideoModel,
     dress_video_model: draft.dressVideoModel,
+    overlap_prompt: draft.overlapPrompt,
+    overlap_prompt_enabled: draft.overlapPromptEnabled,
   };
 }
 
@@ -256,6 +262,12 @@ export function useVideoFlowState() {
   const [dressVideoModel, setDressVideoModel] = useState<DressVideoModel>(
     storedDraft?.dressVideoModel ?? DEFAULT_DRESS_VIDEO_MODEL,
   );
+  const [overlapPrompt, setOverlapPrompt] = useState(
+    hydrateFromStored ? (storedDraft?.overlapPrompt ?? "") : "",
+  );
+  const [overlapPromptEnabled, setOverlapPromptEnabled] = useState(
+    hydrateFromStored ? storedDraft?.overlapPromptEnabled === true : false,
+  );
 
   const canUseGrok = Boolean(health?.xai_key_loaded);
   const canUseWavespeed = Boolean(health?.wavespeed_key_loaded);
@@ -298,6 +310,8 @@ export function useVideoFlowState() {
     backgroundVideoModel,
     dressVideoModel,
     enhancePrompt,
+    overlapPrompt,
+    overlapPromptEnabled,
   });
   const lastSavedPromptFingerprint = useRef(initialPromptFingerprint);
   const latestPromptFingerprint = useRef(initialPromptFingerprint);
@@ -472,6 +486,19 @@ export function useVideoFlowState() {
         : (draft.dressVideoModel ?? DEFAULT_DRESS_VIDEO_MODEL);
     setBackgroundVideoModel(backgroundVideoModelToApply);
     setDressVideoModel(dressVideoModelToApply);
+    let overlapPromptToApply = draft.overlapPrompt ?? "";
+    let overlapEnabledToApply = draft.overlapPromptEnabled === true;
+    if (sameCard && local) {
+      if (localPromptsNewer) {
+        overlapPromptToApply = local.overlapPrompt ?? "";
+        overlapEnabledToApply = local.overlapPromptEnabled === true;
+      } else if (!overlapPromptToApply.trim() && (local.overlapPrompt ?? "").trim()) {
+        overlapPromptToApply = local.overlapPrompt ?? "";
+        overlapEnabledToApply = local.overlapPromptEnabled === true;
+      }
+    }
+    setOverlapPrompt(overlapPromptToApply);
+    setOverlapPromptEnabled(overlapEnabledToApply);
     const appliedFingerprint = promptFingerprint({
       picturePrompts: picturePromptsToApply,
       backgroundMotionPrompt: motion,
@@ -480,6 +507,8 @@ export function useVideoFlowState() {
       backgroundVideoModel: backgroundVideoModelToApply,
       dressVideoModel: dressVideoModelToApply,
       enhancePrompt: enhancePromptRef.current,
+      overlapPrompt: overlapPromptToApply,
+      overlapPromptEnabled: overlapEnabledToApply,
     });
     latestPromptFingerprint.current = appliedFingerprint;
     if (!localPromptsNewer) lastSavedPromptFingerprint.current = appliedFingerprint;
@@ -501,6 +530,8 @@ export function useVideoFlowState() {
       baseImage: baseToApply,
       backgroundVideoModel: backgroundVideoModelToApply,
       dressVideoModel: dressVideoModelToApply,
+      overlapPrompt: overlapPromptToApply,
+      overlapPromptEnabled: overlapEnabledToApply,
       localUpdatedAt: localPromptsNewer
         ? localUpdatedMs
         : serverUpdatedMs(draft.updatedAt) || Date.now(),
@@ -607,6 +638,8 @@ export function useVideoFlowState() {
         sourceImageModel: DEFAULT_SOURCE_IMAGE_MODEL,
         backgroundVideoModel: "grok-imagine",
         dressVideoModel: DEFAULT_DRESS_VIDEO_MODEL,
+        overlapPrompt: "",
+        overlapPromptEnabled: false,
       });
       } finally {
         if (selectionTokenRef.current === token) switchingCardRef.current = false;
@@ -705,6 +738,8 @@ export function useVideoFlowState() {
     backgroundVideoModel,
     dressVideoModel,
     enhancePrompt,
+    overlapPrompt,
+    overlapPromptEnabled,
     flow,
   });
   fieldsRef.current = {
@@ -734,6 +769,8 @@ export function useVideoFlowState() {
     backgroundVideoModel,
     dressVideoModel,
     enhancePrompt,
+    overlapPrompt,
+    overlapPromptEnabled,
     flow,
   };
 
@@ -770,6 +807,8 @@ export function useVideoFlowState() {
       sourceImageModel: fields.sourceImageModel,
       backgroundVideoModel: fields.backgroundVideoModel,
       dressVideoModel: fields.dressVideoModel,
+      overlapPrompt: fields.overlapPrompt,
+      overlapPromptEnabled: fields.overlapPromptEnabled,
       localUpdatedAt: Date.now(),
     };
     writeStoredVideoFlowDraft(draft);
@@ -813,6 +852,8 @@ export function useVideoFlowState() {
       backgroundVideoModel: draft.backgroundVideoModel,
       dressVideoModel: draft.dressVideoModel,
       enhancePrompt: liveEnhance,
+      overlapPrompt: draft.overlapPrompt,
+      overlapPromptEnabled: draft.overlapPromptEnabled,
     });
     const task = (async () => {
       setDraftSaving(true);
@@ -858,6 +899,8 @@ export function useVideoFlowState() {
       backgroundVideoModel,
       dressVideoModel,
       enhancePrompt,
+      overlapPrompt,
+      overlapPromptEnabled,
     });
     latestPromptFingerprint.current = fingerprint;
     setPromptsDirty(fingerprint !== lastSavedPromptFingerprint.current);
@@ -897,6 +940,8 @@ export function useVideoFlowState() {
     sourceImageModel,
     backgroundVideoModel,
     dressVideoModel,
+    overlapPrompt,
+    overlapPromptEnabled,
     flow,
     enhancePrompt,
     rememberDraft,
@@ -1042,6 +1087,10 @@ export function useVideoFlowState() {
     setBackgroundVideoModel,
     dressVideoModel,
     setDressVideoModel,
+    overlapPrompt,
+    setOverlapPrompt,
+    overlapPromptEnabled,
+    setOverlapPromptEnabled,
     canUseGrok,
     canUseWavespeed,
     canUseSourceAi,
