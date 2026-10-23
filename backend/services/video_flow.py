@@ -150,23 +150,22 @@ def with_uploaded_image_tokens(
             count=1,
             flags=re.IGNORECASE,
         )
-    if has_uniform and not re.search(r"@image4\b", text, re.IGNORECASE):
-        if re.search(r"dress reference image(?! @image4\b)", text, re.IGNORECASE):
-            text = re.sub(
-                r"dress reference image(?! @image4\b)",
-                "dress reference image @image4",
-                text,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-        elif re.search(r"costume(?! in @image4\b)", text, re.IGNORECASE):
-            text = re.sub(
-                r"costume(?! in @image4\b)",
-                "costume in @image4",
-                text,
-                count=1,
-                flags=re.IGNORECASE,
-            )
+    if has_uniform and re.search(r"dress reference image(?! @image4\b)", text, re.IGNORECASE):
+        text = re.sub(
+            r"dress reference image(?! @image4\b)",
+            "dress reference image @image4",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    if has_uniform and re.search(r"costume(?! in @image4\b)", text, re.IGNORECASE):
+        text = re.sub(
+            r"costume(?! in @image4\b)",
+            "costume in @image4",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
     missing: list[str] = []
     if has_main and not re.search(r"@image1\b", text, re.IGNORECASE):
         missing.append("@image1")
@@ -1062,6 +1061,57 @@ def import_dress_clip(*, card_id: str, foreground: str | Path) -> dict:
     return flow_state(card_id)
 
 
+def _dress_publish_stamp_path(work: Path) -> Path:
+    return work / "dress-published.json"
+
+
+def _dress_source_stamp(path: Path) -> dict | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    if stat.st_size <= 0:
+        return None
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _remember_published_dress(work: Path, dressed: Path) -> None:
+    stamp = _dress_source_stamp(dressed)
+    if stamp is None:
+        return
+    _dress_publish_stamp_path(work).write_text(
+        json.dumps(stamp) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _published_dress_is_stale(work: Path, dressed: Path) -> bool:
+    """True when the outfit clip changed after the card was published."""
+    current = _dress_source_stamp(dressed)
+    path = _dress_publish_stamp_path(work)
+    if current is None or not path.is_file():
+        return False
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not isinstance(saved, dict):
+        return True
+    return saved.get("size") != current["size"] or saved.get("mtime_ns") != current["mtime_ns"]
+
+
+def _invalidate_game_after_dress(work: Path, card_id: str) -> None:
+    """Drop the published game so mesh, symbols, and delivery rebuild from this outfit."""
+    state = read_state(work)
+    for step in STEP_ORDER[STEP_ORDER.index("dress") + 1 :]:
+        if step in state["approved"]:
+            state["approved"].remove(step)
+        clear_step_outputs(work, card_id, step)
+        clear_step_timing(work, step)
+    _dress_publish_stamp_path(work).unlink(missing_ok=True)
+    write_state(work, state)
+
+
 def _publish_card(
     *,
     card_id: str,
@@ -1117,6 +1167,7 @@ def _publish_card(
             raise RuntimeError(str(exc.detail)) from exc
         draft = read_flow_draft(card_id) or {}
         _sync_card_theme_id(card_id, str(draft.get("theme") or ""))
+        _remember_published_dress(work, paths["foreground_dressed"])
         print(f"Card updated: {card.id} ({card.label})")
         return
     try:
@@ -1150,6 +1201,7 @@ def _publish_card(
         raise RuntimeError(str(exc.detail)) from exc
     draft = read_flow_draft(card_id) or {}
     _sync_card_theme_id(card_id, str(draft.get("theme") or ""))
+    _remember_published_dress(work, paths["foreground_dressed"])
     print(f"Card created: {card.id} ({card.label})")
 
 
@@ -1240,6 +1292,11 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
     work = work_dir(card_id)
     state = read_state(work)
     recovered = recover_stale_approvals(work, card_id, state, probe_videos=probe_videos)
+    if "dress" in state["approved"] and _published_dress_is_stale(
+        work, _paths(work)["foreground_dressed"]
+    ):
+        _invalidate_game_after_dress(work, card_id)
+        state = read_state(work)
     if "mesh" in state["approved"]:
         ensure_active_mesh_snapshotted(work, card_id)
     write_state(work, state)
@@ -3396,6 +3453,7 @@ def run_video_flow_step(
             dress_video_model=dress_model,
         )
         _sync_foreground_to_background(work, paths)
+        _invalidate_game_after_dress(work, card_id)
     elif step == "boomerang":
         # Headless runs keep the clips. The dashboard picks a duration itself.
         skip_boomerang_step(card_id, card_label=card_label)

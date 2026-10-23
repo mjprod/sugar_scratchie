@@ -66,6 +66,7 @@ import type { CompressReport } from "./projects";
 import { MaskEditor } from "./MaskEditor";
 import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
+import { flowStepBody } from "./stepRequest";
 import { SymbolPointPicker } from "./SymbolPointPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
 import { isWavespeedDressVideoModel, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageModel } from "./storage";
@@ -3091,34 +3092,30 @@ export function RunMode(props: RunModeProps) {
       ? runningTiming.started_at
       : null;
 
-  const stepPayload = {
+  const stepPayload = flowStepBody({
     image,
     theme,
-    picture_prompts: picturePrompts,
-    picture_variation_count: 2,
-    picture_compare_mode: "models",
-    picture_models: ["grok-imagine", "seedream-v5-lite", "grok-imagine"],
-    background_motion_prompt: backgroundMotionPrompt,
-    foreground_motion_prompt: backgroundMotionPrompt,
-    dress_prompt: dressPrompt,
-    dress_reference_image: dressReferenceImage,
-    card_id: cardId.trim(),
-    card_label: cardLabel.trim(),
-    model_id: modelId.trim(),
+    picturePrompts,
+    backgroundMotionPrompt,
+    dressPrompt,
+    dressReferenceImage,
+    cardId: cardId.trim(),
+    cardLabel: cardLabel.trim(),
+    modelId: modelId.trim(),
     resolution,
-    enhance_dress_prompt: enhancePrompt,
+    enhanceDressPrompt: enhancePrompt,
     tracker,
-    write_webm: writeWebm,
-    compress_preset: compressPreset,
-    mesh_tune: meshTuneToApi(meshTune),
-    source_mode: "upload",
-    face_image: faceImage,
-    bikini_image: bikiniImage,
+    writeWebm,
+    compressPreset,
+    meshTune,
+    faceImage,
+    bikiniImage,
+    picturePicked,
     provider: aiProvider,
-    image_model: sourceImageModel,
-    background_video_model: backgroundVideoModel,
-    dress_video_model: dressVideoModel,
-  };
+    imageModel: sourceImageModel,
+    backgroundVideoModel,
+    dressVideoModel,
+  });
 
   const stepApiReady =
     actionStep === "picture"

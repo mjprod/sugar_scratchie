@@ -2717,6 +2717,81 @@ textarea:focus-visible {
   border-color: var(--red-7);
 }
 
+.lite-flow-board {
+  align-items: flex-start;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  padding: 8px 4px 28px;
+}
+
+.lite-flow-node-wrap {
+  align-items: flex-start;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.lite-flow-wire {
+  border-top: 2px solid var(--gray-7);
+  flex: 0 0 36px;
+  margin-top: 28px;
+  position: relative;
+}
+
+.lite-flow-wire::after {
+  border: 5px solid transparent;
+  border-left-color: var(--gray-8);
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -6px;
+}
+
+.lite-flow-wire.is-live {
+  border-top-color: var(--red-9);
+}
+
+.lite-flow-wire.is-live::after {
+  border-left-color: var(--red-9);
+}
+
+.lite-flow-node {
+  background: var(--color-panel-solid);
+  border: 1px solid var(--gray-6);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(23, 21, 19, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  width: 300px;
+}
+
+.lite-flow-node.is-active {
+  border-color: var(--red-8);
+  box-shadow: 0 0 0 3px var(--red-3);
+}
+
+.lite-flow-node.is-running {
+  border-color: var(--blue-8);
+}
+
+.lite-flow-node.is-approved {
+  border-color: var(--green-8);
+}
+
+.lite-flow-node.is-failed {
+  border-color: var(--red-8);
+}
+
+.lite-flow-node.is-locked {
+  opacity: 0.62;
+}
+
+.lite-flow-node.is-wide {
+  width: min(920px, 78vw);
+}
+
 .video-flow-pipeline-list {
   color: var(--gray-11);
   display: grid;

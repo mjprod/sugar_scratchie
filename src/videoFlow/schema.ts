@@ -209,12 +209,11 @@ export function ensureImageTokens(prompt: string, tokens: readonly string[]): st
   if (want3 && /this same woman(?! in @image3\b)/i.test(body)) {
     body = body.replace(/this same woman(?! in @image3\b)/i, "this same woman in @image3");
   }
-  if (want4 && !/@image4\b/i.test(body)) {
-    if (/dress reference image(?! @image4\b)/i.test(body)) {
-      body = body.replace(/dress reference image(?! @image4\b)/i, "dress reference image @image4");
-    } else if (/costume(?! in @image4\b)/i.test(body)) {
-      body = body.replace(/costume(?! in @image4\b)/i, "costume in @image4");
-    }
+  if (want4 && /dress reference image(?! @image4\b)/i.test(body)) {
+    body = body.replace(/dress reference image(?! @image4\b)/i, "dress reference image @image4");
+  }
+  if (want4 && /costume(?! in @image4\b)/i.test(body)) {
+    body = body.replace(/costume(?! in @image4\b)/i, "costume in @image4");
   }
   const missing: string[] = [];
   if (want1 && !/@image1\b/i.test(body)) missing.push("@image1");

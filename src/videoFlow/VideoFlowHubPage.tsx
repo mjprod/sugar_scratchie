@@ -1,4 +1,4 @@
-import { PenLine, Play, UserRound } from "lucide-react";
+import { PenLine, Play, Sparkles, UserRound } from "lucide-react";
 import { Box, Card, Flex, Heading, Text } from "@radix-ui/themes";
 import { VideoFlowShell } from "./VideoFlowShell";
 import { useVideoFlowState } from "./useVideoFlowState";
@@ -31,6 +31,17 @@ export function VideoFlowHubPage() {
                 <Heading size="5">Models</Heading>
                 <Text color="gray" size="2">
                   Create girls and motion cards, then click Edit to open the pipeline.
+                </Text>
+              </Flex>
+            </a>
+          </Card>
+          <Card asChild className="video-flow-hub-card">
+            <a href="/dashboard/video-flow/lite">
+              <Flex direction="column" gap="3" p="2">
+                <Sparkles {...iconProps} size={28} />
+                <Heading size="5">Lite</Heading>
+                <Text color="gray" size="2">
+                  Drop a photo and press Run. Prompts stay on Run flow.
                 </Text>
               </Flex>
             </a>
