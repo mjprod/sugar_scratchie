@@ -493,7 +493,7 @@ export function LiteFlowPage() {
     outfitClip;
 
   const runBusy = Boolean(pendingStep || runningJob);
-  const keysMissing = health && !health.xai_key_loaded && !health.wavespeed_key_loaded;
+  const keysMissing = health && !health.xai_key_loaded;
   const runHref = cardId
     ? `/dashboard/video-flow/run?card=${encodeURIComponent(cardId)}`
     : "/dashboard/video-flow/run";
