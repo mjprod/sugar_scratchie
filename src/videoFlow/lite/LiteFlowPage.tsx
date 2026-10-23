@@ -129,6 +129,9 @@ export function LiteFlowPage() {
   const [error, setError] = useState("");
   const [missingCard, setMissingCard] = useState(false);
   const [pendingStep, setPendingStep] = useState<string | null>(null);
+  const [finishFailure, setFinishFailure] = useState<
+    "boomerang" | "card" | "mesh" | "symbols" | "compress" | null
+  >(null);
   const [catalogReady, setCatalogReady] = useState(false);
 
   const epochRef = useRef(0);
@@ -265,6 +268,13 @@ export function LiteFlowPage() {
     }
   }, [cardJobs, flowState, pendingStep]);
 
+  useEffect(() => {
+    if (!finishFailure || !flowState) return;
+    if (flowState.complete || flowState.steps[finishFailure]?.status === "approved") {
+      setFinishFailure(null);
+    }
+  }, [finishFailure, flowState]);
+
   const saveDraft = useCallback(async (id: string) => {
     const fields = fieldsRef.current;
     await api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
@@ -346,6 +356,7 @@ export function LiteFlowPage() {
         else await enqueue(step, false);
       } catch (caught) {
         setPendingStep(null);
+        if (step !== "background" && step !== "dress") setFinishFailure(step);
         setError("Something went wrong.");
         console.error(errorText(caught));
       }
@@ -529,16 +540,29 @@ export function LiteFlowPage() {
       ? "running"
       : nodeStatus("mesh", dressStatus !== "approved");
   const symbolsNodeStatus = nodeStatus("symbols", meshStatus !== "approved");
+  const pendingFinish =
+    dressStatus !== "approved" || flowState?.complete
+      ? null
+      : flowState?.steps.boomerang?.status !== "approved"
+        ? "boomerang"
+        : flowState?.steps.card?.status !== "approved"
+          ? "card"
+          : flowState?.steps.mesh?.status !== "approved"
+            ? "mesh"
+            : flowState?.steps.symbols?.status !== "approved"
+              ? "symbols"
+              : flowState?.steps.compress?.status !== "approved"
+                ? "compress"
+                : null;
+  const gameFailedStep =
+    pendingFinish != null &&
+    (finishFailure === pendingFinish || (latestFailed && latestJob?.command[1] === pendingFinish))
+      ? pendingFinish
+      : null;
   const gameNodeStatus: LiteNodeStatus =
     nodeStatus("compress", symbolsStatus !== "approved") === "running"
       ? "running"
-      : (latestFailed &&
-          (latestJob?.command[1] === "card" ||
-            latestJob?.command[1] === "mesh" ||
-            latestJob?.command[1] === "symbols" ||
-            latestJob?.command[1] === "compress" ||
-            latestJob?.command[1] === "boomerang")) ||
-          (error === "Something went wrong." && dressStatus === "approved" && !flowState?.complete)
+      : gameFailedStep
         ? "failed"
         : nodeStatus("compress", symbolsStatus !== "approved");
 
@@ -939,30 +963,32 @@ export function LiteFlowPage() {
                       </a>
                     </Button>
                   ) : null}
-                  {gameNodeStatus === "failed" ? (
+                  {gameNodeStatus === "failed" && gameFailedStep ? (
                     <Button
                       color="red"
                       disabled={runBusy}
                       type="button"
                       variant="soft"
                       onClick={() => {
-                        const step = latestJob?.command[1];
-                        if (
-                          step === "boomerang" ||
-                          step === "card" ||
-                          step === "mesh" ||
-                          step === "compress"
-                        ) {
-                          void retry(step);
-                        } else {
-                          const id = cardId.trim();
-                          if (!id) return;
-                          liteHeld.delete(`${id}:symbols`);
+                        const step = gameFailedStep;
+                        const id = cardId.trim();
+                        if (!id) return;
+                        setFinishFailure(null);
+                        setError("");
+                        liteHeld.delete(`${id}:${step}`);
+                        if (step === "symbols") {
                           void placeSymbols().catch(() => {
                             setPendingStep(null);
+                            setFinishFailure("symbols");
                             setError("Something went wrong.");
                           });
+                          return;
                         }
+                        void enqueue(step, true).catch(() => {
+                          setPendingStep(null);
+                          setFinishFailure(step);
+                          setError("Something went wrong.");
+                        });
                       }}
                     >
                       <RotateCcw {...iconProps} />

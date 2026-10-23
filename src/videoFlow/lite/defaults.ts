@@ -9,12 +9,20 @@ import { flowStepBody } from "../stepRequest";
 export const LITE_TRACKER = "blend";
 export const LITE_RESOLUTION = "720p";
 export const LITE_COMPRESS_PRESET = "mobile";
+const LITE_XAI_VIDEO_MODEL = "grok-imagine";
+const LITE_WAVESPEED_BACKGROUND_MODEL = "wan-2.2-spicy";
+const LITE_WAVESPEED_DRESS_MODEL = "seedance-2.0-video-edit";
 
 export type LiteImageModel = "grok-imagine" | "seedream-v5-lite";
 
+/** Seedream only when WaveSpeed is the only configured provider. */
 export function liteImageModel(hasXai: boolean, hasWavespeed: boolean): LiteImageModel {
   if (hasXai || !hasWavespeed) return "grok-imagine";
   return "seedream-v5-lite";
+}
+
+function liteUsesWavespeed(hasXai: boolean, hasWavespeed: boolean): boolean {
+  return liteImageModel(hasXai, hasWavespeed) === "seedream-v5-lite";
 }
 
 export type LiteDraftInput = {
@@ -33,6 +41,7 @@ export type LiteDraftInput = {
 /** Fixed settings for the lite canvas. Prompts are filled from the theme and never shown. */
 export function liteRequestBody(input: LiteDraftInput) {
   const imageModel = liteImageModel(input.hasXai, input.hasWavespeed);
+  const wavespeed = liteUsesWavespeed(input.hasXai, input.hasWavespeed);
   return flowStepBody({
     image: input.image,
     theme: input.theme,
@@ -52,9 +61,9 @@ export function liteRequestBody(input: LiteDraftInput) {
     faceImage: input.face,
     bikiniImage: input.bikini.trim(),
     picturePicked: true,
-    provider: imageModel === "seedream-v5-lite" ? "wavespeed" : "xai",
+    provider: wavespeed ? "wavespeed" : "xai",
     imageModel,
-    backgroundVideoModel: "grok-imagine",
-    dressVideoModel: "grok-imagine",
+    backgroundVideoModel: wavespeed ? LITE_WAVESPEED_BACKGROUND_MODEL : LITE_XAI_VIDEO_MODEL,
+    dressVideoModel: wavespeed ? LITE_WAVESPEED_DRESS_MODEL : LITE_XAI_VIDEO_MODEL,
   });
 }
