@@ -3410,7 +3410,11 @@ def run_video_flow_step(
                     if overlap_prompt is not None
                     else str(draft.get("overlap_prompt") or "")
                 ).strip()
-                if overlap_prompt_enabled
+                if (
+                    bool(overlap_prompt_enabled)
+                    if overlap_prompt_enabled is not None
+                    else bool(draft.get("overlap_prompt_enabled"))
+                )
                 else ""
             ),
         )
