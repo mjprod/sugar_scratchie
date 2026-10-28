@@ -87,6 +87,9 @@ import {
   type VideoFlowProject,
 } from "./videoFlow/projects";
 import { captureVideoFirstFrame, captureVideoSrcFirstFrame, dataUrlToFile } from "./shared/media";
+import { FoilPackN8nButton } from "./FoilPackN8nDialog";
+import { FoilPackagesPanel } from "./FoilPackagesPanel";
+import { InfluencerN8nButton } from "./InfluencerN8nDialog";
 import { previewSource } from "./videoFlow/ui";
 
 function modelVideoPosterKey(modelId: string, kind: ModelVideoKind) {
@@ -1433,6 +1436,7 @@ export function ModelsPage() {
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
               onSaveSocials={(socials) => void handleSaveSocials(selectedModel.id, socials)}
               onSaveCardPricing={(cardId, pricing) => void handleSaveCardPricing(cardId, pricing)}
+              onRefresh={() => void refresh()}
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
@@ -2163,6 +2167,7 @@ function ModelVideoSlot({
   onGeneratePoster,
   packName,
   onPackNameChange,
+  foilN8n,
 }: {
   busy: boolean;
   label: string;
@@ -2177,11 +2182,20 @@ function ModelVideoSlot({
   onGeneratePoster?: () => void;
   packName?: string;
   onPackNameChange?: (value: string) => void;
+  foilN8n?: {
+    modelId: string;
+    kind: "pack-face" | "pack-face-2";
+    name: string;
+    code: string;
+    onSaved: () => void;
+  };
 }) {
   const src = url?.trim() || "";
   const savedPoster = savedPosterUrl?.trim() || "";
   const uploadPoster = uploadPosterUrl?.trim() || "";
+  const showPackVideo = Boolean(foilN8n);
   const [srcPoster, setSrcPoster] = useState("");
+  const [foilBusy, setFoilBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [dialogPlaying, setDialogPlaying] = useState(false);
   const dialogVideoRef = useRef<HTMLVideoElement>(null);
@@ -2189,11 +2203,12 @@ function ModelVideoSlot({
   function handlePreviewOpenChange(open: boolean) {
     setPreviewOpen(open);
     if (!open) setDialogPlaying(false);
+    else if (showPackVideo && src) setDialogPlaying(true);
   }
 
   useEffect(() => {
     setSrcPoster("");
-    if (!src || savedPoster || uploadPoster) return;
+    if (!src || (!showPackVideo && (savedPoster || uploadPoster))) return;
 
     let cancelled = false;
     void captureVideoSrcFirstFrame(src)
@@ -2207,7 +2222,7 @@ function ModelVideoSlot({
     return () => {
       cancelled = true;
     };
-  }, [src, savedPoster, uploadPoster]);
+  }, [src, savedPoster, uploadPoster, showPackVideo]);
 
   useEffect(() => {
     if (!previewOpen || !dialogPlaying || !src) return;
@@ -2221,7 +2236,7 @@ function ModelVideoSlot({
     void video.play().catch(() => undefined);
   }, [previewOpen, dialogPlaying, src]);
 
-  const previewFrame = savedPoster || uploadPoster || srcPoster;
+  const previewFrame = showPackVideo && src ? srcPoster : savedPoster || uploadPoster || srcPoster;
   const thumbShellStyle = {
     position: "relative" as const,
     ...MODEL_MEDIA_THUMB,
@@ -2258,6 +2273,19 @@ function ModelVideoSlot({
               display: "block",
             }}
           />
+          {foilBusy ? (
+            <Flex
+              align="center"
+              justify="center"
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "oklch(0 0 0 / 0.45)",
+              }}
+            >
+              <LoaderCircle {...iconProps} className="spin" style={{ color: "white" }} />
+            </Flex>
+          ) : null}
           <Box
             aria-hidden="true"
             style={{
@@ -2337,6 +2365,19 @@ function ModelVideoSlot({
           <Upload {...iconProps} />
           {src ? "Replace video" : "Upload video"}
         </Button>
+        {foilN8n ? (
+          <FoilPackN8nButton
+            busy={busy}
+            kind={foilN8n.kind}
+            label={label}
+            modelId={foilN8n.modelId}
+            name={foilN8n.name}
+            code={foilN8n.code}
+            videoUrl={src}
+            onSaved={foilN8n.onSaved}
+            onBusyChange={setFoilBusy}
+          />
+        ) : null}
       </Flex>
 
       {previewFrame ? (
@@ -2746,6 +2787,7 @@ function ModelDetail({
   onSaveTags,
   onSaveSocials,
   onSaveCardPricing,
+  onRefresh,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -2812,6 +2854,7 @@ function ModelDetail({
   onSaveTags: (tags: string[]) => void;
   onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
   onSaveCardPricing: (cardId: string, pricing: CardPricing) => void;
+  onRefresh: () => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
@@ -2981,6 +3024,9 @@ function ModelDetail({
                     </Flex>
                   </Box>
                 </Grid>
+                <Box mt="3">
+                  <InfluencerN8nButton busy={busy} modelId={model.id} name={editingName} />
+                </Box>
                 <Box>
                   <Text as="div" mb="2" size="1" weight="bold">
                     Card overlay
@@ -3174,7 +3220,8 @@ function ModelDetail({
           <Text as="div" color="gray" mb="2" size="1">
             Foil pack and home swipe videos for this model — served to the product app via{" "}
             <CodeInline>/api/models</CodeInline>. Card pack names replace “Pack Nº …” under the
-            foil packs in the product app.
+            foil packs in the product app. The foil preview is the pack video. Create with n8n
+            sends that video to the foil flow.
           </Text>
           <Box mb="3">
             <ModelCoverSlot
@@ -3203,6 +3250,13 @@ function ModelDetail({
                   ? () => onGeneratePoster("pack-face", model.packFaceVideoUrl!)
                   : undefined
               }
+              foilN8n={{
+                modelId: model.id,
+                kind: "pack-face",
+                name: editingName.trim() || model.influencerName || model.label,
+                code: model.id,
+                onSaved: onRefresh,
+              }}
             />
             <ModelVideoSlot
               busy={busy}
@@ -3222,6 +3276,13 @@ function ModelDetail({
                   ? () => onGeneratePoster("pack-face-2", model.packFaceVideoUrl2!)
                   : undefined
               }
+              foilN8n={{
+                modelId: model.id,
+                kind: "pack-face-2",
+                name: editingName.trim() || model.influencerName || model.label,
+                code: model.id,
+                onSaved: onRefresh,
+              }}
             />
             <SwipeMotionVideoSlot
               busy={busy}
@@ -3270,6 +3331,7 @@ function ModelDetail({
               </Text>
             ) : null}
           </Flex>
+          <FoilPackagesPanel modelId={model.id} onApplied={onRefresh} />
         </Box>
 
         <Box mb="3">

@@ -103,6 +103,12 @@ def needs_operator(scope: Scope) -> bool:
         return False
     if any(path == p or path.startswith(p + "/") for p in _PLAYER_PREFIXES):
         return False
+    # n8n posts live lines with its own progress token. The route checks that token.
+    if method == "POST" and path.startswith("/api/jobs/") and "/progress" in path:
+        return False
+    # The n8n form runs the Mac steps with its own token. The route checks that token.
+    if method == "POST" and path == "/api/internal/influencer-run":
+        return False
     if path.startswith("/api/jobs"):
         return True
     # Player PII — require operator token for every method, including GET.

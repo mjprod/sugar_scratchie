@@ -17,5 +17,24 @@ services:
       timeout: 5s
       retries: 10
 
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: sugar-scratchie-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "false"
+      # n8n 2 hides Execute Command unless this is an empty list. The After Effects
+      # workflow uses that node to copy a job folder and launch After Effects.
+      NODES_EXCLUDE: "[]"
+    volumes:
+      - ./n8n-data:/home/node/.n8n
+
 volumes:
   sugar_scratchie_pg:

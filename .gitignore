@@ -24,6 +24,10 @@ build/
 .tmp/
 .video-backups/
 .image-backups/
+# n8n checkout stays local. Runtime data (encryption key, credentials, sqlite)
+# lives in n8n-data so it is not mixed into the source tree.
+/n8n/
+/n8n-data/
 .DS_Store
 *.log
 .cache/

@@ -25,6 +25,8 @@ Usage: ./scripts/manage.sh <command>
   setup      Install Python + frontend-new deps
   db-up      Start Postgres (Docker)
   db-down    Stop Postgres
+  n8n-up     Start local n8n (Docker, data in ./n8n-data)
+  n8n-down   Stop local n8n
   migrate    Run Alembic migrations
   seed       Seed store / packs / redeem codes
   reset-db   Ensure DB + migrate + seed (Docker if available)
@@ -38,6 +40,7 @@ Typical first run:
   ./scripts/manage.sh setup
   ./scripts/manage.sh reset-db
   ./scripts/manage.sh start
+  ./scripts/manage.sh n8n-up
 
 Without Docker: install Postgres locally, set DATABASE_URL in .env
 (e.g. postgresql+psycopg://sugar:sugar@127.0.0.1:5432/sugar), then setup/migrate/seed/start.
@@ -144,8 +147,31 @@ cmd_db_up() {
 
 cmd_db_down() {
   need_docker
-  docker compose down
+  docker compose stop postgres
+  docker compose rm -f postgres
   green "db-down: ok"
+}
+
+cmd_n8n_up() {
+  need_docker
+  mkdir -p "$ROOT/n8n-data"
+  # The container runs as uid 1000. A host rewrite of database.sqlite leaves it
+  # owned by the Mac user and mode 644, and n8n then fails webhooks with
+  # SQLITE_IOERR because it cannot write the database.
+  chmod a+rwx "$ROOT/n8n-data"
+  chmod a+rw "$ROOT/n8n-data"/database.sqlite "$ROOT/n8n-data"/database.sqlite-wal "$ROOT/n8n-data"/database.sqlite-shm 2>/dev/null || true
+  cyan "Starting n8n on http://127.0.0.1:5678 …"
+  docker compose up -d n8n
+  green "n8n editor: http://127.0.0.1:5678"
+  echo "Foil clips post to http://127.0.0.1:5678/webhook/foil-pack"
+  echo "Workflow data stays in ./n8n-data (gitignored)."
+}
+
+cmd_n8n_down() {
+  need_docker
+  docker compose stop n8n
+  docker compose rm -f n8n
+  green "n8n-down: ok"
 }
 
 cmd_migrate() {
@@ -250,7 +276,7 @@ cmd_status() {
   fi
   echo
   echo "—— Ports ——"
-  for port in 5432 5433 8090 5080 5173; do
+  for port in 5432 5433 5678 8090 5080 5173; do
     pids="$(port_pids "$port")"
     if [[ -n "$pids" ]]; then
       green ":${port} listening (pid ${pids})"
@@ -278,6 +304,8 @@ main() {
     setup) cmd_setup ;;
     db-up) cmd_db_up ;;
     db-down) cmd_db_down ;;
+    n8n-up) cmd_n8n_up ;;
+    n8n-down) cmd_n8n_down ;;
     migrate) cmd_migrate ;;
     seed) cmd_seed ;;
     reset-db) cmd_reset_db ;;

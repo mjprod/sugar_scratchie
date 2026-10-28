@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated, Callable, Literal
 from urllib.parse import unquote
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -93,6 +93,7 @@ from backend.models_store import (
     delete_model_flag_svg,
     delete_model_theme_avatar,
     ensure_models_bootstrapped,
+    get_model,
     list_models,
     model_exists,
     update_model,
@@ -480,6 +481,7 @@ class Job:
     ended_at: float | None = None
     return_code: int | None = None
     logs: list[str] = field(default_factory=list)
+    progress_token: str = ""
 
     def public(self) -> dict:
         return {
@@ -636,8 +638,21 @@ def run_job(job: Job) -> None:
         logger.exception("job %s (%s) failed", job.id, job.kind)
 
 
-def enqueue(kind: str, command: list[str], action: Callable[[], None]) -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], kind=kind, command=command, action=action)
+def enqueue(
+    kind: str,
+    command: list[str],
+    action: Callable[[], None],
+    *,
+    job_id: str | None = None,
+    progress_token: str = "",
+) -> Job:
+    job = Job(
+        id=job_id or uuid.uuid4().hex[:12],
+        kind=kind,
+        command=command,
+        action=action,
+        progress_token=progress_token,
+    )
     with jobs_lock:
         jobs[job.id] = job
     logger.info("job %s (%s) queued", job.id, kind)
@@ -2338,6 +2353,244 @@ def video_flow_job(request: VideoFlowRequest) -> dict:
         ),
     )
     return job.public()
+
+
+class FoilPackageRequest(BaseModel):
+    name: str = ""
+    kind: str = ""
+
+
+@app.get("/api/jobs/models/{model_id}/foil-packages")
+def get_foil_packages(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    from backend.services.foil_packages import list_packages
+
+    model = get_model(db, MODELS_DIR, model_id)
+    return {"packages": list_packages(model.id)}
+
+
+@app.delete("/api/jobs/models/{model_id}/foil-packages")
+def delete_foil_package(
+    model_id: str,
+    request: FoilPackageRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    from backend.services.foil_packages import delete_package
+
+    model = get_model(db, MODELS_DIR, model_id)
+    delete_package(model.id, request.name)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/models/{model_id}/foil-packages/use")
+def use_foil_package(
+    model_id: str,
+    request: FoilPackageRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    """Render one saved package onto foil 1 or foil 2."""
+    from backend.services.foil_n8n import FOIL_KINDS
+    from backend.services.foil_packages import apply_package, resolve_package
+
+    if request.kind not in FOIL_KINDS:
+        raise HTTPException(status_code=400, detail="kind must be pack-face or pack-face-2")
+    model = get_model(db, MODELS_DIR, model_id)
+    resolve_package(model.id, request.name)
+    job = enqueue(
+        "foil-package",
+        ["foil-package", model.id, request.kind, request.name],
+        lambda model_id=model.id, name=request.name, kind=request.kind: apply_package(
+            model_id=model_id,
+            name=name,
+            kind=kind,
+            models_dir=MODELS_DIR,
+        ),
+    )
+    return job.public()
+
+
+@app.get("/api/jobs/foil-n8n/status")
+def foil_n8n_status() -> dict:
+    from backend.services.foil_n8n import webhook_status
+
+    return webhook_status()
+
+
+@app.post("/api/jobs/models/{model_id}/foil-n8n")
+async def post_foil_n8n(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    start: float = Form(0),
+    name: str = Form(""),
+    code: str = Form(""),
+) -> dict:
+    """Trim an uploaded clip to 4 seconds and run the foil n8n workflow."""
+    import secrets
+
+    from backend.services.foil_n8n import run_foil_pack_n8n, save_source
+    from backend.services.influencer_n8n import require_label
+
+    if start != start or start < 0 or start > 60 * 60:
+        raise HTTPException(status_code=400, detail="start must be between 0 and 3600 seconds")
+    model = get_model(db, MODELS_DIR, model_id)
+    influencer_name = require_label(name or model.influencerName or model.label or model.id, "Name")
+    influencer_code = require_label(code or model.id, "Code")
+    source = save_source(ROOT, model.id, kind, file.filename or "", await file.read())
+    job_id = uuid.uuid4().hex[:12]
+    token = secrets.token_urlsafe(24)
+    job = enqueue(
+        "foil-n8n",
+        ["foil-n8n", model.id, kind, f"{start:.3f}", influencer_name, influencer_code],
+        lambda source=source, model_id=model.id, kind=kind, start=start, influencer_name=influencer_name, influencer_code=influencer_code, job_id=job_id, token=token: run_foil_pack_n8n(
+            models_dir=MODELS_DIR,
+            model_id=model_id,
+            kind=kind,
+            source=source,
+            start=start,
+            name=influencer_name,
+            code=influencer_code,
+            job_id=job_id,
+            progress_token=token,
+        ),
+        job_id=job_id,
+        progress_token=token,
+    )
+    return job.public()
+
+
+@app.post("/api/internal/influencer-run")
+async def post_internal_influencer_run(request: Request) -> dict:
+    """n8n's form asks the Mac to run the creator steps. Docker cannot start After Effects."""
+    import secrets
+
+    from backend.services.influencer_n8n import FORM_RUN_TOKEN, require_label, run_form_steps
+
+    token = request.headers.get("x-progress-token", "")
+    if not token or not secrets.compare_digest(token, FORM_RUN_TOKEN):
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Body must be JSON") from exc
+    name = require_label(str(payload.get("name") or ""), "Name")
+    card = require_label(str(payload.get("id") or payload.get("code") or ""), "Id")
+    clip_path = Path(str(payload.get("clip") or ""))
+    if not clip_path.is_file():
+        raise HTTPException(status_code=400, detail="Clip file was not found")
+    line = run_form_steps(clip=clip_path, name=name, card_id=card)
+    return {"ok": True, "line": line}
+
+
+@app.post("/api/jobs/models/{model_id}/influencer-n8n")
+async def post_influencer_n8n(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    card_id: str = Form(""),
+) -> dict:
+    """Send an influencer name, id, and clip through the n8n creator steps."""
+    import secrets
+
+    from backend.services.influencer_n8n import (
+        progress_url_for,
+        require_label,
+        run_hosted_steps,
+        run_influencer_n8n,
+        save_clip,
+    )
+
+    model = get_model(db, MODELS_DIR, model_id)
+    influencer_name = require_label(name or (model.influencerName or ""), "Name")
+    influencer_id = require_label(card_id or model.id, "Id")
+    clip = save_clip(ROOT, model.id, file.filename or "", await file.read())
+    job_id = uuid.uuid4().hex[:12]
+    token = secrets.token_urlsafe(24)
+    job = enqueue(
+        "influencer-n8n",
+        ["influencer-n8n", model.id, influencer_id, influencer_name],
+        lambda clip=clip, influencer_name=influencer_name, influencer_id=influencer_id, job_id=job_id, token=token: run_influencer_n8n(
+            clip=clip,
+            name=influencer_name,
+            card_id=influencer_id,
+            job_id=job_id,
+            progress_token=token,
+        ),
+        job_id=job_id,
+        progress_token=token,
+    )
+    return job.public()
+
+
+def _progress_job(job_id: str, token: str) -> Job:
+    import secrets
+
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None or not token or not secrets.compare_digest(token, job.progress_token):
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+
+@app.post("/api/jobs/{job_id}/progress")
+async def post_job_progress(job_id: str, request: Request) -> dict:
+    """Live line from the n8n workflow, shown on the page that is waiting."""
+    import secrets
+
+    from backend.services.influencer_n8n import note_progress
+
+    token = request.headers.get("x-progress-token", "")
+    job = _progress_job(job_id, token)
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Progress body must be JSON") from exc
+    line = str(payload.get("line") or "").strip()
+    if line:
+        with jobs_lock:
+            job.logs.append(line)
+        note_progress(job_id, line)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/progress/run")
+async def post_job_progress_run(job_id: str, request: Request) -> dict:
+    """n8n asks the Mac to run the steps when the workflow cannot launch After Effects."""
+    import secrets
+
+    from backend.services.influencer_n8n import progress_url_for, run_hosted_steps
+
+    token = request.headers.get("x-progress-token", "")
+    _progress_job(job_id, token)
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Progress body must be JSON") from exc
+    name = str(payload.get("name") or "")
+    card = str(payload.get("id") or payload.get("card_id") or "")
+    kind = str(payload.get("kind") or "")
+    pack_model_id = str(payload.get("model_id") or "")
+    clip_path = Path(str(payload.get("clip") or ""))
+    if not clip_path.is_file():
+        raise HTTPException(status_code=400, detail="Clip file was not found")
+    try:
+        line = run_hosted_steps(
+            clip=clip_path,
+            name=name,
+            card_id=card,
+            progress_url=progress_url_for(job_id),
+            progress_token=token,
+            kind=kind,
+            model_id=pack_model_id,
+            models_dir=MODELS_DIR,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "line": line}
 
 
 @app.get("/api/jobs")
