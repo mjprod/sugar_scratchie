@@ -68,6 +68,9 @@ export function VideoFlowShell({
               </a>
             </Button>
             <Button asChild color="gray" variant="soft">
+              <a href="/dashboard/packs">Packs</a>
+            </Button>
+            <Button asChild color="gray" variant="soft">
               <a href="/dashboard/themes">
                 <Tags {...iconProps} />
                 Themes

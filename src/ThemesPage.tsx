@@ -484,6 +484,9 @@ export function ThemesPage() {
                 <a href="/dashboard/models">Models</a>
               </Button>
               <Button asChild variant="soft">
+                <a href="/dashboard/packs">Packs</a>
+              </Button>
+              <Button asChild variant="soft">
                 <a href="/dashboard/ai-models">AI models</a>
               </Button>
               <Button asChild variant="soft">

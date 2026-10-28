@@ -46,6 +46,11 @@ export default defineConfig(({ mode: _mode }) => {
       },
     },
   ],
+  optimizeDeps: {
+    // Default scan picks up every HTML file, including the nested n8n app,
+    // then skips pre-bundling when those imports do not resolve.
+    entries: ["index.html"],
+  },
   server: {
     host: "0.0.0.0",
     port: 5080,

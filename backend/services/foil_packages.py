@@ -21,7 +21,8 @@ from backend.services.influencer_n8n import JOBS_DIR, PROJECT_FILE, RESULT_NAME
 
 REPORT_NAME = "ae-relink-report.json"
 AERENDER = Path("/Applications/Adobe After Effects 2026/aerender")
-COMP_NAME = "MainComp"
+# Card output is this 60fps comp. MainComp is the design comp nested inside it.
+COMP_NAME = "--Exporter60fps"
 
 
 def jobs_dir() -> Path:

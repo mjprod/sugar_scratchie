@@ -7,6 +7,7 @@ import {
   FileUp,
   Image,
   LoaderCircle,
+  Package,
   Play,
   SlidersHorizontal,
   Square,
@@ -1074,6 +1075,12 @@ export function Dashboard() {
                   <a href="/dashboard/models">
                     <UserRound {...iconProps} />
                     Models
+                  </a>
+                </Button>
+                <Button asChild variant="soft">
+                  <a href="/dashboard/packs">
+                    <Package {...iconProps} />
+                    Packs
                   </a>
                 </Button>
                 <Button asChild variant="soft">

@@ -6,6 +6,7 @@ import { Dashboard } from "./Dashboard";
 import { DashboardLoginPage } from "./DashboardLoginPage";
 import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
+import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
@@ -63,6 +64,7 @@ function withOperatorGate(Page: React.ComponentType): React.ComponentType {
 
 const GatedDashboard = withOperatorGate(Dashboard);
 const GatedModelsPage = withOperatorGate(ModelsPage);
+const GatedPacksPage = withOperatorGate(PacksPage);
 const GatedThemesPage = withOperatorGate(ThemesPage);
 const GatedAiModelsPage = withOperatorGate(AiModelsPage);
 const GatedUsersPage = withOperatorGate(UsersPage);
@@ -102,6 +104,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
   if (path === "/dashboard/models") return GatedModelsPage;
+  if (path === "/dashboard/packs") return GatedPacksPage;
   if (path === "/dashboard/themes") return GatedThemesPage;
   if (path === "/dashboard/ai-models") return GatedAiModelsPage;
   if (path === "/dashboard/users") return GatedUsersPage;

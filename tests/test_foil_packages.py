@@ -108,6 +108,7 @@ def test_render_accepts_the_mp4_aerender_writes(tmp_path: Path, monkeypatch: pyt
     )
 
     def fake_run(command, **_kwargs):
+        assert command[command.index("-comp") + 1] == "--Exporter60fps"
         dest = Path(command[command.index("-output") + 1])
         dest.with_suffix(".mp4").write_bytes(FAKE_MP4)
 
