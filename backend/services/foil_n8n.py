@@ -3,7 +3,7 @@
 The operator uploads a video for pack-face or pack-face-2. This module keeps
 a 4-second window, then POSTs that mp4 to local n8n
 (http://127.0.0.1:5678/webhook/foil-pack). Set N8N_FOIL_PACK_WEBHOOK_URL
-to send the clip somewhere else. n8n's data lives in the gitignored ./n8n folder.
+to send the clip somewhere else. n8n's data lives in the gitignored ./n8n-data folder.
 
 Multipart fields:
   file       video/mp4, the trimmed clip
