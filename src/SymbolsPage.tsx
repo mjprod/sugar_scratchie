@@ -326,6 +326,9 @@ export function SymbolsPage() {
                 <a href="/dashboard/models">Models</a>
               </Button>
               <Button asChild variant="soft">
+                <a href="/dashboard/packs">Packs</a>
+              </Button>
+              <Button asChild variant="soft">
                 <a href="/dashboard/themes">Themes</a>
               </Button>
               <Button asChild variant="soft">
