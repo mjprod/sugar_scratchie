@@ -233,9 +233,32 @@ def launch_after_effects(destination: Path) -> str:
     raise RuntimeError("After Effects did not save the project within 3 minutes.")
 
 
+def progress_base(*, for_docker: bool) -> str:
+    """Base URL for progress callbacks.
+
+    n8n runs in Docker (``n8n-up``). Inside that container, 127.0.0.1 is n8n
+    itself, so the URL sent to n8n must use the host gateway. The After Effects
+    script runs on this machine and keeps the loopback address.
+    """
+    if for_docker:
+        configured = os.environ.get("INFLUENCER_PROGRESS_BASE", "").strip()
+        if configured:
+            return configured.rstrip("/")
+        return "http://host.docker.internal:8090"
+    configured = os.environ.get("INFLUENCER_PROGRESS_HOST_BASE", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    return "http://127.0.0.1:8090"
+
+
 def progress_url_for(job_id: str) -> str:
-    base = os.environ.get("INFLUENCER_PROGRESS_BASE", "http://127.0.0.1:8090").rstrip("/")
-    return f"{base}/api/jobs/{job_id}/progress"
+    """Progress URL n8n, inside Docker, posts back to."""
+    return f"{progress_base(for_docker=True)}/api/jobs/{job_id}/progress"
+
+
+def host_progress_url_for(job_id: str) -> str:
+    """Progress URL processes on this machine post back to."""
+    return f"{progress_base(for_docker=False)}/api/jobs/{job_id}/progress"
 
 
 def begin_wait(job_id: str) -> threading.Event:

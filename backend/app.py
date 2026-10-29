@@ -2569,7 +2569,11 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
     """n8n asks the Mac to run the steps when the workflow cannot launch After Effects."""
     import asyncio
 
-    from backend.services.influencer_n8n import note_progress, progress_url_for, run_hosted_steps
+    from backend.services.influencer_n8n import (
+        host_progress_url_for,
+        note_progress,
+        run_hosted_steps,
+    )
 
     token = request.headers.get("x-progress-token", "")
     job = _progress_job(job_id, token)
@@ -2599,7 +2603,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
             clip=clip_path,
             name=name,
             card_id=card,
-            progress_url=progress_url_for(job_id),
+            progress_url=host_progress_url_for(job_id),
             progress_token=token,
             kind=kind,
             model_id=pack_model_id,

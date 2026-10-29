@@ -228,6 +228,20 @@ def test_hosted_steps_report_in_process_instead_of_calling_back(tmp_path: Path, 
     assert reported == [line]
 
 
+def test_progress_url_for_reaches_the_host_from_docker_n8n(monkeypatch):
+    from backend.services.influencer_n8n import host_progress_url_for, progress_url_for
+
+    monkeypatch.delenv("INFLUENCER_PROGRESS_BASE", raising=False)
+    monkeypatch.delenv("INFLUENCER_PROGRESS_HOST_BASE", raising=False)
+    assert progress_url_for("job1") == "http://host.docker.internal:8090/api/jobs/job1/progress"
+    assert host_progress_url_for("job1") == "http://127.0.0.1:8090/api/jobs/job1/progress"
+
+    monkeypatch.setenv("INFLUENCER_PROGRESS_BASE", "http://api.internal:8090/")
+    monkeypatch.setenv("INFLUENCER_PROGRESS_HOST_BASE", "http://10.0.0.2:8090/")
+    assert progress_url_for("job1") == "http://api.internal:8090/api/jobs/job1/progress"
+    assert host_progress_url_for("job1") == "http://10.0.0.2:8090/api/jobs/job1/progress"
+
+
 def test_form_run_rejects_a_missing_clip(client):
     hidden = client.post(
         "/api/internal/influencer-run",

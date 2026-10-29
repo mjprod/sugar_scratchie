@@ -33,6 +33,10 @@ services:
       # n8n 2 hides Execute Command unless this is an empty list. The After Effects
       # workflow uses that node to copy a job folder and launch After Effects.
       NODES_EXCLUDE: "[]"
+    extra_hosts:
+      # Let n8n call the API on the host (progress lines and /progress/run).
+      # 127.0.0.1 inside this container is n8n, not the API.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./n8n-data:/home/node/.n8n
 
