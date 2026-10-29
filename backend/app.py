@@ -2497,9 +2497,7 @@ async def post_influencer_n8n(
     import secrets
 
     from backend.services.influencer_n8n import (
-        progress_url_for,
         require_label,
-        run_hosted_steps,
         run_influencer_n8n,
         save_clip,
     )
