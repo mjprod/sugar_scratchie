@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from backend.services.foil_n8n import FOIL_KINDS, write_pack_video
-from backend.services.influencer_n8n import JOBS_DIR, PROJECT_FILE, RESULT_NAME
+from backend.services.influencer_n8n import PROJECT_FILE, RESULT_NAME, influencer_jobs
 
 REPORT_NAME = "ae-relink-report.json"
 AERENDER = Path("/Applications/Adobe After Effects 2026/aerender")
@@ -26,7 +26,7 @@ COMP_NAME = "--Exporter60fps"
 
 
 def jobs_dir() -> Path:
-    return Path(os.environ.get("INFLUENCER_JOBS", str(JOBS_DIR)))
+    return influencer_jobs()
 
 
 def folder_prefix(model_id: str) -> str:

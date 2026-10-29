@@ -26,10 +26,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-SCRIPT_PATH = Path("/Users/glaucomp/n8n-sugar-scratch/local/after-effects/duplicate_job.py")
-TEMPLATE_DIR = Path("/Users/glaucomp/Desktop/PackageMaker/ss-influencer")
-JOBS_DIR = Path("/Users/glaucomp/Desktop/PackageMaker/jobs")
 PROJECT_FILE = "ss-Influencer.aep"
+# Standard install location. Override with AFTER_EFFECTS_APP when it lives elsewhere.
 AE_APP = Path("/Applications/Adobe After Effects 2026/Adobe After Effects 2026.app")
 AE_APP_NAME = "Adobe After Effects 2026"
 AE_PROCESS_NAME = "After Effects"
@@ -74,10 +72,21 @@ def require_label(value: str, label: str) -> str:
     return text
 
 
+def _env_path(name: str) -> Path:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is not set. Add it to .env — see .env.example.")
+    return Path(value)
+
+
+def influencer_jobs() -> Path:
+    return _env_path("INFLUENCER_JOBS")
+
+
 def script_command(clip: Path, name: str, card_id: str) -> list[str]:
-    script = Path(os.environ.get("INFLUENCER_N8N_SCRIPT", str(SCRIPT_PATH)))
-    template = os.environ.get("INFLUENCER_TEMPLATE", str(TEMPLATE_DIR))
-    jobs = os.environ.get("INFLUENCER_JOBS", str(JOBS_DIR))
+    script = _env_path("INFLUENCER_N8N_SCRIPT")
+    template = str(_env_path("INFLUENCER_TEMPLATE"))
+    jobs = str(influencer_jobs())
     return [
         sys.executable,
         str(script),

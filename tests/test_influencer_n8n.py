@@ -35,9 +35,15 @@ def test_require_label_rejects_empty_and_pipes():
     assert require_label("  Ada  Vale ", "Name") == "Ada Vale"
 
 
-def test_script_command_uses_name_id_and_clip(tmp_path: Path):
+def test_script_command_uses_name_id_and_clip(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("INFLUENCER_N8N_SCRIPT", str(tmp_path / "duplicate_job.py"))
+    monkeypatch.setenv("INFLUENCER_TEMPLATE", str(tmp_path / "template"))
+    monkeypatch.setenv("INFLUENCER_JOBS", str(tmp_path / "jobs"))
     clip = tmp_path / "clip.mp4"
     command = script_command(clip, "Ada", "234")
+    assert command[1] == str(tmp_path / "duplicate_job.py")
+    assert command[command.index("--template") + 1] == str(tmp_path / "template")
+    assert command[command.index("--jobs") + 1] == str(tmp_path / "jobs")
     assert command[2:8] == ["--template", command[3], "--jobs", command[5], "--name", "Ada"]
     assert "--id" in command
     assert command[command.index("--id") + 1] == "234"
