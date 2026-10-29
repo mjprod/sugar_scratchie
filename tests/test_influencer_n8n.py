@@ -194,6 +194,40 @@ def test_launch_sends_the_project_when_after_effects_is_open(tmp_path: Path, mon
     assert text.startswith("Saved ")
 
 
+def test_hosted_steps_report_in_process_instead_of_calling_back(tmp_path: Path, monkeypatch):
+    from backend.services.influencer_n8n import RESULT_LINE, run_hosted_steps
+
+    destination = tmp_path / "job"
+    destination.mkdir()
+    reported: list[str] = []
+
+    monkeypatch.setattr(
+        "backend.services.influencer_n8n.run_copy",
+        lambda *_args, **_kwargs: destination,
+    )
+    monkeypatch.setattr(
+        "backend.services.influencer_n8n.launch_after_effects",
+        lambda _destination: "Saved",
+    )
+
+    def fail_http(*_args, **_kwargs):
+        raise AssertionError("hosted steps must not POST progress back to this API")
+
+    monkeypatch.setattr("backend.services.influencer_n8n._post_json", fail_http)
+
+    line = run_hosted_steps(
+        clip=tmp_path / "clip.mp4",
+        name="Ada",
+        card_id="234",
+        progress_url="http://127.0.0.1:8090/api/jobs/job1/progress",
+        progress_token="token",
+        report_line=reported.append,
+    )
+
+    assert line == f"{RESULT_LINE} {destination}"
+    assert reported == [line]
+
+
 def test_form_run_rejects_a_missing_clip(client):
     hidden = client.post(
         "/api/internal/influencer-run",

@@ -2465,6 +2465,7 @@ async def post_foil_n8n(
 @app.post("/api/internal/influencer-run")
 async def post_internal_influencer_run(request: Request) -> dict:
     """n8n's form asks the Mac to run the creator steps. Docker cannot start After Effects."""
+    import asyncio
     import secrets
 
     from backend.services.influencer_n8n import FORM_RUN_TOKEN, require_label, run_form_steps
@@ -2481,7 +2482,15 @@ async def post_internal_influencer_run(request: Request) -> dict:
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
-    line = run_form_steps(clip=clip_path, name=name, card_id=card)
+    try:
+        line = await asyncio.to_thread(
+            run_form_steps,
+            clip=clip_path,
+            name=name,
+            card_id=card,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "line": line}
 
 
@@ -2558,12 +2567,12 @@ async def post_job_progress(job_id: str, request: Request) -> dict:
 @app.post("/api/jobs/{job_id}/progress/run")
 async def post_job_progress_run(job_id: str, request: Request) -> dict:
     """n8n asks the Mac to run the steps when the workflow cannot launch After Effects."""
-    import secrets
+    import asyncio
 
-    from backend.services.influencer_n8n import progress_url_for, run_hosted_steps
+    from backend.services.influencer_n8n import note_progress, progress_url_for, run_hosted_steps
 
     token = request.headers.get("x-progress-token", "")
-    _progress_job(job_id, token)
+    job = _progress_job(job_id, token)
     try:
         payload = await request.json()
     except Exception as exc:
@@ -2575,8 +2584,18 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
+
+    def report_line(line: str) -> None:
+        text = line.strip()
+        if not text:
+            return
+        with jobs_lock:
+            job.logs.append(text)
+        note_progress(job_id, text)
+
     try:
-        line = run_hosted_steps(
+        line = await asyncio.to_thread(
+            run_hosted_steps,
             clip=clip_path,
             name=name,
             card_id=card,
@@ -2585,6 +2604,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
             kind=kind,
             model_id=pack_model_id,
             models_dir=MODELS_DIR,
+            report_line=report_line,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

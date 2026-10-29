@@ -22,6 +22,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -280,9 +281,21 @@ def run_hosted_steps(
     kind: str = "",
     model_id: str = "",
     models_dir: Path | None = None,
+    report_line: Callable[[str], None] | None = None,
 ) -> str:
-    """Mac steps used when n8n itself cannot launch After Effects."""
+    """Mac steps used when n8n itself cannot launch After Effects.
+
+    ``report_line`` records the result in this process. Posting it back to
+    ``progress_url`` deadlocks when that URL is this same API: the request
+    is still inside the server, so the callback cannot be served.
+    """
     from backend.services.foil_n8n import FOIL_KINDS
+
+    def publish(line: str) -> None:
+        if report_line is not None:
+            report_line(line)
+            return
+        _post_json(progress_url, {"line": line}, progress_token, timeout=30)
 
     child_env = {
         "INFLUENCER_PROGRESS_URL": progress_url,
@@ -298,12 +311,12 @@ def run_hosted_steps(
 
             publish_package_video(destination, model_id=model_id, kind=kind, models_dir=models_dir)
         line = f"{RESULT_LINE} {destination}"
-        _post_json(progress_url, {"line": line}, progress_token, timeout=30)
+        publish(line)
         return line
     except Exception as exc:
         line = f"{ERROR_LINE} {exc}"
         try:
-            _post_json(progress_url, {"line": line}, progress_token, timeout=30)
+            publish(line)
         except Exception:
             pass
         raise
