@@ -184,6 +184,7 @@ def test_launch_sends_the_project_when_after_effects_is_open(tmp_path: Path, mon
 
     def fake_popen(command, **kwargs):
         assert command[0] == "osascript"
+        assert not kwargs.get("start_new_session")
         (destination / "ae-relink-result.txt").write_text("Saved the project\n")
         return Proc()
 

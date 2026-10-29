@@ -212,12 +212,13 @@ def launch_after_effects(destination: Path) -> str:
         + "end tell\n"
     )
     print("Opening After Effects.")
+    # Stay in this process session. A new session cannot send Apple Events, and
+    # After Effects then returns "Connection is invalid (-609)".
     process = subprocess.Popen(
         ["osascript", "-e", applescript],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        start_new_session=True,
     )
     deadline = time.time() + AE_WAIT_SECONDS
     while time.time() < deadline:
