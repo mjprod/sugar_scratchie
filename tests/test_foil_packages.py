@@ -42,6 +42,12 @@ def _package(root: Path, name: str, *, kind: str = "", saved: bool = True) -> Pa
     return folder
 
 
+def test_list_packages_is_empty_when_jobs_path_is_unset(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("INFLUENCER_JOBS", raising=False)
+
+    assert list_packages("ada") == []
+
+
 def test_list_packages_keeps_only_this_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = _jobs(tmp_path, monkeypatch)
     older = _package(root, "SS-ada Ada", kind="pack-face")

@@ -73,11 +73,18 @@ def require_label(value: str, label: str) -> str:
     return text
 
 
-def _env_path(name: str) -> Path:
+def configured_env_path(name: str) -> Path | None:
     value = os.environ.get(name, "").strip()
     if not value:
-        raise RuntimeError(f"{name} is not set. Add it to .env — see .env.example.")
+        return None
     return Path(value)
+
+
+def _env_path(name: str) -> Path:
+    path = configured_env_path(name)
+    if path is None:
+        raise RuntimeError(f"{name} is not set. Add it to .env — see .env.example.")
+    return path
 
 
 def influencer_jobs() -> Path:

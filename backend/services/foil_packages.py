@@ -17,7 +17,12 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from backend.services.foil_n8n import FOIL_KINDS, write_pack_video
-from backend.services.influencer_n8n import PROJECT_FILE, RESULT_NAME, influencer_jobs
+from backend.services.influencer_n8n import (
+    PROJECT_FILE,
+    RESULT_NAME,
+    configured_env_path,
+    influencer_jobs,
+)
 
 REPORT_NAME = "ae-relink-report.json"
 AERENDER = Path("/Applications/Adobe After Effects 2026/aerender")
@@ -25,8 +30,13 @@ AERENDER = Path("/Applications/Adobe After Effects 2026/aerender")
 COMP_NAME = "--Exporter60fps"
 
 
-def jobs_dir() -> Path:
-    return influencer_jobs()
+def jobs_dir() -> Path | None:
+    """Jobs folder from INFLUENCER_JOBS. None when that variable is unset.
+
+    Listing treats that the same as a missing directory. Creating or applying
+    a package still goes through influencer_jobs, which requires the path.
+    """
+    return configured_env_path("INFLUENCER_JOBS")
 
 
 def folder_prefix(model_id: str) -> str:
@@ -49,7 +59,7 @@ def _safe_name(name: str) -> str:
 def resolve_package(model_id: str, name: str) -> Path:
     """Return the job folder only when it is a direct child of the jobs directory."""
     folder_name = _safe_name(name)
-    root = jobs_dir().resolve()
+    root = influencer_jobs().resolve()
     dest = (root / folder_name).resolve()
     if dest.parent != root:
         raise HTTPException(status_code=400, detail="Package name is not valid")
@@ -88,7 +98,7 @@ def _read_kind(folder: Path) -> str:
 
 def list_packages(model_id: str) -> list[dict]:
     root = jobs_dir()
-    if not root.is_dir():
+    if root is None or not root.is_dir():
         return []
     prefix = folder_prefix(model_id)
     resolved_root = root.resolve()
