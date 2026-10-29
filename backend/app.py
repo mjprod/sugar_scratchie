@@ -969,7 +969,7 @@ class SetSlotPriceRequest(BaseModel):
 @app.get("/api/cards/{card_id}/photo-scratch")
 def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
-    return {"slots": [slot.dict() for slot in slots]}
+    return {"slots": [slot.model_dump() for slot in slots]}
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/publish-game")
@@ -1140,7 +1140,7 @@ def save_photo_scratch_slot_symbols(
     if not re.fullmatch(r"slot_\d{2}", slot_id):
         raise HTTPException(status_code=400, detail="Invalid slot_id")
     slot = write_photo_scratch_slot_symbols(CARDS_DIR, card_id, slot_id, request.points)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.patch("/api/cards/{card_id}/photo-scratch/clothes-ref")
@@ -1161,7 +1161,7 @@ def patch_photo_scratch_clothes_ref(
     slots = set_photo_scratch_clothes_ref(
         CARDS_DIR, card_id, image, slot_id or None, theme
     )
-    return {"slots": [slot.dict() for slot in slots]}
+    return {"slots": [slot.model_dump() for slot in slots]}
 
 
 @app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/prompt")
@@ -1175,7 +1175,7 @@ def patch_photo_scratch_slot_prompt(
     slot = set_photo_scratch_slot_prompt(
         CARDS_DIR, card_id, slot_id, request.layer, request.prompt, theme
     )
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/price")
@@ -1195,7 +1195,7 @@ def patch_photo_scratch_slot_price(
     slot = set_photo_scratch_slot_price(
         CARDS_DIR, card_id, slot_id, request.card_price, theme
     )
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/generate")
@@ -1257,7 +1257,7 @@ def approve_photo_scratch_layer_endpoint(
     choice: str = "",
 ) -> dict:
     slot = approve_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme, choice)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-layer")
@@ -1268,20 +1268,20 @@ def reject_photo_scratch_layer_endpoint(
     theme: str = "",
 ) -> dict:
     slot = reject_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
-    return slot.dict()
+    return slot.model_dump()
 
 
 # Keep old bg endpoints as aliases for backwards compatibility.
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/approve-bg")
 def approve_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
     slot = approve_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/reject-bg")
 def reject_photo_scratch_bg_endpoint(card_id: str, slot_id: str, theme: str = "") -> dict:
     slot = reject_photo_scratch_bg(CARDS_DIR, card_id, slot_id, theme)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
@@ -1293,7 +1293,7 @@ async def upload_photo_scratch_layer_endpoint(
     file: UploadFile = File(...),
 ) -> dict:
     slot = await upload_photo_scratch_layer(ROOT, CARDS_DIR, card_id, slot_id, layer, file, theme)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.delete("/api/cards/{card_id}/photo-scratch/{slot_id}/{layer}")
@@ -1301,7 +1301,7 @@ def delete_photo_scratch_layer_endpoint(
     card_id: str, slot_id: str, layer: str, theme: str = ""
 ) -> dict:
     slot = delete_photo_scratch_layer(CARDS_DIR, card_id, slot_id, layer, theme)
-    return slot.dict()
+    return slot.model_dump()
 
 
 @app.get("/api/models")

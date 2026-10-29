@@ -1087,7 +1087,7 @@ def _save_photo_scratch_slots(
     data = []
     for slot in slots:
         item = {}
-        for key, value in slot.dict().items():
+        for key, value in slot.model_dump().items():
             if key in skip or value is None:
                 continue
             if isinstance(value, list) and len(value) == 0:
