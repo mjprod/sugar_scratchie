@@ -1,5 +1,5 @@
 import { LoaderCircle, Pause, Play, Sparkles, Upload } from "lucide-react";
-import { Box, Button, Callout, Code, Dialog, Flex, Text } from "@radix-ui/themes";
+import { Box, Button, Callout, Code, Dialog, Flex, Select, Text } from "@radix-ui/themes";
 import { useEffect, useRef, useState } from "react";
 import { api, operatorFetch } from "./shared/api";
 
@@ -89,6 +89,7 @@ export function FoilPackN8nButton({
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [loadingCardVideo, setLoadingCardVideo] = useState(false);
+  const [keyer, setKeyer] = useState("byebg");
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -286,6 +287,7 @@ export function FoilPackN8nButton({
       form.append("start", start.toFixed(3));
       form.append("name", name.trim());
       form.append("code", code.trim());
+      form.append("keyer", keyer);
       const response = await operatorFetch(
         `/api/jobs/models/${encodeURIComponent(modelId)}/foil-n8n`,
         { method: "POST", body: form },
@@ -610,6 +612,21 @@ export function FoilPackN8nButton({
               </Text>
             ) : null}
           </Flex>
+          ) : null}
+
+          {!sending ? (
+            <label>
+              <Text as="div" mb="1" mt="3" size="1" weight="medium">
+                Background removal
+              </Text>
+              <Select.Root value={keyer} onValueChange={setKeyer}>
+                <Select.Trigger />
+                <Select.Content>
+                  <Select.Item value="byebg">ByeBg</Select.Item>
+                  <Select.Item value="greenkey">Greenkey</Select.Item>
+                </Select.Content>
+              </Select.Root>
+            </label>
           ) : null}
 
           {!sending && configured === false ? (

@@ -1,5 +1,5 @@
 import { LoaderCircle, Sparkles, Upload } from "lucide-react";
-import { Box, Button, Callout, Dialog, Flex, Text, TextField } from "@radix-ui/themes";
+import { Box, Button, Callout, Dialog, Flex, Select, Text, TextField } from "@radix-ui/themes";
 import { useEffect, useRef, useState } from "react";
 import { api, operatorFetch } from "./shared/api";
 
@@ -46,6 +46,7 @@ export function InfluencerN8nButton({ busy, modelId, name }: Props) {
   const [influencerName, setInfluencerName] = useState(name);
   const [cardId, setCardId] = useState(modelId);
   const [file, setFile] = useState<File | null>(null);
+  const [keyer, setKeyer] = useState("byebg");
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -114,6 +115,7 @@ export function InfluencerN8nButton({ busy, modelId, name }: Props) {
       form.append("file", file);
       form.append("name", nextName);
       form.append("card_id", nextId);
+      form.append("keyer", keyer);
       const response = await operatorFetch(
         `/api/jobs/models/${encodeURIComponent(modelId)}/influencer-n8n`,
         { method: "POST", body: form },
@@ -151,9 +153,9 @@ export function InfluencerN8nButton({ busy, modelId, name }: Props) {
           <Dialog.Title mb="1">Send influencer to n8n</Dialog.Title>
           {sending ? null : (
             <Dialog.Description size="2" color="gray" mb="3">
-              Sends the name, the id, and the clip through every creator step: Greenkey, copy
-              the template, write the name and id, then open After Effects. Quit After Effects
-              before you send.
+              Sends the name, the id, and the clip through every creator step: background
+              removal, copy the template, write the name and id, then open After Effects.
+              Quit After Effects before you send.
             </Dialog.Description>
           )}
 
@@ -225,6 +227,18 @@ export function InfluencerN8nButton({ busy, modelId, name }: Props) {
                   </Text>
                 ) : null}
               </Flex>
+              <label>
+                <Text as="div" mb="1" size="1" weight="medium">
+                  Background removal
+                </Text>
+                <Select.Root value={keyer} onValueChange={setKeyer}>
+                  <Select.Trigger />
+                  <Select.Content>
+                    <Select.Item value="byebg">ByeBg</Select.Item>
+                    <Select.Item value="greenkey">Greenkey</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </label>
             </Flex>
           )}
 
