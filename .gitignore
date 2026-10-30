@@ -71,3 +71,4 @@ android/captures/
 .vscode/
 *.swp
 *~
+public/mesh/index.json

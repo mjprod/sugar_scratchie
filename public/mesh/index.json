@@ -3,6 +3,8 @@
     "asia_gym.json",
     "asia_gym2.json",
     "asian_2.json",
+    "avaalfaro_1.json",
+    "brookesouza_1.json",
     "girl_1.json",
     "janja_1.json",
     "ju_gym.json",
@@ -20,6 +22,11 @@
     "shine_1.json",
     "shine_4.json",
     "thai_1.json",
-    "tracked-mesh.json"
+    "tracked-mesh.json",
+    "wildhalli_1.json",
+    "wildhalli_cg_01.json",
+    "wildhalli_eg01.json",
+    "wildhalli_myth01.json",
+    "wildhalli_p102.json"
   ]
 }

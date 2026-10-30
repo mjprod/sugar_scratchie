@@ -1,0 +1,71 @@
+[
+  {
+    "id": "slot_01",
+    "label": "Greek Mythos \u2013 1",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_01_background.jpg?v=1792125491",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_01_bikini.jpg?v=1792125667",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_01_clothes.jpg?v=1792126489"
+  },
+  {
+    "id": "slot_02",
+    "label": "Greek Mythos \u2013 2",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_02_background.jpg?v=1792125496",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_02_bikini.jpg?v=1792126281",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_02_clothes.jpg?v=1792126592"
+  },
+  {
+    "id": "slot_03",
+    "label": "Greek Mythos \u2013 3",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_03_background.jpg?v=1792125502",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_03_bikini.jpg?v=1792125769",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_03_clothes.jpg?v=1792126505"
+  },
+  {
+    "id": "slot_04",
+    "label": "Greek Mythos \u2013 4",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_04_background.jpg?v=1792125508",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_04_bikini.jpg?v=1792126971",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_04_clothes.jpg?v=1792127326"
+  },
+  {
+    "id": "slot_05",
+    "label": "Greek Mythos \u2013 5",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_05_background.jpg?v=1792125514",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_05_bikini.jpg?v=1792125881",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_05_clothes.jpg?v=1792126624"
+  },
+  {
+    "id": "slot_06",
+    "label": "Greek Mythos \u2013 6",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_06_background.jpg?v=1792126029",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_06_bikini.jpg?v=1792127375",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_06_clothes.jpg?v=1792127412"
+  },
+  {
+    "id": "slot_07",
+    "label": "Greek Mythos \u2013 7",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_07_background.jpg?v=1792125527",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_07_bikini.jpg?v=1792126563",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_07_clothes.jpg?v=1792126936"
+  },
+  {
+    "id": "slot_08",
+    "label": "Greek Mythos \u2013 8",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_08_background.jpg?v=1792125533",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_08_bikini.jpg?v=1792126619",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_08_clothes.jpg?v=1792128030"
+  },
+  {
+    "id": "slot_09",
+    "label": "Greek Mythos \u2013 9",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_09_background.jpg?v=1792125540",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_09_bikini.jpg?v=1792126687",
+    "clothes": "/cards/wildhalli_myth01/photo-scratch/pending/slot_09_clothes.jpg?v=1792127348"
+  },
+  {
+    "id": "slot_10",
+    "label": "Greek Mythos \u2013 10",
+    "background": "/cards/wildhalli_myth01/photo-scratch/pending/slot_10_background.jpg?v=1792125547",
+    "bikini": "/cards/wildhalli_myth01/photo-scratch/pending/slot_10_bikini.jpg?v=1792129184"
+  }
+]

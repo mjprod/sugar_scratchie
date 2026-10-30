@@ -1,0 +1,73 @@
+[
+  {
+    "id": "slot_01",
+    "label": "Egypt \u2013 1",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_01_background.jpg?v=1792031141",
+    "bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_01_bikini.jpg?v=1792031438",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png",
+    "card_price": 10
+  },
+  {
+    "id": "slot_02",
+    "label": "Egypt \u2013 2",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_02_background.jpg?v=1792031147",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_02_bikini.jpg?v=1792032500",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_03",
+    "label": "Egypt \u2013 3",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_03_background.jpg?v=1792031153",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_03_bikini.jpg?v=1792032746",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_04",
+    "label": "Egypt \u2013 4",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_04_background.jpg?v=1792031158",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_04_bikini.jpg?v=1792032852",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_05",
+    "label": "Egypt \u2013 5",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_05_background.jpg?v=1792031163",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_05_bikini.jpg?v=1792032982",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_06",
+    "label": "Egypt \u2013 6",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_06_background.jpg?v=1792031168",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_06_bikini.jpg?v=1792033096",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_07",
+    "label": "Egypt \u2013 7",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_07_background.jpg?v=1792031172",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_07_bikini.jpg?v=1792033213",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_08",
+    "label": "Egypt \u2013 8",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_08_background.jpg?v=1792031177",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_08_bikini.jpg?v=1792033595",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_09",
+    "label": "Egypt \u2013 9",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_09_background.jpg?v=1792031183",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_09_bikini.jpg?v=1792033701",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  },
+  {
+    "id": "slot_10",
+    "label": "Egypt \u2013 10",
+    "background": "/cards/wildhalli_eg01/photo-scratch/pending/slot_10_background.jpg?v=1792031189",
+    "pending_bikini": "/cards/wildhalli_eg01/photo-scratch/pending/slot_10_bikini.jpg",
+    "clothes_ref": ".tmp/uploads/9ecf5757-egyptCostumeAnime.png"
+  }
+]
