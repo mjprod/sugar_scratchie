@@ -183,6 +183,7 @@ from backend.services.video_flow import (
     flow_state,
     import_dress_clip,
     import_manual_clips,
+    import_picture_still,
     list_flows,
     patch_flow_draft_model,
     read_flow_draft,
@@ -397,6 +398,10 @@ class VideoFlowImportClipsRequest(BaseModel):
 
 class VideoFlowImportDressRequest(BaseModel):
     foreground: str = Field(min_length=1)
+
+
+class VideoFlowImportPictureRequest(BaseModel):
+    image: str = Field(min_length=1)
 
 
 class MeshCandidateRequest(BaseModel):
@@ -2135,6 +2140,19 @@ def import_video_flow_clips(card_id: str, request: VideoFlowImportClipsRequest) 
             foreground=foreground,
             model_id=request.model_id.strip() or None,
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
+@app.post("/api/video-flow/{card_id}/import-picture")
+def import_video_flow_picture(card_id: str, request: VideoFlowImportPictureRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    image = workspace_path(request.image, must_exist=True)
+    try:
+        result = import_picture_still(card_id=card_id, image=image)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     cancel_stale_video_flow_jobs(card_id)

@@ -669,3 +669,103 @@ def test_overlap_prompt_is_sent_unchanged(monkeypatch, tmp_path):
     )
 
     assert seen == [overlap, overlap]
+
+
+def test_import_picture_requires_operator(client, card_id):
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": "package.json"},
+    )
+    assert response.status_code == 401
+
+
+def test_import_picture_rejects_paths_outside_project(client, dashboard_headers, card_id):
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": "/etc/hosts"},
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_import_picture_rejects_unreadable_file(client, dashboard_headers, card_id):
+    work = work_dir(card_id)
+    bad = work / "notes.png"
+    bad.write_text("not an image", encoding="utf-8")
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": str(bad)},
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 400, response.text
+    assert "unreadable" in response.json()["detail"]
+
+
+def test_import_picture_lands_in_review(client, dashboard_headers, card_id):
+    from PIL import Image
+
+    work = work_dir(card_id)
+    src = work / "added.jpg"
+    Image.new("RGB", (4, 6), (1, 2, 3)).save(src, format="JPEG")
+
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": str(src)},
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["steps"]["picture"]["status"] == "review"
+    assert body["picture_uploaded"] is True
+    assert body["approved"] == []
+    assert body["picture_choice"] is None
+    assert body["steps"]["picture"]["artifacts"] == [
+        f".tmp/video-flow/{card_id}/picture-1.png"
+    ]
+    added = Image.open(work / "picture-1.png")
+    assert added.format == "PNG"
+    assert added.size == (4, 6)
+
+    approve = client.post(
+        f"/api/video-flow/{card_id}/approve",
+        json={"step": "picture", "picture_choice": 1},
+        headers=dashboard_headers,
+    )
+    assert approve.status_code == 200, approve.text
+    approved = approve.json()
+    assert approved["steps"]["picture"]["status"] == "approved"
+    assert approved["picture_choice"] == 1
+    assert approved["steps"]["background"]["status"] == "ready"
+    assert (work / "picture.png").read_bytes() == (work / "picture-1.png").read_bytes()
+
+
+def test_import_picture_replaces_set_and_resets_downstream(
+    client, dashboard_headers, card_id
+):
+    from PIL import Image
+
+    work = work_dir(card_id)
+    (work / "picture-1.png").write_bytes(b"old-one")
+    (work / "picture-2.png").write_bytes(b"old-two")
+    (work / "picture.png").write_bytes(b"old-winner")
+    (work / "background-raw.mp4").write_bytes(b"video")
+    write_state(work, {"approved": ["picture", "background", "dress"]})
+    src = work / "replacement.png"
+    Image.new("RGB", (2, 2), (9, 8, 7)).save(src)
+
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": str(src)},
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["approved"] == []
+    assert body["picture_uploaded"] is True
+    assert body["steps"]["picture"]["status"] == "review"
+    assert body["steps"]["background"]["status"] == "locked"
+    assert body["steps"]["dress"]["status"] == "locked"
+    assert not (work / "picture-2.png").exists()
+    assert not (work / "picture.png").exists()
+    assert not (work / "background-raw.mp4").exists()
+    assert Image.open(work / "picture-1.png").getpixel((0, 0)) == (9, 8, 7)
