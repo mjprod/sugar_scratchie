@@ -739,6 +739,26 @@ def test_import_picture_lands_in_review(client, dashboard_headers, card_id):
     assert (work / "picture.png").read_bytes() == (work / "picture-1.png").read_bytes()
 
 
+def test_import_picture_applies_exif_orientation(client, dashboard_headers, card_id):
+    from PIL import Image
+
+    work = work_dir(card_id)
+    src = work / "phone.jpg"
+    photo = Image.new("RGB", (4, 6), (1, 2, 3))
+    exif = photo.getexif()
+    exif[274] = 6  # right side is the top — rotate 90° clockwise for display
+    photo.save(src, format="JPEG", exif=exif)
+
+    response = client.post(
+        f"/api/video-flow/{card_id}/import-picture",
+        json={"image": str(src)},
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 200, response.text
+    added = Image.open(work / "picture-1.png")
+    assert added.size == (6, 4)
+
+
 def test_import_picture_replaces_set_and_resets_downstream(
     client, dashboard_headers, card_id
 ):
@@ -769,3 +789,86 @@ def test_import_picture_replaces_set_and_resets_downstream(
     assert not (work / "picture.png").exists()
     assert not (work / "background-raw.mp4").exists()
     assert Image.open(work / "picture-1.png").getpixel((0, 0)) == (9, 8, 7)
+
+
+def test_import_picture_does_not_reapprove_published_card(
+    client, dashboard_headers, card_id, monkeypatch
+):
+    from PIL import Image
+
+    import backend.services.video_flow as video_flow
+
+    published = video_flow.CARDS_DIR / card_id
+    published.mkdir(parents=True)
+    (published / "background.mp4").write_bytes(b"bg")
+    (published / "foreground.mp4").write_bytes(b"fg")
+    monkeypatch.setattr(
+        video_flow,
+        "output_video_ready",
+        lambda path: path.is_file() and path.stat().st_size > 0,
+    )
+
+    work = work_dir(card_id)
+    (work / "picture.png").write_bytes(b"old-winner")
+    (work / "picture-1.png").write_bytes(b"old-one")
+    write_state(
+        work,
+        {"approved": ["picture", "background", "dress", "boomerang", "card"]},
+    )
+    src = work / "replacement.png"
+    Image.new("RGB", (2, 2), (4, 5, 6)).save(src)
+
+    try:
+        response = client.post(
+            f"/api/video-flow/{card_id}/import-picture",
+            json={"image": str(src)},
+            headers=dashboard_headers,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["recovered_approvals"] is False
+        assert body["approved"] == []
+        assert body["picture_choice"] is None
+        assert body["steps"]["picture"]["status"] == "review"
+        assert body["steps"]["background"]["status"] == "locked"
+        assert body["steps"]["card"]["status"] == "locked"
+        assert not (work / "picture.png").exists()
+        assert (work / "picture-1.png").is_file()
+
+        again = client.get(
+            f"/api/video-flow/{card_id}/state",
+            headers=dashboard_headers,
+        )
+        assert again.status_code == 200, again.text
+        refreshed = again.json()
+        assert refreshed["approved"] == []
+        assert refreshed["steps"]["picture"]["status"] == "review"
+        assert refreshed["steps"]["background"]["status"] == "locked"
+    finally:
+        shutil.rmtree(published, ignore_errors=True)
+
+
+def test_missing_state_still_recovers_published_card(card_id, monkeypatch):
+    import backend.services.video_flow as video_flow
+
+    published = video_flow.CARDS_DIR / card_id
+    published.mkdir(parents=True)
+    (published / "background.mp4").write_bytes(b"bg")
+    (published / "foreground.mp4").write_bytes(b"fg")
+    monkeypatch.setattr(
+        video_flow,
+        "output_video_ready",
+        lambda path: path.is_file() and path.stat().st_size > 0,
+    )
+
+    work = work_dir(card_id)
+    state_file = work / "state.json"
+    if state_file.exists():
+        state_file.unlink()
+
+    try:
+        state = video_flow.flow_state(card_id)
+    finally:
+        shutil.rmtree(published, ignore_errors=True)
+    assert state["recovered_approvals"] is True
+    assert state["approved"] == ["picture", "background", "dress", "boomerang", "card"]

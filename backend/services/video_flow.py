@@ -1236,6 +1236,24 @@ def _ensure_card_published(
     return card_dir
 
 
+def _approvals_were_lost(work: Path) -> bool:
+    """True when state.json is missing or unreadable.
+
+    An explicit empty approval list is a reset (reject or a new picture). That
+    must not be rebuilt from published card videos.
+    """
+    path = state_path(work)
+    if not path.is_file():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not isinstance(data, dict):
+        return True
+    return not isinstance(data.get("approved"), list)
+
+
 def recover_stale_approvals(
     work: Path,
     card_id: str,
@@ -1245,6 +1263,8 @@ def recover_stale_approvals(
 ) -> bool:
     """Restore approvals when artifacts still exist but state.json was cleared."""
     if state["approved"]:
+        return False
+    if not _approvals_were_lost(work):
         return False
     paths = _paths(work)
     card_dir = CARDS_DIR / card_id
@@ -2912,12 +2932,15 @@ def import_picture_still(*, card_id: str, image: str | Path) -> dict:
 
     from io import BytesIO
 
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         with Image.open(src) as opened:
+            # Phone JPEGs store rotation in EXIF. The browser preview honors it;
+            # bake that rotation into the pixels so the still is not sideways.
+            oriented = ImageOps.exif_transpose(opened) or opened
             buffer = BytesIO()
-            opened.convert("RGB").save(buffer, format="PNG")
+            oriented.convert("RGB").save(buffer, format="PNG")
             png_bytes = buffer.getvalue()
     except Exception as exc:
         raise RuntimeError(f"Picture is unreadable: {image}") from exc
@@ -2934,6 +2957,10 @@ def import_picture_still(*, card_id: str, image: str | Path) -> dict:
     )
     if has_existing:
         reject_flow_step(card_id, "picture")
+    else:
+        # Persist the empty list before flow_state runs. A missing state file
+        # plus published clips would otherwise mark this new still approved.
+        write_state(work, read_state(work))
 
     record_step_started(work, "picture")
     picture_choice_path(work, 1).write_bytes(png_bytes)
