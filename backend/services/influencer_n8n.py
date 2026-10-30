@@ -143,7 +143,10 @@ def run_copy(clip: Path, name: str, card_id: str, env: dict[str, str] | None = N
     child_env = os.environ.copy()
     if env:
         child_env.update(env)
-    keyer = child_env.get("KEY_PROVIDER", "byebg").strip().lower() or "byebg"
+    try:
+        keyer = normalize_keyer(child_env.get("KEY_PROVIDER", ""))
+    except HTTPException as exc:
+        raise RuntimeError(str(exc.detail)) from exc
     child_env["KEY_PROVIDER"] = keyer
     print(f"{keyer}: key the clip, then copy the template and write the name and id.")
     child_env["PYTHONUNBUFFERED"] = "1"
