@@ -64,6 +64,18 @@ def save_clip(root: Path, model_id: str, filename: str, data: bytes) -> Path:
     return path
 
 
+KEYERS = ("byebg", "greenkey")
+
+
+def normalize_keyer(value: str) -> str:
+    text = value.strip().lower()
+    if not text:
+        return "byebg"
+    if text not in KEYERS:
+        raise HTTPException(status_code=400, detail="keyer must be byebg or greenkey")
+    return text
+
+
 def require_label(value: str, label: str) -> str:
     text = " ".join(value.split())
     if not text:
@@ -128,10 +140,15 @@ def run_copy(clip: Path, name: str, card_id: str, env: dict[str, str] | None = N
     script = Path(command[1])
     if not script.is_file():
         raise RuntimeError(f"Influencer script not found: {script}")
-    print("Greenkey, then copy the template and write the name and id.")
     child_env = os.environ.copy()
     if env:
         child_env.update(env)
+    try:
+        keyer = normalize_keyer(child_env.get("KEY_PROVIDER", ""))
+    except HTTPException as exc:
+        raise RuntimeError(str(exc.detail)) from exc
+    child_env["KEY_PROVIDER"] = keyer
+    print(f"{keyer}: key the clip, then copy the template and write the name and id.")
     child_env["PYTHONUNBUFFERED"] = "1"
     env = child_env
     process = subprocess.Popen(
@@ -313,6 +330,7 @@ def run_hosted_steps(
     model_id: str = "",
     models_dir: Path | None = None,
     report_line: Callable[[str], None] | None = None,
+    key_provider: str = "byebg",
 ) -> str:
     """Mac steps used when n8n itself cannot launch After Effects.
 
@@ -331,6 +349,7 @@ def run_hosted_steps(
     child_env = {
         "INFLUENCER_PROGRESS_URL": progress_url,
         "INFLUENCER_PROGRESS_TOKEN": progress_token,
+        "KEY_PROVIDER": key_provider or "byebg",
     }
     if kind in FOIL_KINDS:
         child_env["FOIL_PACK_KIND"] = kind
@@ -353,9 +372,9 @@ def run_hosted_steps(
         raise
 
 
-def run_form_steps(*, clip: Path, name: str, card_id: str) -> str:
+def run_form_steps(*, clip: Path, name: str, card_id: str, key_provider: str = "byebg") -> str:
     """Mac steps for the n8n form, which has no progress job."""
-    destination = run_copy(clip, name, card_id)
+    destination = run_copy(clip, name, card_id, env={"KEY_PROVIDER": key_provider or "byebg"})
     launch_after_effects(destination)
     return f"{RESULT_LINE} {destination}"
 

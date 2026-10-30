@@ -23,6 +23,43 @@ class FakeProcess:
         return self._code
 
 
+def test_normalize_keyer_defaults_to_byebg_and_rejects_unknown():
+    from fastapi import HTTPException
+
+    import pytest
+
+    from backend.services.influencer_n8n import normalize_keyer
+
+    assert normalize_keyer("") == "byebg"
+    assert normalize_keyer(" ByeBg ") == "byebg"
+    assert normalize_keyer("greenkey") == "greenkey"
+    with pytest.raises(HTTPException):
+        normalize_keyer("other")
+
+
+def test_hosted_steps_pass_the_chosen_keyer(tmp_path: Path, monkeypatch):
+    from backend.services.influencer_n8n import run_hosted_steps
+
+    seen: dict[str, str] = {}
+
+    def fake_copy(*_args, **kwargs):
+        seen.update(kwargs.get("env") or {})
+        return tmp_path
+
+    monkeypatch.setattr("backend.services.influencer_n8n.run_copy", fake_copy)
+    monkeypatch.setattr("backend.services.influencer_n8n.launch_after_effects", lambda _destination: "Saved")
+    run_hosted_steps(
+        clip=tmp_path / "clip.mp4",
+        name="Ada",
+        card_id="234",
+        progress_url="http://127.0.0.1:8090/api/jobs/job1/progress",
+        progress_token="token",
+        key_provider="greenkey",
+        report_line=lambda _line: None,
+    )
+    assert seen["KEY_PROVIDER"] == "greenkey"
+
+
 def test_require_label_rejects_empty_and_pipes():
     from fastapi import HTTPException
 

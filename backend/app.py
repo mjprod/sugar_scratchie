@@ -183,6 +183,7 @@ from backend.services.video_flow import (
     flow_state,
     import_dress_clip,
     import_manual_clips,
+    import_picture_still,
     list_flows,
     patch_flow_draft_model,
     read_flow_draft,
@@ -399,6 +400,10 @@ class VideoFlowImportDressRequest(BaseModel):
     foreground: str = Field(min_length=1)
 
 
+class VideoFlowImportPictureRequest(BaseModel):
+    image: str = Field(min_length=1)
+
+
 class MeshCandidateRequest(BaseModel):
     card_id: str = Field(min_length=1, max_length=64)
     card_label: str = Field(min_length=1, max_length=120)
@@ -482,6 +487,7 @@ class Job:
     return_code: int | None = None
     logs: list[str] = field(default_factory=list)
     progress_token: str = ""
+    key_provider: str = "byebg"
 
     def public(self) -> dict:
         return {
@@ -645,6 +651,7 @@ def enqueue(
     *,
     job_id: str | None = None,
     progress_token: str = "",
+    key_provider: str = "byebg",
 ) -> Job:
     job = Job(
         id=job_id or uuid.uuid4().hex[:12],
@@ -652,6 +659,7 @@ def enqueue(
         command=command,
         action=action,
         progress_token=progress_token,
+        key_provider=key_provider or "byebg",
     )
     with jobs_lock:
         jobs[job.id] = job
@@ -2138,6 +2146,19 @@ def import_video_flow_clips(card_id: str, request: VideoFlowImportClipsRequest) 
     return result
 
 
+@app.post("/api/video-flow/{card_id}/import-picture")
+def import_video_flow_picture(card_id: str, request: VideoFlowImportPictureRequest) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    image = workspace_path(request.image, must_exist=True)
+    try:
+        result = import_picture_still(card_id=card_id, image=image)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_stale_video_flow_jobs(card_id)
+    return result
+
+
 @app.post("/api/video-flow/{card_id}/import-dress")
 def import_video_flow_dress(card_id: str, request: VideoFlowImportDressRequest) -> dict:
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
@@ -2427,18 +2448,20 @@ async def post_foil_n8n(
     start: float = Form(0),
     name: str = Form(""),
     code: str = Form(""),
+    keyer: str = Form(""),
 ) -> dict:
     """Trim an uploaded clip to 4 seconds and run the foil n8n workflow."""
     import secrets
 
     from backend.services.foil_n8n import run_foil_pack_n8n, save_source
-    from backend.services.influencer_n8n import require_label
+    from backend.services.influencer_n8n import normalize_keyer, require_label
 
     if start != start or start < 0 or start > 60 * 60:
         raise HTTPException(status_code=400, detail="start must be between 0 and 3600 seconds")
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or model.influencerName or model.label or model.id, "Name")
     influencer_code = require_label(code or model.id, "Code")
+    chosen_keyer = normalize_keyer(keyer)
     source = save_source(ROOT, model.id, kind, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
@@ -2458,6 +2481,7 @@ async def post_foil_n8n(
         ),
         job_id=job_id,
         progress_token=token,
+        key_provider=chosen_keyer,
     )
     return job.public()
 
@@ -2468,7 +2492,7 @@ async def post_internal_influencer_run(request: Request) -> dict:
     import asyncio
     import secrets
 
-    from backend.services.influencer_n8n import FORM_RUN_TOKEN, require_label, run_form_steps
+    from backend.services.influencer_n8n import FORM_RUN_TOKEN, normalize_keyer, require_label, run_form_steps
 
     token = request.headers.get("x-progress-token", "")
     if not token or not secrets.compare_digest(token, FORM_RUN_TOKEN):
@@ -2488,6 +2512,7 @@ async def post_internal_influencer_run(request: Request) -> dict:
             clip=clip_path,
             name=name,
             card_id=card,
+            key_provider=normalize_keyer(str(payload.get("keyer") or "")),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2501,11 +2526,13 @@ async def post_influencer_n8n(
     file: UploadFile = File(...),
     name: str = Form(""),
     card_id: str = Form(""),
+    keyer: str = Form(""),
 ) -> dict:
     """Send an influencer name, id, and clip through the n8n creator steps."""
     import secrets
 
     from backend.services.influencer_n8n import (
+        normalize_keyer,
         require_label,
         run_influencer_n8n,
         save_clip,
@@ -2514,6 +2541,7 @@ async def post_influencer_n8n(
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or (model.influencerName or ""), "Name")
     influencer_id = require_label(card_id or model.id, "Id")
+    chosen_keyer = normalize_keyer(keyer)
     clip = save_clip(ROOT, model.id, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
@@ -2529,6 +2557,7 @@ async def post_influencer_n8n(
         ),
         job_id=job_id,
         progress_token=token,
+        key_provider=chosen_keyer,
     )
     return job.public()
 
@@ -2609,6 +2638,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
             model_id=pack_model_id,
             models_dir=MODELS_DIR,
             report_line=report_line,
+            key_provider=job.key_provider or "byebg",
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

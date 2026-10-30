@@ -507,7 +507,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       title: "Create picture",
       subtitle: "Pick one",
       description:
-        "Choose 1, 2, or 3. Each picture has its own prompt. Pick one before image-to-video.",
+        "Makes a Grok still and a Seedream still. Pick one before image-to-video, or add a picture you already have.",
       x: 220,
       y: 56,
       step: "picture",

@@ -155,6 +155,7 @@ type VideoFlowState = {
   timings?: FlowTimings | null;
   recovered_approvals?: boolean;
   picture_choice?: number | null;
+  picture_uploaded?: boolean;
 };
 
 type BoomerangReport = {
@@ -2800,6 +2801,7 @@ export function RunMode(props: RunModeProps) {
   const [importBusy, setImportBusy] = useState(false);
   const [cardMediaRevision, setCardMediaRevision] = useState(0);
   const [manualDress, setManualDress] = useState("");
+  const [manualPicture, setManualPicture] = useState("");
   const [showMeshAdvanced, setShowMeshAdvanced] = useState(false);
   const [compareTracker, setCompareTracker] = useState<MeshTracker>("cotracker");
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
@@ -3264,6 +3266,33 @@ export function RunMode(props: RunModeProps) {
     }
   }
 
+  const canImportManualPicture = Boolean(
+    cardId.trim() && manualPicture.trim() && !importBusy && !jobBusy,
+  );
+
+  async function importManualPicture() {
+    const id = cardId.trim();
+    if (!id || !canImportManualPicture) return;
+    setImportBusy(true);
+    onError("");
+    try {
+      const next = await api<VideoFlowState>(
+        `/api/video-flow/${encodeURIComponent(id)}/import-picture`,
+        {
+          method: "POST",
+          body: JSON.stringify({ image: manualPicture.trim() }),
+        },
+      );
+      applyFlowState(next);
+      setManualPicture("");
+      await onRefreshAssets();
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   const dressUnlocked = Boolean(
     flowState?.steps.dress && flowState.steps.dress.status !== "locked",
   );
@@ -3615,10 +3644,17 @@ export function RunMode(props: RunModeProps) {
                   {cardApproved ? " Changing the clips means you should run Finalize again." : null}
                 </>
               ) : activeStep === "picture" ? (
-                <>
-                  Pick one of the pictures below. Each card has <strong>Use this picture</strong>.
-                  Remake only if you want a new set.
-                </>
+                flowState?.picture_uploaded ? (
+                  <>
+                    This still was added by you. Add another picture below to replace it. Later
+                    steps will need to run again.
+                  </>
+                ) : (
+                  <>
+                    Pick one of the pictures below. Each card has <strong>Use this picture</strong>.
+                    Remake only if you want a new set.
+                  </>
+                )
               ) : (
                 <>
                   This step is finished. Edit the prompt above if you want a different result, then
@@ -3782,6 +3818,44 @@ export function RunMode(props: RunModeProps) {
               onOverlapEnabledChange={onOverlapPromptEnabledChange}
             />
             <PromptSaveRow dirty={promptsDirty} saving={draftSaving} onSave={onSaveDraft} />
+            <Separator size="4" />
+            <Heading as="h3" size="3">
+              Or add your own picture
+            </Heading>
+            <Text color="gray" size="2">
+              Use a still you already have instead of generating Grok and Seedream. It shows up
+              below — click <strong>Use this picture</strong> to approve it. Adding a picture
+              replaces the current set and resets the later steps.
+            </Text>
+            <Field label="Picture">
+              <FilePathPicker
+                accept="image/*"
+                placeholder="Pick a picture or paste a path"
+                preview="image"
+                previewLabel="Your picture"
+                previewSize="compact"
+                previewZoomable
+                value={manualPicture}
+                onChange={setManualPicture}
+                onError={onError}
+              />
+            </Field>
+            <Flex align="center" gap="3" wrap="wrap">
+              <Button
+                disabled={!canImportManualPicture}
+                type="button"
+                variant="soft"
+                onClick={() => void importManualPicture()}
+              >
+                {importBusy ? <Loader2 {...iconProps} className="spin" /> : <ImagePlus {...iconProps} />}
+                Add this picture
+              </Button>
+              {!cardId.trim() ? (
+                <Text color="gray" size="2">
+                  Set a card id in Setup first.
+                </Text>
+              ) : null}
+            </Flex>
             {flowState?.steps.picture?.status === "approved" &&
             !(flowState.steps.picture.artifacts ?? []).some(Boolean) ? (
               <Callout.Root color="blue">
@@ -4296,6 +4370,7 @@ export function RunMode(props: RunModeProps) {
           const pictureLabel = (artifact: string) => {
             const choice = pictureChoiceFromArtifact(artifact);
             if (choice == null) return artifact.split("/").pop() ?? "Result";
+            if (flowState?.picture_uploaded && choice === 1) return "Your picture";
             if (choice === 1) return "Grok";
             if (choice === 2) return "Seedream";
             return `Picture ${choice}`;
@@ -4376,7 +4451,9 @@ export function RunMode(props: RunModeProps) {
               {flowState.steps[actionStep].label}
               {actionStatus === "review" && reviewSteps.has(actionStep)
                 ? actionStep === "picture"
-                  ? " — pick Grok or Seedream"
+                  ? flowState.picture_uploaded
+                    ? " — use the picture you added"
+                    : " — pick Grok or Seedream"
                   : actionStep === "boomerang"
                     ? grokSeamlessLoop
                       ? " — the clip plays forward; continue to Create card"

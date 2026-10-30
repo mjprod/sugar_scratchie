@@ -724,6 +724,7 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
         "picture": [
             paths["picture"],
             *picture_choice_paths(work),
+            picture_uploaded_marker(work),
             paths["scenery_source"],
             paths["styled_source"],
             paths["styled_bikini"],
@@ -1235,6 +1236,24 @@ def _ensure_card_published(
     return card_dir
 
 
+def _approvals_were_lost(work: Path) -> bool:
+    """True when state.json is missing or unreadable.
+
+    An explicit empty approval list is a reset (reject or a new picture). That
+    must not be rebuilt from published card videos.
+    """
+    path = state_path(work)
+    if not path.is_file():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not isinstance(data, dict):
+        return True
+    return not isinstance(data.get("approved"), list)
+
+
 def recover_stale_approvals(
     work: Path,
     card_id: str,
@@ -1244,6 +1263,8 @@ def recover_stale_approvals(
 ) -> bool:
     """Restore approvals when artifacts still exist but state.json was cleared."""
     if state["approved"]:
+        return False
+    if not _approvals_were_lost(work):
         return False
     paths = _paths(work)
     card_dir = CARDS_DIR / card_id
@@ -1333,6 +1354,7 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
         "timings": timings_summary(work),
         "recovered_approvals": recovered,
         "picture_choice": matching_picture_choice(work),
+        "picture_uploaded": picture_uploaded_marker(work).is_file(),
     }
 
 
@@ -2882,6 +2904,82 @@ def picture_choice_path(work: Path, index: int) -> Path:
     return work / f"picture-{index}.png"
 
 
+def picture_uploaded_marker(work: Path) -> Path:
+    return work / "picture-uploaded.json"
+
+
+_PICTURE_UPLOAD_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def import_picture_still(*, card_id: str, image: str | Path) -> dict:
+    """Use a still the operator already has as the Create picture result.
+
+    The file is saved as the first take and left in review, so they approve it
+    with Use this picture. Replacing an earlier set resets the later steps.
+    """
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise RuntimeError("Invalid card id")
+    src = Path(image)
+    if not src.is_absolute():
+        src = ROOT / src
+    src = src.resolve()
+    if ROOT.resolve() not in src.parents and src != ROOT.resolve():
+        raise RuntimeError(f"Picture path is outside the project: {image}")
+    if not src.is_file():
+        raise RuntimeError(f"Picture not found: {image}")
+    if src.suffix.lower() not in _PICTURE_UPLOAD_SUFFIXES:
+        raise RuntimeError("Picture must be a PNG, JPEG, WebP, or GIF.")
+
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(src) as opened:
+            # Phone JPEGs store rotation in EXIF. The browser preview honors it;
+            # bake that rotation into the pixels so the still is not sideways.
+            oriented = ImageOps.exif_transpose(opened) or opened
+            buffer = BytesIO()
+            oriented.convert("RGB").save(buffer, format="PNG")
+            png_bytes = buffer.getvalue()
+    except Exception as exc:
+        raise RuntimeError(f"Picture is unreadable: {image}") from exc
+    if not png_bytes:
+        raise RuntimeError(f"Picture is unreadable: {image}")
+
+    work = work_dir(card_id)
+    state = read_state(work)
+    paths = _paths(work)
+    has_existing = (
+        "picture" in state["approved"]
+        or _image_file_ready(paths["picture"])
+        or any(_image_file_ready(path) for path in picture_choice_paths(work))
+    )
+    if has_existing:
+        reject_flow_step(card_id, "picture")
+    else:
+        # Persist the empty list before flow_state runs. A missing state file
+        # plus published clips would otherwise mark this new still approved.
+        write_state(work, read_state(work))
+
+    record_step_started(work, "picture")
+    picture_choice_path(work, 1).write_bytes(png_bytes)
+    for extra in range(2, PICTURE_CHOICE_COUNT + 1):
+        picture_choice_path(work, extra).unlink(missing_ok=True)
+    paths["picture"].unlink(missing_ok=True)
+    try:
+        source = src.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        source = src.name
+    picture_uploaded_marker(work).write_text(
+        json.dumps({"source": source}) + "\n",
+        encoding="utf-8",
+    )
+    record_step_finished(work, "picture")
+    print(f"Added picture for {card_id} from {src.name} — ready for review.")
+    return flow_state(card_id)
+
+
 def picture_choice_paths(work: Path) -> list[Path]:
     return [picture_choice_path(work, index) for index in range(1, PICTURE_CHOICE_COUNT + 1)]
 
@@ -3115,6 +3213,7 @@ def build_picture_still(
         picked_picture = work / "picked-picture.png"
         shutil.copy2(paths["picture"], picked_picture)
     paths["picture"].unlink(missing_ok=True)
+    picture_uploaded_marker(work).unlink(missing_ok=True)
     for extra in range(take_count + 1, PICTURE_CHOICE_COUNT + 1):
         picture_choice_path(work, extra).unlink(missing_ok=True)
     written: list[Path] = []
