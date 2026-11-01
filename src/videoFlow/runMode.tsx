@@ -3170,9 +3170,10 @@ export function RunMode(props: RunModeProps) {
     overlapPromptEnabled,
   });
 
+  const pictureApiReady = kleinSource ? kleinReady : canUseSourceAi;
   const stepApiReady =
     actionStep === "picture"
-      ? canUseSourceAi
+      ? pictureApiReady
       : actionStep === "background"
         ? canUseBackgroundVideo
         : actionStep === "dress"
@@ -3887,7 +3888,12 @@ export function RunMode(props: RunModeProps) {
                 </Callout.Text>
               </Callout.Root>
             ) : null}
-            {!canUseSourceAi ? (
+            {kleinSource && !kleinReady ? (
+              <Text color="gray" size="2">
+                Set FLUX_KLEIN_URL (the public tunnel also needs FLUX_KLEIN_TOKEN) or BFL_API_KEY
+                before generating this picture.
+              </Text>
+            ) : !kleinSource && !canUseSourceAi ? (
               <Text color="gray" size="2">
                 Add XAI_API_KEY or WAVESPEED_API_KEY to .env before generating the picture.
               </Text>
