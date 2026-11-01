@@ -23,6 +23,7 @@ from backend.services.ai_provider import (
     normalize_provider,
     normalize_source_image_model,
     swap_face_on_image,
+    uses_flux_klein,
     xai_key_available,
 )
 from backend.services.grok import (
@@ -1762,7 +1763,13 @@ def _resolve_photo_scratch_media(src: str) -> Path:
 
 def _run_step1_style_edit(label: str, xai_model: str, run) -> None:
     """Step-1 still edits: Seedream on WaveSpeed first (follows refs, lighter moderation),
-    then x.ai. Raises with a Setup hint when every route fails."""
+    then x.ai. Klein, when that is the selected source model, is the only route.
+    Raises with a Setup hint when every route fails."""
+    if uses_flux_klein(xai_model):
+        print(f"Step 1 {label} via FLUX 3 Image Klein ...")
+        # Not x.ai, so the bikini photo stays attached instead of caption-only.
+        run("bfl", xai_model)
+        return
     routes: list[tuple[str, str]] = []
     seedream = normalize_source_image_model(STEP1_STYLE_MODEL)
     if os.environ.get("WAVESPEED_API_KEY") and seedream == STEP1_STYLE_MODEL:
@@ -3106,6 +3113,8 @@ def _provider_for_source_image_model(image_model: str) -> str:
         provider = str(resolve_spec("source_image", model).provider or "").strip().lower()
     except Exception:
         provider = ""
+    if uses_flux_klein(model) or provider == "bfl":
+        return "bfl"
     if provider == "wavespeed" or model == "seedream-v5-lite":
         return "wavespeed"
     return "xai"
@@ -3124,7 +3133,7 @@ def build_picture_still(
     picture_variation_count: int | None = None,
     overlap_prompt: str = "",
 ) -> Path:
-    """Bikini, face, and three themed scenery takes. The operator picks one."""
+    """Bikini, face, then one scenery still from the source model selected in Setup."""
     work = paths["picture"].parent
     i2v_image: str | Path = image
     face_path = _optional_draft_image(draft, "face_image", "Face reference")
@@ -3191,8 +3200,8 @@ def build_picture_still(
         count=take_count,
         overlap_prompt=overlap,
     )
-    # Two stills: Grok and Seedream, one prompt. No third generator.
-    take_count = 2
+    # One still, from the source model selected in Setup.
+    take_count = 1
     # Overlap is sent exactly as typed: no photo-name inserts, body light, or framing lock.
     shared_prompt = (
         overlap
@@ -3203,9 +3212,9 @@ def build_picture_still(
             has_bikini=bikini_path is not None,
         )
     )
-    take_prompts = [shared_prompt, shared_prompt]
+    take_prompts = [shared_prompt]
     compare_mode = "models"
-    picture_model_ids = ["grok-imagine", "seedream-v5-lite"]
+    picture_model_ids = [normalize_source_image_model(source_model, provider=ai_provider)]
     # Use this picture copies the winner to picture.png. A new set deletes that
     # file, so keep a copy for @image3 before the unlink.
     picked_picture: Path | None = None

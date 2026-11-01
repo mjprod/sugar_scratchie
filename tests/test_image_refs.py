@@ -24,6 +24,9 @@ def test_rewrite_matches_attachment_order():
     assert rewrite_image_tokens(prompt, style="seedream") == (
         "Put the uniform from Figure 2 on the woman in Figure 1."
     )
+    assert rewrite_image_tokens(prompt, style="flux") == (
+        "Put the uniform from Image 2 on the woman in Image 1."
+    )
 
 
 def test_replace_image_tokens_uses_exact_phrases():
