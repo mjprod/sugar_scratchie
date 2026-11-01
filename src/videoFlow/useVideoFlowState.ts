@@ -66,6 +66,8 @@ type HealthResponse = {
   ok: boolean;
   xai_key_loaded: boolean;
   wavespeed_key_loaded: boolean;
+  bfl_key_loaded?: boolean;
+  flux_klein_url_set?: boolean;
 };
 
 function looksLikeWorkspaceRootPath(value: string): boolean {
@@ -272,6 +274,7 @@ export function useVideoFlowState() {
   const canUseGrok = Boolean(health?.xai_key_loaded);
   const canUseWavespeed = Boolean(health?.wavespeed_key_loaded);
   const canUseSourceAi = canUseAiProvider(aiProvider, health);
+  const kleinReady = Boolean(health?.bfl_key_loaded || health?.flux_klein_url_set);
   const activeProjectId = cardId.trim();
 
   async function refreshHealth() {
@@ -1094,6 +1097,7 @@ export function useVideoFlowState() {
     canUseGrok,
     canUseWavespeed,
     canUseSourceAi,
+    kleinReady,
     refreshHealth,
     refreshJobs,
     refreshProjects,

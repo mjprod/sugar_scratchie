@@ -136,6 +136,8 @@ def _adapter_for(adapter_id: str, role: str) -> AdapterInfo:
 
 def _clean_endpoint(info: AdapterInfo, raw: str) -> str:
     path = (raw or "").strip()
+    if info.provider == "bfl":
+        return ""
     if info.provider == "xai":
         if not path:
             return ""
