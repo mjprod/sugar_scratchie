@@ -39,6 +39,13 @@ ADAPTERS: tuple[AdapterInfo, ...] = (
         endpoint_hint="/bytedance/seedream-v5.0-lite",
     ),
     AdapterInfo(
+        id="flux_klein_image",
+        label="Black Forest Labs image (FLUX 3 Image Klein)",
+        roles=("source_image",),
+        provider="bfl",
+        needs_endpoint=False,
+    ),
+    AdapterInfo(
         id="wan_spicy_i2v",
         label="WaveSpeed image-to-video (WAN Spicy-style)",
         roles=("background_video",),
@@ -119,6 +126,14 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         adapter="seedream_image",
         endpoint_path="/bytedance/seedream-v5.0-lite",
         sort_order=1,
+    ),
+    GenerationModelSpec(
+        id="flux-3-image-klein",
+        role="source_image",
+        label="FLUX 3 Image Klein",
+        provider="bfl",
+        adapter="flux_klein_image",
+        sort_order=2,
     ),
     GenerationModelSpec(
         id="grok-imagine",

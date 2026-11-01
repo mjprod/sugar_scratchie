@@ -11,6 +11,7 @@ export function VideoFlowRunPage() {
     canUseGrok,
     canUseSourceAi,
     canUseWavespeed,
+    kleinReady,
     health,
     enhancePrompt,
     setEnhancePrompt,
@@ -54,6 +55,7 @@ export function VideoFlowRunPage() {
     setBikiniImage,
     aiProvider,
     sourceImageModel,
+    setSourceImageModel,
     backgroundVideoModel,
     setBackgroundVideoModel,
     dressVideoModel,
@@ -112,8 +114,10 @@ export function VideoFlowRunPage() {
             canUseGrok={canUseGrok}
             canUseSourceAi={canUseSourceAi}
             canUseWavespeed={canUseWavespeed}
+            kleinReady={kleinReady}
             aiProvider={aiProvider}
             sourceImageModel={sourceImageModel}
+            onSourceImageModelChange={setSourceImageModel}
             backgroundVideoModel={backgroundVideoModel}
             dressVideoModel={dressVideoModel}
             overlapPrompt={overlapPrompt}
