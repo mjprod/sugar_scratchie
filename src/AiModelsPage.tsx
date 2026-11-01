@@ -144,6 +144,10 @@ function formProvider(provider: string): ProviderName {
   return provider === "xai" ? "xai" : "wavespeed";
 }
 
+function isBflBuiltin(model: GenerationModelInfo | null): boolean {
+  return Boolean(model?.builtin && model.provider === "bfl");
+}
+
 function providerLabel(provider: string): string {
   if (provider === "xai") return "x.ai";
   if (provider === "bfl") return "Black Forest";
@@ -239,6 +243,7 @@ export function AiModelsPage() {
   }
 
   function applyRemote(row: RemoteProviderModel) {
+    if (isBflBuiltin(editing)) return;
     const displayName = prettyModelName(row.name);
     setPicked(row);
     setProvider(formProvider(row.provider));
@@ -269,6 +274,7 @@ export function AiModelsPage() {
   }
 
   async function lookUp() {
+    if (isBflBuiltin(editing)) return;
     setBusy(true);
     setError("");
     setLookupNote("");
@@ -396,7 +402,9 @@ export function AiModelsPage() {
                   <Heading size="4">{editing ? `Edit “${editing.label}”` : "Add a model"}</Heading>
                   <Text color="gray" size="2">
                     {editing
-                      ? "Change the name, or search if you want to point this choice at a different model."
+                      ? isBflBuiltin(editing)
+                        ? "Change the name. This built-in stays on FLUX 3 Image Klein."
+                        : "Change the name, or search if you want to point this choice at a different model."
                       : "Choose the company, search, then name it for the dropdown."}
                   </Text>
                 </Box>
@@ -430,6 +438,7 @@ export function AiModelsPage() {
                   </Flex>
                 )}
 
+                {isBflBuiltin(editing) ? null : (
                 <Flex direction="column" gap="2">
                   <Text size="2" weight="medium">
                     Search {providerLabel(provider)}
@@ -485,6 +494,7 @@ export function AiModelsPage() {
                     </div>
                   ) : null}
                 </Flex>
+                )}
 
                 {picked || editing ? (
                   <Flex direction="column" gap="3">
