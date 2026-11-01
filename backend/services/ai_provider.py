@@ -4,10 +4,10 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from backend.services import bfl, grok, wavespeed
+from backend.services import grok, wavespeed
 
 AiProvider = Literal["xai", "wavespeed"]
-# Catalog ids. Built-ins are grok-imagine, seedream-v5-lite, and flux-3-image-klein.
+# Catalog ids. Built-ins are grok-imagine / seedream-v5-lite; operators can add more.
 SourceImageModel = str
 BackgroundVideoModel = str
 DressVideoModel = str
@@ -16,7 +16,7 @@ DRESS_REFERENCE_TOKENS: dict[str, str] = {
     "wan-3.0-video-edit": "Image 1",
     "seedance-2.0-video-edit": "@Image 1",
 }
-SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite", "bfl"]
+SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite"]
 
 
 def normalize_provider(provider: str | None) -> AiProvider:
@@ -58,22 +58,7 @@ def normalize_dress_video_model(model: str | None) -> DressVideoModel:
     return _accept("dress_video", model, default="grok-imagine")
 
 
-def uses_flux_klein(image_model: str | None) -> bool:
-    model = (image_model or "").strip()
-    if not model:
-        return False
-    try:
-        if _spec("source_image", model).adapter == "flux_klein_image":
-            return True
-    except Exception:
-        pass
-    return model == "flux-3-image-klein"
-
-
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
-    # Klein is chosen by the source-image model, not by the x.ai / WaveSpeed toggle.
-    if uses_flux_klein(image_model):
-        return "bfl"
     # The image-model dropdown is hidden for x.ai, so a leftover Seedream id
     # (the Video Flow default) must not send stills to WaveSpeed.
     if provider == "xai":
@@ -138,14 +123,6 @@ def generate_portrait_image(
     aspect_ratio: str = "9:16",
     lock_position: bool = False,
 ) -> Path:
-    if uses_flux_klein(image_model):
-        return bfl.generate_portrait_image(
-            prompt=prompt,
-            out=out,
-            face_image=face_image,
-            aspect_ratio=aspect_ratio,
-            lock_position=lock_position,
-        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.generate_portrait_image_seedream(
@@ -189,14 +166,6 @@ def swap_face_on_image(
     prompt: str | None = None,
     aspect_ratio: str = "9:16",
 ) -> Path:
-    if uses_flux_klein(image_model):
-        return bfl.swap_face_on_image(
-            base_image=base_image,
-            face_image=face_image,
-            out=out,
-            prompt=prompt,
-            aspect_ratio=aspect_ratio,
-        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.swap_face_on_image_seedream(
@@ -280,16 +249,6 @@ def edit_image_scenery(
     face_image: str | Path | None = None,
 ) -> Path:
     """Replace backdrop on a still before image-to-video when the theme needs new scenery."""
-    if uses_flux_klein(image_model):
-        return bfl.edit_image_scenery(
-            image=image,
-            theme=theme,
-            out=out,
-            aspect_ratio=aspect_ratio,
-            variation=variation,
-            prompt=prompt,
-            face_image=face_image,
-        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.edit_image_scenery_seedream(
@@ -344,13 +303,6 @@ def edit_clothes_layer(
     background, and face are locked by construction, so no Match alignment is needed.
     Falls back to Grok edit when WaveSpeed key is unavailable.
     """
-    if uses_flux_klein(image_model):
-        return bfl.edit_photo_scratch_layer(
-            prompt=prompt,
-            out=out,
-            source_image=source_image,
-            aspect_ratio=aspect_ratio,
-        )
     route = source_image_route(provider, image_model)
     if route in ("wavespeed", "seedream-v5-lite"):
         return wavespeed.edit_clothes_layer_kontext(
@@ -397,17 +349,6 @@ def edit_photo_scratch_layer(
     selected with extra reference images, route through Seedream so we do not silently fall
     back to x.ai moderation.
     """
-    if uses_flux_klein(image_model):
-        return bfl.edit_photo_scratch_layer(
-            prompt=prompt,
-            out=out,
-            source_image=source_image,
-            background_image=background_image,
-            face_image=face_image,
-            bikini_image=bikini_image,
-            aspect_ratio=aspect_ratio,
-            named_images=images,
-        )
     route = source_image_route(provider, image_model)
     if images:
         from backend.services.image_refs import rewrite_image_tokens

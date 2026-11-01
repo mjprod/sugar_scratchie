@@ -392,8 +392,8 @@ def test_create_picture_face_locks_each_take_after_scenery(monkeypatch, tmp_path
         picture_variation_count=2,
     )
 
-    assert scenery_calls == [work / "picture-1.png"]
-    assert post_scenery_swaps == [work / "picture-1.png"]
+    assert len(scenery_calls) == 2
+    assert post_scenery_swaps == [work / "picture-1.png", work / "picture-2.png"]
     assert Image.open(work / "picture-1.png").getpixel((0, 0)) == (255, 0, 0)
 
 
@@ -447,12 +447,14 @@ def test_create_picture_models_mode_uses_one_prompt_across_models(monkeypatch, t
         picture_variation_count=2,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0][0] == "grok-imagine"
+    assert calls[1][0] == "seedream-v5-lite"
+    assert calls[0][2] == calls[1][2]
     assert "other unused" not in calls[0][2]
 
 
-def test_create_picture_uses_only_the_selected_source_model(monkeypatch, tmp_path):
+def test_create_picture_is_always_grok_and_seedream(monkeypatch, tmp_path):
     from PIL import Image
 
     import backend.services.video_flow as video_flow
@@ -488,7 +490,7 @@ def test_create_picture_uses_only_the_selected_source_model(monkeypatch, tmp_pat
     video_flow.build_picture_still(
         image=source,
         theme_text="Police",
-        source_model="flux-3-image-klein",
+        source_model="grok-imagine",
         ai_provider="xai",
         draft={},
         paths=paths,
@@ -496,8 +498,7 @@ def test_create_picture_uses_only_the_selected_source_model(monkeypatch, tmp_pat
         picture_variation_count=3,
     )
 
-    assert calls == ["flux-3-image-klein"]
-    assert not (work / "picture-2.png").exists()
+    assert calls == ["grok-imagine", "seedream-v5-lite"]
 
 
 def test_create_picture_at_image_sends_named_photos(monkeypatch, tmp_path):
@@ -552,8 +553,9 @@ def test_create_picture_at_image_sends_named_photos(monkeypatch, tmp_path):
     )
 
     prepared = paths["styled_source"]
-    assert len(seen) == 1
+    assert len(seen) == 2
     assert seen[0][0] == "grok-imagine"
+    assert seen[1][0] == "seedream-v5-lite"
     assert seen[0][1][0] == prepared
     assert seen[0][1][1] == bikini
     assert seen[0][1][2].name == "picked-picture.png"
@@ -609,10 +611,11 @@ def test_create_picture_skips_image3_until_a_picture_is_picked(monkeypatch, tmp_
     )
 
     prepared = paths["styled_source"]
-    assert len(seen) == 1
+    assert len(seen) == 2
     assert "@image3" not in seen[0][1]
     assert "@image1" in seen[0][1] and "@image2" in seen[0][1]
     assert seen[0][2] == [prepared, bikini]
+    assert seen[1][2] == [prepared, bikini]
 
 
 def test_overlap_prompt_is_sent_unchanged(monkeypatch, tmp_path):
@@ -665,7 +668,7 @@ def test_overlap_prompt_is_sent_unchanged(monkeypatch, tmp_path):
         overlap_prompt=overlap,
     )
 
-    assert seen == [overlap]
+    assert seen == [overlap, overlap]
 
 
 def test_import_picture_requires_operator(client, card_id):

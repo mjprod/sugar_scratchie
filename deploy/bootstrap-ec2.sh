@@ -69,7 +69,5 @@ echo "  API health: https://${DOMAIN}/api/health"
 echo
 echo "Ensure ${APP_DIR}/.env contains:"
 echo "  XAI_API_KEY=sk-..."
-echo "  FLUX_KLEIN_URL=https://flux.mxjprod.work   # Klein stills; tunnel also needs FLUX_KLEIN_TOKEN"
-echo "  BFL_API_KEY=...   # optional cloud fallback"
 echo "  CORS_ORIGINS=https://${DOMAIN}"
 echo "Then: sudo systemctl restart sugar-scratchie-api"

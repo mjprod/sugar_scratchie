@@ -28,9 +28,7 @@ def test_generation_models_lists_builtins(client):
     assert ("dress_video", "WaveSpeed Alibaba WAN 3.0 Video Edit") in labels
     assert ("dress_video", "WaveSpeed WAN 2.2 Video Edit") in labels
     assert ("dress_video", "x.ai Grok Imagine") in labels
-    assert ("source_image", "FLUX 3 Image Klein") in labels
     assert any(adapter["id"] == "wan_spicy_i2v" for adapter in body["adapters"])
-    assert any(adapter["id"] == "flux_klein_image" for adapter in body["adapters"])
 
 
 def test_generation_model_crud_and_dispatch(client, dashboard_headers, monkeypatch, tmp_path):
@@ -458,7 +456,6 @@ def test_xai_provider_routes_stills_off_leftover_seedream(monkeypatch, tmp_path)
     assert source_image_route("xai", "grok-imagine") == "xai"
     assert source_image_route("wavespeed", "seedream-v5-lite") == "seedream-v5-lite"
     assert source_image_route("wavespeed", "grok-imagine") == "wavespeed"
-    assert source_image_route("xai", "flux-3-image-klein") == "bfl"
 
     def refuse_seedream(**kwargs):
         raise AssertionError(f"seedream still used: {kwargs.get('out')}")

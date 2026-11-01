@@ -301,7 +301,6 @@ const IMAGE_TOKEN_HELP =
 
 function PicturePromptFields({
   prompts,
-  modelLabel,
   overlapPrompt,
   overlapEnabled,
   onPromptsChange,
@@ -309,7 +308,6 @@ function PicturePromptFields({
   onOverlapEnabledChange,
 }: {
   prompts: PicturePrompts;
-  modelLabel: string;
   overlapPrompt: string;
   overlapEnabled: boolean;
   onPromptsChange: (next: PicturePrompts) => void;
@@ -321,8 +319,8 @@ function PicturePromptFields({
   return (
     <Flex direction="column" gap="3">
       <Text color="gray" size="2">
-        Makes one picture from this prompt with {modelLabel}. {IMAGE_TOKEN_HELP} A name with no
-        photo uploaded yet is skipped, and the picture still runs.
+        Makes two pictures from this prompt: Grok and Seedream. {IMAGE_TOKEN_HELP} A
+        name with no photo uploaded yet is skipped, and the two pictures still run.
       </Text>
       <Field label="Prompt">
         <TextArea
@@ -805,10 +803,8 @@ type RunModeProps = {
   canUseGrok: boolean;
   canUseSourceAi: boolean;
   canUseWavespeed: boolean;
-  kleinReady: boolean;
   aiProvider: AiProvider;
   sourceImageModel: SourceImageModel;
-  onSourceImageModelChange: (value: SourceImageModel) => void;
   backgroundVideoModel: BackgroundVideoModel;
   dressVideoModel: DressVideoModel;
   overlapPrompt: string;
@@ -2735,10 +2731,8 @@ export function RunMode(props: RunModeProps) {
     canUseGrok,
     canUseSourceAi,
     canUseWavespeed,
-    kleinReady,
     aiProvider,
     sourceImageModel,
-    onSourceImageModelChange,
     backgroundVideoModel,
     dressVideoModel,
     overlapPrompt,
@@ -3076,9 +3070,6 @@ export function RunMode(props: RunModeProps) {
   const actionPreviewArtifacts = actionStepState?.artifacts ?? [];
   const backgroundModel = findGenerationModel(models, "background_video", backgroundVideoModel);
   const dressModel = findGenerationModel(models, "dress_video", dressVideoModel);
-  const sourceImageSpec = findGenerationModel(models, "source_image", sourceImageModel);
-  const kleinSource = sourceImageSpec?.adapter === "flux_klein_image";
-  const sourceImageLabel = sourceImageSpec?.label || "the selected model";
   const backgroundOnWavespeed = backgroundModel
     ? backgroundModel.provider === "wavespeed"
     : backgroundVideoModel === "wan-2.2-spicy";
@@ -3767,20 +3758,6 @@ export function RunMode(props: RunModeProps) {
                 />
               </Field>
             </Grid>
-            <Field label="Source image model">
-              <GenerationModelSelect
-                role="source_image"
-                value={sourceImageModel}
-                models={models}
-                onValueChange={onSourceImageModelChange}
-              />
-            </Field>
-            {findGenerationModel(models, "source_image", sourceImageModel)?.adapter ===
-              "flux_klein_image" && !kleinReady ? (
-              <Text color="gray" size="2">
-                Set FLUX_KLEIN_URL (the public tunnel also needs FLUX_KLEIN_TOKEN) or BFL_API_KEY before using FLUX 3 Image Klein.
-              </Text>
-            ) : null}
             <Field label="Theme (scenery + dress-up costume)">
               {themes.length > 0 ? (
                 <ThemeSelect themes={themes} value={theme} onChange={onThemeChange} />
@@ -3820,19 +3797,20 @@ export function RunMode(props: RunModeProps) {
           <Flex direction="column" gap="4">
             <InfluencerPositionGuide />
             <Text color="gray" size="2">
-              Makes one picture with {sourceImageLabel} from the prompt below. {IMAGE_TOKEN_HELP}{" "}
+              Makes two pictures, Grok and Seedream, from the prompt below. {IMAGE_TOKEN_HELP}{" "}
               {overlapPromptEnabled && overlapPrompt.trim()
                 ? "Overlap prompt is on, so only that text is sent."
-                : "Use it as soon as it appears. The still keeps the influencer position."}
+                : "Pick one as soon as it appears. Every still keeps the influencer position."}
             </Text>
             {effectiveRunningStep === "picture" ? (
               <Callout.Root color="blue">
-                <Callout.Text>Making 1 picture with {sourceImageLabel}.</Callout.Text>
+                <Callout.Text>
+                  Making 2 pictures — Grok and Seedream. Use one as soon as it shows up.
+                </Callout.Text>
               </Callout.Root>
             ) : null}
             <PicturePromptFields
               prompts={picturePrompts}
-              modelLabel={sourceImageLabel}
               overlapPrompt={overlapPrompt}
               overlapEnabled={overlapPromptEnabled}
               onPromptsChange={onPicturePromptsChange}
@@ -3845,7 +3823,7 @@ export function RunMode(props: RunModeProps) {
               Or add your own picture
             </Heading>
             <Text color="gray" size="2">
-              Use a still you already have instead of generating one. It shows up
+              Use a still you already have instead of generating Grok and Seedream. It shows up
               below — click <strong>Use this picture</strong> to approve it. Adding a picture
               replaces the current set and resets the later steps.
             </Text>
@@ -4393,7 +4371,8 @@ export function RunMode(props: RunModeProps) {
             const choice = pictureChoiceFromArtifact(artifact);
             if (choice == null) return artifact.split("/").pop() ?? "Result";
             if (flowState?.picture_uploaded && choice === 1) return "Your picture";
-            if (choice === 1) return sourceImageLabel;
+            if (choice === 1) return "Grok";
+            if (choice === 2) return "Seedream";
             return `Picture ${choice}`;
           };
           const pictureChoices =
@@ -4465,7 +4444,7 @@ export function RunMode(props: RunModeProps) {
         <Flex direction="column" gap="3" style={{ flex: 1 }}>
           {activeNode === "source" ? (
             <Text size="2">
-              Setup — open Create picture. It makes one {sourceImageLabel} still.
+              Setup — open Create picture. It makes a Grok still and a Seedream still.
             </Text>
           ) : actionStep && flowState ? (
             <Text size="2" weight="medium">
@@ -4474,7 +4453,7 @@ export function RunMode(props: RunModeProps) {
                 ? actionStep === "picture"
                   ? flowState.picture_uploaded
                     ? " — use the picture you added"
-                    : " — use this picture"
+                    : " — pick Grok or Seedream"
                   : actionStep === "boomerang"
                     ? grokSeamlessLoop
                       ? " — the clip plays forward; continue to Create card"

@@ -39,7 +39,6 @@ const GENERATION_MODEL_ID = /^[a-z][a-z0-9._-]{0,63}$/;
 export const SOURCE_IMAGE_MODELS: { id: string; label: string; wavespeed: boolean }[] = [
   { id: "grok-imagine", label: "Grok Imagine", wavespeed: false },
   { id: "seedream-v5-lite", label: "Seedream v5.0 Lite", wavespeed: true },
-  { id: "flux-3-image-klein", label: "FLUX 3 Image Klein", wavespeed: false },
 ];
 
 export const BACKGROUND_VIDEO_MODELS: { id: string; label: string; wavespeed: boolean }[] = [

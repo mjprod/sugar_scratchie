@@ -140,20 +140,8 @@ function toPayload(form: FormState, adapter: GenerationAdapter | undefined) {
   };
 }
 
-function formProvider(provider: string): ProviderName {
-  return provider === "xai" ? "xai" : "wavespeed";
-}
-
-function providerLabel(provider: string): string {
-  if (provider === "xai") return "x.ai";
-  if (provider === "bfl") return "Black Forest";
-  return "WaveSpeed";
-}
-
-function providerColor(provider: string): "orange" | "cyan" | "green" {
-  if (provider === "wavespeed") return "orange";
-  if (provider === "bfl") return "green";
-  return "cyan";
+function providerLabel(provider: ProviderName): string {
+  return provider === "xai" ? "x.ai" : "WaveSpeed";
 }
 
 export function AiModelsPage() {
@@ -170,13 +158,8 @@ export function AiModelsPage() {
   const [advanced, setAdvanced] = useState(false);
 
   const roleAdapters = useMemo(
-    () =>
-      adapters.filter((adapter) => {
-        if (!form || !adapter.roles.includes(form.role)) return false;
-        if (editing?.provider === "bfl") return adapter.provider === "bfl";
-        return adapter.provider === provider;
-      }),
-    [adapters, form, provider, editing],
+    () => adapters.filter((adapter) => form && adapter.roles.includes(form.role) && adapter.provider === provider),
+    [adapters, form, provider],
   );
   const selectedAdapter =
     adapters.find((adapter) => adapter.id === form?.adapter) ?? roleAdapters[0];
@@ -200,7 +183,7 @@ export function AiModelsPage() {
 
   function startEdit(model: GenerationModelInfo) {
     setEditing(model);
-    setProvider(formProvider(model.provider));
+    setProvider(model.provider);
     setError("");
     clearLookup();
     setForm(formFromModel(model));
@@ -241,7 +224,7 @@ export function AiModelsPage() {
   function applyRemote(row: RemoteProviderModel) {
     const displayName = prettyModelName(row.name);
     setPicked(row);
-    setProvider(formProvider(row.provider));
+    setProvider(row.provider);
     setForm((current) => {
       if (!current) return current;
       const next: FormState = { ...current, endpoint_path: row.model_id };
@@ -498,10 +481,6 @@ export function AiModelsPage() {
                       <Text color="gray" size="2">
                         Currently {editing.endpoint_path}
                       </Text>
-                    ) : editing?.provider === "bfl" ? (
-                      <Text color="gray" size="2">
-                        This built-in calls FLUX_KLEIN_URL. The public tunnel also needs FLUX_KLEIN_TOKEN.
-                      </Text>
                     ) : editing?.provider === "xai" ? (
                       <Text color="gray" size="2">
                         This built-in uses the x.ai model from the server settings. Search if you want to pin a
@@ -607,11 +586,7 @@ export function AiModelsPage() {
                         </label>
                         <label>
                           <Text as="div" mb="1" size="1" weight="medium" color="gray">
-                            {editing?.provider === "bfl"
-                              ? "Server address comes from FLUX_KLEIN_URL"
-                              : provider === "xai"
-                                ? "x.ai model id"
-                                : "WaveSpeed path"}
+                            {provider === "xai" ? "x.ai model id" : "WaveSpeed path"}
                           </Text>
                           <TextField.Root
                             value={form.endpoint_path}
@@ -724,7 +699,7 @@ export function AiModelsPage() {
                             <Box>
                               <Flex align="center" gap="2" wrap="wrap">
                                 <Text weight="medium">{model.label}</Text>
-                                <Badge color={providerColor(model.provider)} variant="soft">
+                                <Badge color={model.provider === "wavespeed" ? "orange" : "cyan"} variant="soft">
                                   {providerLabel(model.provider)}
                                 </Badge>
                                 {!model.enabled ? (

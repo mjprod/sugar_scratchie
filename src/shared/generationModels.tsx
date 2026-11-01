@@ -13,7 +13,7 @@ export type GenerationAdapter = {
   id: string;
   label: string;
   roles: GenerationModelRole[];
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed";
   needs_endpoint: boolean;
   needs_reference_token: boolean;
   needs_variant: boolean;
@@ -24,7 +24,7 @@ export type GenerationModelInfo = {
   id: string;
   role: GenerationModelRole;
   label: string;
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed";
   adapter: string;
   endpoint_path: string;
   reference_token: string;
@@ -53,16 +53,7 @@ type Catalog = {
 
 const FALLBACK_MODELS: GenerationModelInfo[] = [
   ...SOURCE_IMAGE_MODELS.map((entry, index) =>
-    fallbackModel(
-      entry,
-      "source_image",
-      index,
-      entry.id === "seedream-v5-lite"
-        ? "seedream_image"
-        : entry.id === "flux-3-image-klein"
-          ? "flux_klein_image"
-          : "grok_image",
-    ),
+    fallbackModel(entry, "source_image", index, entry.id === "seedream-v5-lite" ? "seedream_image" : "grok_image"),
   ),
   ...BACKGROUND_VIDEO_MODELS.map((entry, index) =>
     fallbackModel(entry, "background_video", index, entry.id === "wan-2.2-spicy" ? "wan_spicy_i2v" : "grok_i2v"),
@@ -91,8 +82,7 @@ function fallbackModel(
     id: entry.id,
     role,
     label: entry.label,
-    provider:
-      entry.id === "flux-3-image-klein" ? "bfl" : entry.wavespeed ? "wavespeed" : "xai",
+    provider: entry.wavespeed ? "wavespeed" : "xai",
     adapter,
     endpoint_path: "",
     reference_token: entry.id === "seedance-2.0-video-edit" ? "@Image 1" : entry.id === "wan-3.0-video-edit" ? "Image 1" : "",
@@ -157,7 +147,7 @@ export async function deleteGenerationModel(role: GenerationModelRole, modelId: 
 }
 
 export type RemoteProviderModel = {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed";
   model_id: string;
   name: string;
   kind: string;
@@ -168,7 +158,7 @@ export type RemoteProviderModel = {
 };
 
 export async function lookupProviderModels(input: {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed";
   query?: string;
   role?: GenerationModelRole | "";
 }): Promise<RemoteProviderModel[]> {
@@ -184,7 +174,7 @@ export async function lookupProviderModels(input: {
 }
 
 export async function checkProviderModel(input: {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed";
   model_id: string;
 }): Promise<RemoteProviderModel> {
   return api<RemoteProviderModel>("/api/generation-models/check", {

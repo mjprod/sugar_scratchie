@@ -6,8 +6,7 @@
 @image4 is the theme uniform. It is required for the dress step.
 
 Grok reads ``<IMAGE_0>`` in attachment order. Seedream reads ``Figure 1``.
-FLUX 3 Image Klein reads ``Image 1``. The numbers in the prompt stay the
-operator's names; each model only sees its own tokens.
+The numbers in the prompt stay the operator's names; each model only sees its own tokens.
 """
 
 from __future__ import annotations
@@ -55,8 +54,6 @@ def rewrite_image_tokens(prompt: str, *, style: str) -> str:
             return f"Figure {position + 1}"
         if style == "at-image":
             return f"@Image {position + 1}"
-        if style == "flux":
-            return f"Image {position + 1}"
         return f"Image {position + 1}"
 
     return _TOKEN.sub(replace, prompt or "")
