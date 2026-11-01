@@ -262,10 +262,10 @@ def _job_id(payload: dict) -> str:
 
 
 def _poll_job(base: str, job_id: str) -> dict:
-    deadline = time.time() + POLL_TIMEOUT_S
+    deadline = time.monotonic() + POLL_TIMEOUT_S
     url = f"{base}/jobs/{job_id}"
     last = "queued"
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         req = urllib.request.Request(url, method="GET")
         for name, value in _server_headers(json_body=False).items():
             req.add_header(name, value)
