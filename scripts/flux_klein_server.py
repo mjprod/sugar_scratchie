@@ -89,7 +89,7 @@ def _materialize_images(raw_images: list, directory: Path) -> list[Path]:
             comma = text.find(",")
             text = text[comma + 1 :] if comma >= 0 else ""
         try:
-            blob = base64.b64decode(text, validate=False)
+            blob = base64.b64decode(text, validate=True)
         except Exception as exc:
             raise RuntimeError(f"Reference image {index + 1} is not base64.") from exc
         if not blob:
