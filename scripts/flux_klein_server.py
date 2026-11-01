@@ -19,7 +19,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOST = os.environ.get("FLUX_KLEIN_HOST", "0.0.0.0")
+HOST = os.environ.get("FLUX_KLEIN_HOST", "127.0.0.1")
 PORT = int(os.environ.get("FLUX_KLEIN_PORT", "8091"))
 MODEL_DIR = os.environ.get("FLUX_KLEIN_MODEL_DIR", "").strip()
 PRESET = os.environ.get("FLUX_KLEIN_PRESET", "q8-quality-16").strip() or "q8-quality-16"
