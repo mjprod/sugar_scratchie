@@ -5,6 +5,7 @@ import type { ImageProvider } from '../lib/genProvider'
 import type { ImageMode } from '../lib/promptRefs'
 import { toDataUri } from '../lib/imageData'
 import { useCrop916 } from './ExtractPopup'
+import { dressFetch } from '../lib/dressApi'
 
 type Slot = 'person' | 'clothes'
 type Category = 'tops' | 'bottoms' | 'one-pieces'
@@ -100,7 +101,7 @@ export function OutfitPanel({
   }
 
   const makeGarment = async (prompt: string): Promise<string> => {
-    const res = await fetch('/api/generate-image', {
+    const res = await dressFetch('/generate-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -131,8 +132,8 @@ export function OutfitPanel({
       }
       setJob(engine)
       const person = await toDataUri(source)
-      const path = engine === 'fashn' ? '/api/fashn-tryon' : '/api/leffa-tryon'
-      const res = await fetch(path, {
+      const path = engine === 'fashn' ? '/fashn-tryon' : '/leffa-tryon'
+      const res = await dressFetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

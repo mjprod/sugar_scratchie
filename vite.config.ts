@@ -68,8 +68,7 @@ export default defineConfig(({ mode: _mode }) => {
         target: "http://127.0.0.1:8090",
         // Operator auth is cookie-based (login at /dashboard/login).
         // Do not inject X-Dashboard-Token here — that bypassed the login UI.
-        // Sugar Dress handlers (/api/generate-image, etc.) are served by
-        // xaiImagineApi() above and never reach this proxy.
+        // Sugar Dress uses /dress-api/* (Vite plugin), not this /api proxy.
       },
     },
   },

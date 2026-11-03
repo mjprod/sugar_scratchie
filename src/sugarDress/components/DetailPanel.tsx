@@ -3,6 +3,7 @@ import { Plus, X } from '@phosphor-icons/react'
 import { ADD_REF_EVENT, OPEN_LIBRARY_EVENT } from './AssetPanel'
 import { ExtractPopup, useCrop916 } from './ExtractPopup'
 import { toDataUri } from '../lib/imageData'
+import { dressFetch } from '../lib/dressApi'
 
 type Slot = 'person' | 'clothes' | 'bg'
 
@@ -88,7 +89,7 @@ export function DetailPanel({
     setLocalError(null)
     try {
       const src = await toDataUri(source)
-      const res = await fetch('/api/extract-person', {
+      const res = await dressFetch('/extract-person', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -142,7 +143,7 @@ export function DetailPanel({
       const plate = made?.src ?? background
       const person = made?.person ?? figure
       if (!plate) return
-      const res = await fetch('/api/composite-background', {
+      const res = await dressFetch('/composite-background', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

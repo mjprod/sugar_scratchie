@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
+import { dressFetch } from '../lib/dressApi'
 import {
   DEFAULT_CAMERA,
   cameraTransform,
@@ -138,7 +139,7 @@ async function clothingWithoutWearer(src: string): Promise<string> {
   ctx.drawImage(img, 0, 0, sample.width, sample.height)
   if (!wornClothingPhoto(ctx.getImageData(0, 0, sample.width, sample.height).data)) return src
   try {
-    const res = await fetch('/api/extract-clothes', {
+    const res = await dressFetch('/extract-clothes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ src }),
@@ -412,7 +413,7 @@ export function InfiniteCanvas() {
             ? await toDataUri(payload.startFrame)
             : images[0] ?? null
 
-          const res = await fetch('/api/generate-video', {
+          const res = await dressFetch('/generate-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -478,7 +479,7 @@ export function InfiniteCanvas() {
           images[clothAt] = await clothingWithoutWearer(images[clothAt])
         }
         const sourceRefs = images.slice()
-        const res = await fetch('/api/generate-image', {
+        const res = await dressFetch('/generate-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
@@ -1116,7 +1117,7 @@ export function InfiniteCanvas() {
             NO_ONSCREEN_TEXT,
             VIDEO_AUDIO_DEFAULT,
           ].join('\n\n')
-          const res = await fetch('/api/generate-video', {
+          const res = await dressFetch('/generate-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1139,7 +1140,7 @@ export function InfiniteCanvas() {
           const sourceRefs = meta.refs ?? []
           const prompt = withNote
           const images = sourceRefs
-          const res = await fetch('/api/generate-image', {
+          const res = await dressFetch('/generate-image', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1343,7 +1344,7 @@ export function InfiniteCanvas() {
         ? 'Keep the background exactly as in the first image. Do not replace the room.'
         : 'The white around the person is empty. Do not add a background.'
       for (let i = 0; i < looks.length; i++) {
-        const res = await fetch('/api/generate-image', {
+        const res = await dressFetch('/generate-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1384,7 +1385,7 @@ export function InfiniteCanvas() {
         ? 'Keep the background exactly as in the first image. Do not replace the room.'
         : 'The white around the person is empty. Do not add a background.'
       for (let i = 0; i < costumes.length; i++) {
-        const res = await fetch('/api/generate-image', {
+        const res = await dressFetch('/generate-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1429,7 +1430,7 @@ export function InfiniteCanvas() {
         poseIndex: null,
         undress: bare,
       })}\n${ground}`
-      const res = await fetch('/api/generate-image', {
+      const res = await dressFetch('/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1469,7 +1470,7 @@ export function InfiniteCanvas() {
         poseIndex: 1,
         lockFace: true,
       })}\n${ground}`
-      const res = await fetch('/api/generate-image', {
+      const res = await dressFetch('/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1565,7 +1566,7 @@ export function InfiniteCanvas() {
                   if (!target) throw new Error('Image not found')
                   const src = await toDataUri(target.src)
                   const ref = await toDataUri(reference)
-                  const res = await fetch('/api/match-colour', {
+                  const res = await dressFetch('/match-colour', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ src, reference: ref }),

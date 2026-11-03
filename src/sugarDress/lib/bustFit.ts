@@ -9,6 +9,7 @@
 import { headLimit } from './undressLock'
 import { toDataUri } from './imageData'
 import { loadImage } from './extractFrame'
+import { dressFetch } from './dressApi'
 
 const MIN_SCALE = 1.06
 const MAX_SCALE = 1.7
@@ -197,7 +198,7 @@ export function widenChest(
 
 async function personAlpha(src: string, img: HTMLImageElement): Promise<Uint8Array | null> {
   const uri = await toDataUri(src)
-  const res = await fetch('/api/extract-person', {
+  const res = await dressFetch('/extract-person', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

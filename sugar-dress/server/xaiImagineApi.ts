@@ -610,34 +610,35 @@ async function handleLeffaTryOn(req: IncomingMessage, res: ServerResponse) {
 }
 
 function attach(server: ViteDevServer | PreviewServer, keys: ProviderKeys) {
-  server.middlewares.use('/api/fashn-tryon', (req, res) => {
+  // /dress-api/* stays on Vite. Do not use /api/* — that proxies to FastAPI.
+  server.middlewares.use('/dress-api/fashn-tryon', (req, res) => {
     void handleFashnTryOn(req, res)
   })
-  server.middlewares.use('/api/leffa-tryon', (req, res) => {
+  server.middlewares.use('/dress-api/leffa-tryon', (req, res) => {
     void handleLeffaTryOn(req, res)
   })
-  server.middlewares.use('/api/extract-person', (req, res) => {
+  server.middlewares.use('/dress-api/extract-person', (req, res) => {
     void handleExtractPerson(req, res)
   })
-  server.middlewares.use('/api/extract-clothes', (req, res) => {
+  server.middlewares.use('/dress-api/extract-clothes', (req, res) => {
     void handleExtractClothes(req, res)
   })
-  server.middlewares.use('/api/face-oval', (req, res) => {
+  server.middlewares.use('/dress-api/face-oval', (req, res) => {
     void handleFaceOval(req, res)
   })
-  server.middlewares.use('/api/keep-body', (req, res) => {
+  server.middlewares.use('/dress-api/keep-body', (req, res) => {
     void handleKeepBody(req, res)
   })
-  server.middlewares.use('/api/composite-background', (req, res) => {
+  server.middlewares.use('/dress-api/composite-background', (req, res) => {
     void handleCompositeBackground(req, res)
   })
-  server.middlewares.use('/api/match-colour', (req, res) => {
+  server.middlewares.use('/dress-api/match-colour', (req, res) => {
     void handleMatchColour(req, res)
   })
-  server.middlewares.use('/api/generate-image', (req, res) => {
+  server.middlewares.use('/dress-api/generate-image', (req, res) => {
     void handleGenerate(req, res, keys)
   })
-  server.middlewares.use('/api/generate-video', (req, res) => {
+  server.middlewares.use('/dress-api/generate-video', (req, res) => {
     void handleGenerateVideo(req, res, keys)
   })
 }

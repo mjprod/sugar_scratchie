@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ImageProvider } from '../lib/genProvider'
 import type { ImageMode } from '../lib/promptRefs'
+import { dressFetch } from '../lib/dressApi'
 
 type Props = {
   busy: boolean
@@ -44,7 +45,7 @@ export function BuildDressPanel({ busy, error, imageProvider, imageMode, onGenBu
     setLocalBusy(true)
     setLocalError(null)
     try {
-      const res = await fetch('/api/generate-image', {
+      const res = await dressFetch('/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

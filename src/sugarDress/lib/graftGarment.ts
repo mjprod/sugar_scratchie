@@ -11,6 +11,7 @@
 import type { FaceRect } from './personGuide'
 import { toDataUri } from './imageData'
 import { loadImage } from './extractFrame'
+import { dressFetch } from './dressApi'
 
 type Box = { minX: number; minY: number; maxX: number; maxY: number }
 
@@ -217,7 +218,7 @@ function scaleAlpha(alpha: Uint8Array, sw: number, sh: number, dw: number, dh: n
 }
 
 async function matte(src: string, img: HTMLImageElement): Promise<Uint8Array | null> {
-  const res = await fetch('/api/extract-person', {
+  const res = await dressFetch('/extract-person', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

@@ -9,6 +9,7 @@ import { toDataUri } from '../lib/imageData'
 import { getPrimaryRef } from '../lib/promptRefs'
 import { CHAIN_PORT_GAP_PX, SIDES, type Side } from '../lib/laneChain'
 import { resizeLocked, type Box, type Corner } from '../lib/resizeItem'
+import { dressFetch } from '../lib/dressApi'
 
 type Props = {
   item: CanvasItem
@@ -212,13 +213,15 @@ export function CanvasImage({
     setCutError(null)
     try {
       const src = await toDataUri(item.src)
-      const res = await fetch('/api/extract-person', {
+      const res = await dressFetch('/extract-person', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ src, x: crop.x, y: crop.y, w: crop.w, h: crop.h, method: crop.method }),
       })
-      const data = (await res.json()) as { src?: string; error?: string }
-      if (!res.ok || !data.src) throw new Error(data.error || 'Extract failed')
+      const data = (await res.json()) as { src?: string; error?: string; detail?: string }
+      if (!res.ok || !data.src) {
+        throw new Error(data.error || data.detail || 'Extract failed')
+      }
       await onPlaceCutout(data.src)
       setCutOpen(false)
     } catch (err) {
