@@ -1,8 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
+import tailwindcss from "@tailwindcss/vite";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { xaiImagineApi } from "./sugar-dress/server/xaiImagineApi.ts";
 
 const meshDirectory = resolve("public/mesh");
 const meshIndexFile = resolve(meshDirectory, "index.json");
@@ -31,8 +33,11 @@ export default defineConfig(({ mode: _mode }) => {
     dedupe: ["react", "react-dom"],
   },
   plugins: [
+    // Dress /dress-api/* middleware must register before the FastAPI /api proxy.
+    xaiImagineApi(),
     react(),
     basicSsl(),
+    tailwindcss(),
     {
       name: "mesh-json-index",
       buildStart() {
@@ -63,6 +68,7 @@ export default defineConfig(({ mode: _mode }) => {
         target: "http://127.0.0.1:8090",
         // Operator auth is cookie-based (login at /dashboard/login).
         // Do not inject X-Dashboard-Token here — that bypassed the login UI.
+        // Sugar Dress uses /dress-api/* (Vite plugin), not this /api proxy.
       },
     },
   },

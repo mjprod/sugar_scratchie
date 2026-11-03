@@ -6,7 +6,7 @@ import { iconProps } from "./ui";
 type VideoFlowShellProps = {
   title: string;
   subtitle: string;
-  active: "hub" | "designer" | "run" | "lite" | "picture";
+  active: "hub" | "designer" | "run" | "lite" | "picture" | "dress";
   error?: string;
   onRefresh?: () => void;
   children: ReactNode;
@@ -59,6 +59,12 @@ export function VideoFlowShell({
                 href="/dashboard/picture-flow"
               >
                 Picture
+              </a>
+              <a
+                className={active === "dress" ? "is-active" : ""}
+                href="/dashboard/video-flow/dress"
+              >
+                Dress
               </a>
             </nav>
             <Button asChild color="gray" variant="soft">
