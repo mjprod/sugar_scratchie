@@ -9,7 +9,6 @@ import {
   LoaderCircle,
   Package,
   Play,
-  Shirt,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -1100,12 +1099,6 @@ export function Dashboard() {
                   <a href="/dashboard/video-flow">
                     <Clapperboard {...iconProps} />
                     Video Flow
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/video-flow/dress">
-                    <Shirt {...iconProps} />
-                    Dress
                   </a>
                 </Button>
                 <Button asChild variant="soft">

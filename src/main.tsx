@@ -15,7 +15,6 @@ import { AiModelsPage } from "./AiModelsPage";
 import { SymbolsPage } from "./SymbolsPage";
 import { UsersPage } from "./UsersPage";
 import { PictureFlowPage } from "./pictureFlow/PictureFlowPage";
-import { SugarDressPage } from "./sugarDress/SugarDressPage";
 import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { LiteFlowPage } from "./videoFlow/lite/LiteFlowPage";
@@ -71,7 +70,6 @@ const GatedAiModelsPage = withOperatorGate(AiModelsPage);
 const GatedUsersPage = withOperatorGate(UsersPage);
 const GatedSymbolsPage = withOperatorGate(SymbolsPage);
 const GatedPictureFlowPage = withOperatorGate(PictureFlowPage);
-const GatedSugarDressPage = withOperatorGate(SugarDressPage);
 const GatedVideoFlowDesignerPage = withOperatorGate(VideoFlowDesignerPage);
 const GatedVideoFlowRunPage = withOperatorGate(VideoFlowRunPage);
 const GatedVideoFlowLitePage = withOperatorGate(LiteFlowPage);
@@ -104,7 +102,6 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
   if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;
-  if (path === "/dashboard/video-flow/dress") return GatedSugarDressPage;
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/packs") return GatedPacksPage;
@@ -165,20 +162,14 @@ function App() {
     return () => document.removeEventListener("click", onClick);
   }, []);
 
-  const path = normalizePath(location.path);
   const Page = pickApp(location.path);
-  const page = <Page key={`${path}${location.search}`} />;
-  // Dress has its own dark UI. Radix Theme washes out its buttons and chrome.
-  if (path === "/dashboard/video-flow/dress") return page;
-  return (
-    <Theme accentColor="red" grayColor="sand" radius="medium">
-      {page}
-    </Theme>
-  );
+  return <Page key={`${normalizePath(location.path)}${location.search}`} />;
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <Theme accentColor="red" grayColor="sand" radius="medium">
+      <App />
+    </Theme>
   </React.StrictMode>,
 );

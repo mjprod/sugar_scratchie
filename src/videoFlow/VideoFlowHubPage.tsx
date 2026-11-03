@@ -1,5 +1,5 @@
-import { PenLine, Play, Shirt, Sparkles, UserRound } from "lucide-react";
-import { Card, Flex, Heading, Text } from "@radix-ui/themes";
+import { PenLine, Play, Sparkles, UserRound } from "lucide-react";
+import { Box, Card, Flex, Heading, Text } from "@radix-ui/themes";
 import { VideoFlowShell } from "./VideoFlowShell";
 import { useVideoFlowState } from "./useVideoFlowState";
 import { iconProps } from "./ui";
@@ -31,17 +31,6 @@ export function VideoFlowHubPage() {
                 <Heading size="5">Models</Heading>
                 <Text color="gray" size="2">
                   Create girls and motion cards, then click Edit to open the pipeline.
-                </Text>
-              </Flex>
-            </a>
-          </Card>
-          <Card asChild className="video-flow-hub-card">
-            <a href="/dashboard/video-flow/dress">
-              <Flex direction="column" gap="3" p="2">
-                <Shirt {...iconProps} size={28} />
-                <Heading size="5">Dress</Heading>
-                <Text color="gray" size="2">
-                  Infinite canvas: drop a person photo and change clothes with Flux.
                 </Text>
               </Flex>
             </a>
