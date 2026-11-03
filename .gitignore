@@ -28,6 +28,7 @@ build/
 # lives in n8n-data so it is not mixed into the source tree.
 /n8n/
 /n8n-data/
+
 .DS_Store
 *.log
 .cache/
