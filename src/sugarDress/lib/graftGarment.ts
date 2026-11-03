@@ -1,3 +1,4 @@
+import { dressFetch } from './dressApi'
 /**
  * Put the new garment on the original person and clear the old one.
  * The body is not stretched. New cloth is sampled with one scale around the body center.
@@ -11,7 +12,6 @@
 import type { FaceRect } from './personGuide'
 import { toDataUri } from './imageData'
 import { loadImage } from './extractFrame'
-import { dressFetch } from './dressApi'
 
 type Box = { minX: number; minY: number; maxX: number; maxY: number }
 

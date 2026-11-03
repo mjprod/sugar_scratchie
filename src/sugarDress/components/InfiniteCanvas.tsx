@@ -1,3 +1,4 @@
+import { dressFetch } from '../lib/dressApi'
 import {
   useCallback,
   useEffect,
@@ -8,7 +9,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
-import { dressFetch } from '../lib/dressApi'
 import {
   DEFAULT_CAMERA,
   cameraTransform,
@@ -187,7 +187,7 @@ export function InfiniteCanvas() {
   const [chainHoverId, setChainHoverId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [generatingKind, setGeneratingKind] = useState<'image' | 'video' | null>(null)
-  const [, setGenerateError] = useState<string | null>(null)
+  const [generateError, setGenerateError] = useState<string | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   /** Item id whose regenerate dialog is open */
@@ -1146,9 +1146,11 @@ export function InfiniteCanvas() {
             body: JSON.stringify({
               prompt,
               ...(images.length ? { images } : {}),
-              aspect_ratio: '9:16',
-              image_mode: imageModeRef.current,
-              provider: imageProviderRef.current,
+              aspect_ratio: meta.aspect ?? '9:16',
+              image_mode: meta.imageMode ?? imageModeRef.current,
+              provider:
+                (edits.provider as ImageProvider | undefined) ??
+                imageProviderRef.current,
             }),
           })
           const data = (await res.json()) as { src?: string; error?: string }
@@ -1184,7 +1186,10 @@ export function InfiniteCanvas() {
                     prompt: basePrompt,
                     script: edits.script || undefined,
                     ...(meta.mediaKind === 'image'
-                      ? { imageMode: imageModeRef.current }
+                      ? {
+                          aspect: meta.aspect ?? '9:16',
+                          imageMode: meta.imageMode ?? imageModeRef.current,
+                        }
                       : {}),
                   },
                 }
@@ -1650,6 +1655,20 @@ export function InfiniteCanvas() {
             {generatingKind === 'video'
               ? `Generating video with ${providerLabel(videoProvider)}…`
               : `Generating with ${imageProviderLabel(imageProvider)} · ${imageMode === '720' ? '720' : 'Speed'}…`}
+          </div>
+        )}
+
+        {generateError && !generating && (
+          <div className="gen-error" role="alert">
+            <p>{generateError}</p>
+            <button
+              type="button"
+              className="gen-error-dismiss"
+              aria-label="Dismiss error"
+              onClick={() => setGenerateError(null)}
+            >
+              Dismiss
+            </button>
           </div>
         )}
 

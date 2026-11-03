@@ -1,3 +1,4 @@
+import { dressFetch } from './dressApi'
 /**
  * Stretch a generated outfit across the original bust.
  * The new clothes move outward. The original skin is not pasted back.
@@ -9,7 +10,6 @@
 import { headLimit } from './undressLock'
 import { toDataUri } from './imageData'
 import { loadImage } from './extractFrame'
-import { dressFetch } from './dressApi'
 
 const MIN_SCALE = 1.06
 const MAX_SCALE = 1.7

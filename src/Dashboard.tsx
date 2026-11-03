@@ -1102,6 +1102,9 @@ export function Dashboard() {
                   </a>
                 </Button>
                 <Button asChild variant="soft">
+                  <a href="/dashboard/video-flow/dress">Dress</a>
+                </Button>
+                <Button asChild variant="soft">
                   <a href="/video-transition">
                     <SlidersHorizontal {...iconProps} />
                     Transition lab

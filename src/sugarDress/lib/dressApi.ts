@@ -6,11 +6,6 @@ export function dressUrl(path: string): string {
   return `${DRESS_API}${suffix}`;
 }
 
-type ErrorBody = {
-  error?: string;
-  detail?: string | { msg?: string }[];
-};
-
 export async function dressFetch(path: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(dressUrl(path), init);
@@ -23,16 +18,4 @@ export async function dressFetch(path: string, init?: RequestInit): Promise<Resp
     }
     throw err instanceof Error ? err : new Error(message);
   }
-}
-
-export async function readDressError(res: Response, fallback: string): Promise<string> {
-  try {
-    const data = (await res.json()) as ErrorBody;
-    if (typeof data.error === "string" && data.error.trim()) return data.error;
-    if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
-    if (Array.isArray(data.detail) && data.detail[0]?.msg) return String(data.detail[0].msg);
-  } catch {
-    /* non-JSON */
-  }
-  return fallback;
 }

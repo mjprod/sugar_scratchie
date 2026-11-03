@@ -218,10 +218,8 @@ export function CanvasImage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ src, x: crop.x, y: crop.y, w: crop.w, h: crop.h, method: crop.method }),
       })
-      const data = (await res.json()) as { src?: string; error?: string; detail?: string }
-      if (!res.ok || !data.src) {
-        throw new Error(data.error || data.detail || 'Extract failed')
-      }
+      const data = (await res.json()) as { src?: string; error?: string }
+      if (!res.ok || !data.src) throw new Error(data.error || 'Extract failed')
       await onPlaceCutout(data.src)
       setCutOpen(false)
     } catch (err) {

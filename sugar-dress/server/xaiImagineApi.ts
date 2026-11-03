@@ -35,8 +35,8 @@ type Body = {
   image?: string
   /** Up to 3 reference images for multi-image edit */
   images?: string[]
-  /** `speed` → grok-imagine-image; `quality` → grok-imagine-image-quality */
-  image_mode?: 'speed' | 'quality'
+  /** Client uses speed|720. Grok also accepts legacy `quality` (=720). */
+  image_mode?: 'speed' | 'quality' | '720'
   /** Quality model only: 1k | 2k */
   resolution?: '1k' | '2k'
   /** grok | gpt-image-2.5 | gpt-image-2 | seedream-5-lite | seedream-5-pro | flux-3-klein | flux-18 */
@@ -73,7 +73,8 @@ type Body = {
 }
 
 function resolveImageModel(mode: Body['image_mode']): string {
-  return mode === 'quality'
+  // Canvas UI sends '720' for the high tier; older clients used 'quality'.
+  return mode === 'quality' || mode === '720'
     ? 'grok-imagine-image-quality'
     : 'grok-imagine-image'
 }
@@ -137,7 +138,7 @@ async function handleGrokImage(body: Body, apiKey: string) {
     ? 'https://api.x.ai/v1/images/edits'
     : 'https://api.x.ai/v1/images/generations'
   const model = resolveImageModel(body.image_mode)
-  const isQuality = body.image_mode === 'quality'
+  const isQuality = body.image_mode === 'quality' || body.image_mode === '720'
   const qualityResolution =
     body.resolution === '1k' || body.resolution === '2k'
       ? body.resolution
@@ -378,7 +379,8 @@ async function handleGenerate(
       })
       return
     } else {
-      result = await handleGrokImage(body, keys.xai)
+      // Same prepared prompt + multi as other providers (garment sample, pose plate, person guard).
+      result = await handleGrokImage({ ...body, prompt, images: multi }, keys.xai)
     }
 
     const bodyMatch = body.body_match?.trim()

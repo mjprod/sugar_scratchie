@@ -19,6 +19,7 @@ import { VideoFlowDesignerPage } from "./videoFlow/VideoFlowDesignerPage";
 import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { LiteFlowPage } from "./videoFlow/lite/LiteFlowPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
+import { SugarDressPage } from "./sugarDress/SugarDressPage";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
 
@@ -74,6 +75,7 @@ const GatedVideoFlowDesignerPage = withOperatorGate(VideoFlowDesignerPage);
 const GatedVideoFlowRunPage = withOperatorGate(VideoFlowRunPage);
 const GatedVideoFlowLitePage = withOperatorGate(LiteFlowPage);
 const GatedVideoFlowHubPage = withOperatorGate(VideoFlowHubPage);
+const GatedSugarDressPage = withOperatorGate(SugarDressPage);
 const DashboardPlayerGame = lazy(() =>
   import("./dashGame/DashboardPlayerGame").then((m) => ({
     default: m.DashboardPlayerGame,
@@ -102,6 +104,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
   if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;
+  if (path === "/dashboard/video-flow/dress" || path === "/dress") return GatedSugarDressPage;
   if (path === "/dashboard/picture-flow" || path === "/picture-flow") return GatedPictureFlowPage;
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/packs") return GatedPacksPage;
@@ -163,13 +166,19 @@ function App() {
   }, []);
 
   const Page = pickApp(location.path);
-  return <Page key={`${normalizePath(location.path)}${location.search}`} />;
+  const path = normalizePath(location.path);
+  const bare = path === "/dashboard/video-flow/dress" || path === "/dress";
+  const page = <Page key={`${path}${location.search}`} />;
+  if (bare) return page;
+  return (
+    <Theme accentColor="red" grayColor="sand" radius="medium">
+      {page}
+    </Theme>
+  );
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Theme accentColor="red" grayColor="sand" radius="medium">
-      <App />
-    </Theme>
+    <App />
   </React.StrictMode>,
 );
