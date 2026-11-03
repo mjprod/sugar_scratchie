@@ -399,6 +399,17 @@ export function InfiniteCanvas() {
     [addMediaFromSrc, askCrop],
   )
 
+  /** Mark a generated item as Made-from its source on the chain. */
+  const linkMade = useCallback((fromId: string | null | undefined, toId: string) => {
+    if (!fromId || fromId === toId) return
+    setChainMap((prev) => linkChain(prev, fromId, toId, 'right', 'left', 'made'))
+  }, [])
+
+  const findIdBySrc = useCallback((src: string | null | undefined) => {
+    if (!src) return null
+    return itemsRef.current.find((it) => it.src === src)?.id ?? null
+  }, [])
+
   const generateFromPrompt = useCallback(
     async (payload: PromptSubmitPayload) => {
       beginGen(payload.mediaKind === 'video' ? 'video' : 'image')
@@ -426,6 +437,9 @@ export function InfiniteCanvas() {
           const startFrame = payload.startFrame
             ? await toDataUri(payload.startFrame)
             : images[0] ?? null
+          const startSourceId =
+            findIdBySrc(payload.startFrame) ??
+            (selectedIds.length === 1 ? selectedIds[0] : null)
 
           const res = await dressFetch('/generate-video', {
             method: 'POST',
@@ -447,12 +461,21 @@ export function InfiniteCanvas() {
           if (!res.ok || !data.src) {
             throw new Error(data.error || 'Video generation failed')
           }
+          const sourceItem = startSourceId
+            ? itemsRef.current.find((it) => it.id === startSourceId)
+            : null
           const videoItem = await addMediaFromSrc(
             data.src,
-            {
-              kind: 'screen',
-              screen: getViewportCenter(),
-            },
+            sourceItem
+              ? {
+                  kind: 'world',
+                  x: sourceItem.x + sourceItem.width + 36,
+                  y: sourceItem.y,
+                }
+              : {
+                  kind: 'screen',
+                  screen: getViewportCenter(),
+                },
             'video',
             {
               genMeta: {
@@ -465,9 +488,10 @@ export function InfiniteCanvas() {
               },
             },
           )
+          linkMade(startSourceId, videoItem.id)
           // Place last-frame still to the right of the video
           if (data.lastFrame) {
-            await addMediaFromSrc(
+            const lastStill = await addMediaFromSrc(
               data.lastFrame,
               {
                 kind: 'world',
@@ -476,6 +500,7 @@ export function InfiniteCanvas() {
               },
               'image',
             )
+            linkMade(videoItem.id, lastStill.id)
           }
           return
         }
@@ -540,35 +565,40 @@ export function InfiniteCanvas() {
             imageMode,
           },
         }
-        if (selectedImage && payload.images.length === 0) {
-          await addMediaFromSrc(
-            placed,
-            {
-              kind: 'world',
-              x: selectedImage.x + 36,
-              y: selectedImage.y + 36,
-            },
-            'image',
-            imageGenMeta,
-          )
-        } else {
-          await addMediaFromSrc(
-            placed,
-            {
-              kind: 'screen',
-              screen: getViewportCenter(),
-            },
-            'image',
-            imageGenMeta,
-          )
-        }
+        const sourceId =
+          selectedImage?.id ??
+          (payload.images[0] ? findIdBySrc(payload.images[0]) : null) ??
+          (selectedIds.length === 1 ? selectedIds[0] : null)
+
+        const created =
+          selectedImage && payload.images.length === 0
+            ? await addMediaFromSrc(
+                placed,
+                {
+                  kind: 'world',
+                  x: selectedImage.x + selectedImage.width + 36,
+                  y: selectedImage.y,
+                },
+                'image',
+                imageGenMeta,
+              )
+            : await addMediaFromSrc(
+                placed,
+                {
+                  kind: 'screen',
+                  screen: getViewportCenter(),
+                },
+                'image',
+                imageGenMeta,
+              )
+        linkMade(sourceId, created.id)
       } catch (err) {
         setGenerateError(err instanceof Error ? err.message : 'Generation failed')
       } finally {
         endGen()
       }
     },
-    [addMediaFromSrc, getViewportCenter, items, selectedIds],
+    [addMediaFromSrc, findIdBySrc, getViewportCenter, items, linkMade, selectedIds],
   )
 
   const handleWheel = useCallback(
@@ -1463,7 +1493,18 @@ export function InfiniteCanvas() {
       })
       const generated = (await res.json()) as { src?: string; error?: string }
       if (!res.ok || !generated.src) throw new Error(generated.error || (bare ? 'Undress failed' : 'Clothes on failed'))
-      await placeAtCenter(generated.src)
+      const sourceId = findIdBySrc(cutout)
+      const source = sourceId
+        ? itemsRef.current.find((it) => it.id === sourceId)
+        : null
+      const created = await addMediaFromSrc(
+        generated.src,
+        source
+          ? { kind: 'world', x: source.x + source.width + 36, y: source.y }
+          : { kind: 'screen', screen: getViewportCenter() },
+        'image',
+      )
+      linkMade(sourceId, created.id)
     } catch (err) {
       const message = err instanceof Error ? err.message : bare ? 'Undress failed' : 'Clothes on failed'
       setGenerateError(message)
@@ -1503,7 +1544,18 @@ export function InfiniteCanvas() {
       })
       const generated = (await res.json()) as { src?: string; error?: string }
       if (!res.ok || !generated.src) throw new Error(generated.error || 'Pose failed')
-      await placeAtCenter(generated.src)
+      const sourceId = findIdBySrc(personSrc)
+      const source = sourceId
+        ? itemsRef.current.find((it) => it.id === sourceId)
+        : null
+      const created = await addMediaFromSrc(
+        generated.src,
+        source
+          ? { kind: 'world', x: source.x + source.width + 36, y: source.y }
+          : { kind: 'screen', screen: getViewportCenter() },
+        'image',
+      )
+      linkMade(sourceId, created.id)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Pose failed'
       setGenerateError(message)

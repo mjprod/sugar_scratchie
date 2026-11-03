@@ -3,10 +3,14 @@ import type { Point } from './camera'
 
 export type Side = 'top' | 'right' | 'bottom' | 'left'
 
+export type ChainKind = 'made'
+
 export type ChainLink = {
   toId: string
   fromSide: Side
   toSide: Side
+  /** made = generated from the previous node */
+  kind?: ChainKind
 }
 
 /** Directed story lane: each node points to at most one next image. */
@@ -60,6 +64,7 @@ export function linkChain(
   toId: string,
   fromSide: Side,
   toSide: Side,
+  kind?: ChainKind,
 ): ChainMap {
   if (fromId === toId) return map
 
@@ -69,7 +74,12 @@ export function linkChain(
     if (link.toId === toId) delete next[k]
   }
 
-  next[fromId] = { toId, fromSide, toSide }
+  next[fromId] = {
+    toId,
+    fromSide,
+    toSide,
+    ...(kind ? { kind } : {}),
+  }
 
   const seen = new Set<string>()
   let cur: string | undefined = toId
@@ -190,6 +200,7 @@ export type ChainEdge = {
   toId: string
   fromSide: Side
   toSide: Side
+  kind?: ChainKind
 }
 
 export function listChainEdges(
@@ -205,6 +216,7 @@ export function listChainEdges(
         toId: link.toId,
         fromSide: link.fromSide,
         toSide: link.toSide,
+        kind: link.kind,
       })
     }
   }

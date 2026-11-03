@@ -62,6 +62,7 @@ type FrameSlot = {
   from: 'upload' | 'canvas'
 }
 
+
 type Props = {
   busy: boolean
   error: string | null
