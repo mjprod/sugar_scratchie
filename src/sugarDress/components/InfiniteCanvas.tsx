@@ -188,6 +188,20 @@ export function InfiniteCanvas() {
   const [chainHoverId, setChainHoverId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [generatingKind, setGeneratingKind] = useState<'image' | 'video' | null>(null)
+  /** Refcount so overlapping dress/pose/gen jobs don't clear the busy overlay early. */
+  const genJobsRef = useRef(0)
+  const beginGen = useCallback((kind?: 'image' | 'video') => {
+    genJobsRef.current += 1
+    if (kind) setGeneratingKind(kind)
+    setGenerating(true)
+  }, [])
+  const endGen = useCallback(() => {
+    genJobsRef.current = Math.max(0, genJobsRef.current - 1)
+    if (genJobsRef.current === 0) {
+      setGenerating(false)
+      setGeneratingKind(null)
+    }
+  }, [])
   const [generateError, setGenerateError] = useState<string | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
@@ -387,8 +401,7 @@ export function InfiniteCanvas() {
 
   const generateFromPrompt = useCallback(
     async (payload: PromptSubmitPayload) => {
-      setGenerating(true)
-      setGeneratingKind(payload.mediaKind === 'video' ? 'video' : 'image')
+      beginGen(payload.mediaKind === 'video' ? 'video' : 'image')
       setGenerateError(null)
       try {
         const selectedSingle =
@@ -552,7 +565,7 @@ export function InfiniteCanvas() {
       } catch (err) {
         setGenerateError(err instanceof Error ? err.message : 'Generation failed')
       } finally {
-        setGenerating(false)
+        endGen()
       }
     },
     [addMediaFromSrc, getViewportCenter, items, selectedIds],
@@ -1100,7 +1113,7 @@ export function InfiniteCanvas() {
         })()
       if (!meta) throw new Error('This item has no generation settings and cannot be regenerated')
 
-      setGenerating(true)
+      beginGen(meta.mediaKind === 'video' ? 'video' : 'image')
       setGenerateError(null)
       try {
         const basePrompt = edits.prompt.trim() || meta.prompt
@@ -1204,7 +1217,7 @@ export function InfiniteCanvas() {
         )
         throw err
       } finally {
-        setGenerating(false)
+        endGen()
       }
     },
     [],
@@ -1340,7 +1353,7 @@ export function InfiniteCanvas() {
   const runAutoBikini = async (personSrc: string, count: 1 | 3) => {
     const looks = pickBikinis(count)
     if (!looks[0]) return
-    setGenerating(true)
+    beginGen('image')
     setGenerateError(null)
     try {
       const src = await toDataUri(personSrc)
@@ -1374,14 +1387,14 @@ export function InfiniteCanvas() {
       setGenerateError(message)
       throw err
     } finally {
-      setGenerating(false)
+      endGen()
     }
   }
 
   const runCosplay = async (personSrc: string, themeId: string, count: 1 | 2 | 3) => {
     const costumes = pickCosplay(themeId, count)
     if (!costumes[0]) return
-    setGenerating(true)
+    beginGen('image')
     setGenerateError(null)
     try {
       const src = await toDataUri(personSrc)
@@ -1415,12 +1428,12 @@ export function InfiniteCanvas() {
       setGenerateError(message)
       throw err
     } finally {
-      setGenerating(false)
+      endGen()
     }
   }
 
   const runDress = async (cutout: string, clothing: string | null, text: string, bare = false) => {
-    setGenerating(true)
+    beginGen('image')
     setGenerateError(null)
     try {
       const flat = await flattenOnWhite(cutout)
@@ -1456,12 +1469,12 @@ export function InfiniteCanvas() {
       setGenerateError(message)
       throw err
     } finally {
-      setGenerating(false)
+      endGen()
     }
   }
 
   const runPose = async (personSrc: string) => {
-    setGenerating(true)
+    beginGen('image')
     setGenerateError(null)
     try {
       const pose = await toDataUri('/pose-default.png')
@@ -1496,7 +1509,7 @@ export function InfiniteCanvas() {
       setGenerateError(message)
       throw err
     } finally {
-      setGenerating(false)
+      endGen()
     }
   }
 
@@ -1507,7 +1520,7 @@ export function InfiniteCanvas() {
     reference: string | null,
     person: string,
   ): Promise<{ src: string; person: string }> => {
-    setGenerating(true)
+    beginGen('image')
     setGenerateError(null)
     try {
       const images = reference ? [await toDataUri(reference)] : []
@@ -1534,7 +1547,7 @@ export function InfiniteCanvas() {
       setGenerateError(message)
       throw err
     } finally {
-      setGenerating(false)
+      endGen()
     }
   }
 
@@ -1759,8 +1772,12 @@ export function InfiniteCanvas() {
         onMakeBackground={makeBackground}
         imageMode={imageMode}
         onOutfitBusy={(busy) => {
-          setGenerating(busy)
-          if (busy) setGenerateError(null)
+          if (busy) {
+            beginGen('image')
+            setGenerateError(null)
+          } else {
+            endGen()
+          }
         }}
       />
 
