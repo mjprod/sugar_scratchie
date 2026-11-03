@@ -792,7 +792,8 @@
   position: absolute;
   z-index: 30;
   left: 14px;
-  top: 14px;
+  /* Sit under CanvasChrome left-bar so brand / mode chips stay clickable. */
+  top: 72px;
   bottom: 14px;
   width: var(--control-rail);
   transform: none;

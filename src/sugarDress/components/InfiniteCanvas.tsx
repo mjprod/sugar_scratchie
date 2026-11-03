@@ -23,7 +23,7 @@ import {
 } from '../lib/camera'
 import type { CanvasItem, GenMeta, InteractionMode } from '../types'
 import { toDataUri } from '../lib/imageData'
-import type { ImageMode, PromptSubmitPayload } from '../lib/promptRefs'
+import type { ImageMode, PromptSubmitPayload, SelectionRef } from '../lib/promptRefs'
 import {
   clearOutgoing,
   computeChainOrder,
@@ -51,6 +51,7 @@ import { autoBikiniPrompt, cosplayPrompt, dressEditPrompt, pickBikinis, pickCosp
 import { flattenOnWhite, isOpaque, loadImage } from '../lib/extractFrame'
 import { useCrop916 } from './ExtractPopup'
 import { RegenerateDialog } from './RegenerateDialog'
+import { StudioDock } from './StudioDock'
 import {
   appendImageAssets,
   loadAssets,
@@ -192,7 +193,7 @@ export function InfiniteCanvas() {
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   /** Item id whose regenerate dialog is open */
   const [regenId, setRegenId] = useState<string | null>(null)
-  const [videoProvider] = useGenProviderState()
+  const [videoProvider, setVideoProvider] = useGenProviderState()
   const videoProviderRef = useRef(videoProvider)
   videoProviderRef.current = videoProvider
   const [imageProvider, setImageProvider] = useImageProviderState()
@@ -1499,6 +1500,49 @@ export function InfiniteCanvas() {
     }
   }
 
+  /** Empty scene plate for Detail → background composite. Person is returned unchanged. */
+  const makeBackground = async (
+    prompt: string,
+    size: { w: number; h: number },
+    reference: string | null,
+    person: string,
+  ): Promise<{ src: string; person: string }> => {
+    setGenerating(true)
+    setGenerateError(null)
+    try {
+      const images = reference ? [await toDataUri(reference)] : []
+      const res = await dressFetch('/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: [
+            'Empty background plate only. No people, no mannequin, no face.',
+            `Frame about ${Math.round(size.w)}×${Math.round(size.h)} pixels.`,
+            prompt.trim(),
+          ].join('\n'),
+          ...(images.length ? { images } : {}),
+          aspect_ratio: '9:16',
+          image_mode: imageModeRef.current,
+          provider: imageProviderRef.current,
+        }),
+      })
+      const data = (await res.json()) as { src?: string; error?: string }
+      if (!res.ok || !data.src) throw new Error(data.error || 'Background generate failed')
+      return { src: data.src, person }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Background generate failed'
+      setGenerateError(message)
+      throw err
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const selectionRefs: SelectionRef[] = selectedIds.flatMap((id) => {
+    const item = items.find((it) => it.id === id)
+    return item ? [{ id: item.id, src: item.src }] : []
+  })
+
   const cursorClass = isPanning
     ? 'cursor-grabbing'
     : panModeActive
@@ -1700,6 +1744,25 @@ export function InfiniteCanvas() {
             </div>
           )}
       </div>
+
+      <StudioDock
+        busy={generating}
+        error={generateError}
+        selectionRefs={selectionRefs}
+        videoProvider={videoProvider}
+        onVideoProviderChange={setVideoProvider}
+        imageProvider={imageProvider}
+        onGenerate={generateFromPrompt}
+        assets={assets}
+        onPlace={placeAtCenter}
+        onDress={runDress}
+        onMakeBackground={makeBackground}
+        imageMode={imageMode}
+        onOutfitBusy={(busy) => {
+          setGenerating(busy)
+          if (busy) setGenerateError(null)
+        }}
+      />
 
       <CanvasChrome
         mode={mode}
