@@ -4,6 +4,7 @@ import {
   GALLERY_CHANGED_EVENT,
   deleteGalleryImage,
   fetchGallery,
+  notifyGalleryChanged,
   type GalleryImage,
 } from "../lib/modelGallery";
 
@@ -105,6 +106,7 @@ export function GalleryPanel({
     try {
       await deleteGalleryImage(modelId, image.id);
       setImages((prev) => prev.filter((item) => item.id !== image.id));
+      notifyGalleryChanged(modelId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not remove that still");
     }

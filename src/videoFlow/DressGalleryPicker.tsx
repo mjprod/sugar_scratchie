@@ -24,6 +24,7 @@ export function DressGalleryPicker({
   const [active, setActive] = useState("");
 
   useEffect(() => {
+    setActive("");
     if (!modelId) {
       setImages([]);
       setError("");
