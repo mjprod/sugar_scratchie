@@ -203,17 +203,17 @@ export function InfiniteCanvas() {
     }
   }, [])
   const [generateError, setGenerateError] = useState<string | null>(null)
-  /** Slots held by outfit, build, and detail jobs. A release with none held is ignored. */
-  const outfitJobsRef = useRef(0)
-  const onOutfitBusy = useCallback((busy: boolean) => {
+  /** Slots held by dock panel jobs. A release with none held is ignored. */
+  const dockGenJobsRef = useRef(0)
+  const onDockGenBusy = useCallback((busy: boolean) => {
     if (busy) {
-      outfitJobsRef.current += 1
+      dockGenJobsRef.current += 1
       beginGen('image')
       setGenerateError(null)
       return
     }
-    if (outfitJobsRef.current === 0) return
-    outfitJobsRef.current -= 1
+    if (dockGenJobsRef.current === 0) return
+    dockGenJobsRef.current -= 1
     endGen()
   }, [beginGen, endGen])
   const [exportBusy, setExportBusy] = useState(false)
@@ -445,12 +445,12 @@ export function InfiniteCanvas() {
         }
 
         if (payload.mediaKind === 'video') {
-          // The start frame that was sent. A selected video is not one, and an
-          // upload wins over the canvas selection.
+          // null is a cleared start frame: leave the job text-to-video.
+          // Only a missing field may fall back to a reference or the selection.
           const sentStartSrc =
-            payload.startFrame ??
-            payload.images[0] ??
-            (selectedImage ? selectedImage.src : null)
+            payload.startFrame !== undefined
+              ? payload.startFrame
+              : payload.images[0] ?? (selectedImage ? selectedImage.src : null)
           const startFrame = sentStartSrc ? await toDataUri(sentStartSrc) : null
           const startSourceId = findIdBySrc(sentStartSrc)
 
@@ -1836,7 +1836,7 @@ export function InfiniteCanvas() {
         onDress={runDress}
         onMakeBackground={makeBackground}
         imageMode={imageMode}
-        onOutfitBusy={onOutfitBusy}
+        onDockGenBusy={onDockGenBusy}
       />
 
       <CanvasChrome

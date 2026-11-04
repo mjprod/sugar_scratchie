@@ -41,7 +41,7 @@ type Props = {
     person: string,
   ) => Promise<{ src: string; person: string }>
   imageMode: ImageMode
-  onOutfitBusy: (busy: boolean) => void
+  onDockGenBusy: (busy: boolean) => void
 }
 
 export function StudioDock({
@@ -57,7 +57,7 @@ export function StudioDock({
   onDress,
   onMakeBackground,
   imageMode,
-  onOutfitBusy,
+  onDockGenBusy,
 }: Props) {
   const [tab, setTab] = useState<Tab | null>(firstVisibleTab)
   const hidden =
@@ -142,7 +142,7 @@ export function StudioDock({
             onPlace={onPlace}
             onDress={onDress}
             onMakeBackground={onMakeBackground}
-            onGenBusy={onOutfitBusy}
+            onGenBusy={onDockGenBusy}
           />
         ) : visibleTab === 'outfit' ? (
           <OutfitPanel
@@ -151,7 +151,7 @@ export function StudioDock({
             selectionSrc={selectionRefs[0]?.src ?? null}
             imageProvider={imageProvider}
             imageMode={imageMode}
-            onGenBusy={onOutfitBusy}
+            onGenBusy={onDockGenBusy}
             onPlace={onPlace}
           />
         ) : (
@@ -160,7 +160,7 @@ export function StudioDock({
             error={error}
             imageProvider={imageProvider}
             imageMode={imageMode}
-            onGenBusy={onOutfitBusy}
+            onGenBusy={onDockGenBusy}
             onPlace={onPlace}
           />
         )}
