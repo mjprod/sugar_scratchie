@@ -10,7 +10,7 @@ type Props = {
   items: CanvasItem[]
   edges: ChainEdge[]
   scale: number
-  selectedEdgeFromId: string | null
+  selectedEdge: { fromId: string; toId: string } | null
   preview: {
     x1: number
     y1: number
@@ -18,7 +18,7 @@ type Props = {
     y2: number
     fromSide: Side
   } | null
-  onSelectEdge: (fromId: string) => void
+  onSelectEdge: (fromId: string, toId: string) => void
   onClothesOn: (fromId: string, toId: string) => void
   onMergeIn: (fromId: string, toId: string) => void
   clothesBusy?: boolean
@@ -72,7 +72,7 @@ export function ChainOverlay({
   items,
   edges,
   scale,
-  selectedEdgeFromId,
+  selectedEdge,
   preview,
   onSelectEdge,
   onClothesOn,
@@ -119,7 +119,8 @@ export function ChainOverlay({
           const a = portPoint(from, fromSide, gap)
           const b = portPoint(to, toSide, gap)
           const d = curvePath(a.x, a.y, b.x, b.y, fromSide, toSide)
-          const selected = selectedEdgeFromId === fromId
+          const selected =
+            selectedEdge?.fromId === fromId && selectedEdge.toId === toId
           return (
             <g key={`${fromId}-${toId}`}>
               <path
@@ -128,7 +129,7 @@ export function ChainOverlay({
                 onPointerDown={(e) => {
                   e.stopPropagation()
                   e.preventDefault()
-                  onSelectEdge(fromId)
+                  onSelectEdge(fromId, toId)
                 }}
               />
               <path
@@ -163,7 +164,7 @@ export function ChainOverlay({
           />
         )}
       </svg>
-      {edges.map(({ fromId, toId, fromSide, toSide, kind }) => {
+      {edges.map(({ fromId, toId, fromSide, toSide }) => {
         const from = byId.get(fromId)
         const to = byId.get(toId)
         if (!from || !to) return null
@@ -183,11 +184,6 @@ export function ChainOverlay({
               e.stopPropagation()
             }}
           >
-            {kind === 'made' && (
-              <span className="chain-match chain-made" title="Generated from the previous image">
-                Made
-              </span>
-            )}
             <button
               type="button"
               className="chain-match chain-merge"

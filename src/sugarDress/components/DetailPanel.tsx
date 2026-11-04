@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from '@phosphor-icons/react'
+import { useHoldGenBusy } from './useHoldGenBusy'
 import { ADD_REF_EVENT, OPEN_LIBRARY_EVENT } from './AssetPanel'
 import { ExtractPopup, useCrop916 } from './ExtractPopup'
 import { toDataUri } from '../lib/imageData'
@@ -19,6 +20,7 @@ type Props = {
     reference: string | null,
     person: string,
   ) => Promise<{ src: string; person: string }>
+  onGenBusy: (busy: boolean) => void
 }
 
 async function readFile(file: File | undefined): Promise<string | null> {
@@ -38,6 +40,7 @@ export function DetailPanel({
   onPlace,
   onDress,
   onMakeBackground,
+  onGenBusy,
 }: Props) {
   const [person, setPerson] = useState<string | null>(null)
   const [skipSelection, setSkipSelection] = useState<string | null>(null)
@@ -54,6 +57,7 @@ export function DetailPanel({
   const slotRef = useRef<Slot>('person')
   const fileRef = useRef<HTMLInputElement>(null)
   const { ask: askCrop, popup: cropPopup } = useCrop916()
+  const holdGen = useHoldGenBusy(onGenBusy)
   const source = person ?? (selectionSrc && selectionSrc !== skipSelection ? selectionSrc : null)
   const disabled = busy || localBusy
 
@@ -139,23 +143,25 @@ export function DetailPanel({
     setJob('bg')
     setLocalError(null)
     try {
-      const made = text ? await onMakeBackground(text, frameSize, background, figure) : null
-      const plate = made?.src ?? background
-      const person = made?.person ?? figure
-      if (!plate) return
-      const res = await dressFetch('/composite-background', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          person: await toDataUri(person),
-          background: await toDataUri(plate),
-          width: frameSize.w,
-          height: frameSize.h,
-        }),
+      await holdGen(async () => {
+        const made = text ? await onMakeBackground(text, frameSize, background, figure) : null
+        const plate = made?.src ?? background
+        const person = made?.person ?? figure
+        if (!plate) return
+        const res = await dressFetch('/composite-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            person: await toDataUri(person),
+            background: await toDataUri(plate),
+            width: frameSize.w,
+            height: frameSize.h,
+          }),
+        })
+        const data = (await res.json()) as { src?: string; error?: string }
+        if (!res.ok || !data.src) throw new Error(data.error || 'Background composite failed')
+        await onPlace(data.src)
       })
-      const data = (await res.json()) as { src?: string; error?: string }
-      if (!res.ok || !data.src) throw new Error(data.error || 'Background composite failed')
-      await onPlace(data.src)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Background composite failed')
     } finally {

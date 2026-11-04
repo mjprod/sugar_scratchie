@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useHoldGenBusy } from './useHoldGenBusy'
 import type { ImageProvider } from '../lib/genProvider'
 import type { ImageMode } from '../lib/promptRefs'
 import { dressFetch } from '../lib/dressApi'
@@ -32,12 +33,7 @@ export function BuildDressPanel({ busy, error, imageProvider, imageMode, onGenBu
   const [localError, setLocalError] = useState<string | null>(null)
   const disabled = busy || localBusy
   const ready = Boolean(text.trim()) && !disabled
-
-  useEffect(() => {
-    onGenBusy(localBusy)
-  }, [localBusy, onGenBusy])
-
-  useEffect(() => () => onGenBusy(false), [onGenBusy])
+  const holdGen = useHoldGenBusy(onGenBusy)
 
   const build = async () => {
     const prompt = text.trim()
@@ -45,20 +41,22 @@ export function BuildDressPanel({ busy, error, imageProvider, imageMode, onGenBu
     setLocalBusy(true)
     setLocalError(null)
     try {
-      const res = await dressFetch('/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: buildDressPrompt(prompt),
-          images: [],
-          aspect_ratio: '9:16',
-          image_mode: imageMode,
-          provider: imageProvider,
-        }),
+      await holdGen(async () => {
+        const res = await dressFetch('/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: buildDressPrompt(prompt),
+            images: [],
+            aspect_ratio: '9:16',
+            image_mode: imageMode,
+            provider: imageProvider,
+          }),
+        })
+        const data = (await res.json()) as { src?: string; error?: string }
+        if (!res.ok || !data.src) throw new Error(data.error || 'The dress was not made')
+        await onPlace(data.src)
       })
-      const data = (await res.json()) as { src?: string; error?: string }
-      if (!res.ok || !data.src) throw new Error(data.error || 'The dress was not made')
-      await onPlace(data.src)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'The dress was not made')
     } finally {
@@ -84,7 +82,7 @@ export function BuildDressPanel({ busy, error, imageProvider, imageMode, onGenBu
           <button type="button" className={ready ? 'detail-ready' : undefined} disabled={!ready} onClick={() => void build()}>
             {localBusy ? 'Making the dress…' : 'Build Dress'}
           </button>
-          <span>This only makes the clothes. Put them on a person with Outfit Change or Quick.</span>
+          <span>This only makes the clothes. Put them on a person with Outfit Change.</span>
         </li>
       </ol>
       {shown && <p className="prompt-error">{shown}</p>}

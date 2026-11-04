@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useHoldGenBusy } from './useHoldGenBusy'
 import { Plus, X } from '@phosphor-icons/react'
 import { ADD_REF_EVENT, OPEN_LIBRARY_EVENT } from './AssetPanel'
 import type { ImageProvider } from '../lib/genProvider'
@@ -69,12 +70,7 @@ export function OutfitPanel({
   const text = clothesPrompt.trim()
   const disabled = busy || localBusy
   const ready = Boolean(source && (clothes || text) && !disabled)
-
-  useEffect(() => {
-    onGenBusy(localBusy)
-  }, [localBusy, onGenBusy])
-
-  useEffect(() => () => onGenBusy(false), [onGenBusy])
+  const holdGen = useHoldGenBusy(onGenBusy)
 
   useEffect(() => {
     const onAdd = (e: Event) => {
@@ -123,30 +119,32 @@ export function OutfitPanel({
     setLocalBusy(true)
     setLocalError(null)
     try {
-      let garment = clothes
-      let photo: Photo = clothes ? photoType : 'flat-lay'
-      if (!garment) {
-        setJob('garment')
-        garment = await makeGarment(text)
-        photo = 'flat-lay'
-      }
-      setJob(engine)
-      const person = await toDataUri(source)
-      const path = engine === 'fashn' ? '/fashn-tryon' : '/leffa-tryon'
-      const res = await dressFetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          person,
-          garment: await toDataUri(garment),
-          category,
-          photo_type: photo,
-          prompt: text,
-        }),
+      await holdGen(async () => {
+        let garment = clothes
+        let photo: Photo = clothes ? photoType : 'flat-lay'
+        if (!garment) {
+          setJob('garment')
+          garment = await makeGarment(text)
+          photo = 'flat-lay'
+        }
+        setJob(engine)
+        const person = await toDataUri(source)
+        const path = engine === 'fashn' ? '/fashn-tryon' : '/leffa-tryon'
+        const res = await dressFetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            person,
+            garment: await toDataUri(garment),
+            category,
+            photo_type: photo,
+            prompt: text,
+          }),
+        })
+        const data = (await res.json()) as { src?: string; error?: string }
+        if (!res.ok || !data.src) throw new Error(data.error || 'Outfit change failed')
+        await onPlace(data.src)
       })
-      const data = (await res.json()) as { src?: string; error?: string }
-      if (!res.ok || !data.src) throw new Error(data.error || 'Outfit change failed')
-      await onPlace(data.src)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Outfit change failed')
     } finally {
