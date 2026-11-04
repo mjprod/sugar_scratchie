@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
+import { readCurrentModelId, writeCurrentModelId } from "../shared/currentModel";
 import { labelFromProjectId } from "./projects";
 import type { VideoFlowProject } from "./projects";
 import {
@@ -188,10 +189,17 @@ export function useVideoFlowState() {
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("card")?.trim() || ""
       : "";
+  const bootModelId =
+    typeof window !== "undefined" ? readCurrentModelId() : "";
   // URL ?card= wins over localStorage. Never hydrate image/label from a draft
   // that belongs to a different card — that caused Shine 4 to show Shine 3's image.
+  // A girl chosen on Models also wins over another girl's last card.
+  const storedMatchesGirl =
+    !bootModelId || !storedDraft?.modelId || storedDraft.modelId === bootModelId;
   const hydrateFromStored =
-    Boolean(storedDraft?.cardId) && (!bootCardId || storedDraft?.cardId === bootCardId);
+    Boolean(storedDraft?.cardId) &&
+    (!bootCardId || storedDraft?.cardId === bootCardId) &&
+    storedMatchesGirl;
 
   const [image, setImage] = useState(hydrateFromStored ? (storedDraft?.image ?? "") : "");
   const [theme, setTheme] = useState(
@@ -234,7 +242,9 @@ export function useVideoFlowState() {
   const [cardLabel, setCardLabel] = useState(
     hydrateFromStored ? (storedDraft?.cardLabel ?? "") : "",
   );
-  const [modelId, setModelId] = useState(hydrateFromStored ? (storedDraft?.modelId ?? "") : "");
+  const [modelId, setModelId] = useState(
+    hydrateFromStored ? (storedDraft?.modelId ?? "") : bootModelId,
+  );
   const [writeWebm, setWriteWebm] = useState(storedDraft?.writeWebm ?? flow.defaults.write_webm);
   const [compressPreset, setCompressPreset] = useState<CompressPreset>(
     storedDraft?.compressPreset ?? parseCompressPreset(flow.defaults.compress_preset),
@@ -465,6 +475,7 @@ export function useVideoFlowState() {
     setCardId(draft.cardId);
     setCardLabel(draft.cardLabel);
     setModelId(draft.modelId);
+    if (draft.modelId.trim()) writeCurrentModelId(draft.modelId);
     setWriteWebm(draft.writeWebm);
     setCompressPreset(draft.compressPreset ?? "mobile");
     setResolution(draft.resolution);
@@ -678,14 +689,23 @@ export function useVideoFlowState() {
 
   useEffect(() => {
     let cancelled = false;
-    const bootCard = new URLSearchParams(window.location.search).get("card")?.trim() || "";
+    const params = new URLSearchParams(window.location.search);
+    const bootCard = params.get("card")?.trim() || "";
+    const bootModel = readCurrentModelId();
     refreshProjects()
       .then((list) => {
         if (cancelled) return;
+        const keepModel = (id: string) => {
+          const girl = id.trim();
+          if (!girl) return;
+          writeCurrentModelId(girl);
+          params.set("model", girl);
+        };
         if (bootCard) {
           // Consume ?card= immediately so a later projects refresh cannot re-open
-          // an older card from a stale URL.
-          const params = new URLSearchParams(window.location.search);
+          // an older card from a stale URL. Keep the girl that card belongs to.
+          const listed = list.find((entry) => entry.card_id === bootCard);
+          keepModel(listed?.draft?.model_id?.trim() || bootModel);
           params.delete("card");
           const query = params.toString();
           window.history.replaceState(
@@ -695,6 +715,34 @@ export function useVideoFlowState() {
           );
           // Pass the fresh list — projectsRef may not have re-rendered yet.
           void selectProject(bootCard, list);
+          return;
+        }
+        if (bootModel) {
+          keepModel(bootModel);
+          const query = params.toString();
+          window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${query ? `?${query}` : ""}`,
+          );
+          const storedId = storedDraft?.cardId?.trim() || readActiveProjectId();
+          const listedStored = list.find((entry) => entry.card_id === storedId);
+          const storedModel = (
+            listedStored?.draft?.model_id ||
+            storedDraft?.modelId ||
+            ""
+          ).trim();
+          if (storedId && storedModel === bootModel) {
+            void selectProject(storedId, list);
+            return;
+          }
+          const hers = list.find((entry) => (entry.draft?.model_id || "").trim() === bootModel);
+          if (hers) {
+            void selectProject(hers.card_id, list);
+            return;
+          }
+          setCardId("");
+          setModelId(bootModel);
           return;
         }
         const storedId = storedDraft?.cardId?.trim() || readActiveProjectId();

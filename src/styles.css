@@ -2973,6 +2973,34 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.dress-gallery-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.dress-gallery-strip button {
+  background: var(--gray-3);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 0;
+}
+
+.dress-gallery-strip button.is-active {
+  border-color: var(--accent-9);
+}
+
+.dress-gallery-strip img {
+  display: block;
+  height: 96px;
+  object-fit: cover;
+  width: 72px;
+}
+
 .flow-node.is-locked {
   opacity: 0.72;
 }

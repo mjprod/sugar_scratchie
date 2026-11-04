@@ -68,6 +68,7 @@ import { MeshTunePanel } from "./MeshTunePanel";
 import { meshTuneToApi, type MeshTuneSettings } from "./meshTune";
 import { flowStepBody } from "./stepRequest";
 import { SymbolPointPicker } from "./SymbolPointPicker";
+import { DressGalleryPicker } from "./DressGalleryPicker";
 import { Field, FilePathPicker, iconProps, MediaPreview, MESH_TRACKERS, MESH_TRACKER_MODES, meshTrackerFromArtifact, meshTrackerModeLabel, previewSource, type MeshTracker, type MeshTrackerMode } from "./ui";
 import { isWavespeedDressVideoModel, type AiProvider, type BackgroundVideoModel, type DressVideoModel, type SourceImageModel } from "./storage";
 import {
@@ -3700,6 +3701,11 @@ export function RunMode(props: RunModeProps) {
                 onError={onError}
               />
             </Field>
+            <DressGalleryPicker
+              hint="Click a Dress still to use it as her photo."
+              modelId={modelId.trim()}
+              onPick={onImageChange}
+            />
 
             <Field label="Bikini (@image2, optional — dress her in this swimsuit)">
               <Flex direction="column" gap="1">
@@ -3863,6 +3869,11 @@ export function RunMode(props: RunModeProps) {
                 onError={onError}
               />
             </Field>
+            <DressGalleryPicker
+              hint="Click a Dress still, then Add this picture."
+              modelId={modelId.trim()}
+              onPick={setManualPicture}
+            />
             <Flex align="center" gap="3" wrap="wrap">
               <Button
                 disabled={!canImportManualPicture}

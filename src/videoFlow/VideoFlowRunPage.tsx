@@ -78,6 +78,7 @@ export function VideoFlowRunPage() {
   return (
     <VideoFlowShell
       active="run"
+      dressModelId={modelId}
       error={error}
       subtitle={
         activeProjectId

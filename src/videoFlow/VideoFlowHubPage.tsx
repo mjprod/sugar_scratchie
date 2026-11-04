@@ -80,7 +80,7 @@ export function VideoFlowHubPage() {
                 <Shirt {...iconProps} size={28} />
                 <Heading size="5">Dress</Heading>
                 <Text color="gray" size="2">
-                  Infinite canvas for clothes, pose, extract, and Flux try-on.
+                  Make stills for one girl. They stay in her gallery for Run flow.
                 </Text>
               </Flex>
             </a>

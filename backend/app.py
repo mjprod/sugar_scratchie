@@ -84,6 +84,12 @@ from backend.cards import (
     zoom_photo_scratch_slot,
 )
 from backend.collection import build_collection_catalog
+from backend.services.model_gallery import (
+    AddModelGalleryRequest,
+    add_gallery_image,
+    delete_gallery_image,
+    list_gallery,
+)
 from backend.models_store import (
     CreateModelRequest,
     ModelInfo,
@@ -1346,6 +1352,41 @@ def remove_model(
 ) -> dict:
     delete_model(db, ROOT, MODELS_DIR, CARDS_DIR, MESH_DIR, model_id)
     return {"ok": True, "id": model_id}
+
+
+@app.get("/api/models/{model_id}/gallery")
+def get_model_gallery(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    get_model(db, MODELS_DIR, model_id)
+    return {"images": list_gallery(MODELS_DIR, model_id)}
+
+
+@app.post("/api/models/{model_id}/gallery")
+def post_model_gallery(
+    model_id: str,
+    request: AddModelGalleryRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    get_model(db, MODELS_DIR, model_id)
+    return add_gallery_image(
+        models_dir=MODELS_DIR,
+        model_id=model_id,
+        src=request.src,
+        prompt=request.prompt,
+    )
+
+
+@app.delete("/api/models/{model_id}/gallery/{image_id}")
+def remove_model_gallery_image(
+    model_id: str,
+    image_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    get_model(db, MODELS_DIR, model_id)
+    delete_gallery_image(models_dir=MODELS_DIR, model_id=model_id, image_id=image_id)
+    return {"ok": True}
 
 
 @app.post("/api/models/{model_id}/avatar")

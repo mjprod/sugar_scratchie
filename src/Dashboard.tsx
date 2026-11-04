@@ -43,6 +43,7 @@ import {
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, operatorLogout, uploadFile, type UploadedFileInfo } from "./shared/api";
+import { hrefWithModel, readSavedModelId } from "./shared/currentModel";
 import { MaskEditor } from "./videoFlow/MaskEditor";
 
 type CardInfo = {
@@ -1102,7 +1103,7 @@ export function Dashboard() {
                   </a>
                 </Button>
                 <Button asChild variant="soft">
-                  <a href="/dashboard/video-flow/dress">Dress</a>
+                  <a href={hrefWithModel("/dashboard/video-flow/dress", readSavedModelId())}>Dress</a>
                 </Button>
                 <Button asChild variant="soft">
                   <a href="/video-transition">

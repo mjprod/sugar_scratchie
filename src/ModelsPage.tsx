@@ -38,6 +38,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api } from "./shared/api";
+import { hrefWithModel, writeCurrentModelId } from "./shared/currentModel";
 import {
   COUNTRY_FLAG_OPTIONS,
   countryFlagSvgUrl,
@@ -211,8 +212,10 @@ function playAllHref(modelId: string): string {
   return `/?model=${encodeURIComponent(modelId)}`;
 }
 
-function editCardHref(cardId: string): string {
-  return `/dashboard/video-flow/run?card=${encodeURIComponent(cardId)}`;
+function editCardHref(cardId: string, modelId = ""): string {
+  const params = new URLSearchParams({ card: cardId });
+  if (modelId.trim()) params.set("model", modelId.trim());
+  return `/dashboard/video-flow/run?${params.toString()}`;
 }
 
 function pictureFlowHref(cardId: string, slotId?: string): string {
@@ -628,6 +631,10 @@ export function ModelsPage() {
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
+
+  useEffect(() => {
+    if (selectedModelId) writeCurrentModelId(selectedModelId);
+  }, [selectedModelId]);
 
   async function refresh() {
     const [nextModels, assets, flowData, nextThemes] = await Promise.all([
@@ -1257,7 +1264,7 @@ export function ModelsPage() {
     try {
       await createMotionCardDraft(id, newCardLabel.trim() || labelFromProjectId(id), modelId);
       closeCreateCard();
-      window.location.href = editCardHref(id);
+      window.location.href = editCardHref(id, modelId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       setBusy(false);
@@ -1673,7 +1680,7 @@ export function ModelsPage() {
                                 </Select.Content>
                               </Select.Root>
                               <Button asChild size="1" variant="soft">
-                                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                                <a href={editCardHref(card.id, card.model_id ?? "")} title={`Edit ${card.label} in Video Flow`}>
                                   <Pencil {...iconProps} />
                                   Edit
                                 </a>
@@ -2808,6 +2815,12 @@ function ModelDetail({
             New motion card
           </Button>
           <Button asChild size="1" variant="soft">
+            <a href={hrefWithModel("/dashboard/video-flow/run", model.id)}>Run flow</a>
+          </Button>
+          <Button asChild size="1" variant="soft">
+            <a href={hrefWithModel("/dashboard/video-flow/dress", model.id)}>Dress</a>
+          </Button>
+          <Button asChild size="1" variant="soft">
             <a href={`/dashboard/packs?model=${encodeURIComponent(model.id)}`}>Packs</a>
           </Button>
           <Button disabled={busy} size="1" variant="soft" onClick={onStartRename}>
@@ -3879,7 +3892,7 @@ function MotionCardRow({
             )}
             <ActionSlot>
               <Button asChild size="1" variant="soft">
-                <a href={editCardHref(card.id)} title={`Edit ${card.label} in Video Flow`}>
+                <a href={editCardHref(card.id, modelId)} title={`Edit ${card.label} in Video Flow`}>
                   <Pencil {...iconProps} />
                 </a>
               </Button>

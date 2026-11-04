@@ -53,6 +53,11 @@ type Props = {
   imageProvider: ImageProvider
   onImageProviderChange: (provider: ImageProvider) => void
   genBusy: boolean
+  modelLabel: string
+  modelAvatar: string | null
+  onSwitchModel: () => void
+  galleryOpen: boolean
+  onToggleGallery: () => void
 }
 
 export function CanvasChrome({
@@ -76,6 +81,11 @@ export function CanvasChrome({
   imageProvider,
   onImageProviderChange,
   genBusy,
+  modelLabel,
+  modelAvatar,
+  onSwitchModel,
+  galleryOpen,
+  onToggleGallery,
 }: Props) {
   const pct = Math.round(scale * 100)
   const [currentMs, setCurrentMs] = useState<number | null>(null)
@@ -153,6 +163,21 @@ export function CanvasChrome({
           <span className="brand-dot" />
           <span className="brand-name">Sugar Dress</span>
         </a>
+        <button
+          type="button"
+          className="model-chip"
+          onClick={onSwitchModel}
+          title={`Gallery for ${modelLabel}. Switch girl`}
+        >
+          {modelAvatar ? (
+            <img src={modelAvatar} alt="" />
+          ) : (
+            <span className="model-chip-fallback" aria-hidden>
+              {modelLabel.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          <span className="model-chip-name">{modelLabel}</span>
+        </button>
         <div className="seg-group" role="group" aria-label="Image mode">
           {IMAGE_MODES.map((opt) => (
             <button
@@ -223,6 +248,15 @@ export function CanvasChrome({
               <ImageSquare size={18} weight="duotone" />
             </button>
           </div>
+          <button
+            type="button"
+            className={galleryOpen ? 'tool-btn active' : 'tool-btn'}
+            onClick={onToggleGallery}
+            title="Her gallery"
+            aria-pressed={galleryOpen}
+          >
+            <span className="gallery-tool-label">Gallery</span>
+          </button>
         </div>
       </header>
       {assetOpen && (
