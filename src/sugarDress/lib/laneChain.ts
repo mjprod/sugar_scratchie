@@ -13,8 +13,11 @@ export type ChainLink = {
   kind?: ChainKind
 }
 
-/** Directed story lane: each node points to at most one next image. */
-export type ChainMap = Record<string, ChainLink>
+/**
+ * Story lane plus Made edges. Each node has at most one story-lane next.
+ * Made edges are extra outgoing links and do not replace that next.
+ */
+export type ChainMap = Record<string, ChainLink[]>
 
 export const SIDES: Side[] = ['top', 'right', 'bottom', 'left']
 
@@ -58,6 +61,36 @@ export function nearestSide(
   return best
 }
 
+function cloneChain(map: ChainMap): ChainMap {
+  const next: ChainMap = {}
+  for (const [id, links] of Object.entries(map)) {
+    if (links.length) next[id] = links.map((link) => ({ ...link }))
+  }
+  return next
+}
+
+/** Drop every edge that lands on `toId`. A node has one incoming edge. */
+function dropIncoming(map: ChainMap, toId: string) {
+  for (const [id, links] of Object.entries(map)) {
+    const kept = links.filter((link) => link.toId !== toId)
+    if (kept.length) map[id] = kept
+    else delete map[id]
+  }
+}
+
+function reaches(map: ChainMap, start: string, goal: string): boolean {
+  const seen = new Set<string>()
+  const stack = [start]
+  while (stack.length) {
+    const cur = stack.pop()
+    if (!cur || seen.has(cur)) continue
+    if (cur === goal) return true
+    seen.add(cur)
+    for (const link of map[cur] ?? []) stack.push(link.toId)
+  }
+  return false
+}
+
 export function linkChain(
   map: ChainMap,
   fromId: string,
@@ -68,70 +101,68 @@ export function linkChain(
 ): ChainMap {
   if (fromId === toId) return map
 
-  const next: ChainMap = { ...map }
+  const next = cloneChain(map)
+  dropIncoming(next, toId)
 
-  for (const [k, link] of Object.entries(next)) {
-    if (link.toId === toId) delete next[k]
-  }
-
-  next[fromId] = {
+  const link: ChainLink = {
     toId,
     fromSide,
     toSide,
     ...(kind ? { kind } : {}),
   }
+  const existing = next[fromId] ?? []
+  next[fromId] =
+    kind === 'made'
+      ? [...existing, link]
+      : [...existing.filter((item) => item.kind === 'made'), link]
 
-  const seen = new Set<string>()
-  let cur: string | undefined = toId
-  while (cur) {
-    if (cur === fromId) {
-      for (const [k, link] of Object.entries(next)) {
-        if (link.toId === fromId) delete next[k]
-      }
-      break
-    }
-    if (seen.has(cur)) break
-    seen.add(cur)
-    cur = next[cur]?.toId
-  }
-
+  if (reaches(next, toId, fromId)) dropIncoming(next, fromId)
   return next
 }
 
 export function removeFromChain(map: ChainMap, id: string): ChainMap {
-  const next: ChainMap = { ...map }
-  const outgoing = next[id]
+  const storyNext = (map[id] ?? []).find((link) => link.kind !== 'made')
+  const next = cloneChain(map)
   delete next[id]
 
-  for (const [k, link] of Object.entries(next)) {
-    if (link.toId === id) {
-      if (outgoing) {
-        next[k] = {
-          toId: outgoing.toId,
+  for (const [fromId, links] of Object.entries(next)) {
+    const updated: ChainLink[] = []
+    for (const link of links) {
+      if (link.toId !== id) {
+        updated.push(link)
+        continue
+      }
+      if (link.kind !== 'made' && storyNext) {
+        updated.push({
+          toId: storyNext.toId,
           fromSide: link.fromSide,
-          toSide: outgoing.toSide,
-        }
-      } else {
-        delete next[k]
+          toSide: storyNext.toSide,
+        })
       }
     }
+    if (updated.length) next[fromId] = updated
+    else delete next[fromId]
   }
 
   return next
 }
 
-export function clearOutgoing(map: ChainMap, fromId: string): ChainMap {
-  if (!(fromId in map)) return map
-  const next = { ...map }
-  delete next[fromId]
+/** Remove one outgoing edge. With no `toId`, remove every edge leaving `fromId`. */
+export function clearOutgoing(map: ChainMap, fromId: string, toId?: string): ChainMap {
+  const links = map[fromId]
+  if (!links?.length) return map
+  const kept = toId ? links.filter((link) => link.toId !== toId) : []
+  const next = cloneChain(map)
+  if (kept.length) next[fromId] = kept
+  else delete next[fromId]
   return next
 }
 
 /** True when the node has an incoming or outgoing chain edge. */
 export function isLinked(map: ChainMap, id: string): boolean {
-  if (map[id]) return true
-  for (const link of Object.values(map)) {
-    if (link.toId === id) return true
+  if (map[id]?.length) return true
+  for (const links of Object.values(map)) {
+    if (links.some((link) => link.toId === id)) return true
   }
   return false
 }
@@ -147,9 +178,10 @@ export function disconnectNodes(
   const idSet = new Set(ids)
   if (idSet.size === 0) return map
   const next: ChainMap = {}
-  for (const [fromId, link] of Object.entries(map)) {
-    if (idSet.has(fromId) || idSet.has(link.toId)) continue
-    next[fromId] = link
+  for (const [fromId, links] of Object.entries(map)) {
+    if (idSet.has(fromId)) continue
+    const kept = links.filter((link) => !idSet.has(link.toId))
+    if (kept.length) next[fromId] = kept
   }
   return next
 }
@@ -160,37 +192,42 @@ export function computeChainOrder(
 ): Record<string, number> {
   const idSet = new Set(itemIds)
   const involved = new Set<string>()
-  for (const [a, link] of Object.entries(map)) {
-    if (!idSet.has(a) || !idSet.has(link.toId)) continue
-    involved.add(a)
-    involved.add(link.toId)
+  for (const [fromId, links] of Object.entries(map)) {
+    for (const link of links) {
+      if (!idSet.has(fromId) || !idSet.has(link.toId)) continue
+      involved.add(fromId)
+      involved.add(link.toId)
+    }
   }
   if (involved.size === 0) return {}
 
   const hasIncoming = new Set<string>()
-  for (const [a, link] of Object.entries(map)) {
-    if (idSet.has(a) && idSet.has(link.toId)) hasIncoming.add(link.toId)
+  for (const [fromId, links] of Object.entries(map)) {
+    if (!idSet.has(fromId)) continue
+    for (const link of links) {
+      if (idSet.has(link.toId)) hasIncoming.add(link.toId)
+    }
   }
 
   const roots = [...involved].filter((id) => !hasIncoming.has(id))
   const orders: Record<string, number> = {}
+  const seen = new Set<string>()
+  let n = 1
+
+  const visit = (id: string) => {
+    if (!idSet.has(id) || seen.has(id)) return
+    seen.add(id)
+    orders[id] = n++
+    const links = map[id] ?? []
+    const story = links.filter((link) => link.kind !== 'made')
+    const made = links.filter((link) => link.kind === 'made')
+    for (const link of [...story, ...made]) visit(link.toId)
+  }
 
   // Continue numbering across separate chains so export filenames stay unique.
-  let n = 1
-  for (const root of roots) {
-    let cur: string | undefined = root
-    const seen = new Set<string>()
-    while (cur && idSet.has(cur) && !seen.has(cur)) {
-      orders[cur] = n++
-      seen.add(cur)
-      cur = map[cur]?.toId
-    }
-  }
-
-  // Nodes in cycles / fragments without a clear root
-  for (const id of involved) {
-    if (orders[id] == null) orders[id] = n++
-  }
+  // The story lane is numbered before Made branches.
+  for (const root of roots) visit(root)
+  for (const id of involved) visit(id)
 
   return orders
 }
@@ -209,8 +246,9 @@ export function listChainEdges(
 ): ChainEdge[] {
   const idSet = new Set(itemIds)
   const edges: ChainEdge[] = []
-  for (const [fromId, link] of Object.entries(map)) {
-    if (idSet.has(fromId) && idSet.has(link.toId)) {
+  for (const [fromId, links] of Object.entries(map)) {
+    for (const link of links) {
+      if (!idSet.has(fromId) || !idSet.has(link.toId)) continue
       edges.push({
         fromId,
         toId: link.toId,

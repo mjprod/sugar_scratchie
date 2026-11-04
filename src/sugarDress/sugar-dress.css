@@ -444,18 +444,6 @@
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
-.chain-made {
-  cursor: default;
-  pointer-events: none;
-  background: color-mix(in oklab, var(--accent) 22%, rgba(18, 20, 23, 0.96));
-  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-  color: var(--accent);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-size: 11px;
-}
-
 .chain-match:disabled {
   opacity: 0.45;
   cursor: default;
@@ -823,14 +811,18 @@
 
 .prompt-dock-body {
   pointer-events: auto;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 100%;
   overflow: auto;
   display: flex;
   flex-direction: column;
 }
 
-.prompt-dock-body > .prompt-bar,
+.prompt-dock-body > .prompt-bar {
+  flex: 0 0 auto;
+}
+
 .prompt-dock-body > .director-panel {
   flex: 1 1 auto;
   min-height: 0;

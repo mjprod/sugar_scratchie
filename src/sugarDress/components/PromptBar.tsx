@@ -158,16 +158,23 @@ export function PromptBar({
   const editMode =
     singleSelect || multiSelect || hasAtMentions || uploads.length > 0
   const isVideo = mediaKind === 'video'
+  const leadId = selectionRefs[0]?.id
+  const leadSrc = selectionRefs[0]?.src
+  /** Lead image the user removed. A new array from the parent must not put it back. */
+  const dismissedLead = useRef<string | null>(null)
 
-  // Canvas selection → start frame (prefer first selected)
   useEffect(() => {
-    if (!isVideo || selectionRefs.length === 0) return
-    const a = selectionRefs[0]
+    const leadKey = leadId && leadSrc ? `${leadId}\0${leadSrc}` : ''
+    if (dismissedLead.current && dismissedLead.current !== leadKey) {
+      dismissedLead.current = null
+    }
+    if (!isVideo || !leadId || !leadSrc || dismissedLead.current === leadKey) return
     setStartFrame((prev) => {
       if (prev?.from === 'upload') return prev
-      return { id: a.id, src: a.src, from: 'canvas' }
+      if (prev?.id === leadId && prev.src === leadSrc) return prev
+      return { id: leadId, src: leadSrc, from: 'canvas' }
     })
-  }, [isVideo, selectionRefs])
+  }, [isVideo, leadId, leadSrc])
 
   const setKind = (kind: MediaKind) => {
     setMediaKind(kind)
@@ -377,6 +384,7 @@ export function PromptBar({
       return
     }
     const pick = selectionRefs[0]
+    dismissedLead.current = null
     setStartFrame({ id: pick.id, src: pick.src, from: 'canvas' })
     setLocalError(null)
   }
@@ -520,7 +528,10 @@ export function PromptBar({
             className="frame-clear"
             title="Clear"
             disabled={busy}
-            onClick={() => setStartFrame(null)}
+            onClick={() => {
+              if (leadId && leadSrc) dismissedLead.current = `${leadId}\0${leadSrc}`
+              setStartFrame(null)
+            }}
           >
             <X size={12} weight="bold" />
           </button>

@@ -153,6 +153,8 @@ async function clothingWithoutWearer(src: string): Promise<string> {
   }
 }
 
+type SelectedEdge = { fromId: string; toId: string }
+
 export function InfiniteCanvas() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
@@ -168,9 +170,7 @@ export function InfiniteCanvas() {
   const [items, setItems] = useState<CanvasItem[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [selectedEdgeFromId, setSelectedEdgeFromId] = useState<string | null>(
-    null,
-  )
+  const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
   const [marquee, setMarquee] = useState<{
     x1: number
     y1: number
@@ -203,6 +203,19 @@ export function InfiniteCanvas() {
     }
   }, [])
   const [generateError, setGenerateError] = useState<string | null>(null)
+  /** Slots held by dock panel jobs. A release with none held is ignored. */
+  const dockGenJobsRef = useRef(0)
+  const onDockGenBusy = useCallback((busy: boolean) => {
+    if (busy) {
+      dockGenJobsRef.current += 1
+      beginGen('image')
+      setGenerateError(null)
+      return
+    }
+    if (dockGenJobsRef.current === 0) return
+    dockGenJobsRef.current -= 1
+    endGen()
+  }, [beginGen, endGen])
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   /** Item id whose regenerate dialog is open */
@@ -232,8 +245,8 @@ export function InfiniteCanvas() {
   marqueeRef.current = marquee
   const selectedIdsRef = useRef(selectedIds)
   selectedIdsRef.current = selectedIds
-  const selectedEdgeRef = useRef(selectedEdgeFromId)
-  selectedEdgeRef.current = selectedEdgeFromId
+  const selectedEdgeRef = useRef(selectedEdge)
+  selectedEdgeRef.current = selectedEdge
   const itemsRef = useRef(items)
   itemsRef.current = items
 
@@ -368,7 +381,7 @@ export function InfiniteCanvas() {
       }
       setItems((prev) => [...prev, item])
       setSelectedIds([item.id])
-      setSelectedEdgeFromId(null)
+      setSelectedEdge(null)
       return item
     },
     [],
@@ -429,17 +442,17 @@ export function InfiniteCanvas() {
           images = await Promise.all(images.map((src) => toDataUri(src)))
         } else if (selectedImage && payload.mediaKind === 'image') {
           images = [await toDataUri(selectedImage.src)]
-        } else if (selectedImage && payload.mediaKind === 'video') {
-          images = [await toDataUri(selectedImage.src)]
         }
 
         if (payload.mediaKind === 'video') {
-          const startFrame = payload.startFrame
-            ? await toDataUri(payload.startFrame)
-            : images[0] ?? null
-          const startSourceId =
-            findIdBySrc(payload.startFrame) ??
-            (selectedIds.length === 1 ? selectedIds[0] : null)
+          // null is a cleared start frame: leave the job text-to-video.
+          // Only a missing field may fall back to a reference or the selection.
+          const sentStartSrc =
+            payload.startFrame !== undefined
+              ? payload.startFrame
+              : payload.images[0] ?? (selectedImage ? selectedImage.src : null)
+          const startFrame = sentStartSrc ? await toDataUri(sentStartSrc) : null
+          const startSourceId = findIdBySrc(sentStartSrc)
 
           const res = await dressFetch('/generate-video', {
             method: 'POST',
@@ -565,10 +578,8 @@ export function InfiniteCanvas() {
             imageMode,
           },
         }
-        const sourceId =
-          selectedImage?.id ??
-          (payload.images[0] ? findIdBySrc(payload.images[0]) : null) ??
-          (selectedIds.length === 1 ? selectedIds[0] : null)
+        const sentSrc = payload.images[0]
+        const sourceId = sentSrc ? findIdBySrc(sentSrc) : (selectedImage?.id ?? null)
 
         const created =
           selectedImage && payload.images.length === 0
@@ -640,7 +651,7 @@ export function InfiniteCanvas() {
 
   const clearSelection = useCallback(() => {
     setSelectedIds([])
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
   }, [])
 
   const beginMarquee = (
@@ -656,7 +667,7 @@ export function InfiniteCanvas() {
       additive,
     }
     setMarquee({ x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y })
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
     if (!additive) setSelectedIds([])
   }
 
@@ -785,7 +796,7 @@ export function InfiniteCanvas() {
       )
       .map((item) => item.id)
 
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
     setSelectedIds((prev) => {
       if (!session.additive) return hit
       const set = new Set(prev)
@@ -876,7 +887,7 @@ export function InfiniteCanvas() {
 
   const onItemSelect = useCallback(
     (id: string, opts?: { additive?: boolean }) => {
-      setSelectedEdgeFromId(null)
+      setSelectedEdge(null)
       setSelectedIds((prev) => {
         let next: string[]
         if (opts?.additive) {
@@ -919,12 +930,14 @@ export function InfiniteCanvas() {
     })
     setChainMap((prev) => removeFromChain(prev, id))
     setSelectedIds((current) => current.filter((x) => x !== id))
-    setSelectedEdgeFromId((edge) => (edge === id ? null : edge))
+    setSelectedEdge((edge) =>
+      edge && (edge.fromId === id || edge.toId === id) ? null : edge,
+    )
   }, [])
 
-  const onSelectEdge = useCallback((fromId: string) => {
+  const onSelectEdge = useCallback((fromId: string, toId: string) => {
     setSelectedIds([])
-    setSelectedEdgeFromId(fromId)
+    setSelectedEdge({ fromId, toId })
   }, [])
 
   const hitTestItem = useCallback(
@@ -1023,7 +1036,7 @@ export function InfiniteCanvas() {
         )
         setSelectedIds([hit.id])
         selectedIdsRef.current = [hit.id]
-        setSelectedEdgeFromId(null)
+        setSelectedEdge(null)
       }
 
       chainListeners.current = { move: onMove, up: onUp }
@@ -1038,14 +1051,14 @@ export function InfiniteCanvas() {
 
   const onItemDisconnect = useCallback((id: string) => {
     setChainMap((prev) => disconnectNodes(prev, [id]))
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
   }, [])
 
   const onDisconnectSelection = useCallback(() => {
     const ids = selectedIdsRef.current
     if (!ids.length) return
     setChainMap((prev) => disconnectNodes(prev, ids))
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
   }, [])
 
   const chainOrder = computeChainOrder(
@@ -1268,11 +1281,11 @@ export function InfiniteCanvas() {
       if (typing) return
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const edgeId = selectedEdgeRef.current
-        if (edgeId) {
+        const edge = selectedEdgeRef.current
+        if (edge) {
           e.preventDefault()
-          setChainMap((prev) => clearOutgoing(prev, edgeId))
-          setSelectedEdgeFromId(null)
+          setChainMap((prev) => clearOutgoing(prev, edge.fromId, edge.toId))
+          setSelectedEdge(null)
           return
         }
         const ids = selectedIdsRef.current
@@ -1373,7 +1386,7 @@ export function InfiniteCanvas() {
     const item = itemsRef.current.find((i) => i.id === id)
     if (!item) return
     setSelectedIds([id])
-    setSelectedEdgeFromId(null)
+    setSelectedEdge(null)
   }, [])
 
   const placeAtCenter = async (src: string) => {
@@ -1565,15 +1578,13 @@ export function InfiniteCanvas() {
     }
   }
 
-  /** Empty scene plate for Detail → background composite. Person is returned unchanged. */
+  /** Empty scene plate for Detail. The caller holds the busy slot through compositing. */
   const makeBackground = async (
     prompt: string,
     size: { w: number; h: number },
     reference: string | null,
     person: string,
   ): Promise<{ src: string; person: string }> => {
-    beginGen('image')
-    setGenerateError(null)
     try {
       const images = reference ? [await toDataUri(reference)] : []
       const res = await dressFetch('/generate-image', {
@@ -1598,8 +1609,6 @@ export function InfiniteCanvas() {
       const message = err instanceof Error ? err.message : 'Background generate failed'
       setGenerateError(message)
       throw err
-    } finally {
-      endGen()
     }
   }
 
@@ -1708,7 +1717,7 @@ export function InfiniteCanvas() {
             items={items}
             edges={chainEdges}
             scale={scaleUi}
-            selectedEdgeFromId={selectedEdgeFromId}
+            selectedEdge={selectedEdge}
             preview={chainPreview}
             onSelectEdge={onSelectEdge}
             clothesBusy={generating}
@@ -1718,8 +1727,10 @@ export function InfiniteCanvas() {
               if (!from || !to || from.kind === 'video' || to.kind === 'video') return
               void runDress(to.src, from.src, '')
                 .then(() => {
-                  setChainMap((prev) => clearOutgoing(prev, fromId))
-                  setSelectedEdgeFromId((cur) => (cur === fromId ? null : cur))
+                  setChainMap((prev) => clearOutgoing(prev, fromId, toId))
+                  setSelectedEdge((cur) =>
+                    cur?.fromId === fromId && cur.toId === toId ? null : cur,
+                  )
                 })
                 .catch(() => {})
             }}
@@ -1743,8 +1754,10 @@ export function InfiniteCanvas() {
                     : item,
                 )
               })
-              setChainMap((prev) => clearOutgoing(prev, fromId))
-              setSelectedEdgeFromId((cur) => (cur === fromId ? null : cur))
+              setChainMap((prev) => clearOutgoing(prev, fromId, toId))
+              setSelectedEdge((cur) =>
+                cur?.fromId === fromId && cur.toId === toId ? null : cur,
+              )
             }}
           />
         </div>
@@ -1823,14 +1836,7 @@ export function InfiniteCanvas() {
         onDress={runDress}
         onMakeBackground={makeBackground}
         imageMode={imageMode}
-        onOutfitBusy={(busy) => {
-          if (busy) {
-            beginGen('image')
-            setGenerateError(null)
-          } else {
-            endGen()
-          }
-        }}
+        onDockGenBusy={onDockGenBusy}
       />
 
       <CanvasChrome
