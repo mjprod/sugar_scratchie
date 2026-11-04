@@ -89,8 +89,11 @@ def _public_item(model_id: str, item: dict) -> dict:
     filename = f"{image_id}.png"
     return {
         "id": image_id,
+        # `path` is the repo-relative file Video Flow imports. `url` is served by
+        # the API: production nginx only exposes the build's dist/ copy of
+        # /models/, which does not include stills saved after deploy.
         "path": f"public/models/{model_id}/gallery/{filename}",
-        "url": f"/models/{model_id}/gallery/{filename}",
+        "url": f"/api/models/{model_id}/gallery/{image_id}.png",
         "prompt": item.get("prompt") if isinstance(item.get("prompt"), str) else "",
         "created_at": item.get("created_at") if isinstance(item.get("created_at"), (int, float)) else 0,
         "created": bool(item.get("created")),
@@ -125,6 +128,17 @@ def _decode_png(src: str) -> bytes:
     if not encoded:
         raise HTTPException(status_code=400, detail="Gallery image is unreadable")
     return encoded
+
+
+def gallery_image_file(models_dir: Path, model_id: str, image_id: str) -> Path:
+    slug = safe_model_id(model_id)
+    if not _IMAGE_ID.fullmatch(image_id):
+        raise HTTPException(status_code=404, detail="Gallery image not found")
+    folder = _gallery_dir(models_dir, slug).resolve()
+    path = (folder / f"{image_id}.png").resolve()
+    if folder not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="Gallery image not found")
+    return path
 
 
 def list_gallery(models_dir: Path, model_id: str) -> list[dict]:

@@ -25,7 +25,7 @@ def test_gallery_saves_png_dedupes_and_deletes(tmp_path):
     assert saved["created"] is True
     assert saved["prompt"] == "red dress"
     assert saved["path"] == f"public/models/anna/gallery/{saved['id']}.png"
-    assert saved["url"] == f"/models/anna/gallery/{saved['id']}.png"
+    assert saved["url"] == f"/api/models/anna/gallery/{saved['id']}.png"
     file = root / saved["path"]
     assert file.is_file()
     with Image.open(file) as image:
@@ -75,6 +75,14 @@ def test_gallery_api_requires_operator_and_a_real_model(client, dashboard_header
         listed = client.get(f"/api/models/{model_id}/gallery")
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()["images"]] == [body["id"]]
+        assert listed.json()["images"][0]["url"] == f"/api/models/{model_id}/gallery/{body['id']}.png"
+
+        image = client.get(listed.json()["images"][0]["url"])
+        assert image.status_code == 200
+        assert image.headers["content-type"].startswith("image/png")
+        assert image.content[:8] == b"\x89PNG\r\n\x1a\n"
+        missing = client.get(f"/api/models/{model_id}/gallery/abc123abc123.png")
+        assert missing.status_code == 404
 
         removed = client.delete(
             f"/api/models/{model_id}/gallery/{body['id']}",

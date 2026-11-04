@@ -88,6 +88,7 @@ from backend.services.model_gallery import (
     AddModelGalleryRequest,
     add_gallery_image,
     delete_gallery_image,
+    gallery_image_file,
     list_gallery,
 )
 from backend.models_store import (
@@ -1352,6 +1353,20 @@ def remove_model(
 ) -> dict:
     delete_model(db, ROOT, MODELS_DIR, CARDS_DIR, MESH_DIR, model_id)
     return {"ok": True, "id": model_id}
+
+
+@app.get("/api/models/{model_id}/gallery/{image_id}.png")
+def get_model_gallery_image(
+    model_id: str,
+    image_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> FileResponse:
+    get_model(db, MODELS_DIR, model_id)
+    return FileResponse(
+        gallery_image_file(MODELS_DIR, model_id, image_id),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/api/models/{model_id}/gallery")

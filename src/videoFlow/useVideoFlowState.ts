@@ -236,9 +236,13 @@ export function useVideoFlowState() {
       ? (storedDraft?.dressReferenceImage ?? flow.defaults.dress_reference_image)
       : flow.defaults.dress_reference_image,
   );
-  const [cardId, setCardId] = useState(
-    () => bootCardId || storedDraft?.cardId || readActiveProjectId(),
-  );
+  // Another girl's last card must not become the open id. Hydrating her id with
+  // this girl's empty image and theme makes the persist effect overwrite her draft.
+  const [cardId, setCardId] = useState(() => {
+    if (bootCardId) return bootCardId;
+    if (!storedMatchesGirl) return "";
+    return storedDraft?.cardId || readActiveProjectId();
+  });
   const [cardLabel, setCardLabel] = useState(
     hydrateFromStored ? (storedDraft?.cardLabel ?? "") : "",
   );
@@ -311,6 +315,9 @@ export function useVideoFlowState() {
   const selectionTokenRef = useRef(0);
   const desiredCardIdRef = useRef(cardId.trim());
   const switchingCardRef = useRef(false);
+  // The mount effect may still be choosing her card. Saving before that lands
+  // posts the blank setup onto whoever cardId points at.
+  const bootPendingRef = useRef(true);
   const draftSaveSeqRef = useRef(0);
   const draftAbortRef = useRef<AbortController | null>(null);
   const draftTimerRef = useRef(0);
@@ -754,6 +761,9 @@ export function useVideoFlowState() {
         if (list.length > 0) {
           void selectProject(list[0].card_id, list);
         }
+      })
+      .finally(() => {
+        if (!cancelled) bootPendingRef.current = false;
       });
     return () => {
       cancelled = true;
@@ -936,6 +946,7 @@ export function useVideoFlowState() {
   }, [rememberDraft]);
 
   useEffect(() => {
+    if (bootPendingRef.current) return;
     const id = cardId.trim();
     if (!id) return;
     // Skip a different card's fields while a switch is in progress — otherwise
