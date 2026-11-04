@@ -1,12 +1,15 @@
 import { ExternalLink, LoaderCircle, Tags, UserRound } from "lucide-react";
 import { Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
 import type { ReactNode } from "react";
+import { hrefWithModel, readCurrentModelId } from "../shared/currentModel";
 import { iconProps } from "./ui";
 
 type VideoFlowShellProps = {
   title: string;
   subtitle: string;
   active: "hub" | "designer" | "run" | "lite" | "picture" | "dress";
+  /** Girl on the open card. Dress opens her gallery. */
+  dressModelId?: string;
   error?: string;
   onRefresh?: () => void;
   children: ReactNode;
@@ -16,10 +19,15 @@ export function VideoFlowShell({
   title,
   subtitle,
   active,
+  dressModelId,
   error,
   onRefresh,
   children,
 }: VideoFlowShellProps) {
+  const girl = dressModelId?.trim() || readCurrentModelId();
+  const dressHref = hrefWithModel("/dashboard/video-flow/dress", girl);
+  const runHref = hrefWithModel("/dashboard/video-flow/run", girl);
+  const modelsHref = hrefWithModel("/dashboard/models", girl);
   return (
     <div className="video-flow-page">
       <header className="video-flow-header">
@@ -42,7 +50,7 @@ export function VideoFlowShell({
           </Box>
           <Flex align="center" gap="2" wrap="wrap">
             <nav className="video-flow-nav">
-              <a className={active === "run" ? "is-active" : ""} href="/dashboard/video-flow/run">
+              <a className={active === "run" ? "is-active" : ""} href={runHref}>
                 Run
               </a>
               <a className={active === "lite" ? "is-active" : ""} href="/dashboard/video-flow/lite">
@@ -62,13 +70,13 @@ export function VideoFlowShell({
               </a>
               <a
                 className={active === "dress" ? "is-active" : ""}
-                href="/dashboard/video-flow/dress"
+                href={dressHref}
               >
                 Dress
               </a>
             </nav>
             <Button asChild color="gray" variant="soft">
-              <a href="/dashboard/models">
+              <a href={modelsHref}>
                 <UserRound {...iconProps} />
                 Models
               </a>

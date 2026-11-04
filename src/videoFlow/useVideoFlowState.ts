@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
+import { readCurrentModelId, writeCurrentModelId } from "../shared/currentModel";
 import { labelFromProjectId } from "./projects";
 import type { VideoFlowProject } from "./projects";
 import {
@@ -188,10 +189,17 @@ export function useVideoFlowState() {
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("card")?.trim() || ""
       : "";
+  const bootModelId =
+    typeof window !== "undefined" ? readCurrentModelId() : "";
   // URL ?card= wins over localStorage. Never hydrate image/label from a draft
   // that belongs to a different card — that caused Shine 4 to show Shine 3's image.
+  // A girl chosen on Models also wins over another girl's last card.
+  const storedMatchesGirl =
+    !bootModelId || !storedDraft?.modelId || storedDraft.modelId === bootModelId;
   const hydrateFromStored =
-    Boolean(storedDraft?.cardId) && (!bootCardId || storedDraft?.cardId === bootCardId);
+    Boolean(storedDraft?.cardId) &&
+    (!bootCardId || storedDraft?.cardId === bootCardId) &&
+    storedMatchesGirl;
 
   const [image, setImage] = useState(hydrateFromStored ? (storedDraft?.image ?? "") : "");
   const [theme, setTheme] = useState(
@@ -228,13 +236,19 @@ export function useVideoFlowState() {
       ? (storedDraft?.dressReferenceImage ?? flow.defaults.dress_reference_image)
       : flow.defaults.dress_reference_image,
   );
-  const [cardId, setCardId] = useState(
-    () => bootCardId || storedDraft?.cardId || readActiveProjectId(),
-  );
+  // Another girl's last card must not become the open id. Hydrating her id with
+  // this girl's empty image and theme makes the persist effect overwrite her draft.
+  const [cardId, setCardId] = useState(() => {
+    if (bootCardId) return bootCardId;
+    if (!storedMatchesGirl) return "";
+    return storedDraft?.cardId || readActiveProjectId();
+  });
   const [cardLabel, setCardLabel] = useState(
     hydrateFromStored ? (storedDraft?.cardLabel ?? "") : "",
   );
-  const [modelId, setModelId] = useState(hydrateFromStored ? (storedDraft?.modelId ?? "") : "");
+  const [modelId, setModelId] = useState(
+    hydrateFromStored ? (storedDraft?.modelId ?? "") : bootModelId,
+  );
   const [writeWebm, setWriteWebm] = useState(storedDraft?.writeWebm ?? flow.defaults.write_webm);
   const [compressPreset, setCompressPreset] = useState<CompressPreset>(
     storedDraft?.compressPreset ?? parseCompressPreset(flow.defaults.compress_preset),
@@ -301,6 +315,9 @@ export function useVideoFlowState() {
   const selectionTokenRef = useRef(0);
   const desiredCardIdRef = useRef(cardId.trim());
   const switchingCardRef = useRef(false);
+  // The mount effect may still be choosing her card. Saving before that lands
+  // posts the blank setup onto whoever cardId points at.
+  const bootPendingRef = useRef(true);
   const draftSaveSeqRef = useRef(0);
   const draftAbortRef = useRef<AbortController | null>(null);
   const draftTimerRef = useRef(0);
@@ -465,6 +482,7 @@ export function useVideoFlowState() {
     setCardId(draft.cardId);
     setCardLabel(draft.cardLabel);
     setModelId(draft.modelId);
+    if (draft.modelId.trim()) writeCurrentModelId(draft.modelId);
     setWriteWebm(draft.writeWebm);
     setCompressPreset(draft.compressPreset ?? "mobile");
     setResolution(draft.resolution);
@@ -678,14 +696,23 @@ export function useVideoFlowState() {
 
   useEffect(() => {
     let cancelled = false;
-    const bootCard = new URLSearchParams(window.location.search).get("card")?.trim() || "";
+    const params = new URLSearchParams(window.location.search);
+    const bootCard = params.get("card")?.trim() || "";
+    const bootModel = readCurrentModelId();
     refreshProjects()
       .then((list) => {
         if (cancelled) return;
+        const keepModel = (id: string) => {
+          const girl = id.trim();
+          if (!girl) return;
+          writeCurrentModelId(girl);
+          params.set("model", girl);
+        };
         if (bootCard) {
           // Consume ?card= immediately so a later projects refresh cannot re-open
-          // an older card from a stale URL.
-          const params = new URLSearchParams(window.location.search);
+          // an older card from a stale URL. Keep the girl that card belongs to.
+          const listed = list.find((entry) => entry.card_id === bootCard);
+          keepModel(listed?.draft?.model_id?.trim() || bootModel);
           params.delete("card");
           const query = params.toString();
           window.history.replaceState(
@@ -697,6 +724,34 @@ export function useVideoFlowState() {
           void selectProject(bootCard, list);
           return;
         }
+        if (bootModel) {
+          keepModel(bootModel);
+          const query = params.toString();
+          window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${query ? `?${query}` : ""}`,
+          );
+          const storedId = storedDraft?.cardId?.trim() || readActiveProjectId();
+          const listedStored = list.find((entry) => entry.card_id === storedId);
+          const storedModel = (
+            listedStored?.draft?.model_id ||
+            storedDraft?.modelId ||
+            ""
+          ).trim();
+          if (storedId && storedModel === bootModel) {
+            void selectProject(storedId, list);
+            return;
+          }
+          const hers = list.find((entry) => (entry.draft?.model_id || "").trim() === bootModel);
+          if (hers) {
+            void selectProject(hers.card_id, list);
+            return;
+          }
+          setCardId("");
+          setModelId(bootModel);
+          return;
+        }
         const storedId = storedDraft?.cardId?.trim() || readActiveProjectId();
         if (storedId) {
           // Ensure server draft wins over a possibly mixed localStorage draft.
@@ -706,6 +761,9 @@ export function useVideoFlowState() {
         if (list.length > 0) {
           void selectProject(list[0].card_id, list);
         }
+      })
+      .finally(() => {
+        if (!cancelled) bootPendingRef.current = false;
       });
     return () => {
       cancelled = true;
@@ -888,6 +946,7 @@ export function useVideoFlowState() {
   }, [rememberDraft]);
 
   useEffect(() => {
+    if (bootPendingRef.current) return;
     const id = cardId.trim();
     if (!id) return;
     // Skip a different card's fields while a switch is in progress — otherwise

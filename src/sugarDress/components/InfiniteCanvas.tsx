@@ -45,6 +45,7 @@ import {
 } from '../lib/exportImages'
 import { LIBRARY_ADD_EVENT, noteLibraryLanded, readLibraryDrag } from './AssetPanel'
 import { CanvasChrome } from './CanvasChrome'
+import { GalleryPanel } from './GalleryPanel'
 import { CanvasImage } from './CanvasImage'
 import { ChainOverlay } from './ChainOverlay'
 import { autoBikiniPrompt, cosplayPrompt, dressEditPrompt, pickBikinis, pickCosplay, wornClothingPhoto } from '../lib/dressEdit'
@@ -59,6 +60,11 @@ import {
   type Asset,
 } from '../lib/assets'
 import { buildRegenPrompt, promptFromCaption } from '../lib/regenPrompt'
+import {
+  notifyGalleryChanged,
+  saveGalleryImage,
+  type DressModel,
+} from '../lib/modelGallery'
 import {
   NO_ONSCREEN_TEXT,
   VIDEO_AUDIO_DEFAULT,
@@ -155,7 +161,15 @@ async function clothingWithoutWearer(src: string): Promise<string> {
 
 type SelectedEdge = { fromId: string; toId: string }
 
-export function InfiniteCanvas() {
+export function InfiniteCanvas({
+  model,
+  modelLabel,
+  onSwitchModel,
+}: {
+  model: DressModel
+  modelLabel: string
+  onSwitchModel: () => void
+}) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -168,6 +182,16 @@ export function InfiniteCanvas() {
   const [isPanning, setIsPanning] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [items, setItems] = useState<CanvasItem[]>([])
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [galleryNote, setGalleryNote] = useState('')
+  const modelIdRef = useRef(model.id)
+  modelIdRef.current = model.id
+
+  useEffect(() => {
+    if (!galleryNote) return
+    const timer = window.setTimeout(() => setGalleryNote(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [galleryNote])
   const [assets, setAssets] = useState<Asset[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
@@ -344,6 +368,21 @@ export function InfiniteCanvas() {
 
   const { ask: askCrop, popup: cropPopup } = useCrop916()
 
+  const rememberStill = useCallback((src: string, prompt?: string) => {
+    const id = modelIdRef.current
+    if (!id) return
+    void (async () => {
+      try {
+        const data = src.startsWith('data:') ? src : await toDataUri(src)
+        const saved = await saveGalleryImage(id, data, prompt ?? '')
+        notifyGalleryChanged(id)
+        setGalleryNote(saved.created ? 'Saved to her gallery' : 'Already in her gallery')
+      } catch {
+        setGalleryNote('Could not save that still to her gallery')
+      }
+    })()
+  }, [])
+
   const addMediaFromSrc = useCallback(
     async (
       src: string,
@@ -352,6 +391,7 @@ export function InfiniteCanvas() {
         | { kind: 'world'; x: number; y: number },
       mediaKind: 'image' | 'video' = 'image',
       extra?: Partial<Pick<CanvasItem, 'caption' | 'genMeta' | 'opacity'>>,
+      savePrompt?: string,
     ): Promise<CanvasItem> => {
       const size =
         mediaKind === 'video'
@@ -382,9 +422,10 @@ export function InfiniteCanvas() {
       setItems((prev) => [...prev, item])
       setSelectedIds([item.id])
       setSelectedEdge(null)
+      if (mediaKind === 'image' && savePrompt !== undefined) rememberStill(src, savePrompt)
       return item
     },
-    [],
+    [rememberStill],
   )
 
   const addImagesAtScreen = useCallback(
@@ -512,6 +553,8 @@ export function InfiniteCanvas() {
                 y: videoItem.y,
               },
               'image',
+              undefined,
+              'Last frame',
             )
             linkMade(videoItem.id, lastStill.id)
           }
@@ -592,6 +635,7 @@ export function InfiniteCanvas() {
                 },
                 'image',
                 imageGenMeta,
+                prompt,
               )
             : await addMediaFromSrc(
                 placed,
@@ -601,6 +645,7 @@ export function InfiniteCanvas() {
                 },
                 'image',
                 imageGenMeta,
+                prompt,
               )
         linkMade(sourceId, created.id)
       } catch (err) {
@@ -1215,6 +1260,7 @@ export function InfiniteCanvas() {
             throw new Error(data.error || 'Image regenerate failed')
           }
           newSrc = data.src
+          rememberStill(newSrc, basePrompt)
         }
 
         const size =
@@ -1263,7 +1309,7 @@ export function InfiniteCanvas() {
         endGen()
       }
     },
-    [],
+    [rememberStill],
   )
 
   useEffect(() => {
@@ -1378,6 +1424,20 @@ export function InfiniteCanvas() {
       },
     }
   })()
+  const selectedStill =
+    selectedIds.length === 1
+      ? items.find((item) => item.id === selectedIds[0] && item.kind !== 'video') ?? null
+      : null
+
+  const saveSelectedStill = () => {
+    if (!selectedStill) return
+    const prompt =
+      selectedStill.genMeta?.mediaKind === 'image'
+        ? selectedStill.genMeta.prompt
+        : selectedStill.caption || 'Saved from canvas'
+    rememberStill(selectedStill.src, prompt)
+  }
+
   const generatedItems = items
     .filter((i) => i.genMeta || promptFromCaption(i.caption))
     .map((i) => ({ id: i.id, src: i.src, kind: i.kind ?? ('image' as const) }))
@@ -1420,10 +1480,16 @@ export function InfiniteCanvas() {
         const generated = (await res.json()) as { src?: string; error?: string }
         if (!res.ok || !generated.src) throw new Error(generated.error || 'Auto bikini failed')
         const center = getViewportCenter()
-        await addMediaFromSrc(generated.src, {
-          kind: 'screen',
-          screen: { x: center.x + i * 36, y: center.y + i * 28 },
-        })
+        await addMediaFromSrc(
+          generated.src,
+          {
+            kind: 'screen',
+            screen: { x: center.x + i * 36, y: center.y + i * 28 },
+          },
+          'image',
+          undefined,
+          `Bikini · ${looks[i]}`,
+        )
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Auto bikini failed'
@@ -1461,10 +1527,16 @@ export function InfiniteCanvas() {
         const generated = (await res.json()) as { src?: string; error?: string }
         if (!res.ok || !generated.src) throw new Error(generated.error || 'Cosplay failed')
         const center = getViewportCenter()
-        await addMediaFromSrc(generated.src, {
-          kind: 'screen',
-          screen: { x: center.x + i * 36, y: center.y + i * 28 },
-        })
+        await addMediaFromSrc(
+          generated.src,
+          {
+            kind: 'screen',
+            screen: { x: center.x + i * 36, y: center.y + i * 28 },
+          },
+          'image',
+          undefined,
+          `Cosplay · ${costumes[i]}`,
+        )
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Cosplay failed'
@@ -1516,6 +1588,8 @@ export function InfiniteCanvas() {
           ? { kind: 'world', x: source.x + source.width + 36, y: source.y }
           : { kind: 'screen', screen: getViewportCenter() },
         'image',
+        undefined,
+        text.trim() || (bare ? 'Undress' : 'Clothes on'),
       )
       linkMade(sourceId, created.id)
     } catch (err) {
@@ -1567,6 +1641,8 @@ export function InfiniteCanvas() {
           ? { kind: 'world', x: source.x + source.width + 36, y: source.y }
           : { kind: 'screen', screen: getViewportCenter() },
         'image',
+        undefined,
+        'Pose',
       )
       linkMade(sourceId, created.id)
     } catch (err) {
@@ -1860,7 +1936,24 @@ export function InfiniteCanvas() {
         imageProvider={imageProvider}
         onImageProviderChange={setImageProvider}
         genBusy={generating}
+        modelLabel={modelLabel}
+        modelAvatar={model.avatar}
+        onSwitchModel={onSwitchModel}
+        galleryOpen={galleryOpen}
+        onToggleGallery={() => setGalleryOpen((open) => !open)}
       />
+
+      {galleryOpen ? (
+        <GalleryPanel
+          modelId={model.id}
+          modelLabel={modelLabel}
+          canSave={Boolean(selectedStill)}
+          note={galleryNote}
+          onSaveSelected={saveSelectedStill}
+          onPlace={(url) => void placeAtCenter(url)}
+          onClose={() => setGalleryOpen(false)}
+        />
+      ) : null}
 
       {regenTarget && (
         <RegenerateDialog
