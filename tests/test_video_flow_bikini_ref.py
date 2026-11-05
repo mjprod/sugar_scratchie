@@ -46,6 +46,31 @@ def _draft(**overrides: str) -> dict:
     }
 
 
+def test_blank_source_image_is_not_the_project_folder(client, workspace, dashboard_headers):
+    """Changing the girl saves a blank photo. That must not become the project folder."""
+    from backend.services.video_flow import read_flow_draft
+
+    response = client.post(URL, json=_draft(), headers=dashboard_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["draft"]["image"] == ""
+    assert read_flow_draft(CARD_ID)["image"] == ""
+
+    response = client.post(
+        URL,
+        json=_draft(image=str(workspace)),
+        headers=dashboard_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert read_flow_draft(CARD_ID)["image"] == ""
+
+    photo = workspace / ".tmp" / "uploads" / "girl.png"
+    photo.parent.mkdir(parents=True, exist_ok=True)
+    photo.write_bytes(b"png")
+    response = client.post(URL, json=_draft(image=str(photo)), headers=dashboard_headers)
+    assert response.status_code == 200, response.text
+    assert read_flow_draft(CARD_ID)["image"].endswith("girl.png")
+
+
 def test_draft_round_trips_bikini_image(client, workspace, dashboard_headers):
     from backend.services.video_flow import read_flow_draft, save_flow_draft
 

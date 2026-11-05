@@ -193,15 +193,20 @@ export function useVideoFlowState() {
     typeof window !== "undefined" ? readCurrentModelId() : "";
   // URL ?card= wins over localStorage. Never hydrate image/label from a draft
   // that belongs to a different card — that caused Shine 4 to show Shine 3's image.
-  // A girl chosen on Models also wins over another girl's last card.
-  const storedMatchesGirl =
-    !bootModelId || !storedDraft?.modelId || storedDraft.modelId === bootModelId;
+  // A girl chosen on Models wins over another girl's last card. A draft with no
+  // girl does not belong to every girl — that kept the previous card open.
+  const storedModelId = storedDraft?.modelId?.trim() ?? "";
+  const storedMatchesGirl = !bootModelId || storedModelId === bootModelId;
   const hydrateFromStored =
     Boolean(storedDraft?.cardId) &&
     (!bootCardId || storedDraft?.cardId === bootCardId) &&
     storedMatchesGirl;
 
-  const [image, setImage] = useState(hydrateFromStored ? (storedDraft?.image ?? "") : "");
+  const [image, setImage] = useState(
+    hydrateFromStored && !looksLikeWorkspaceRootPath(storedDraft?.image ?? "")
+      ? (storedDraft?.image ?? "")
+      : "",
+  );
   const [theme, setTheme] = useState(
     hydrateFromStored ? (storedDraft?.theme?.trim() || DEFAULT_THEME) : DEFAULT_THEME,
   );
@@ -360,30 +365,28 @@ export function useVideoFlowState() {
     const serverRef = (draft.dressReferenceImage ?? "").trim();
     const localRef = sameCard ? (local.dressReferenceImage ?? "").trim() : "";
     let dressRefToApply = serverRef || localRef;
-    // Face identity reference: a server draft saved before the debounced POST
-    // fires has an empty face_image — never let it wipe a freshly picked face.
     const serverFace = (draft.faceImage ?? "").trim();
     const localFace = sameCard ? (local.faceImage ?? "").trim() : "";
-    const faceToApply = serverFace || localFace;
     const serverBikini = (draft.bikiniImage ?? "").trim();
     const localBikini = sameCard ? (local.bikiniImage ?? "").trim() : "";
-    const bikiniToApply = serverBikini || localBikini;
     const serverBase = (draft.baseImage ?? "").trim();
     const localBase = sameCard ? (local.baseImage ?? "").trim() : "";
     const baseToApply = serverBase || localBase;
-    const localImage = sameCard ? (local.image ?? "").trim() : "";
-    const serverImage = (draft.image ?? "").trim();
-    // Never keep a path that is the workspace root (debounce/save race bug).
-    const imageLooksLikeRoot =
-      serverImage === "/" ||
-      serverImage.endsWith("/sugar_scratchie") ||
-      serverImage === ".";
+    const localImageRaw = sameCard ? (local.image ?? "").trim() : "";
+    const serverImageRaw = (draft.image ?? "").trim();
+    const localImage = looksLikeWorkspaceRootPath(localImageRaw) ? "" : localImageRaw;
+    const serverImage = looksLikeWorkspaceRootPath(serverImageRaw) ? "" : serverImageRaw;
+    // localStorage is written on each keystroke. A server draft fetched while
+    // that save is still in flight is older — keep the photo the operator just picked.
+    const localUpdatedMs = sameCard ? (local?.localUpdatedAt ?? 0) : 0;
+    const localPromptsNewer = localUpdatedMs > serverUpdatedMs(draft.updatedAt) + 1500;
     const imageToApply =
-      serverImage && !imageLooksLikeRoot
-        ? serverImage
-        : localImage && !localImage.endsWith("/sugar_scratchie")
-          ? localImage
-          : serverImage;
+      localPromptsNewer && localImage ? localImage : serverImage || localImage;
+    // A server draft saved before the debounced POST has the previous girl's
+    // face or bikini — never let it wipe the photo just picked.
+    const faceToApply = localPromptsNewer && localFace ? localFace : serverFace || localFace;
+    const bikiniToApply =
+      localPromptsNewer && localBikini ? localBikini : serverBikini || localBikini;
 
     let motion =
       draft.backgroundMotionPrompt || draft.foregroundMotionPrompt || "";
@@ -393,10 +396,7 @@ export function useVideoFlowState() {
       themeToApply,
       undefined,
     );
-    // localStorage is written on each keystroke. A server draft fetched while
-    // that save is still in flight is older — keep the prompts the operator just typed.
-    const localUpdatedMs = sameCard ? (local?.localUpdatedAt ?? 0) : 0;
-    const localPromptsNewer = localUpdatedMs > serverUpdatedMs(draft.updatedAt) + 1500;
+    // Same clock as the photo above — keep prompts typed while the save is in flight.
     if (localPromptsNewer) dressRefToApply = localRef;
     const localPrompts = sameCard ? local?.picturePrompts : undefined;
     if (localPromptsNewer && local) {
@@ -700,7 +700,7 @@ export function useVideoFlowState() {
     const bootCard = params.get("card")?.trim() || "";
     const bootModel = readCurrentModelId();
     refreshProjects()
-      .then((list) => {
+      .then(async (list) => {
         if (cancelled) return;
         const keepModel = (id: string) => {
           const girl = id.trim();
@@ -721,7 +721,7 @@ export function useVideoFlowState() {
             `${window.location.pathname}${query ? `?${query}` : ""}`,
           );
           // Pass the fresh list — projectsRef may not have re-rendered yet.
-          void selectProject(bootCard, list);
+          await selectProject(bootCard, list);
           return;
         }
         if (bootModel) {
@@ -740,12 +740,12 @@ export function useVideoFlowState() {
             ""
           ).trim();
           if (storedId && storedModel === bootModel) {
-            void selectProject(storedId, list);
+            await selectProject(storedId, list);
             return;
           }
           const hers = list.find((entry) => (entry.draft?.model_id || "").trim() === bootModel);
           if (hers) {
-            void selectProject(hers.card_id, list);
+            await selectProject(hers.card_id, list);
             return;
           }
           setCardId("");
@@ -755,11 +755,11 @@ export function useVideoFlowState() {
         const storedId = storedDraft?.cardId?.trim() || readActiveProjectId();
         if (storedId) {
           // Ensure server draft wins over a possibly mixed localStorage draft.
-          void selectProject(storedId, list);
+          await selectProject(storedId, list);
           return;
         }
         if (list.length > 0) {
-          void selectProject(list[0].card_id, list);
+          await selectProject(list[0].card_id, list);
         }
       })
       .finally(() => {
@@ -944,6 +944,10 @@ export function useVideoFlowState() {
     latestPersistRef.current = waited.catch(() => undefined);
     return waited;
   }, [rememberDraft]);
+
+  useEffect(() => {
+    if (looksLikeWorkspaceRootPath(image)) setImage("");
+  }, [image]);
 
   useEffect(() => {
     if (bootPendingRef.current) return;

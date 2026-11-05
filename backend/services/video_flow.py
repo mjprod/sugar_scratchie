@@ -1359,6 +1359,28 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
     }
 
 
+def _usable_source_image(image: str | Path) -> str:
+    """A Setup photo path. The project folder is not a photo.
+
+    An empty path used to resolve to the workspace root and get saved as the
+    source image. Re-runs then sent that folder, so a new girl's photo never
+    landed and the preview failed.
+    """
+    text = str(image).strip()
+    if not text or text.startswith(("http://", "https://")):
+        return text
+    path = Path(text)
+    if not path.is_absolute():
+        path = ROOT / path
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return ""
+    if resolved == ROOT.resolve() or resolved.is_dir():
+        return ""
+    return text
+
+
 def draft_path(work: Path) -> Path:
     return work / "draft.json"
 
@@ -1438,7 +1460,7 @@ def save_flow_draft(
         return "models" if str(raw or "").strip() == "models" else "prompts"
 
     draft = {
-        "image": str(image),
+        "image": _usable_source_image(image),
         "theme": saved_theme,
         "picture_prompt": setup_field(picture_prompt, "picture_prompt"),
         "picture_prompts": saved_picture_prompts(),
