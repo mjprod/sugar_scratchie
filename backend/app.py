@@ -2340,13 +2340,21 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
     if raw_image.startswith(("http://", "https://")):
         image = raw_image
     elif raw_image:
-        resolved = workspace_path(raw_image, must_exist=False)
-        if resolved == ROOT or resolved.is_dir() or (image_required and not resolved.is_file()):
-            raise HTTPException(
-                status_code=400,
-                detail="Pick her photo in Setup. The source image is missing or is the project folder.",
-            )
-        image = resolved
+        if raw_image == "/":
+            if image_required:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pick her photo in Setup before running this step.",
+                )
+            image = ""
+        else:
+            resolved = workspace_path(raw_image, must_exist=False)
+            if resolved == ROOT or resolved.is_dir() or (image_required and not resolved.is_file()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pick her photo in Setup. The source image is missing or is the project folder.",
+                )
+            image = resolved
     elif image_required:
         raise HTTPException(
             status_code=400,
