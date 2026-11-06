@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import uuid
 
 from PIL import Image
 
+import pytest
+from fastapi import HTTPException
+
 from backend.services.model_gallery import add_gallery_image, delete_gallery_image, list_gallery
 
 
-def _png_data_uri() -> str:
+def _png_data_uri(color: tuple[int, int, int] = (180, 40, 60)) -> str:
     buf = io.BytesIO()
-    Image.new("RGB", (32, 48), (180, 40, 60)).save(buf, format="PNG")
+    Image.new("RGB", (32, 48), color).save(buf, format="PNG")
     encoded = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
@@ -24,6 +28,8 @@ def test_gallery_saves_png_dedupes_and_deletes(tmp_path):
     saved = add_gallery_image(models_dir=models, model_id="anna", src=src, prompt="  red   dress  ")
     assert saved["created"] is True
     assert saved["prompt"] == "red dress"
+    assert saved["kind"] == ""
+    assert saved["theme"] == ""
     assert saved["path"] == f"public/models/anna/gallery/{saved['id']}.png"
     assert saved["url"] == f"/api/models/anna/gallery/{saved['id']}.png"
     file = root / saved["path"]
@@ -40,6 +46,52 @@ def test_gallery_saves_png_dedupes_and_deletes(tmp_path):
     delete_gallery_image(models_dir=models, model_id="anna", image_id=saved["id"])
     assert list_gallery(models, "anna") == []
     assert not file.exists()
+
+
+def test_gallery_splits_bikini_and_cosplay_and_reads_old_prompts(tmp_path):
+    models = tmp_path / "public" / "models"
+    bikini = add_gallery_image(
+        models_dir=models,
+        model_id="anna",
+        src=_png_data_uri((20, 80, 180)),
+        prompt="Bikini · red",
+        kind="Bikini",
+    )
+    assert bikini["kind"] == "bikini"
+    assert bikini["theme"] == ""
+
+    cosplay = add_gallery_image(
+        models_dir=models,
+        model_id="anna",
+        src=_png_data_uri((20, 140, 40)),
+        prompt="Cosplay · Police",
+        kind="cosplay",
+        theme="Police",
+    )
+    assert cosplay["kind"] == "cosplay"
+    assert cosplay["theme"] == "police"
+
+    with pytest.raises(HTTPException):
+        add_gallery_image(
+            models_dir=models,
+            model_id="anna",
+            src=_png_data_uri((1, 2, 3)),
+            kind="dress",
+        )
+
+    folder = models / "anna" / "gallery"
+    legacy_id = "abc123abc123"
+    Image.new("RGB", (8, 8), (9, 9, 9)).save(folder / f"{legacy_id}.png", format="PNG")
+    index = folder / "index.json"
+    rows = json.loads(index.read_text(encoding="utf-8"))
+    rows["images"].append({"id": legacy_id, "prompt": "Cosplay · old", "created_at": 1, "sha256": "x"})
+    index.write_text(json.dumps(rows), encoding="utf-8")
+
+    listed = {row["id"]: row for row in list_gallery(models, "anna")}
+    assert listed[bikini["id"]]["kind"] == "bikini"
+    assert listed[cosplay["id"]]["theme"] == "police"
+    assert listed[legacy_id]["kind"] == "cosplay"
+    assert listed[legacy_id]["theme"] == ""
 
 
 def test_gallery_api_requires_operator_and_a_real_model(client, dashboard_headers, monkeypatch, tmp_path):
@@ -70,6 +122,8 @@ def test_gallery_api_requires_operator_and_a_real_model(client, dashboard_header
         assert added.status_code == 200
         body = added.json()
         assert body["created"] is True
+        assert body["kind"] == ""
+        assert body["theme"] == ""
         assert (models / model_id / "gallery" / f"{body['id']}.png").is_file()
 
         listed = client.get(f"/api/models/{model_id}/gallery")

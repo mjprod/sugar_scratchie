@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "@phosphor-icons/react";
+import { COSPLAY_THEMES } from "../lib/dressEdit";
 import {
   GALLERY_CHANGED_EVENT,
   deleteGalleryImage,
@@ -15,7 +16,7 @@ function GalleryThumb({
   onPlace,
 }: {
   image: GalleryImage;
-  onPlace: (url: string) => void;
+  onPlace: (image: GalleryImage) => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const wait = useRef<number | null>(null);
@@ -34,7 +35,7 @@ function GalleryThumb({
       className="gallery-thumb"
       title={image.prompt || "Place on the canvas"}
       aria-label={image.prompt || "Gallery still"}
-      onClick={() => onPlace(image.url)}
+      onClick={() => onPlace(image)}
     >
       <img
         src={src}
@@ -51,13 +52,61 @@ function GalleryThumb({
   );
 }
 
+function GalleryGrid({
+  images,
+  empty,
+  onPlace,
+  onRemove,
+}: {
+  images: GalleryImage[];
+  empty: string;
+  onPlace: (image: GalleryImage) => void;
+  onRemove: (image: GalleryImage) => void;
+}) {
+  if (images.length === 0) return <p className="gallery-panel-copy">{empty}</p>;
+  return (
+    <ul className="gallery-grid">
+      {images.map((image) => (
+        <li key={image.id}>
+          <GalleryThumb image={image} onPlace={onPlace} />
+          <button type="button" className="gallery-remove" onClick={() => onRemove(image)}>
+            Remove
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function cosplayGroups(images: GalleryImage[]): { id: string; label: string; images: GalleryImage[] }[] {
+  const buckets = new Map<string, GalleryImage[]>();
+  for (const image of images) {
+    const id = image.theme || "";
+    const rows = buckets.get(id) ?? [];
+    rows.push(image);
+    buckets.set(id, rows);
+  }
+  const groups: { id: string; label: string; images: GalleryImage[] }[] = [];
+  for (const theme of COSPLAY_THEMES) {
+    const rows = buckets.get(theme.id);
+    if (!rows?.length) continue;
+    groups.push({ id: theme.id, label: theme.label, images: rows });
+    buckets.delete(theme.id);
+  }
+  for (const [id, rows] of buckets) {
+    if (!rows.length) continue;
+    groups.push({ id: id || "none", label: id || "No theme", images: rows });
+  }
+  return groups;
+}
+
 type Props = {
   modelId: string;
   modelLabel: string;
   canSave: boolean;
   note: string;
   onSaveSelected: () => void;
-  onPlace: (url: string) => void;
+  onPlace: (image: GalleryImage) => void;
   onClose: () => void;
 };
 
@@ -129,8 +178,7 @@ export function GalleryPanel({
         </button>
       </header>
       <p className="gallery-panel-copy">
-        Generated stills stay with this girl. Click one to put it on the canvas. Video Flow can use
-        the same stills.
+        Auto Bikini and Cosplay save here on their own. Run uses a bikini still as her photo.
       </p>
       <button
         type="button"
@@ -144,24 +192,43 @@ export function GalleryPanel({
       {note ? <p className="gallery-panel-note">{note}</p> : null}
       {error ? <p className="gallery-panel-error">{error}</p> : null}
       {loading ? <p className="gallery-panel-copy">Loading…</p> : null}
-      {!loading && images.length === 0 ? (
-        <p className="gallery-panel-copy">Nothing saved yet. Generate a still and it lands here.</p>
-      ) : (
-        <ul className="gallery-grid">
-          {images.map((image) => (
-            <li key={image.id}>
-              <GalleryThumb image={image} onPlace={onPlace} />
-              <button
-                type="button"
-                className="gallery-remove"
-                onClick={() => void remove(image)}
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {!loading ? (
+        <>
+          <section className="gallery-section">
+            <h3>Bikini</h3>
+            <GalleryGrid
+              images={images.filter((image) => image.kind === "bikini")}
+              empty="None yet. Auto Bikini saves into this group."
+              onPlace={onPlace}
+              onRemove={(image) => void remove(image)}
+            />
+          </section>
+          <section className="gallery-section">
+            <h3>Cosplay</h3>
+            {images.some((image) => image.kind === "cosplay") ? (
+              cosplayGroups(images.filter((image) => image.kind === "cosplay")).map((group) => (
+                <div key={group.id} className="gallery-theme">
+                  <h4>{group.label}</h4>
+                  <GalleryGrid images={group.images} empty="" onPlace={onPlace} onRemove={(image) => void remove(image)} />
+                </div>
+              ))
+            ) : (
+              <p className="gallery-panel-copy">None yet. Cosplay saves into this group, under its theme.</p>
+            )}
+          </section>
+          {images.some((image) => image.kind !== "bikini" && image.kind !== "cosplay") ? (
+            <section className="gallery-section">
+              <h3>Other</h3>
+              <GalleryGrid
+                images={images.filter((image) => image.kind !== "bikini" && image.kind !== "cosplay")}
+                empty=""
+                onPlace={onPlace}
+                onRemove={(image) => void remove(image)}
+              />
+            </section>
+          ) : null}
+        </>
+      ) : null}
     </aside>
   );
 }

@@ -57,12 +57,6 @@ export function VideoFlowShell({
                 Lite
               </a>
               <a
-                className={active === "designer" ? "is-active" : ""}
-                href="/dashboard/video-flow/designer"
-              >
-                Design
-              </a>
-              <a
                 className={active === "picture" ? "is-active" : ""}
                 href="/dashboard/picture-flow"
               >

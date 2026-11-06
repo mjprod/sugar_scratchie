@@ -1390,6 +1390,8 @@ def post_model_gallery(
         model_id=model_id,
         src=request.src,
         prompt=request.prompt,
+        kind=request.kind,
+        theme=request.theme,
     )
 
 
@@ -2331,15 +2333,33 @@ def video_flow_step_job(request: VideoFlowStepRequest) -> dict:
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # Mesh / symbols / compress only need the published card — source image is optional.
-    image_required = request.step in ("background", "dress", "card")
-    if request.image.strip():
-        image = (
-            request.image
-            if request.image.startswith(("http://", "https://"))
-            else workspace_path(request.image, must_exist=image_required)
-        )
+    # Picture needs her photo too. A blank path used to become the project folder,
+    # so re-running after a girl change ignored the new photo.
+    image_required = request.step in ("picture", "background", "dress", "card")
+    raw_image = request.image.strip()
+    if raw_image.startswith(("http://", "https://")):
+        image = raw_image
+    elif raw_image:
+        if raw_image == "/":
+            if image_required:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pick her photo in Setup before running this step.",
+                )
+            image = ""
+        else:
+            resolved = workspace_path(raw_image, must_exist=False)
+            if resolved == ROOT or resolved.is_dir() or (image_required and not resolved.is_file()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pick her photo in Setup. The source image is missing or is the project folder.",
+                )
+            image = resolved
     elif image_required:
-        raise HTTPException(status_code=400, detail="Source image is required for this step")
+        raise HTTPException(
+            status_code=400,
+            detail="Pick her photo in Setup before running this step.",
+        )
     else:
         image = ""
     dress_reference = request.dress_reference_image.strip()

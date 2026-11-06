@@ -8,9 +8,9 @@ import {
 } from '../lib/assets'
 import { toDataUri } from '../lib/imageData'
 
-/** PromptBar listens for this to insert @名稱 at the caret. */
+/** Library insert event. Listeners add the named asset at the caret. */
 export const INSERT_TOKEN_EVENT = 'mxj:insert-token'
-/** Active mode (PromptBar / DirectorPanel) listens to add a reference image. */
+/** Listeners add a reference image for the purpose named in the event. */
 export const ADD_REF_EVENT = 'mxj:add-ref'
 /** Open the chrome media library (生成 / 上傳). */
 export const OPEN_LIBRARY_EVENT = 'mxj:open-library'

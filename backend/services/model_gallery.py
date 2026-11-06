@@ -27,9 +27,15 @@ _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.Lock] = {}
 
 
+_KINDS = {"bikini", "cosplay"}
+_THEME = re.compile(r"^[a-z0-9-]{1,40}$")
+
+
 class AddModelGalleryRequest(BaseModel):
     src: str = Field(min_length=1, max_length=40_000_000)
     prompt: str = Field(default="", max_length=2000)
+    kind: str = Field(default="", max_length=20)
+    theme: str = Field(default="", max_length=40)
 
 
 def _lock_for(model_id: str) -> threading.Lock:
@@ -84,6 +90,44 @@ def _write_index(path: Path, images: list[dict]) -> None:
     tmp.replace(path)
 
 
+def _item_prompt(item: dict) -> str:
+    prompt = item.get("prompt")
+    return prompt if isinstance(prompt, str) else ""
+
+
+def _item_kind(item: dict) -> str:
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind in _KINDS:
+        return kind
+    prompt = _item_prompt(item)
+    if prompt.startswith("Bikini"):
+        return "bikini"
+    if prompt.startswith("Cosplay"):
+        return "cosplay"
+    return ""
+
+
+def _item_theme(item: dict) -> str:
+    if _item_kind(item) != "cosplay":
+        return ""
+    theme = item.get("theme")
+    if isinstance(theme, str) and _THEME.fullmatch(theme):
+        return theme
+    return ""
+
+
+def _clean_kind(kind: str, theme: str) -> tuple[str, str]:
+    cleaned_kind = kind.strip().lower()
+    cleaned_theme = theme.strip().lower()
+    if cleaned_kind not in _KINDS and cleaned_kind != "":
+        raise HTTPException(status_code=400, detail="Gallery kind must be bikini or cosplay")
+    if cleaned_kind != "cosplay":
+        return cleaned_kind, ""
+    if cleaned_theme and _THEME.fullmatch(cleaned_theme) is None:
+        raise HTTPException(status_code=400, detail="Gallery theme is not a costume id")
+    return cleaned_kind, cleaned_theme
+
+
 def _public_item(model_id: str, item: dict) -> dict:
     image_id = item["id"]
     filename = f"{image_id}.png"
@@ -94,7 +138,9 @@ def _public_item(model_id: str, item: dict) -> dict:
         # /models/, which does not include stills saved after deploy.
         "path": f"public/models/{model_id}/gallery/{filename}",
         "url": f"/api/models/{model_id}/gallery/{image_id}.png",
-        "prompt": item.get("prompt") if isinstance(item.get("prompt"), str) else "",
+        "prompt": _item_prompt(item),
+        "kind": _item_kind(item),
+        "theme": _item_theme(item),
         "created_at": item.get("created_at") if isinstance(item.get("created_at"), (int, float)) else 0,
         "created": bool(item.get("created")),
     }
@@ -161,8 +207,11 @@ def add_gallery_image(
     model_id: str,
     src: str,
     prompt: str = "",
+    kind: str = "",
+    theme: str = "",
 ) -> dict:
     slug = safe_model_id(model_id)
+    kind, theme = _clean_kind(kind, theme)
     png = _decode_png(src)
     digest = hashlib.sha256(png).hexdigest()
     folder = _gallery_dir(models_dir, slug)
@@ -183,6 +232,8 @@ def add_gallery_image(
         row = {
             "id": image_id,
             "prompt": _clean_prompt(prompt),
+            "kind": kind,
+            "theme": theme,
             "created_at": round(time.time(), 3),
             "sha256": digest,
         }

@@ -23,7 +23,7 @@ import {
 } from '../lib/camera'
 import type { CanvasItem, GenMeta, InteractionMode } from '../types'
 import { toDataUri } from '../lib/imageData'
-import type { ImageMode, PromptSubmitPayload, SelectionRef } from '../lib/promptRefs'
+import type { ImageMode } from '../lib/promptRefs'
 import {
   clearOutgoing,
   computeChainOrder,
@@ -48,11 +48,10 @@ import { CanvasChrome } from './CanvasChrome'
 import { GalleryPanel } from './GalleryPanel'
 import { CanvasImage } from './CanvasImage'
 import { ChainOverlay } from './ChainOverlay'
-import { autoBikiniPrompt, cosplayPrompt, dressEditPrompt, pickBikinis, pickCosplay, wornClothingPhoto } from '../lib/dressEdit'
+import { COSPLAY_THEMES, autoBikiniPrompt, cosplayPrompt, dressEditPrompt, pickBikinis, pickCosplay, wornClothingPhoto } from '../lib/dressEdit'
 import { flattenOnWhite, isOpaque, loadImage } from '../lib/extractFrame'
 import { useCrop916 } from './ExtractPopup'
 import { RegenerateDialog } from './RegenerateDialog'
-import { StudioDock } from './StudioDock'
 import {
   appendImageAssets,
   loadAssets,
@@ -64,6 +63,7 @@ import {
   notifyGalleryChanged,
   saveGalleryImage,
   type DressModel,
+  type GalleryImage,
 } from '../lib/modelGallery'
 import {
   NO_ONSCREEN_TEXT,
@@ -227,24 +227,11 @@ export function InfiniteCanvas({
     }
   }, [])
   const [generateError, setGenerateError] = useState<string | null>(null)
-  /** Slots held by dock panel jobs. A release with none held is ignored. */
-  const dockGenJobsRef = useRef(0)
-  const onDockGenBusy = useCallback((busy: boolean) => {
-    if (busy) {
-      dockGenJobsRef.current += 1
-      beginGen('image')
-      setGenerateError(null)
-      return
-    }
-    if (dockGenJobsRef.current === 0) return
-    dockGenJobsRef.current -= 1
-    endGen()
-  }, [beginGen, endGen])
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   /** Item id whose regenerate dialog is open */
   const [regenId, setRegenId] = useState<string | null>(null)
-  const [videoProvider, setVideoProvider] = useGenProviderState()
+  const [videoProvider] = useGenProviderState()
   const videoProviderRef = useRef(videoProvider)
   videoProviderRef.current = videoProvider
   const [imageProvider, setImageProvider] = useImageProviderState()
@@ -368,15 +355,28 @@ export function InfiniteCanvas({
 
   const { ask: askCrop, popup: cropPopup } = useCrop916()
 
-  const rememberStill = useCallback((src: string, prompt?: string) => {
+  const rememberStill = useCallback((
+    src: string,
+    prompt?: string,
+    meta?: { kind?: 'bikini' | 'cosplay'; theme?: string },
+  ) => {
     const id = modelIdRef.current
     if (!id) return
     void (async () => {
       try {
         const data = src.startsWith('data:') ? src : await toDataUri(src)
-        const saved = await saveGalleryImage(id, data, prompt ?? '')
+        const saved = await saveGalleryImage(id, data, prompt ?? '', {
+          kind: meta?.kind,
+          theme: meta?.theme,
+        })
         notifyGalleryChanged(id)
-        setGalleryNote(saved.created ? 'Saved to her gallery' : 'Already in her gallery')
+        const place =
+          saved.kind === 'bikini'
+            ? 'bikini gallery'
+            : saved.kind === 'cosplay'
+              ? 'cosplay gallery'
+              : 'gallery'
+        setGalleryNote(saved.created ? `Saved to her ${place}` : `Already in her ${place}`)
       } catch {
         setGalleryNote('Could not save that still to her gallery')
       }
@@ -391,7 +391,7 @@ export function InfiniteCanvas({
         | { kind: 'world'; x: number; y: number },
       mediaKind: 'image' | 'video' = 'image',
       extra?: Partial<Pick<CanvasItem, 'caption' | 'genMeta' | 'opacity'>>,
-      savePrompt?: string,
+      save?: { prompt?: string; kind?: 'bikini' | 'cosplay'; theme?: string },
     ): Promise<CanvasItem> => {
       const size =
         mediaKind === 'video'
@@ -418,11 +418,12 @@ export function InfiniteCanvas({
         height: size.height,
         zIndex: zCounter.current,
         ...extra,
+        ...(save?.kind ? { galleryKind: save.kind, galleryTheme: save.theme ?? '' } : {}),
       }
       setItems((prev) => [...prev, item])
       setSelectedIds([item.id])
       setSelectedEdge(null)
-      if (mediaKind === 'image' && savePrompt !== undefined) rememberStill(src, savePrompt)
+      if (mediaKind === 'image' && save) rememberStill(src, save.prompt, save)
       return item
     },
     [rememberStill],
@@ -463,199 +464,6 @@ export function InfiniteCanvas({
     if (!src) return null
     return itemsRef.current.find((it) => it.src === src)?.id ?? null
   }, [])
-
-  const generateFromPrompt = useCallback(
-    async (payload: PromptSubmitPayload) => {
-      beginGen(payload.mediaKind === 'video' ? 'video' : 'image')
-      setGenerateError(null)
-      try {
-        const selectedSingle =
-          selectedIds.length === 1
-            ? items.find((item) => item.id === selectedIds[0]) ?? null
-            : null
-        const selectedImage =
-          selectedSingle?.kind === 'video' ? null : selectedSingle
-
-        let images = payload.images
-        let prompt = payload.prompt
-
-        if (images.length) {
-          images = await Promise.all(images.map((src) => toDataUri(src)))
-        } else if (selectedImage && payload.mediaKind === 'image') {
-          images = [await toDataUri(selectedImage.src)]
-        }
-
-        if (payload.mediaKind === 'video') {
-          // null is a cleared start frame: leave the job text-to-video.
-          // Only a missing field may fall back to a reference or the selection.
-          const sentStartSrc =
-            payload.startFrame !== undefined
-              ? payload.startFrame
-              : payload.images[0] ?? (selectedImage ? selectedImage.src : null)
-          const startFrame = sentStartSrc ? await toDataUri(sentStartSrc) : null
-          const startSourceId = findIdBySrc(sentStartSrc)
-
-          const res = await dressFetch('/generate-video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt,
-              aspect_ratio: payload.aspectRatio,
-              duration: payload.duration ?? 6,
-              resolution: payload.resolution ?? '720p',
-              provider: videoProviderRef.current,
-              ...(startFrame ? { start_image: startFrame } : {}),
-            }),
-          })
-          const data = (await res.json()) as {
-            src?: string
-            lastFrame?: string | null
-            error?: string
-          }
-          if (!res.ok || !data.src) {
-            throw new Error(data.error || 'Video generation failed')
-          }
-          const sourceItem = startSourceId
-            ? itemsRef.current.find((it) => it.id === startSourceId)
-            : null
-          const videoItem = await addMediaFromSrc(
-            data.src,
-            sourceItem
-              ? {
-                  kind: 'world',
-                  x: sourceItem.x + sourceItem.width + 36,
-                  y: sourceItem.y,
-                }
-              : {
-                  kind: 'screen',
-                  screen: getViewportCenter(),
-                },
-            'video',
-            {
-              genMeta: {
-                mediaKind: 'video',
-                prompt,
-                startSrc: startFrame ?? undefined,
-                aspect: payload.aspectRatio,
-                duration: payload.duration ?? 6,
-                resolution: payload.resolution ?? '720p',
-              },
-            },
-          )
-          linkMade(startSourceId, videoItem.id)
-          // Place last-frame still to the right of the video
-          if (data.lastFrame) {
-            const lastStill = await addMediaFromSrc(
-              data.lastFrame,
-              {
-                kind: 'world',
-                x: videoItem.x + videoItem.width + 48,
-                y: videoItem.y,
-              },
-              'image',
-              undefined,
-              'Last frame',
-            )
-            linkMade(videoItem.id, lastStill.id)
-          }
-          return
-        }
-
-        const imageMode = imageModeRef.current
-        const colorMatch = payload.colorMatch
-          ? await toDataUri(payload.colorMatch)
-          : undefined
-        const bodyMatch = payload.bodyMatch
-          ? await toDataUri(payload.bodyMatch)
-          : undefined
-        const clothAt = payload.clothingIndex
-        if (clothAt != null && images[clothAt]) {
-          images = images.slice()
-          images[clothAt] = await clothingWithoutWearer(images[clothAt])
-        }
-        const sourceRefs = images.slice()
-        const res = await dressFetch('/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(
-            images.length
-              ? {
-                  prompt,
-                  images,
-                  aspect_ratio: payload.aspectRatio,
-                  image_mode: imageMode,
-                  provider: imageProviderRef.current,
-                  ...(colorMatch ? { color_match: colorMatch } : {}),
-                  ...(bodyMatch ? { body_match: bodyMatch } : {}),
-                  ...(payload.clothingIndex != null
-                    ? { clothing_index: payload.clothingIndex }
-                    : {}),
-                  ...(payload.poseIndex != null ? { pose_index: payload.poseIndex } : {}),
-                }
-              : {
-                  prompt,
-                  aspect_ratio: payload.aspectRatio,
-                  image_mode: imageMode,
-                  provider: imageProviderRef.current,
-                  ...(colorMatch ? { color_match: colorMatch } : {}),
-                  ...(bodyMatch ? { body_match: bodyMatch } : {}),
-                  ...(payload.clothingIndex != null
-                    ? { clothing_index: payload.clothingIndex }
-                    : {}),
-                  ...(payload.poseIndex != null ? { pose_index: payload.poseIndex } : {}),
-                },
-          ),
-        })
-        const data = (await res.json()) as { src?: string; error?: string }
-        if (!res.ok || !data.src) {
-          throw new Error(data.error || 'Generation failed')
-        }
-        const placed = data.src
-
-        const imageGenMeta = {
-          genMeta: {
-            mediaKind: 'image' as const,
-            prompt,
-            refs: sourceRefs.length ? sourceRefs : undefined,
-            aspect: payload.aspectRatio,
-            imageMode,
-          },
-        }
-        const sentSrc = payload.images[0]
-        const sourceId = sentSrc ? findIdBySrc(sentSrc) : (selectedImage?.id ?? null)
-
-        const created =
-          selectedImage && payload.images.length === 0
-            ? await addMediaFromSrc(
-                placed,
-                {
-                  kind: 'world',
-                  x: selectedImage.x + selectedImage.width + 36,
-                  y: selectedImage.y,
-                },
-                'image',
-                imageGenMeta,
-                prompt,
-              )
-            : await addMediaFromSrc(
-                placed,
-                {
-                  kind: 'screen',
-                  screen: getViewportCenter(),
-                },
-                'image',
-                imageGenMeta,
-                prompt,
-              )
-        linkMade(sourceId, created.id)
-      } catch (err) {
-        setGenerateError(err instanceof Error ? err.message : 'Generation failed')
-      } finally {
-        endGen()
-      }
-    },
-    [addMediaFromSrc, findIdBySrc, getViewportCenter, items, linkMade, selectedIds],
-  )
 
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
@@ -1449,8 +1257,16 @@ export function InfiniteCanvas({
     setSelectedEdge(null)
   }, [])
 
-  const placeAtCenter = async (src: string) => {
-    await addMediaFromSrc(src, { kind: 'screen', screen: getViewportCenter() })
+  const placeGalleryStill = async (image: GalleryImage) => {
+    const created = await addMediaFromSrc(image.url, { kind: 'screen', screen: getViewportCenter() })
+    if (!image.kind) return
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === created.id
+          ? { ...item, galleryKind: image.kind, galleryTheme: image.theme }
+          : item,
+      ),
+    )
   }
 
   const runAutoBikini = async (personSrc: string, count: 1 | 3) => {
@@ -1488,7 +1304,7 @@ export function InfiniteCanvas({
           },
           'image',
           undefined,
-          `Bikini · ${looks[i]}`,
+          { prompt: `Bikini · ${looks[i]}`, kind: 'bikini' },
         )
       }
     } catch (err) {
@@ -1535,7 +1351,11 @@ export function InfiniteCanvas({
           },
           'image',
           undefined,
-          `Cosplay · ${costumes[i]}`,
+          {
+            prompt: `Cosplay · ${COSPLAY_THEMES.find((theme) => theme.id === themeId)?.label ?? themeId}`,
+            kind: 'cosplay',
+            theme: themeId,
+          },
         )
       }
     } catch (err) {
@@ -1589,7 +1409,7 @@ export function InfiniteCanvas({
           : { kind: 'screen', screen: getViewportCenter() },
         'image',
         undefined,
-        text.trim() || (bare ? 'Undress' : 'Clothes on'),
+        { prompt: text.trim() || (bare ? 'Undress' : 'Clothes on') },
       )
       linkMade(sourceId, created.id)
     } catch (err) {
@@ -1635,6 +1455,8 @@ export function InfiniteCanvas({
       const source = sourceId
         ? itemsRef.current.find((it) => it.id === sourceId)
         : null
+      const sourcePrompt = source?.genMeta?.prompt ?? ''
+      const cosplay = source?.galleryKind === 'cosplay' || sourcePrompt.startsWith('Cosplay')
       const created = await addMediaFromSrc(
         generated.src,
         source
@@ -1642,7 +1464,9 @@ export function InfiniteCanvas({
           : { kind: 'screen', screen: getViewportCenter() },
         'image',
         undefined,
-        'Pose',
+        cosplay
+          ? { prompt: 'Pose', kind: 'cosplay', theme: source?.galleryTheme || '' }
+          : { prompt: 'Bikini', kind: 'bikini' },
       )
       linkMade(sourceId, created.id)
     } catch (err) {
@@ -1653,45 +1477,6 @@ export function InfiniteCanvas({
       endGen()
     }
   }
-
-  /** Empty scene plate for Detail. The caller holds the busy slot through compositing. */
-  const makeBackground = async (
-    prompt: string,
-    size: { w: number; h: number },
-    reference: string | null,
-    person: string,
-  ): Promise<{ src: string; person: string }> => {
-    try {
-      const images = reference ? [await toDataUri(reference)] : []
-      const res = await dressFetch('/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: [
-            'Empty background plate only. No people, no mannequin, no face.',
-            `Frame about ${Math.round(size.w)}×${Math.round(size.h)} pixels.`,
-            prompt.trim(),
-          ].join('\n'),
-          ...(images.length ? { images } : {}),
-          aspect_ratio: '9:16',
-          image_mode: imageModeRef.current,
-          provider: imageProviderRef.current,
-        }),
-      })
-      const data = (await res.json()) as { src?: string; error?: string }
-      if (!res.ok || !data.src) throw new Error(data.error || 'Background generate failed')
-      return { src: data.src, person }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Background generate failed'
-      setGenerateError(message)
-      throw err
-    }
-  }
-
-  const selectionRefs: SelectionRef[] = selectedIds.flatMap((id) => {
-    const item = items.find((it) => it.id === id)
-    return item ? [{ id: item.id, src: item.src }] : []
-  })
 
   const cursorClass = isPanning
     ? 'cursor-grabbing'
@@ -1899,22 +1684,6 @@ export function InfiniteCanvas({
           )}
       </div>
 
-      <StudioDock
-        busy={generating}
-        error={generateError}
-        selectionRefs={selectionRefs}
-        videoProvider={videoProvider}
-        onVideoProviderChange={setVideoProvider}
-        imageProvider={imageProvider}
-        onGenerate={generateFromPrompt}
-        assets={assets}
-        onPlace={placeAtCenter}
-        onDress={runDress}
-        onMakeBackground={makeBackground}
-        imageMode={imageMode}
-        onDockGenBusy={onDockGenBusy}
-      />
-
       <CanvasChrome
         mode={mode}
         scale={scaleUi}
@@ -1936,6 +1705,7 @@ export function InfiniteCanvas({
         imageProvider={imageProvider}
         onImageProviderChange={setImageProvider}
         genBusy={generating}
+        modelId={model.id}
         modelLabel={modelLabel}
         modelAvatar={model.avatar}
         onSwitchModel={onSwitchModel}
@@ -1950,7 +1720,7 @@ export function InfiniteCanvas({
           canSave={Boolean(selectedStill)}
           note={galleryNote}
           onSaveSelected={saveSelectedStill}
-          onPlace={(url) => void placeAtCenter(url)}
+          onPlace={(image) => void placeGalleryStill(image)}
           onClose={() => setGalleryOpen(false)}
         />
       ) : null}

@@ -3110,6 +3110,7 @@ textarea:focus-visible {
   border-radius: 12px;
   display: grid;
   gap: 16px;
+  margin-bottom: 96px;
   min-height: 220px;
   padding: 18px;
 }

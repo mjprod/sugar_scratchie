@@ -8,11 +8,15 @@ export type DressModel = {
   influencerName?: string | null;
 };
 
+export type GalleryKind = "bikini" | "cosplay" | "";
+
 export type GalleryImage = {
   id: string;
   path: string;
   url: string;
   prompt: string;
+  kind: GalleryKind;
+  theme: string;
   created_at: number;
   created?: boolean;
 };
@@ -55,10 +59,16 @@ export async function saveGalleryImage(
   modelId: string,
   src: string,
   prompt = "",
+  meta?: { kind?: GalleryKind; theme?: string },
 ): Promise<GalleryImage> {
   return api<GalleryImage>(`/api/models/${encodeURIComponent(modelId)}/gallery`, {
     method: "POST",
-    body: JSON.stringify({ src, prompt: prompt.slice(0, 500) }),
+    body: JSON.stringify({
+      src,
+      prompt: prompt.slice(0, 500),
+      kind: meta?.kind ?? "",
+      theme: meta?.theme ?? "",
+    }),
   });
 }
 

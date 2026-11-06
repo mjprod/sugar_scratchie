@@ -695,6 +695,27 @@
   text-align: center;
 }
 
+.flow-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.flow-back:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
 .brand-mark {
   display: flex;
   align-items: center;
@@ -4454,6 +4475,20 @@
   margin: 0;
   color: var(--accent);
   font-size: 0.8rem;
+}
+
+.gallery-section h3,
+.gallery-theme h4 {
+  margin: 0 0 8px;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gallery-theme + .gallery-theme {
+  margin-top: 10px;
 }
 
 .gallery-grid {

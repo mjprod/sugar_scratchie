@@ -31,6 +31,9 @@ export type CanvasItem = {
   caption?: string
   /** Present on generated items; carries params for regeneration */
   genMeta?: GenMeta
+  /** Gallery group this still belongs to, so a later edit stays in that group. */
+  galleryKind?: 'bikini' | 'cosplay' | ''
+  galleryTheme?: string
 }
 
 export type InteractionMode = 'select' | 'pan'
