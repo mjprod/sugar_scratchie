@@ -60,6 +60,12 @@ export type CompressReport = {
   saved_bytes?: number;
   saved?: string;
   webm_paths?: string[];
+  job_ids?: string[];
+  hd?: {
+    available?: boolean;
+    background?: CompressReportClip;
+    foreground?: CompressReportClip;
+  };
 };
 
 export const PROJECT_ID_PATTERN = /^[a-z0-9_]+$/;

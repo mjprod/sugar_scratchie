@@ -598,7 +598,8 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       kind: "process",
       title: "Finalize",
       subtitle: "390∶672 delivery",
-      description: "Cover-crop both clips to the prototype canvas, encode delivery MP4s, optional WebM",
+      description:
+        "Align foreground timing, then HandBrake HD + SD via VideoSquash. SD replaces the card MP4s; HD is saved beside them",
       x: 1520,
       y: 56,
       step: "compress",

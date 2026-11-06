@@ -46,7 +46,6 @@ import {
 import { fetchThemes, type ThemeInfo } from "../shared/themes";
 import { flowStepBadge, type FlowNodeRuntime } from "./flowCanvas";
 import {
-  COMPRESS_PRESETS,
   DEFAULT_THEME,
   nodeToStep,
   stepToNode,
@@ -212,6 +211,8 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
   const beforeFg = report.before?.foreground;
   const afterBg = report.after?.background;
   const afterFg = report.after?.foreground;
+  const hdBg = report.hd?.background;
+  const hdFg = report.hd?.foreground;
   const ratioPct =
     typeof report.size_ratio === "number" ? Math.round(report.size_ratio * 100) : null;
   const targetLabel =
@@ -220,15 +221,14 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
       : report.target_width
         ? `${report.target_width}px`
         : "?";
+  const showHd = Boolean(hdBg?.exists || hdFg?.exists);
 
   return (
     <Callout.Root color={report.aspect_ok === false ? "orange" : "green"}>
       <Callout.Text size="2">
-        <strong>Last finalize:</strong> {report.preset_label ?? report.preset ?? "delivery"} ·{" "}
+        <strong>Last finalize:</strong> {report.preset_label ?? report.preset ?? "VideoSquash"} ·{" "}
         {targetLabel}
-        {report.aspect ? ` (${report.aspect})` : ""} · {report.fit ?? "cover-crop"} · CRF{" "}
-        {report.crf ?? "?"}
-        {report.write_webm ? " · WebM on" : " · WebM off"}
+        {report.aspect ? ` (${report.aspect})` : ""}
       </Callout.Text>
       <Box mt="2">
         <Grid columns="2" gap="3">
@@ -245,7 +245,7 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
           </Box>
           <Box>
             <Text size="1" color="gray" weight="medium">
-              After
+              SD
             </Text>
             <Text as="div" size="2">
               BG {afterBg?.width ?? "?"}×{afterBg?.height ?? "?"} · {afterBg?.size ?? "—"}
@@ -255,6 +255,13 @@ function CompressReportPanel({ report }: { report: CompressReport }) {
             </Text>
           </Box>
         </Grid>
+        {showHd ? (
+          <Text as="div" size="2" mt="2">
+            HD BG {hdBg?.width ?? "?"}×{hdBg?.height ?? "?"} · {hdBg?.size ?? "—"}
+            {" · "}
+            FG {hdFg?.width ?? "?"}×{hdFg?.height ?? "?"} · {hdFg?.size ?? "—"}
+          </Text>
+        ) : null}
         <Text as="div" size="2" mt="2">
           Saved {report.saved ?? "—"}
           {ratioPct != null ? ` · now ${ratioPct}% of original` : ""}
@@ -2776,8 +2783,6 @@ export function RunMode(props: RunModeProps) {
     onDressReferenceImageChange,
     onCardIdChange,
     onCardLabelChange,
-    onWriteWebmChange,
-    onCompressPresetChange,
     onTrackerChange,
     onMeshTuneChange,
     onResolutionChange,
@@ -4108,39 +4113,16 @@ export function RunMode(props: RunModeProps) {
             <Callout.Root color="blue">
               <Callout.Text size="2">
                 Finalize aligns foreground timing to the bikini motion clip, backs up the raw card
-                videos, then <strong>cover-crops both clips to a fixed 390∶672 canvas</strong> (same
-                aspect as the scratch prototype). Every card gets the same frame size — no more
-                540×822 vs 540×706 mismatches.
+                videos, then sends both clips to <strong>VideoSquash</strong> (HandBrake HD then
+                SD). Presets come from <Code>~/Movies/VideoSquash/presets/HD.json</Code> and{" "}
+                <Code>SD.json</Code> on the encode Mac.
               </Callout.Text>
             </Callout.Root>
-            <Field label="Delivery preset">
-              <Select.Root
-                value={compressPreset}
-                onValueChange={(value) => onCompressPresetChange(value as CompressPreset)}
-              >
-                <Select.Trigger />
-                <Select.Content>
-                  {COMPRESS_PRESETS.map((entry) => (
-                    <Select.Item key={entry.id} value={entry.id}>
-                      {entry.label}
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Root>
-            </Field>
             <Text color="gray" size="2">
-              {COMPRESS_PRESETS.find((entry) => entry.id === compressPreset)?.detail}
-            </Text>
-            <label className="checkbox-label">
-              <Checkbox
-                checked={writeWebm}
-                onCheckedChange={(checked) => onWriteWebmChange(checked === true)}
-              />
-              Also write VP9 WebM sidecars (better browser fallback)
-            </label>
-            <Text color="gray" size="2">
-              Originals are copied to <Code>.video-backups/</Code> before overwrite. A size report is
-              saved under the project work folder after each run.
+              SD replaces <Code>background.mp4</Code> and <Code>foreground.mp4</Code>. HD is written
+              beside them as <Code>background.hd.mp4</Code> and <Code>foreground.hd.mp4</Code>.
+              Originals are copied to <Code>.video-backups/</Code> before overwrite. A size report
+              is saved under the project work folder after each run.
             </Text>
             {flowState?.compress_report ? (
               <CompressReportPanel report={flowState.compress_report} />
