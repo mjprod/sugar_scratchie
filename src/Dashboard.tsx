@@ -620,7 +620,6 @@ function VideoManagerPanel({
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [compressWebm, setCompressWebm] = useState(false);
 
   const editingCard = useMemo(
     () => cards.find((card) => card.id === editingCardId) ?? cards[0],
@@ -700,7 +699,7 @@ function VideoManagerPanel({
     if (!editingCard) return;
     if (
       !window.confirm(
-        `Compress "${editingCard.label}" to 540px H.264? Originals are backed up to .video-backups/ before being overwritten.`,
+        `Compress "${editingCard.label}" with VideoSquash (HandBrake HD + SD)? Originals are backed up to .video-backups/ before being overwritten.`,
       )
     ) {
       return;
@@ -710,7 +709,7 @@ function VideoManagerPanel({
     try {
       await api<JobInfo>(`/api/jobs/cards/${editingCard.id}/compress`, {
         method: "POST",
-        body: JSON.stringify({ write_webm: compressWebm }),
+        body: JSON.stringify({}),
       });
       await onRefreshJobs();
     } catch (caught) {
@@ -792,13 +791,6 @@ function VideoManagerPanel({
 
         <Separator size="4" />
         <Heading size="3">Compress videos</Heading>
-        <label className="checkbox-label">
-          <Checkbox
-            checked={compressWebm}
-            onCheckedChange={(checked) => setCompressWebm(checked === true)}
-          />
-          Also write VP9 WebM sidecars
-        </label>
         <Flex gap="2">
           <Button
             color="gray"
@@ -814,7 +806,8 @@ function VideoManagerPanel({
           color="gray"
           size="1"
         >
-          Re-encodes both clips to 540px H.264 in place (same as the Video Flow compress step). Originals are
+          Re-encodes both clips with VideoSquash (HandBrake HD then SD), same as Finalize. SD replaces
+          the card MP4s. HD is written as background.hd.mp4 and foreground.hd.mp4. Originals are
           backed up to .video-backups/. Watch progress in the Jobs tab.
         </Text>
       </Flex>

@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Code,
   Flex,
   Heading,
   Select,
@@ -16,12 +17,9 @@ import { useEffect, useMemo, useState } from "react";
 import { FlowCanvas, type FlowNodeRuntime } from "./flowCanvas";
 import { layoutFlowForRunView } from "./runFlowLayout";
 import {
-  COMPRESS_PRESETS,
   DEFAULT_VIDEO_FLOW_JSON,
-  parseCompressPreset,
   parseVideoFlowJson,
   stringifyVideoFlowJson,
-  type CompressPreset,
   type FlowNodeDef,
   type FlowNodeId,
   type VideoFlowJson,
@@ -357,48 +355,11 @@ export function DesignerMode({
           ) : null}
 
           {activeNode === "compress" ? (
-            <Flex direction="column" gap="3">
-              <Field label="Default delivery preset">
-                <Select.Root
-                  value={parseCompressPreset(draft.defaults.compress_preset)}
-                  onValueChange={(value) =>
-                    patchDraft({
-                      ...draft,
-                      defaults: {
-                        ...draft.defaults,
-                        compress_preset: value as CompressPreset,
-                      },
-                    })
-                  }
-                >
-                  <Select.Trigger />
-                  <Select.Content>
-                    {COMPRESS_PRESETS.map((entry) => (
-                      <Select.Item key={entry.id} value={entry.id}>
-                        {entry.label}
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Root>
-              </Field>
-              <Text color="gray" size="2">
-                {COMPRESS_PRESETS.find(
-                  (entry) => entry.id === parseCompressPreset(draft.defaults.compress_preset),
-                )?.detail}
-              </Text>
-              <label className="checkbox-label">
-                <Checkbox
-                  checked={draft.defaults.write_webm}
-                  onCheckedChange={(checked) =>
-                    patchDraft({
-                      ...draft,
-                      defaults: { ...draft.defaults, write_webm: checked === true },
-                    })
-                  }
-                />
-                Also write VP9 WebM sidecars by default
-              </label>
-            </Flex>
+            <Text size="2" color="gray">
+              Finalize sends both clips to VideoSquash. HandBrake presets{" "}
+              <Code>HD.json</Code> and <Code>SD.json</Code> on the encode Mac produce the HD and SD
+              files. SD becomes the card MP4s; HD becomes the <Code>.hd.mp4</Code> twins.
+            </Text>
           ) : null}
 
           {activeNode === "card" || activeNode === "output" ? (

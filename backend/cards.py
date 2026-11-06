@@ -304,42 +304,41 @@ def compress_card(
     write_webm: bool = False,
     compress_preset: str = "mobile",
 ) -> None:
-    """Re-encode a card's background/foreground in place using the same settings
-    as the Video Flow finalize step. Originals are backed up under .video-backups/
-    before being overwritten (a wider existing backup is kept). HD twins are
-    refreshed from the pre-compress files."""
+    """Re-encode a card's background/foreground with VideoSquash, same as Finalize.
+
+    Originals are backed up under .video-backups/ before being overwritten (a
+    wider existing backup is kept). SD replaces the card MP4s. HD is written
+    beside them as `*.hd.mp4`. `write_webm` and `compress_preset` are ignored.
+    """
+    del write_webm, compress_preset
     from backend.services.video_prep import (
         backup_video,
-        compress_video,
-        compress_video_webm,
         drop_out_of_sync_hd_variants,
-        normalize_compress_preset,
-        write_hd_variants,
+        install_squash_clip,
+        require_delivery_aspect,
     )
+    from backend.services.videosquash import encode_files, result_for
 
     background, foreground = card_paths(root, cards_dir, card_id)
     if not background.is_file() or not foreground.is_file():
         raise HTTPException(status_code=404, detail=f"Card videos not found: {card_id}")
 
-    preset = normalize_compress_preset(compress_preset)
     backup_dir = root / ".video-backups"
-    if card_id != ORIGINAL_ID:
-        write_hd_variants(
-            background_src=background,
-            foreground_src=foreground,
-            background_dst=background,
-            foreground_dst=foreground,
-            work_dir=background.parent,
-        )
-    for src in (background, foreground):
-        backup_video(src, backup_dir)
-        tmp = src.with_name(f"{src.stem}-compress-tmp{src.suffix}")
-        compress_video(src, tmp, preset=preset)
-        shutil.move(str(tmp), str(src))
-        if write_webm:
-            compress_video_webm(src, src.with_suffix(".webm"), preset=preset)
-    if card_id != ORIGINAL_ID:
+    output_dir = root / ".tmp" / "videosquash" / card_id / uuid.uuid4().hex
+    output_dir.mkdir(parents=True)
+    try:
+        encoded = encode_files([background, foreground], output_dir)
+        background_encoded = result_for(encoded, background)
+        foreground_encoded = result_for(encoded, foreground)
+        require_delivery_aspect(Path(str(background_encoded["sd"])), role="SD background")
+        require_delivery_aspect(Path(str(foreground_encoded["sd"])), role="SD foreground")
+        backup_video(background, backup_dir)
+        backup_video(foreground, backup_dir)
+        install_squash_clip(encoded=background_encoded, dst=background, role="background")
+        install_squash_clip(encoded=foreground_encoded, dst=foreground, role="foreground")
         drop_out_of_sync_hd_variants(background, foreground)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def backfill_card_hd_variants(root: Path, cards_dir: Path, card_id: str) -> dict:

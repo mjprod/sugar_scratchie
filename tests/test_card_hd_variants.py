@@ -172,7 +172,26 @@ def test_hd_variants_never_upscale_and_drop_when_out_of_sync(tmp_path):
 
 
 @needs_ffmpeg
-def test_recompress_keeps_full_res_backups_for_hd_backfill(layout):
+def test_recompress_keeps_full_res_backups_for_hd_backfill(layout, monkeypatch):
+    def fake_encode(sources, output_dir):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        results = []
+        for src in sources:
+            sd = output_dir / f"{src.stem}-SD{src.suffix}"
+            hd = output_dir / f"{src.stem}-HD{src.suffix}"
+            shutil.copy2(src, sd)
+            shutil.copy2(src, hd)
+            results.append(
+                {
+                    "source": str(src.resolve()),
+                    "job_id": f"job-{src.stem}",
+                    "sd": str(sd),
+                    "hd": str(hd),
+                }
+            )
+        return results
+
+    monkeypatch.setattr("backend.services.videosquash.encode_files", fake_encode)
     root, cards_dir, _ = layout
     card_id = f"test_hd_{uuid.uuid4().hex[:8]}"
     card_dir = cards_dir / card_id

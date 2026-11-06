@@ -80,6 +80,25 @@ def delivery_size(preset: CompressPreset) -> tuple[int, int]:
     return width, height
 
 
+def delivery_aspect_ok(width: int, height: int) -> bool:
+    """True when the frame matches the scratch canvas aspect (390∶672), any size."""
+    if width < 2 or height < 2:
+        return False
+    expected = int(round(width * DELIVERY_ASPECT_H / DELIVERY_ASPECT_W))
+    expected -= expected % 2
+    return abs(height - expected) <= 2
+
+
+def require_delivery_aspect(path: Path, *, role: str) -> dict:
+    meta = probe_video(path)
+    width, height = int(meta["width"]), int(meta["height"])
+    if not delivery_aspect_ok(width, height):
+        raise RuntimeError(
+            f"{role} is {width}x{height}, expected a {DELIVERY_ASPECT_W}:{DELIVERY_ASPECT_H} frame"
+        )
+    return meta
+
+
 def cover_crop_filter(width: int, height: int) -> str:
     """Scale to cover the target frame, then center-crop — no letterboxing."""
     return (
@@ -880,6 +899,24 @@ def drop_out_of_sync_hd_variants(background: Path, foreground: Path) -> bool:
     return in_sync
 
 
+def install_squash_clip(*, encoded: dict, dst: Path, role: str) -> None:
+    """Move one VideoSquash HD/SD pair onto the card file and its `.hd.mp4` twin.
+
+    The SD frame is checked before either file is replaced.
+    """
+    sd = Path(str(encoded.get("sd") or ""))
+    hd = Path(str(encoded.get("hd") or ""))
+    if not sd.is_file():
+        raise RuntimeError(f"VideoSquash SD output missing for {role} ({sd})")
+    if not hd.is_file():
+        raise RuntimeError(f"VideoSquash HD output missing for {role} ({hd})")
+    require_delivery_aspect(sd, role=f"SD {role}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(sd), str(dst))
+    shutil.move(str(hd), str(hd_variant_path(dst)))
+    dst.with_suffix(".webm").unlink(missing_ok=True)
+
+
 def finalize_card_videos(
     *,
     background_src: Path,
@@ -894,12 +931,15 @@ def finalize_card_videos(
     write_hd: bool = True,
     report_path: Path | None = None,
 ) -> dict:
-    """Align FG to BG, cover-crop both to a fixed prototype-aspect canvas, optional WebM.
+    """Align FG to the motion clip, then HandBrake HD + SD via VideoSquash.
 
-    Also writes the player's HD twins (`*.hd.mp4`) from the same sources."""
-    preset = normalize_compress_preset(preset)
-    spec = PRESET_SPECS[preset]
-    target_w, target_h = delivery_size(preset)
+    SD replaces the card MP4s. HD is written beside them as `*.hd.mp4`.
+    `preset`, `write_webm`, and `write_hd` are accepted so older callers keep
+    working; VideoSquash always encodes both variants and does not write WebM.
+    """
+    del preset, write_webm, write_hd
+    from backend.services.videosquash import encode_files, result_for
+
     work_dir.mkdir(parents=True, exist_ok=True)
 
     before = {
@@ -945,55 +985,28 @@ def finalize_card_videos(
         aligned_fg,
     )
 
-    bg_tmp = work_dir / "compress-bg-tmp.mp4"
-    fg_tmp = work_dir / "compress-fg-tmp.mp4"
-    print(
-        f"Delivery preset: {preset} ({spec['label']}) — "
-        f"{target_w}x{target_h} cover-crop (390∶672), CRF {spec['crf']}"
-        + (", WebM sidecars on" if write_webm else ", WebM off")
-    )
-
-    # Encode BG first from the card file, then FG from the aligned twin so both
-    # share the same pixel grid before the identical cover-crop.
-    compress_video(background_dst, bg_tmp, preset=preset)
-    compress_video(aligned_fg, fg_tmp, preset=preset)
-    hd_report = (
-        write_hd_variants(
-            background_src=background_dst,
-            foreground_src=aligned_fg,
-            background_dst=background_dst,
-            foreground_dst=foreground_dst,
-            work_dir=work_dir,
-        )
-        if write_hd
-        else {"written": False, "reason": "disabled"}
-    )
-    backup_video(background_dst, backup_dir)
-    backup_video(foreground_dst, backup_dir)
-    shutil.move(str(bg_tmp), str(background_dst))
-    shutil.move(str(fg_tmp), str(foreground_dst))
-    hd_report["available"] = drop_out_of_sync_hd_variants(background_dst, foreground_dst)
-
-    webm_paths: list[str] = []
-    if write_webm:
-        bg_webm = background_dst.with_suffix(".webm")
-        fg_webm = foreground_dst.with_suffix(".webm")
-        compress_video_webm(background_dst, bg_webm, preset=preset)
-        compress_video_webm(foreground_dst, fg_webm, preset=preset)
-        webm_paths = [str(bg_webm), str(fg_webm)]
+    output_dir = work_dir / "videosquash-out"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True)
+    try:
+        encoded = encode_files([background_dst, aligned_fg], output_dir)
+        background_encoded = result_for(encoded, background_dst)
+        foreground_encoded = result_for(encoded, aligned_fg)
+        require_delivery_aspect(Path(str(background_encoded["sd"])), role="SD background")
+        require_delivery_aspect(Path(str(foreground_encoded["sd"])), role="SD foreground")
+        backup_video(background_dst, backup_dir)
+        backup_video(foreground_dst, backup_dir)
+        install_squash_clip(encoded=background_encoded, dst=background_dst, role="background")
+        install_squash_clip(encoded=foreground_encoded, dst=foreground_dst, role="foreground")
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+    hd_available = drop_out_of_sync_hd_variants(background_dst, foreground_dst)
 
     after = {
         "background": _clip_report(background_dst, role="background"),
         "foreground": _clip_report(foreground_dst, role="foreground"),
     }
-    if write_webm:
-        after["background_webm"] = _clip_report(
-            background_dst.with_suffix(".webm"), role="background_webm"
-        )
-        after["foreground_webm"] = _clip_report(
-            foreground_dst.with_suffix(".webm"), role="foreground_webm"
-        )
-
     before_bytes = sum(int(entry.get("bytes") or 0) for entry in before.values())
     after_bytes = sum(
         int(entry.get("bytes") or 0)
@@ -1001,21 +1014,23 @@ def finalize_card_videos(
         if key in ("background", "foreground")
     )
     ratio = (after_bytes / before_bytes) if before_bytes else 1.0
-    aspect_ok = (
-        after["background"].get("width") == target_w
-        and after["background"].get("height") == target_h
-        and after["foreground"].get("width") == target_w
-        and after["foreground"].get("height") == target_h
+    aspect_ok = all(
+        delivery_aspect_ok(int(entry.get("width") or 0), int(entry.get("height") or 0))
+        for entry in (after["background"], after["foreground"])
     )
+    hd_bg = hd_variant_path(background_dst)
+    hd_fg = hd_variant_path(foreground_dst)
+    job_ids = [str(item.get("job_id") or "") for item in encoded if item.get("job_id")]
     report = {
-        "preset": preset,
-        "preset_label": spec["label"],
-        "write_webm": write_webm,
-        "target_width": target_w,
-        "target_height": target_h,
+        "preset": "videosquash",
+        "preset_label": "VideoSquash HD + SD",
+        "encoder": "videosquash",
+        "variants": ["hd", "sd"],
+        "job_ids": job_ids,
+        "target_width": after["background"].get("width"),
+        "target_height": after["background"].get("height"),
         "aspect": f"{DELIVERY_ASPECT_W}:{DELIVERY_ASPECT_H}",
-        "fit": "cover-crop",
-        "crf": int(spec["crf"]),
+        "fit": "handbrake",
         "duration_delta_before": round(duration_delta, 3),
         "pair_sync": pair_sync,
         "aspect_ok": aspect_ok,
@@ -1026,15 +1041,18 @@ def finalize_card_videos(
         "size_ratio": round(ratio, 3),
         "saved_bytes": max(0, before_bytes - after_bytes),
         "saved": _format_bytes(max(0, before_bytes - after_bytes)),
-        "webm_paths": webm_paths,
-        "hd": hd_report,
+        "hd": {
+            "available": hd_available,
+            "background": _clip_report(hd_bg, role="background_hd"),
+            "foreground": _clip_report(hd_fg, role="foreground_hd"),
+        },
         "backups": [
             str(backup_dir / f"{background_dst.parent.name}_{background_dst.name}"),
             str(backup_dir / f"{foreground_dst.parent.name}_{foreground_dst.name}"),
         ],
     }
     print(
-        f"Finalize complete: {target_w}x{target_h} H.264 cover-crop — "
+        f"Finalize complete: VideoSquash {report['target_width']}x{report['target_height']} — "
         f"{format_size(background_dst)} + {format_size(foreground_dst)} "
         f"(was {_format_bytes(before_bytes)}, saved {report['saved']}, ratio {ratio:.0%})"
     )
