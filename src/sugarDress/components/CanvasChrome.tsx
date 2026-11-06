@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ArrowLeft,
   ArrowsOutCardinal,
   Cursor,
   ImageSquare,
@@ -7,6 +8,7 @@ import {
   MagnifyingGlassPlus,
   ArrowsOut,
 } from '@phosphor-icons/react'
+import { hrefWithModel } from '../../shared/currentModel'
 import type { InteractionMode } from '../types'
 import { IMAGE_MODES, type ImageMode } from '../lib/promptRefs'
 import type { ImageProvider } from '../lib/genProvider'
@@ -53,6 +55,7 @@ type Props = {
   imageProvider: ImageProvider
   onImageProviderChange: (provider: ImageProvider) => void
   genBusy: boolean
+  modelId: string
   modelLabel: string
   modelAvatar: string | null
   onSwitchModel: () => void
@@ -81,6 +84,7 @@ export function CanvasChrome({
   imageProvider,
   onImageProviderChange,
   genBusy,
+  modelId,
   modelLabel,
   modelAvatar,
   onSwitchModel,
@@ -159,7 +163,11 @@ export function CanvasChrome({
   return (
     <>
       <header className="chrome-bar left-bar">
-        <a className="brand-mark" href="/dashboard/video-flow" title="Back to Video Flow">
+        <a className="flow-back" href={hrefWithModel('/dashboard/video-flow/run', modelId)}>
+          <ArrowLeft size={16} weight="bold" />
+          Video Flow
+        </a>
+        <a className="brand-mark" href={hrefWithModel('/dashboard/video-flow/run', modelId)} title="Back to Run">
           <span className="brand-dot" />
           <span className="brand-name">Sugar Dress</span>
         </a>

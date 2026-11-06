@@ -15,6 +15,7 @@ import type { VideoFlowStepKey } from "../schema";
 import { MaskEditor } from "../MaskEditor";
 import { SymbolPointPicker } from "../SymbolPointPicker";
 import { FilePathPicker, iconProps, MediaPreview } from "../ui";
+import { DressGalleryPicker } from "../DressGalleryPicker";
 import { VideoFlowShell } from "../VideoFlowShell";
 import { liteRequestBody, type LiteDraftInput } from "./defaults";
 import { LiteCanvas, type LiteNodeStatus } from "./LiteCanvas";
@@ -675,6 +676,12 @@ export function LiteFlowPage() {
                     onChange={setImage}
                     onError={setError}
                   />
+                  <DressGalleryPicker
+                    hint="Or click a bikini still."
+                    kind="bikini"
+                    modelId={modelId.trim()}
+                    onPick={setImage}
+                  />
                   <FilePathPicker
                     accept="image/*"
                     placeholder="Bikini photo"
@@ -684,6 +691,12 @@ export function LiteFlowPage() {
                     value={bikini}
                     onChange={setBikini}
                     onError={setError}
+                  />
+                  <DressGalleryPicker
+                    hint="Or click a bikini still from Dress."
+                    kind="bikini"
+                    modelId={modelId.trim()}
+                    onPick={setBikini}
                   />
                   <FilePathPicker
                     accept="image/*"

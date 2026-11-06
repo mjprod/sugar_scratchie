@@ -3702,8 +3702,11 @@ export function RunMode(props: RunModeProps) {
               />
             </Field>
             <DressGalleryPicker
-              hint="Click a Dress still to use it as her photo."
+              hint="Click a bikini still to use it as her photo."
+              kind="bikini"
+              autoPick={!image.trim()}
               modelId={modelId.trim()}
+              selectedPath={image}
               onPick={onImageChange}
             />
 
@@ -3725,6 +3728,12 @@ export function RunMode(props: RunModeProps) {
                   Create picture dresses her in this swimsuit before you approve it, and
                   photo-scratch bikinis use it too.
                 </Text>
+                <DressGalleryPicker
+                  hint="Or click a bikini still from Dress."
+                  kind="bikini"
+                  modelId={modelId.trim()}
+                  onPick={onBikiniImageChange}
+                />
               </Flex>
             </Field>
 
@@ -3810,7 +3819,14 @@ export function RunMode(props: RunModeProps) {
             </Flex>
             <Flex>
               <Button
-                disabled={!cardId.trim() || !image}
+                disabled={!cardId.trim() || !image.trim()}
+                title={
+                  !cardId.trim()
+                    ? "Set a card id first"
+                    : !image.trim()
+                      ? "Pick a bikini still first"
+                      : "Open Create picture"
+                }
                 type="button"
                 onClick={() => {
                   const nodeId = stepToNodeMap.picture;
@@ -3869,11 +3885,6 @@ export function RunMode(props: RunModeProps) {
                 onError={onError}
               />
             </Field>
-            <DressGalleryPicker
-              hint="Click a Dress still, then Add this picture."
-              modelId={modelId.trim()}
-              onPick={setManualPicture}
-            />
             <Flex align="center" gap="3" wrap="wrap">
               <Button
                 disabled={!canImportManualPicture}
@@ -4482,7 +4493,9 @@ export function RunMode(props: RunModeProps) {
         <Flex direction="column" gap="3" style={{ flex: 1 }}>
           {activeNode === "source" ? (
             <Text size="2">
-              Setup — open Create picture. It makes one {sourceImageLabel} still.
+              {image.trim()
+                ? `Setup — open Create picture. It makes one ${sourceImageLabel} still.`
+                : "Pick a bikini still for the main image, then open Create picture."}
             </Text>
           ) : actionStep && flowState ? (
             <Text size="2" weight="medium">

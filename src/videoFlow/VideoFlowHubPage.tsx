@@ -80,7 +80,7 @@ export function VideoFlowHubPage() {
                 <Shirt {...iconProps} size={28} />
                 <Heading size="5">Dress</Heading>
                 <Text color="gray" size="2">
-                  Make stills for one girl. They stay in her gallery for Run flow.
+                  Make stills for one girl. Bikini and cosplay each save into her gallery.
                 </Text>
               </Flex>
             </a>

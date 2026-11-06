@@ -342,6 +342,33 @@ export function pickCosplay(
   return out
 }
 
+function compactTheme(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/** Card theme labels ("Cowgirl", "Fire Fighter") onto a Dress costume id. */
+export function matchCosplayTheme(cardTheme: string): string {
+  const key = compactTheme(cardTheme)
+  if (!key) return ''
+  for (const theme of COSPLAY_THEMES) {
+    if (key === theme.id || key === compactTheme(theme.label)) return theme.id
+  }
+  const aliases: Record<string, string> = {
+    cowgirl: 'cow',
+    cowboy: 'cow',
+    firefighter: 'fire',
+    fireman: 'fire',
+    flightattendant: 'flight',
+    stewardess: 'flight',
+    gymgirl: 'gym',
+    greekmyth: 'greek',
+    greekmythos: 'greek',
+    greekgoddess: 'greek',
+  }
+  const id = aliases[key] ?? ''
+  return COSPLAY_THEMES.some((theme) => theme.id === id) ? id : ''
+}
+
 /** Clothes become this costume. The person underneath is not redrawn. */
 export function cosplayPrompt(costume: string): string {
   return [
@@ -562,6 +589,18 @@ if (isDirectRun) {
     })
   ) {
     throw new Error('cosplay')
+  }
+  if (
+    matchCosplayTheme('Police') !== 'police' ||
+    matchCosplayTheme('Cowgirl') !== 'cow' ||
+    matchCosplayTheme('Fire Fighter') !== 'fire' ||
+    matchCosplayTheme('Flight Attendant') !== 'flight' ||
+    matchCosplayTheme('Gym Girl') !== 'gym' ||
+    matchCosplayTheme('Greek Mythos') !== 'greek' ||
+    matchCosplayTheme('') !== '' ||
+    matchCosplayTheme('Beach') !== ''
+  ) {
+    throw new Error('cosplay theme match')
   }
   if (wornClothingPhoto([0, 0, 0, 255, 10, 10, 10, 255])) throw new Error('black cloth looked worn')
   const skin = [230, 180, 150, 255]

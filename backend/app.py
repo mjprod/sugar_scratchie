@@ -1390,6 +1390,8 @@ def post_model_gallery(
         model_id=model_id,
         src=request.src,
         prompt=request.prompt,
+        kind=request.kind,
+        theme=request.theme,
     )
 
 
