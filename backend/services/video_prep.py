@@ -899,21 +899,46 @@ def drop_out_of_sync_hd_variants(background: Path, foreground: Path) -> bool:
     return in_sync
 
 
-def install_squash_clip(*, encoded: dict, dst: Path, role: str) -> None:
-    """Move one VideoSquash HD/SD pair onto the card file and its `.hd.mp4` twin.
+def hd_upscale_reason(source: Path | None) -> str | None:
+    """Why this source must not replace an existing `*.hd.mp4`.
 
+    A clip already narrower than the HD twin would only be scaled up. Leave the
+    current twin in place (the old encode skipped the same case).
+    """
+    if source is None or not source.is_file():
+        return None
+    width = int(probe_video(source)["width"])
+    limit = hd_variant_size()[0]
+    if width < limit:
+        return f"{source.name} is {width}px wide (< {limit}px), not upscaling"
+    return None
+
+
+def install_squash_clip(*, encoded: dict, dst: Path, role: str, write_hd: bool = True) -> None:
+    """Move one VideoSquash SD file onto the card clip.
+
+    The HD twin is replaced only when `write_hd` is set and the source is at
+    least the HD width. A narrower source leaves any existing `*.hd.mp4` alone.
     The SD frame is checked before either file is replaced.
     """
     sd = Path(str(encoded.get("sd") or ""))
     hd = Path(str(encoded.get("hd") or ""))
+    source = Path(str(encoded.get("source") or ""))
     if not sd.is_file():
         raise RuntimeError(f"VideoSquash SD output missing for {role} ({sd})")
-    if not hd.is_file():
+    # Probe before the SD move: the source is often the card file itself.
+    skip_hd = hd_upscale_reason(source) if write_hd else "HD disabled"
+    if skip_hd is None and not hd.is_file():
         raise RuntimeError(f"VideoSquash HD output missing for {role} ({hd})")
     require_delivery_aspect(sd, role=f"SD {role}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(sd), str(dst))
-    shutil.move(str(hd), str(hd_variant_path(dst)))
+    if skip_hd is None:
+        shutil.move(str(hd), str(hd_variant_path(dst)))
+    else:
+        print(f"HD variant kept for {role}: {skip_hd}")
+        if hd.is_file() and hd.resolve() != hd_variant_path(dst).resolve():
+            hd.unlink()
     dst.with_suffix(".webm").unlink(missing_ok=True)
 
 
@@ -933,11 +958,12 @@ def finalize_card_videos(
 ) -> dict:
     """Align FG to the motion clip, then HandBrake HD + SD via VideoSquash.
 
-    SD replaces the card MP4s. HD is written beside them as `*.hd.mp4`.
-    `preset`, `write_webm`, and `write_hd` are accepted so older callers keep
-    working; VideoSquash always encodes both variants and does not write WebM.
+    SD replaces the card MP4s. HD replaces `*.hd.mp4` only when `write_hd` is
+    set and the source is at least 720px wide, so a re-encode of a delivery
+    clip does not upscale over a full-res twin. `preset` and `write_webm` are
+    accepted so older callers keep working; VideoSquash does not write WebM.
     """
-    del preset, write_webm, write_hd
+    del preset, write_webm
     from backend.services.videosquash import encode_files, result_for
 
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -997,8 +1023,12 @@ def finalize_card_videos(
         require_delivery_aspect(Path(str(foreground_encoded["sd"])), role="SD foreground")
         backup_video(background_dst, backup_dir)
         backup_video(foreground_dst, backup_dir)
-        install_squash_clip(encoded=background_encoded, dst=background_dst, role="background")
-        install_squash_clip(encoded=foreground_encoded, dst=foreground_dst, role="foreground")
+        install_squash_clip(
+            encoded=background_encoded, dst=background_dst, role="background", write_hd=write_hd
+        )
+        install_squash_clip(
+            encoded=foreground_encoded, dst=foreground_dst, role="foreground", write_hd=write_hd
+        )
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
     hd_available = drop_out_of_sync_hd_variants(background_dst, foreground_dst)

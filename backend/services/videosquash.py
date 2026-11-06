@@ -172,7 +172,12 @@ def _materialize(job: dict, src: Path, output_dir: Path, variant: str, jid: str)
         candidate = _as_path(hinted, output_dir)
         if candidate.is_file() and candidate.resolve() != src.resolve():
             return _stage(candidate, dest)
-    for folder in (output_dir, src.parent):
+    # Remote encodes land on the other Mac. A stem-HD / stem-SD file beside
+    # the source is a leftover from an earlier local run, not this job.
+    folders = [output_dir]
+    if is_local():
+        folders.append(src.parent)
+    for folder in folders:
         found = _versioned_output(folder, src.stem, variant, suffix)
         if found is not None and found.resolve() != src.resolve():
             return _stage(found, dest)

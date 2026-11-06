@@ -334,9 +334,16 @@ def compress_card(
         require_delivery_aspect(Path(str(foreground_encoded["sd"])), role="SD foreground")
         backup_video(background, backup_dir)
         backup_video(foreground, backup_dir)
-        install_squash_clip(encoded=background_encoded, dst=background, role="background")
-        install_squash_clip(encoded=foreground_encoded, dst=foreground, role="foreground")
-        drop_out_of_sync_hd_variants(background, foreground)
+        # The original card's demo files never grew HD twins.
+        publish_hd = card_id != ORIGINAL_ID
+        install_squash_clip(
+            encoded=background_encoded, dst=background, role="background", write_hd=publish_hd
+        )
+        install_squash_clip(
+            encoded=foreground_encoded, dst=foreground, role="foreground", write_hd=publish_hd
+        )
+        if publish_hd:
+            drop_out_of_sync_hd_variants(background, foreground)
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
 
