@@ -78,6 +78,11 @@ import {
   type ImageProvider,
 } from '../lib/genProvider'
 
+function savedGalleryGroup(item: Pick<CanvasItem, 'galleryKind' | 'galleryTheme'>) {
+  if (item.galleryKind !== 'bikini' && item.galleryKind !== 'cosplay') return undefined
+  return { kind: item.galleryKind, theme: item.galleryTheme || '' }
+}
+
 function useGenProviderState(): [GenProvider, (provider: GenProvider) => void] {
   const [provider, setProvider] = useState<GenProvider>(() => loadGenProvider())
   useEffect(() => {
@@ -1068,7 +1073,7 @@ export function InfiniteCanvas({
             throw new Error(data.error || 'Image regenerate failed')
           }
           newSrc = data.src
-          rememberStill(newSrc, basePrompt)
+          rememberStill(newSrc, basePrompt, savedGalleryGroup(item))
         }
 
         const size =
@@ -1243,7 +1248,7 @@ export function InfiniteCanvas({
       selectedStill.genMeta?.mediaKind === 'image'
         ? selectedStill.genMeta.prompt
         : selectedStill.caption || 'Saved from canvas'
-    rememberStill(selectedStill.src, prompt)
+    rememberStill(selectedStill.src, prompt, savedGalleryGroup(selectedStill))
   }
 
   const generatedItems = items
@@ -1455,8 +1460,15 @@ export function InfiniteCanvas({
       const source = sourceId
         ? itemsRef.current.find((it) => it.id === sourceId)
         : null
-      const sourcePrompt = source?.genMeta?.prompt ?? ''
-      const cosplay = source?.galleryKind === 'cosplay' || sourcePrompt.startsWith('Cosplay')
+      const sourcePrompt = source?.genMeta?.prompt ?? source?.caption ?? ''
+      const inherited =
+        source?.galleryKind === 'bikini' || source?.galleryKind === 'cosplay'
+          ? source.galleryKind
+          : sourcePrompt.startsWith('Cosplay')
+            ? 'cosplay'
+            : sourcePrompt.startsWith('Bikini')
+              ? 'bikini'
+              : ''
       const created = await addMediaFromSrc(
         generated.src,
         source
@@ -1464,9 +1476,11 @@ export function InfiniteCanvas({
           : { kind: 'screen', screen: getViewportCenter() },
         'image',
         undefined,
-        cosplay
+        inherited === 'cosplay'
           ? { prompt: 'Pose', kind: 'cosplay', theme: source?.galleryTheme || '' }
-          : { prompt: 'Bikini', kind: 'bikini' },
+          : inherited === 'bikini'
+            ? { prompt: 'Bikini', kind: 'bikini' }
+            : { prompt: 'Pose' },
       )
       linkMade(sourceId, created.id)
     } catch (err) {

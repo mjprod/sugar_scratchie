@@ -33,7 +33,7 @@ export function DressGalleryPicker({
   theme?: string;
   /** When the field is empty and the strip has one still, use that still. */
   autoPick?: boolean;
-  /** Current field value. A gallery path that is no longer saved is replaced. */
+  /** Current field value. Replaced only when that gallery file is gone. */
   selectedPath?: string;
   onPick: (path: string) => void;
 }) {
@@ -82,8 +82,9 @@ export function DressGalleryPicker({
   const onlyPath = shown.length === 1 ? shown[0]?.path ?? "" : "";
   const current = selectedPath?.trim() ?? "";
   const currentIsGallery = Boolean(modelId) && current.includes(`/models/${modelId}/gallery/`);
-  const currentStillThere = shown.some((image) => current.includes(`${image.id}.png`));
-  const replacement = currentIsGallery && shown.length > 0 && !currentStillThere ? shown[0] : undefined;
+  const currentStillSaved = images.some((image) => current.includes(`${image.id}.png`));
+  const replacement =
+    currentIsGallery && images.length > 0 && !currentStillSaved && shown[0] ? shown[0] : undefined;
   useEffect(() => {
     if (!autoPick || !onlyId || !onlyPath) return;
     if (autoPicked.current === onlyId) return;
