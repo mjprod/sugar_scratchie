@@ -587,8 +587,8 @@ export function AiModelsPage() {
                 {addingKlein && kleinAlready ? (
                   <Callout.Root color="amber">
                     <Callout.Text>
-                      FLUX 3 Image Klein is already under Source photo, at the bottom of this page.
-                      Rename it there. If the badge says Hidden, open it and turn the dropdown checkbox back on.
+                      FLUX 3 Image Klein is already under {ROLE_TITLES["source_image"]}. Rename it there. If the badge
+                      says Hidden, open it and turn the dropdown checkbox back on.
                     </Callout.Text>
                   </Callout.Root>
                 ) : null}
