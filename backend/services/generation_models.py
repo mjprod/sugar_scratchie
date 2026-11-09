@@ -46,6 +46,14 @@ ADAPTERS: tuple[AdapterInfo, ...] = (
         needs_endpoint=False,
     ),
     AdapterInfo(
+        id="evolink_image",
+        label="EvoLink image (Seedream-style)",
+        roles=("source_image",),
+        provider="evolink",
+        needs_endpoint=True,
+        endpoint_hint="doubao-seedream-5.0-lite",
+    ),
+    AdapterInfo(
         id="wan_spicy_i2v",
         label="WaveSpeed image-to-video (WAN Spicy-style)",
         roles=("background_video",),
@@ -59,6 +67,14 @@ ADAPTERS: tuple[AdapterInfo, ...] = (
         roles=("background_video",),
         provider="xai",
         needs_endpoint=False,
+    ),
+    AdapterInfo(
+        id="evolink_i2v",
+        label="EvoLink image-to-video (Seedance-style)",
+        roles=("background_video",),
+        provider="evolink",
+        needs_endpoint=True,
+        endpoint_hint="seedance-2.0-image-to-video",
     ),
     AdapterInfo(
         id="reference_video_edit",
@@ -85,6 +101,15 @@ ADAPTERS: tuple[AdapterInfo, ...] = (
         provider="xai",
         needs_endpoint=False,
     ),
+    AdapterInfo(
+        id="evolink_reference_video",
+        label="EvoLink video edit with references (Seedance / WAN)",
+        roles=("dress_video",),
+        provider="evolink",
+        needs_endpoint=True,
+        needs_reference_token=True,
+        endpoint_hint="seedance-2.0-reference-to-video",
+    ),
 )
 
 ADAPTERS_BY_ID: dict[str, AdapterInfo] = {item.id: item for item in ADAPTERS}
@@ -106,7 +131,7 @@ class GenerationModelSpec:
 
     @property
     def takes_reference_image(self) -> bool:
-        return self.adapter == "reference_video_edit"
+        return self.adapter in ("reference_video_edit", "evolink_reference_video")
 
 
 BUILTINS: tuple[GenerationModelSpec, ...] = (
@@ -190,6 +215,44 @@ BUILTINS: tuple[GenerationModelSpec, ...] = (
         adapter="prompt_video_edit",
         endpoint_path="/wavespeed-ai/wan-2.2/video-edit",
         sort_order=3,
+    ),
+    GenerationModelSpec(
+        id="evolink-seedream-5.0-lite",
+        role="source_image",
+        label="EvoLink Seedream 5.0 Lite",
+        provider="evolink",
+        adapter="evolink_image",
+        endpoint_path="doubao-seedream-5.0-lite",
+        sort_order=3,
+    ),
+    GenerationModelSpec(
+        id="evolink-seedance-2.0-i2v",
+        role="background_video",
+        label="EvoLink Seedance 2.0 Image-to-Video",
+        provider="evolink",
+        adapter="evolink_i2v",
+        endpoint_path="seedance-2.0-image-to-video",
+        sort_order=2,
+    ),
+    GenerationModelSpec(
+        id="evolink-seedance-2.0-reference",
+        role="dress_video",
+        label="EvoLink Seedance 2.0 Reference-to-Video",
+        provider="evolink",
+        adapter="evolink_reference_video",
+        endpoint_path="seedance-2.0-reference-to-video",
+        reference_token="@image1",
+        sort_order=4,
+    ),
+    GenerationModelSpec(
+        id="evolink-wan3.0-reference",
+        role="dress_video",
+        label="EvoLink WAN 3.0 Reference-to-Video",
+        provider="evolink",
+        adapter="evolink_reference_video",
+        endpoint_path="wan3.0-reference-video",
+        reference_token="@image1",
+        sort_order=5,
     ),
 )
 

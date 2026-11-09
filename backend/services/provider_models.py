@@ -1,4 +1,4 @@
-"""Live model lists from WaveSpeed and x.ai, used when an operator adds a model."""
+"""Live model lists from WaveSpeed, x.ai, and EvoLink, used when an operator adds a model."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from backend.services import grok, wavespeed
+from backend.services import evolink, grok, wavespeed
 
 CACHE_SECONDS = 300
 
@@ -35,8 +35,8 @@ class RemoteModel:
 
 def list_remote_models(provider: str, *, query: str = "", role: str = "") -> list[RemoteModel]:
     provider = provider.strip().lower()
-    if provider not in ("xai", "wavespeed"):
-        raise ProviderLookupError("Provider must be x.ai or WaveSpeed")
+    if provider not in ("xai", "wavespeed", "evolink"):
+        raise ProviderLookupError("Provider must be x.ai, WaveSpeed, or EvoLink")
     rows = _cached(provider)
     needle = _loose(query)
     matched = []
@@ -57,7 +57,7 @@ def ensure_remote_model(provider: str, model_id: str) -> RemoteModel:
     for row in _cached(provider):
         if _normalize_id(provider, row.model_id) == wanted:
             return row
-    label = "x.ai" if provider == "xai" else "WaveSpeed"
+    label = {"xai": "x.ai", "wavespeed": "WaveSpeed", "evolink": "EvoLink"}.get(provider, provider)
     raise ProviderModelNotFound(
         f"{wanted} is not on your {label} key. Look up the current list and pick a model that exists."
     )
@@ -68,7 +68,12 @@ def _cached(provider: str) -> list[RemoteModel]:
     now = time.monotonic()
     if cached and now - cached[0] < CACHE_SECONDS:
         return cached[1]
-    rows = _fetch_xai() if provider == "xai" else _fetch_wavespeed()
+    if provider == "xai":
+        rows = _fetch_xai()
+    elif provider == "evolink":
+        rows = _fetch_evolink()
+    else:
+        rows = _fetch_wavespeed()
     _cache[provider] = (now, rows)
     return rows
 
@@ -89,6 +94,8 @@ def _normalize_id(provider: str, model_id: str) -> str:
         elif raw and not raw.startswith("/"):
             raw = "/" + raw
         return raw.rstrip("/")
+    if provider == "evolink":
+        return raw.lstrip("/")
     return raw
 
 
@@ -220,3 +227,57 @@ def _suggest_xai(model_id: str, row: dict) -> tuple[str, str]:
     if "video" in outputs or "video" in ident:
         return "background_video", "grok_i2v"
     return "source_image", "grok_image"
+
+
+def _fetch_evolink() -> list[RemoteModel]:
+    try:
+        key = evolink.api_key()
+        payload = evolink.api_get(evolink.MODELS_PATH, key)
+    except RuntimeError as exc:
+        raise ProviderLookupError(str(exc)) from exc
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if rows is None and isinstance(payload, dict):
+        rows = payload.get("models")
+    if not isinstance(rows, list):
+        raise ProviderLookupError("EvoLink model list was not a list")
+    found: list[RemoteModel] = []
+    seen: set[str] = set()
+    for row in rows:
+        if isinstance(row, str):
+            model_id = row.strip()
+            name = model_id
+            kind = ""
+        elif isinstance(row, dict):
+            model_id = str(row.get("id") or row.get("model") or row.get("model_id") or "").strip()
+            name = str(row.get("name") or model_id).strip() or model_id
+            kind = str(row.get("type") or row.get("kind") or row.get("object") or "")
+        else:
+            continue
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        role, adapter, token = _suggest_evolink(model_id, kind)
+        found.append(
+            RemoteModel(
+                provider="evolink",
+                model_id=model_id,
+                name=name,
+                kind=kind,
+                suggested_role=role,
+                suggested_adapter=adapter,
+                reference_token=token,
+            )
+        )
+    found.sort(key=lambda item: item.model_id)
+    return found
+
+
+def _suggest_evolink(model_id: str, kind: str = "") -> tuple[str, str, str]:
+    text = f"{model_id} {kind}".lower()
+    if "image-to-video" in text:
+        return "background_video", "evolink_i2v", ""
+    if any(token in text for token in ("reference-to-video", "reference-video", "video-edit", "video-extend")):
+        return "dress_video", "evolink_reference_video", "@image1"
+    if "video" in text and "image" not in text and "seedream" not in text:
+        return "background_video", "evolink_i2v", ""
+    return "source_image", "evolink_image", ""

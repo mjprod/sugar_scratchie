@@ -776,6 +776,7 @@ def health() -> dict:
         "jobs": job_stats(),
         "xai_key_loaded": bool(os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY")),
         "wavespeed_key_loaded": bool(os.environ.get("WAVESPEED_API_KEY")),
+        "evolink_key_loaded": bool(os.environ.get("EVOLINK_API_KEY")),
         "bfl_key_loaded": bool(os.environ.get("BFL_API_KEY")),
         "flux_klein_url_set": bool(os.environ.get("FLUX_KLEIN_URL")),
         "ffmpeg_available": shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,

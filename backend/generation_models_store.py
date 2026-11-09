@@ -147,6 +147,18 @@ def _clean_endpoint(info: AdapterInfo, raw: str) -> str:
                 detail="x.ai model id looks like grok-imagine-video-1.5",
             )
         return path
+    if info.provider == "evolink":
+        if not path:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter an EvoLink model id, such as seedance-2.0-image-to-video",
+            )
+        if not XAI_MODEL_ID_PATTERN.match(path):
+            raise HTTPException(
+                status_code=400,
+                detail="EvoLink model id looks like seedance-2.0-image-to-video",
+            )
+        return path
     if not path or not ENDPOINT_PATTERN.match(path) or ".." in path:
         raise HTTPException(
             status_code=400,
@@ -386,8 +398,8 @@ def lookup_provider_models(request: LookupProviderModelsRequest) -> list[dict]:
 
 def check_provider_model(request: CheckProviderModelRequest) -> dict:
     provider = request.provider.strip().lower()
-    if provider not in ("xai", "wavespeed"):
-        raise HTTPException(status_code=400, detail="Provider must be x.ai or WaveSpeed")
+    if provider not in ("xai", "wavespeed", "evolink"):
+        raise HTTPException(status_code=400, detail="Provider must be x.ai, WaveSpeed, or EvoLink")
     try:
         row = provider_catalog.ensure_remote_model(provider, request.model_id)
     except provider_catalog.ProviderModelNotFound as exc:

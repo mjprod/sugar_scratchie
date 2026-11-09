@@ -3,7 +3,9 @@ from __future__ import annotations
 import uuid
 
 from backend.services.ai_provider import (
+    edit_clothes_layer,
     edit_image_scenery,
+    edit_photo_scratch_layer,
     edit_video,
     generate_portrait_image,
     image_to_video,
@@ -24,13 +26,19 @@ def test_generation_models_lists_builtins(client):
     labels = {(row["role"], row["label"]) for row in body["models"]}
     assert ("background_video", "x.ai Grok Imagine") in labels
     assert ("background_video", "WaveSpeed WAN 2.2 Spicy") in labels
+    assert ("background_video", "EvoLink Seedance 2.0 Image-to-Video") in labels
     assert ("dress_video", "WaveSpeed ByteDance Seedance 2.0 Video Edit") in labels
     assert ("dress_video", "WaveSpeed Alibaba WAN 3.0 Video Edit") in labels
     assert ("dress_video", "WaveSpeed WAN 2.2 Video Edit") in labels
+    assert ("dress_video", "EvoLink Seedance 2.0 Reference-to-Video") in labels
+    assert ("dress_video", "EvoLink WAN 3.0 Reference-to-Video") in labels
     assert ("dress_video", "x.ai Grok Imagine") in labels
     assert ("source_image", "FLUX 3 Image Klein") in labels
+    assert ("source_image", "EvoLink Seedream 5.0 Lite") in labels
     assert any(adapter["id"] == "wan_spicy_i2v" for adapter in body["adapters"])
     assert any(adapter["id"] == "flux_klein_image" for adapter in body["adapters"])
+    assert any(adapter["id"] == "evolink_i2v" for adapter in body["adapters"])
+    assert any(adapter["id"] == "evolink_reference_video" for adapter in body["adapters"])
 
 
 def test_generation_model_crud_and_dispatch(client, dashboard_headers, monkeypatch, tmp_path):
@@ -459,6 +467,9 @@ def test_xai_provider_routes_stills_off_leftover_seedream(monkeypatch, tmp_path)
     assert source_image_route("wavespeed", "seedream-v5-lite") == "seedream-v5-lite"
     assert source_image_route("wavespeed", "grok-imagine") == "wavespeed"
     assert source_image_route("xai", "flux-3-image-klein") == "bfl"
+    assert source_image_route("evolink", "evolink-seedream-5.0-lite") == "evolink"
+    assert source_image_route("wavespeed", "evolink-seedream-5.0-lite") == "evolink"
+    assert source_image_route("xai", "evolink-seedream-5.0-lite") == "evolink"
 
     def refuse_seedream(**kwargs):
         raise AssertionError(f"seedream still used: {kwargs.get('out')}")
@@ -544,3 +555,173 @@ def test_lock_setup_face_prefers_wavespeed_dedicated_swap(monkeypatch, tmp_path)
         image_model="grok-imagine",
     )
     assert calls == ["wavespeed"]
+
+
+def test_evolink_model_crud_and_dispatch(client, dashboard_headers, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "backend.services.provider_models.ensure_remote_model",
+        lambda provider, model_id: None,
+    )
+    model_id = f"evolink-i2v-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/api/generation-models",
+        headers=dashboard_headers,
+        json={
+            "id": model_id,
+            "role": "background_video",
+            "label": f"EvoLink I2V {model_id}",
+            "adapter": "evolink_i2v",
+            "endpoint_path": "seedance-2.0-image-to-video",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["provider"] == "evolink"
+    assert created.json()["endpoint_path"] == "seedance-2.0-image-to-video"
+
+    called: dict = {}
+
+    def fake_i2v(**kwargs):
+        called.update(kwargs)
+
+    monkeypatch.setattr("backend.services.evolink.image_to_video", fake_i2v)
+    image_to_video(
+        provider="evolink",
+        image=tmp_path / "still.png",
+        prompt="locked camera",
+        out=tmp_path / "out.mp4",
+        model="grok-imagine-video-1.5",
+        resolution="720p",
+        image_field="image",
+        endpoint="/v1/videos/generations",
+        background_video_model=model_id,
+        enhance_motion_prompt=False,
+    )
+    assert called["model"] == "seedance-2.0-image-to-video"
+
+    dress_id = f"evolink-dress-{uuid.uuid4().hex[:8]}"
+    dress = client.post(
+        "/api/generation-models",
+        headers=dashboard_headers,
+        json={
+            "id": dress_id,
+            "role": "dress_video",
+            "label": f"EvoLink dress {dress_id}",
+            "adapter": "evolink_reference_video",
+            "endpoint_path": "seedance-2.0-reference-to-video",
+            "reference_token": "@image1",
+        },
+    )
+    assert dress.status_code == 200, dress.text
+
+    dress_called: dict = {}
+
+    def fake_edit(**kwargs):
+        dress_called.update(kwargs)
+
+    monkeypatch.setattr("backend.services.evolink.edit_video_reference", fake_edit)
+    edit_video(
+        provider="evolink",
+        video=tmp_path / "in.mp4",
+        prompt="red dress",
+        out=tmp_path / "dressed.mp4",
+        model="grok-imagine-video",
+        resolution="720p",
+        video_field="video",
+        enhance=False,
+        prepare_compatible=False,
+        dress_video_model=dress_id,
+        reference_image="outfit.png",
+    )
+    assert dress_called["model"] == "seedance-2.0-reference-to-video"
+    assert "@video1" in dress_called["prompt"]
+    assert "@image1" in dress_called["prompt"]
+
+    client.delete(f"/api/generation-models/background_video/{model_id}", headers=dashboard_headers)
+    client.delete(f"/api/generation-models/dress_video/{dress_id}", headers=dashboard_headers)
+
+
+def test_evolink_photo_scratch_and_clothes_use_evolink(monkeypatch, tmp_path):
+    called: list[str] = []
+
+    def fake_photo(**kwargs):
+        called.append("photo")
+        return kwargs["out"]
+
+    def fake_clothes(**kwargs):
+        called.append("clothes")
+        return kwargs["out"]
+
+    def refuse_wavespeed(**kwargs):
+        raise AssertionError(f"wavespeed still used: {kwargs.get('out')}")
+
+    def refuse_grok(**kwargs):
+        raise AssertionError(f"grok still used: {kwargs.get('out')}")
+
+    monkeypatch.setattr("backend.services.evolink.edit_photo_scratch_layer", fake_photo)
+    monkeypatch.setattr("backend.services.evolink.edit_clothes_layer", fake_clothes)
+    monkeypatch.setattr("backend.services.wavespeed.edit_photo_scratch_layer", refuse_wavespeed)
+    monkeypatch.setattr("backend.services.wavespeed.edit_clothes_layer_kontext", refuse_wavespeed)
+    monkeypatch.setattr("backend.services.wavespeed.run_image_task", refuse_wavespeed)
+    monkeypatch.setattr("backend.services.grok.edit_photo_scratch_layer", refuse_grok)
+
+    out = tmp_path / "out.png"
+    still = tmp_path / "still.png"
+    still.write_bytes(b"png")
+    edit_photo_scratch_layer(
+        provider="evolink",
+        image_model="evolink-seedream-5.0-lite",
+        prompt="change backdrop @image1",
+        out=out,
+        source_image=still,
+        images=[still],
+    )
+    edit_clothes_layer(
+        provider="evolink",
+        image_model="evolink-seedream-5.0-lite",
+        prompt="red jacket",
+        out=out,
+        source_image=still,
+    )
+    assert called == ["photo", "clothes"]
+
+
+def test_evolink_lookup_suggests_adapters(client, dashboard_headers, monkeypatch):
+    from backend.services.provider_models import RemoteModel, _suggest_evolink
+
+    assert _suggest_evolink("seedance-2.0-image-to-video") == (
+        "background_video",
+        "evolink_i2v",
+        "",
+    )
+    assert _suggest_evolink("seedance-2.0-reference-to-video") == (
+        "dress_video",
+        "evolink_reference_video",
+        "@image1",
+    )
+    assert _suggest_evolink("doubao-seedream-5.0-lite") == (
+        "source_image",
+        "evolink_image",
+        "",
+    )
+
+    monkeypatch.setattr(
+        "backend.services.provider_models._cached",
+        lambda provider: [
+            RemoteModel(
+                provider="evolink",
+                model_id="seedance-2.0-image-to-video",
+                name="Seedance 2.0 Image to Video",
+                kind="video",
+                suggested_role="background_video",
+                suggested_adapter="evolink_i2v",
+            )
+        ],
+    )
+    listed = client.post(
+        "/api/generation-models/lookup",
+        headers=dashboard_headers,
+        json={"provider": "evolink", "query": "seedance"},
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["models"][0]["model_id"] == "seedance-2.0-image-to-video"
+    assert listed.json()["models"][0]["suggested_adapter"] == "evolink_i2v"

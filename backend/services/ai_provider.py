@@ -4,24 +4,28 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from backend.services import bfl, grok, wavespeed
+from backend.services import bfl, evolink, grok, wavespeed
 
-AiProvider = Literal["xai", "wavespeed"]
+AiProvider = Literal["xai", "wavespeed", "evolink"]
 # Catalog ids. Built-ins are grok-imagine, seedream-v5-lite, and flux-3-image-klein.
 SourceImageModel = str
 BackgroundVideoModel = str
 DressVideoModel = str
-# How each WaveSpeed edit model expects the prompt to bind the first reference image.
+# How each WaveSpeed / EvoLink edit model expects the prompt to bind the first reference image.
 DRESS_REFERENCE_TOKENS: dict[str, str] = {
     "wan-3.0-video-edit": "Image 1",
     "seedance-2.0-video-edit": "@Image 1",
+    "evolink-seedance-2.0-reference": "@image1",
+    "evolink-wan3.0-reference": "@image1",
 }
-SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite", "bfl"]
+SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite", "bfl", "evolink"]
 
 
 def normalize_provider(provider: str | None) -> AiProvider:
     if provider in ("wavespeed", "seedream-v5-lite"):
         return "wavespeed"
+    if provider == "evolink":
+        return "evolink"
     return "xai"
 
 
@@ -70,10 +74,24 @@ def uses_flux_klein(image_model: str | None) -> bool:
     return model == "flux-3-image-klein"
 
 
+def uses_evolink_image(image_model: str | None) -> bool:
+    model = (image_model or "").strip()
+    if not model:
+        return False
+    try:
+        return _spec("source_image", model).adapter == "evolink_image"
+    except Exception:
+        return False
+
+
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
     # Klein is chosen by the source-image model, not by the x.ai / WaveSpeed toggle.
     if uses_flux_klein(image_model):
         return "bfl"
+    # Catalog provider wins over the draft toggle so EvoLink Seedream stills
+    # never fall through to WaveSpeed/x.ai with a doubao-* model id.
+    if uses_evolink_image(image_model) or provider == "evolink":
+        return "evolink"
     # The image-model dropdown is hidden for x.ai, so a leftover Seedream id
     # (the Video Flow default) must not send stills to WaveSpeed.
     if provider == "xai":
@@ -146,6 +164,16 @@ def generate_portrait_image(
             aspect_ratio=aspect_ratio,
             lock_position=lock_position,
         )
+    source_spec = _spec("source_image", image_model)
+    if source_spec.adapter == "evolink_image":
+        return evolink.generate_portrait_image(
+            prompt=prompt,
+            out=out,
+            face_image=face_image,
+            aspect_ratio=aspect_ratio,
+            model=source_spec.endpoint_path,
+            lock_position=lock_position,
+        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.generate_portrait_image_seedream(
@@ -153,7 +181,7 @@ def generate_portrait_image(
             out=out,
             face_image=face_image,
             aspect_ratio=aspect_ratio,
-            endpoint=_spec("source_image", image_model).endpoint_path,
+            endpoint=source_spec.endpoint_path,
             lock_position=lock_position,
         )
     stored = _stored_xai_model("source_image", image_model)
@@ -197,6 +225,16 @@ def swap_face_on_image(
             prompt=prompt,
             aspect_ratio=aspect_ratio,
         )
+    source_spec = _spec("source_image", image_model)
+    if source_spec.adapter == "evolink_image":
+        return evolink.swap_face_on_image(
+            base_image=base_image,
+            face_image=face_image,
+            out=out,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            model=source_spec.endpoint_path,
+        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.swap_face_on_image_seedream(
@@ -205,7 +243,7 @@ def swap_face_on_image(
             out=out,
             prompt=prompt,
             aspect_ratio=aspect_ratio,
-            endpoint=_spec("source_image", image_model).endpoint_path,
+            endpoint=source_spec.endpoint_path,
         )
     stored = _stored_xai_model("source_image", image_model)
     if route == "xai" and stored:
@@ -290,6 +328,18 @@ def edit_image_scenery(
             prompt=prompt,
             face_image=face_image,
         )
+    source_spec = _spec("source_image", image_model)
+    if source_spec.adapter == "evolink_image":
+        return evolink.edit_image_scenery(
+            image=image,
+            theme=theme,
+            out=out,
+            aspect_ratio=aspect_ratio,
+            model=source_spec.endpoint_path,
+            variation=variation,
+            prompt=prompt,
+            face_image=face_image,
+        )
     route = source_image_route(provider, image_model)
     if route == "seedream-v5-lite":
         return wavespeed.edit_image_scenery_seedream(
@@ -297,7 +347,7 @@ def edit_image_scenery(
             theme=theme,
             out=out,
             aspect_ratio=aspect_ratio,
-            endpoint=_spec("source_image", image_model).endpoint_path,
+            endpoint=source_spec.endpoint_path,
             variation=variation,
             prompt=prompt,
             face_image=face_image,
@@ -342,7 +392,8 @@ def edit_clothes_layer(
 
     Kontext keeps every pixel that the prompt doesn't ask to change — pose, framing,
     background, and face are locked by construction, so no Match alignment is needed.
-    Falls back to Grok edit when WaveSpeed key is unavailable.
+    Falls back to Grok edit when WaveSpeed key is unavailable. EvoLink has no Kontext,
+    so it uses Seedream-style image edit on that key instead.
     """
     if uses_flux_klein(image_model):
         return bfl.edit_photo_scratch_layer(
@@ -352,6 +403,14 @@ def edit_clothes_layer(
             aspect_ratio=aspect_ratio,
         )
     route = source_image_route(provider, image_model)
+    if route == "evolink":
+        return evolink.edit_clothes_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+            model=_spec("source_image", image_model).endpoint_path,
+        )
     if route in ("wavespeed", "seedream-v5-lite"):
         return wavespeed.edit_clothes_layer_kontext(
             prompt=prompt,
@@ -409,6 +468,22 @@ def edit_photo_scratch_layer(
             named_images=images,
         )
     route = source_image_route(provider, image_model)
+    source_spec = _spec("source_image", image_model)
+    if route == "evolink":
+        from backend.services.image_refs import rewrite_image_tokens
+
+        text = rewrite_image_tokens(prompt, style="seedream") if images else prompt
+        return evolink.edit_photo_scratch_layer(
+            prompt=text,
+            out=out,
+            source_image=source_image if not images else images[0],
+            background_image=None if images else background_image,
+            face_image=None if images else face_image,
+            bikini_image=None if images else bikini_image,
+            aspect_ratio=aspect_ratio,
+            model=source_spec.endpoint_path,
+            named_images=images,
+        )
     if images:
         from backend.services.image_refs import rewrite_image_tokens
 
@@ -424,7 +499,7 @@ def edit_photo_scratch_layer(
                 "enable_sync_mode": False,
             }
             wavespeed.run_image_task(
-                wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
+                wavespeed.seedream_paths(source_spec.endpoint_path)[1],
                 payload,
                 out,
                 label="seedream photo-scratch edit",
@@ -461,7 +536,7 @@ def edit_photo_scratch_layer(
             "enable_sync_mode": False,
         }
         wavespeed.run_image_task(
-            wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
+            wavespeed.seedream_paths(source_spec.endpoint_path)[1],
             payload,
             out,
             label="seedream photo-scratch edit",
@@ -534,6 +609,16 @@ def image_to_video(
             label=spec.label,
         )
         return
+    if spec.adapter == "evolink_i2v":
+        evolink.image_to_video(
+            image=image,
+            prompt=final_prompt,
+            out=out,
+            resolution=resolution or "720p",
+            model=spec.endpoint_path,
+            label=spec.label,
+        )
+        return
     stored = (spec.endpoint_path or "").strip()
     grok_model = stored if stored and not stored.startswith("/") else model
     # Already enhanced above when possible; avoid a second chat pass in grok.image_to_video.
@@ -564,6 +649,41 @@ def _identity_still_clause(token: str) -> str:
     )
 
 
+def _build_reference_dress_prompt(
+    *,
+    prompt: str,
+    token: str,
+    identity_str: str,
+    reference_str: str,
+    enhance: bool,
+    enhance_system: str,
+    dress_video_model: str,
+    video_token: str = "",
+) -> str:
+    final_prompt = prompt
+    if enhance and xai_key_available():
+        print(f"Enhancing dress prompt via {grok.chat_model()} (for {dress_video_model}) ...")
+        final_prompt = grok.enhance_prompt(final_prompt, grok.api_key(), system=enhance_system)
+        print(f"Enhanced dress prompt:\n  {final_prompt}\n")
+    elif enhance:
+        print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
+    if video_token and video_token not in final_prompt:
+        final_prompt = f"Edit {video_token}. {final_prompt}"
+    if identity_str:
+        who = _numbered_reference_token(token, 1)
+        final_prompt = f"{_identity_still_clause(who)} {final_prompt}"
+    if reference_str:
+        outfit_token = _numbered_reference_token(token, 2 if identity_str else 1)
+        final_prompt = (
+            f"{final_prompt.rstrip()}\n\n"
+            f"CRITICAL — dress her in the exact outfit shown in {outfit_token} "
+            "(shape, color, cut, accessories, emissive glow/shine). "
+            "Copy the clothes only — do not copy that person's face, hair, or body. "
+            "Keep her face, hair, body, pose, motion, framing, and background unchanged."
+        )
+    return grok.append_dress_identity_lock(final_prompt)
+
+
 def edit_video(
     *,
     provider: AiProvider,
@@ -584,30 +704,44 @@ def edit_video(
     spec = _spec("dress_video", dress_video_model)
     native_reference_token = spec.reference_token or DRESS_REFERENCE_TOKENS.get(dress_video_model)
     identity_str = str(identity_image).strip() if identity_image is not None else ""
+    if spec.adapter == "evolink_reference_video":
+        token = native_reference_token or "@image1"
+        reference_str = str(reference_image).strip() if reference_image is not None else ""
+        final_prompt = _build_reference_dress_prompt(
+            prompt=prompt,
+            token=token,
+            identity_str=identity_str,
+            reference_str=reference_str,
+            enhance=enhance,
+            enhance_system=enhance_system,
+            dress_video_model=dress_video_model,
+            video_token="@video1",
+        )
+        images = [item for item in (identity_str, reference_str) if item]
+        evolink.edit_video_reference(
+            video=video,
+            prompt=final_prompt,
+            out=out,
+            resolution=resolution or "720p",
+            reference_image=None if identity_str else (reference_str or None),
+            reference_images=images if identity_str else None,
+            model=spec.endpoint_path,
+            label=spec.label,
+        )
+        return
     if spec.adapter == "reference_video_edit":
         # These models take the reference image directly — no Grok captioning needed.
         token = native_reference_token or "Image 1"
-        final_prompt = prompt
         reference_str = str(reference_image).strip() if reference_image is not None else ""
-        if enhance and xai_key_available():
-            print(f"Enhancing dress prompt via {grok.chat_model()} (for {dress_video_model}) ...")
-            final_prompt = grok.enhance_prompt(final_prompt, grok.api_key(), system=enhance_system)
-            print(f"Enhanced dress prompt:\n  {final_prompt}\n")
-        elif enhance:
-            print("Dress prompt enhancement skipped — XAI_API_KEY not set; using prompt as written.")
-        if identity_str:
-            who = _numbered_reference_token(token, 1)
-            final_prompt = f"{_identity_still_clause(who)} {final_prompt}"
-        if reference_str:
-            outfit_token = _numbered_reference_token(token, 2 if identity_str else 1)
-            final_prompt = (
-                f"{final_prompt.rstrip()}\n\n"
-                f"CRITICAL — dress her in the exact outfit shown in {outfit_token} "
-                "(shape, color, cut, accessories, emissive glow/shine). "
-                "Copy the clothes only — do not copy that person's face, hair, or body. "
-                "Keep her face, hair, body, pose, motion, framing, and background unchanged."
-            )
-        final_prompt = grok.append_dress_identity_lock(final_prompt)
+        final_prompt = _build_reference_dress_prompt(
+            prompt=prompt,
+            token=token,
+            identity_str=identity_str,
+            reference_str=reference_str,
+            enhance=enhance,
+            enhance_system=enhance_system,
+            dress_video_model=dress_video_model,
+        )
         images = [item for item in (identity_str, reference_str) if item]
         edit_fn = (
             wavespeed.edit_video_seedance2
