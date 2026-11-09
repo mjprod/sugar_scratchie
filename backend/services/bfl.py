@@ -14,6 +14,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -34,6 +35,9 @@ POLL_INTERVAL_S = 2
 POLL_TIMEOUT_S = 600
 CLOUD_TIMEOUT_S = 120
 SIDECAR_TIMEOUT_S = 600
+# The live Klein service on the encode Mac. The public tunnel resets when this
+# API runs on that same machine and calls FLUX_KLEIN_URL.
+LOCAL_SIDECAR_URL = "http://127.0.0.1:8790"
 MAX_REFERENCES = 10
 USER_AGENT = "flux-client/1.0"
 # Their service accepts sides from 64 to 2048, multiples of 16.
@@ -62,6 +66,11 @@ def api_base() -> str:
 
 def sidecar_url() -> str:
     return (os.environ.get("FLUX_KLEIN_URL") or "").strip().rstrip("/")
+
+
+def _is_loopback(url: str) -> bool:
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def klein_token() -> str:
@@ -369,10 +378,15 @@ def generate(
         try:
             return _generate_sidecar(local, payload, out)
         except SidecarUnreachable as exc:
+            if not _is_loopback(local):
+                try:
+                    print(f"FLUX Klein at {local} unreachable ({exc}); trying {LOCAL_SIDECAR_URL} ...")
+                    return _generate_sidecar(LOCAL_SIDECAR_URL, payload, out)
+                except SidecarUnreachable:
+                    pass
             if not api_key():
                 raise RuntimeError(
-                    "FLUX Klein server is unreachable and BFL_API_KEY is not set. "
-                    f"Check FLUX_KLEIN_URL. ({exc})"
+                    f"FLUX Klein server at {local} is unreachable ({exc})."
                 ) from exc
             print(f"FLUX Klein server unreachable ({exc}); using the Black Forest Labs API ...")
     return _generate_cloud(payload, out, label=label)
