@@ -248,7 +248,9 @@ export function AiModelsPage() {
         adapter: adapter?.id ?? current.adapter,
         endpoint_path: "",
         reference_token: adapter?.needs_reference_token
-          ? current.reference_token || defaultReferenceToken(adapter)
+          ? current.reference_token === "@Image 1" || current.reference_token === "@image1"
+            ? defaultReferenceToken(adapter)
+            : current.reference_token
           : "",
         variant: adapter?.needs_variant ? current.variant || "seedance" : "",
       };
