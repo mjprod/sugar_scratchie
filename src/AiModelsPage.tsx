@@ -229,11 +229,13 @@ export function AiModelsPage() {
       ),
   );
   const addingKlein = provider === "bfl" && !editing;
+
+  const adapterNeedsEndpoint = Boolean(selectedAdapter?.needs_endpoint);
   const readyToSave = Boolean(
     form &&
       form.label.trim() &&
       form.id.trim() &&
-      (editing || provider === "bfl" || form.endpoint_path.trim()) &&
+      (editing || !adapterNeedsEndpoint || form.endpoint_path.trim()) &&
       !(addingKlein && kleinAlready),
   );
 
@@ -597,8 +599,8 @@ export function AiModelsPage() {
                 {addingKlein && kleinAlready ? (
                   <Callout.Root color="amber">
                     <Callout.Text>
-                      {fluxAdapter?.default_label || "FLUX"} is already under Source photo, at the bottom of this page.
-                      Rename it there. If the badge says Hidden, open it and turn the dropdown checkbox back on.
+                      {fluxAdapter?.default_label || "FLUX 3 Image Klein"} is already under {ROLE_TITLES["source_image"]}. Rename it there. If the badge
+                      says Hidden, open it and turn the dropdown checkbox back on.
                     </Callout.Text>
                   </Callout.Root>
                 ) : null}
