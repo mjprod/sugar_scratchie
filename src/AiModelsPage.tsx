@@ -208,11 +208,13 @@ export function AiModelsPage() {
     (model) => model.role === "source_image" && model.adapter === "flux_klein_image",
   );
   const addingKlein = provider === "bfl" && !editing;
+
+  const adapterNeedsEndpoint = Boolean(selectedAdapter?.needs_endpoint);
   const readyToSave = Boolean(
     form &&
       form.label.trim() &&
       form.id.trim() &&
-      (editing || provider === "bfl" || form.endpoint_path.trim()) &&
+      (editing || !adapterNeedsEndpoint || form.endpoint_path.trim()) &&
       !(addingKlein && kleinAlready),
   );
 
