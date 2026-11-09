@@ -43,7 +43,7 @@ const ROLE_HELP: Record<GenerationModelRole, string> = {
 
 const ROLES: GenerationModelRole[] = ["background_video", "dress_video", "source_image"];
 
-type ProviderName = "wavespeed" | "xai" | "evolink";
+type ProviderName = "wavespeed" | "xai" | "evolink" | "bfl";
 
 type FormState = {
   id: string;
@@ -145,6 +145,7 @@ function toPayload(form: FormState, adapter: GenerationAdapter | undefined) {
 function formProvider(provider: string): ProviderName {
   if (provider === "xai") return "xai";
   if (provider === "evolink") return "evolink";
+  if (provider === "bfl") return "bfl";
   return "wavespeed";
 }
 
@@ -154,7 +155,7 @@ function isBflBuiltin(model: GenerationModelInfo | null): boolean {
 
 function providerLabel(provider: string): string {
   if (provider === "xai") return "x.ai";
-  if (provider === "bfl") return "Black Forest";
+  if (provider === "bfl") return "FLUX";
   if (provider === "evolink") return "EvoLink";
   return "WaveSpeed";
 }
@@ -167,7 +168,7 @@ function providerColor(provider: string): "orange" | "cyan" | "green" | "purple"
 }
 
 function endpointFieldLabel(provider: ProviderName | string, editingProvider?: string): string {
-  if (editingProvider === "bfl") return "Server address comes from FLUX_KLEIN_URL";
+  if (provider === "bfl" || editingProvider === "bfl") return "Server address comes from FLUX_KLEIN_URL";
   if (provider === "xai") return "x.ai model id";
   if (provider === "evolink") return "EvoLink model id";
   return "WaveSpeed path";
@@ -203,7 +204,17 @@ export function AiModelsPage() {
   );
   const selectedAdapter =
     adapters.find((adapter) => adapter.id === form?.adapter) ?? roleAdapters[0];
-  const readyToSave = Boolean(form && form.label.trim() && form.id.trim() && (editing || form.endpoint_path.trim()));
+  const kleinAlready = models.some(
+    (model) => model.role === "source_image" && model.adapter === "flux_klein_image",
+  );
+  const addingKlein = provider === "bfl" && !editing;
+  const readyToSave = Boolean(
+    form &&
+      form.label.trim() &&
+      form.id.trim() &&
+      (editing || provider === "bfl" || form.endpoint_path.trim()) &&
+      !(addingKlein && kleinAlready),
+  );
 
   function clearLookup() {
     setLookupQuery("");
@@ -242,13 +253,31 @@ export function AiModelsPage() {
     setPicked(null);
     setForm((current) => {
       if (!current || editing) return current;
+      if (next === "bfl") {
+        return {
+          ...current,
+          role: "source_image",
+          adapter: "flux_klein_image",
+          endpoint_path: "",
+          reference_token: "",
+          variant: "",
+          label: "FLUX 3 Image Klein",
+          id: "flux-3-image-klein",
+          idTouched: true,
+          enabled: true,
+        };
+      }
+      const leavingKlein = current.adapter === "flux_klein_image";
       const adapter = adapterFor(adapters, current.role, next);
-      const token = current.reference_token.trim();
+      const token = leavingKlein ? "" : current.reference_token.trim();
       // Empty (e.g. after x.ai) or the stock WaveSpeed/EvoLink token → fill the
       // adapter default. Keep any custom token the operator already typed.
       const stockToken = token === "@Image 1" || token === "@image1";
       return {
         ...current,
+        label: leavingKlein ? "" : current.label,
+        id: leavingKlein ? "" : current.id,
+        idTouched: leavingKlein ? false : current.idTouched,
         adapter: adapter?.id ?? current.adapter,
         endpoint_path: "",
         reference_token: adapter?.needs_reference_token
@@ -406,8 +435,8 @@ export function AiModelsPage() {
               </Text>
               <Heading size="7">AI models</Heading>
               <Text color="gray" size="2">
-                These are the choices in the Video Flow dropdowns. To add one, search your WaveSpeed,
-                x.ai, or EvoLink account and pick a model that is actually there.
+                These are the choices in the Video Flow dropdowns. Search WaveSpeed, x.ai, or EvoLink
+                for a model on that account, or add FLUX Klein from your own server.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -440,7 +469,7 @@ export function AiModelsPage() {
                       ? isBflBuiltin(editing)
                         ? "Change the name. This built-in stays on FLUX 3 Image Klein."
                         : "Change the name, or search if you want to point this choice at a different model."
-                      : "Choose the company, search, then name it for the dropdown."}
+                      : "Choose the company. WaveSpeed, x.ai, and EvoLink come from a search. FLUX uses your Klein server."}
                   </Text>
                 </Box>
 
@@ -482,10 +511,22 @@ export function AiModelsPage() {
                         Seedance, WAN, Seedream
                       </Text>
                     </button>
+                    <button
+                      type="button"
+                      className={provider === "bfl" ? "ai-model-choice is-selected" : "ai-model-choice"}
+                      onClick={() => chooseProvider("bfl")}
+                    >
+                      <Text as="div" weight="bold">
+                        FLUX
+                      </Text>
+                      <Text as="div" color="gray" size="2">
+                        Klein stills on your server
+                      </Text>
+                    </button>
                   </Flex>
                 )}
 
-                {isBflBuiltin(editing) ? null : (
+                {isBflBuiltin(editing) || provider === "bfl" ? null : (
                 <Flex direction="column" gap="2">
                   <Text size="2" weight="medium">
                     Search {providerLabel(provider)}
@@ -543,7 +584,16 @@ export function AiModelsPage() {
                 </Flex>
                 )}
 
-                {picked || editing ? (
+                {addingKlein && kleinAlready ? (
+                  <Callout.Root color="amber">
+                    <Callout.Text>
+                      FLUX 3 Image Klein is already under Source photo, at the bottom of this page.
+                      Rename it there. If the badge says Hidden, open it and turn the dropdown checkbox back on.
+                    </Callout.Text>
+                  </Callout.Root>
+                ) : null}
+
+                {picked || editing || (addingKlein && !kleinAlready) ? (
                   <Flex direction="column" gap="3">
                     {picked ? (
                       <Callout.Root color="green">
@@ -555,9 +605,9 @@ export function AiModelsPage() {
                       <Text color="gray" size="2">
                         Currently {editing.endpoint_path}
                       </Text>
-                    ) : editing?.provider === "bfl" ? (
+                    ) : editing?.provider === "bfl" || addingKlein ? (
                       <Text color="gray" size="2">
-                        This built-in calls FLUX_KLEIN_URL. The public tunnel also needs FLUX_KLEIN_TOKEN.
+                        Stills go to FLUX_KLEIN_URL. The public tunnel also needs FLUX_KLEIN_TOKEN.
                       </Text>
                     ) : editing?.provider === "xai" ? (
                       <Text color="gray" size="2">
@@ -588,7 +638,7 @@ export function AiModelsPage() {
                       />
                     </label>
 
-                    {editing ? (
+                    {editing || addingKlein ? (
                       <Text size="2" color="gray">
                         Shows up in {ROLE_TITLES[form.role]}
                       </Text>
@@ -662,20 +712,26 @@ export function AiModelsPage() {
                             </Select.Content>
                           </Select.Root>
                         </label>
-                        <label>
-                          <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                        {provider === "bfl" || editing?.provider === "bfl" ? (
+                          <Text size="1" color="gray">
                             {endpointFieldLabel(provider, editing?.provider)}
                           </Text>
-                          <TextField.Root
-                            value={form.endpoint_path}
-                            onChange={(event) => {
-                              setPicked(null);
-                              setForm((current) =>
-                                current ? { ...current, endpoint_path: event.currentTarget.value } : current,
-                              );
-                            }}
-                          />
-                        </label>
+                        ) : (
+                          <label>
+                            <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                              {endpointFieldLabel(provider, editing?.provider)}
+                            </Text>
+                            <TextField.Root
+                              value={form.endpoint_path}
+                              onChange={(event) => {
+                                setPicked(null);
+                                setForm((current) =>
+                                  current ? { ...current, endpoint_path: event.currentTarget.value } : current,
+                                );
+                              }}
+                            />
+                          </label>
+                        )}
                         {editing ? null : (
                           <label>
                             <Text as="div" mb="1" size="1" weight="medium" color="gray">
@@ -728,7 +784,7 @@ export function AiModelsPage() {
                       </Flex>
                     ) : null}
                   </Flex>
-                ) : (
+                ) : addingKlein ? null : (
                   <Text color="gray" size="2">
                     Search, then choose a model. The name and dropdown step fill in from that choice.
                   </Text>
@@ -787,7 +843,9 @@ export function AiModelsPage() {
                                 ) : null}
                               </Flex>
                               <Text color="gray" size="1">
-                                {model.endpoint_path || "Uses the account default"}
+                                {model.provider === "bfl"
+                                  ? "FLUX_KLEIN_URL"
+                                  : model.endpoint_path || "Uses the account default"}
                               </Text>
                             </Box>
                             <Flex gap="1">
