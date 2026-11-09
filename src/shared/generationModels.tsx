@@ -18,6 +18,10 @@ export type GenerationAdapter = {
   needs_reference_token: boolean;
   needs_variant: boolean;
   endpoint_hint: string;
+  /** Built-in catalog id when this adapter has exactly one built-in model. */
+  default_model_id?: string;
+  /** Dropdown name of that built-in model. */
+  default_label?: string;
 };
 
 export type GenerationModelInfo = {

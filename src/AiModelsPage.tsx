@@ -180,6 +180,23 @@ function searchPlaceholder(provider: ProviderName): string {
   return "seedance or wan";
 }
 
+function kleinForm(current: FormState, adapter: GenerationAdapter | undefined): FormState {
+  const role = adapter?.roles[0];
+  if (!adapter || !role || !adapter.default_model_id || !adapter.default_label) return current;
+  return {
+    ...current,
+    role,
+    adapter: adapter.id,
+    endpoint_path: "",
+    reference_token: "",
+    variant: "",
+    label: adapter.default_label,
+    id: adapter.default_model_id,
+    idTouched: true,
+    enabled: true,
+  };
+}
+
 export function AiModelsPage() {
   const { models, adapters, loaded, refresh } = useGenerationCatalog();
   const [form, setForm] = useState<FormState | null>(null);
@@ -204,8 +221,12 @@ export function AiModelsPage() {
   );
   const selectedAdapter =
     adapters.find((adapter) => adapter.id === form?.adapter) ?? roleAdapters[0];
-  const kleinAlready = models.some(
-    (model) => model.role === "source_image" && model.adapter === "flux_klein_image",
+  const fluxAdapter = adapters.find((adapter) => adapter.provider === "bfl");
+  const kleinAlready = Boolean(
+    fluxAdapter &&
+      models.some(
+        (model) => model.adapter === fluxAdapter.id && fluxAdapter.roles.includes(model.role),
+      ),
   );
   const addingKlein = provider === "bfl" && !editing;
   const readyToSave = Boolean(
@@ -254,20 +275,9 @@ export function AiModelsPage() {
     setForm((current) => {
       if (!current || editing) return current;
       if (next === "bfl") {
-        return {
-          ...current,
-          role: "source_image",
-          adapter: "flux_klein_image",
-          endpoint_path: "",
-          reference_token: "",
-          variant: "",
-          label: "FLUX 3 Image Klein",
-          id: "flux-3-image-klein",
-          idTouched: true,
-          enabled: true,
-        };
+        return kleinForm(current, fluxAdapter);
       }
-      const leavingKlein = current.adapter === "flux_klein_image";
+      const leavingKlein = Boolean(fluxAdapter && current.adapter === fluxAdapter.id);
       const adapter = adapterFor(adapters, current.role, next);
       const token = leavingKlein ? "" : current.reference_token.trim();
       // Empty (e.g. after x.ai) or the stock WaveSpeed/EvoLink token → fill the
@@ -467,7 +477,7 @@ export function AiModelsPage() {
                   <Text color="gray" size="2">
                     {editing
                       ? isBflBuiltin(editing)
-                        ? "Change the name. This built-in stays on FLUX 3 Image Klein."
+                        ? `Change the name. This built-in stays on ${fluxAdapter?.default_label || editing.label}.`
                         : "Change the name, or search if you want to point this choice at a different model."
                       : "Choose the company. WaveSpeed, x.ai, and EvoLink come from a search. FLUX uses your Klein server."}
                   </Text>
@@ -587,7 +597,7 @@ export function AiModelsPage() {
                 {addingKlein && kleinAlready ? (
                   <Callout.Root color="amber">
                     <Callout.Text>
-                      FLUX 3 Image Klein is already under Source photo, at the bottom of this page.
+                      {fluxAdapter?.default_label || "FLUX"} is already under Source photo, at the bottom of this page.
                       Rename it there. If the badge says Hidden, open it and turn the dropdown checkbox back on.
                     </Callout.Text>
                   </Callout.Root>

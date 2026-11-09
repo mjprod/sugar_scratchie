@@ -38,6 +38,10 @@ class AdapterInfoModel(BaseModel):
     needs_reference_token: bool
     needs_variant: bool
     endpoint_hint: str
+    # Set when exactly one built-in model uses this adapter. The Add form
+    # copies these instead of keeping its own id and dropdown name.
+    default_model_id: str = ""
+    default_label: str = ""
 
 
 class GenerationModelInfo(BaseModel):
@@ -87,20 +91,32 @@ class CheckProviderModelRequest(BaseModel):
     model_id: str = ""
 
 
+def _single_builtin(adapter_id: str) -> GenerationModelSpec | None:
+    matches = [spec for spec in BUILTINS if spec.adapter == adapter_id]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def adapter_payloads() -> list[AdapterInfoModel]:
-    return [
-        AdapterInfoModel(
-            id=item.id,
-            label=item.label,
-            roles=list(item.roles),
-            provider=item.provider,
-            needs_endpoint=item.needs_endpoint,
-            needs_reference_token=item.needs_reference_token,
-            needs_variant=item.needs_variant,
-            endpoint_hint=item.endpoint_hint,
+    payloads: list[AdapterInfoModel] = []
+    for item in ADAPTERS:
+        builtin = _single_builtin(item.id)
+        payloads.append(
+            AdapterInfoModel(
+                id=item.id,
+                label=item.label,
+                roles=list(item.roles),
+                provider=item.provider,
+                needs_endpoint=item.needs_endpoint,
+                needs_reference_token=item.needs_reference_token,
+                needs_variant=item.needs_variant,
+                endpoint_hint=item.endpoint_hint,
+                default_model_id=builtin.id if builtin else "",
+                default_label=builtin.label if builtin else "",
+            )
         )
-        for item in ADAPTERS
-    ]
+    return payloads
 
 
 def safe_model_id(value: str) -> str:
