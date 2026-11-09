@@ -40,7 +40,7 @@ ADAPTERS: tuple[AdapterInfo, ...] = (
     ),
     AdapterInfo(
         id="flux_klein_image",
-        label="Black Forest Labs image (FLUX 3 Image Klein)",
+        label="FLUX Klein image (FLUX_KLEIN_URL)",
         roles=("source_image",),
         provider="bfl",
         needs_endpoint=False,

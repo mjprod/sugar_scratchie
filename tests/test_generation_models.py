@@ -36,7 +36,10 @@ def test_generation_models_lists_builtins(client):
     assert ("source_image", "FLUX 3 Image Klein") in labels
     assert ("source_image", "EvoLink Seedream 5.0 Lite") in labels
     assert any(adapter["id"] == "wan_spicy_i2v" for adapter in body["adapters"])
-    assert any(adapter["id"] == "flux_klein_image" for adapter in body["adapters"])
+    flux = next(adapter for adapter in body["adapters"] if adapter["id"] == "flux_klein_image")
+    assert flux["roles"] == ["source_image"]
+    assert flux["default_model_id"] == "flux-3-image-klein"
+    assert flux["default_label"] == "FLUX 3 Image Klein"
     assert any(adapter["id"] == "evolink_i2v" for adapter in body["adapters"])
     assert any(adapter["id"] == "evolink_reference_video" for adapter in body["adapters"])
 
