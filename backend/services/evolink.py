@@ -191,14 +191,25 @@ def media_url(value: str | Path, key: str | None = None) -> str:
 
 
 def aspect_ratio_to_size(aspect_ratio: str) -> str:
+    """Map canvas aspect to EvoLink Seedream ``size`` ratio strings.
+
+    Seedream on EvoLink accepts ratio sizes including ``9:16`` (2K → 1600×2848).
+    Do not collapse vertical portraits to ``3:4`` — Video Flow is 9:16 end-to-end.
+    """
     mapping = {
-        "9:16": "3:4",
+        "9:16": "9:16",
         "16:9": "16:9",
         "1:1": "1:1",
         "3:4": "3:4",
         "4:3": "4:3",
+        "2:3": "2:3",
+        "3:2": "3:2",
+        "4:5": "4:5",
+        "5:4": "5:4",
+        "21:9": "21:9",
+        "9:21": "9:21",
     }
-    return mapping.get(aspect_ratio.strip(), "3:4")
+    return mapping.get(aspect_ratio.strip(), "9:16")
 
 
 def _result_urls(payload: dict) -> list[str]:
@@ -315,6 +326,61 @@ def finish_video_job(task_id: str, out: Path, *, label: str) -> None:
     urls = poll_task(task_id, key, label=label, timeout_s=VIDEO_POLL_TIMEOUT_S)
     download_video(urls[0], out)
     request_id_sidecar(out).unlink(missing_ok=True)
+
+
+def edit_photo_scratch_layer(
+    *,
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    background_image: str | Path | None = None,
+    face_image: str | Path | None = None,
+    bikini_image: str | Path | None = None,
+    aspect_ratio: str = "9:16",
+    model: str | None = None,
+    named_images: list[str | Path] | None = None,
+) -> Path:
+    """Multi- or single-image still edit via EvoLink Seedream-style generation."""
+    key = api_key()
+    if named_images:
+        image_urls = [media_url(img, key=key) for img in named_images]
+    else:
+        images: list[str | Path] = []
+        if background_image is not None:
+            images.append(background_image)
+        images.append(source_image)
+        if bikini_image is not None:
+            images.append(bikini_image)
+        if face_image is not None:
+            images.append(face_image)
+        image_urls = [media_url(img, key=key) for img in images]
+    payload = {
+        "model": (model or "").strip() or DEFAULT_IMAGE_MODEL,
+        "prompt": prompt,
+        "image_urls": image_urls,
+        "size": aspect_ratio_to_size(aspect_ratio),
+        "quality": "2K",
+    }
+    run_image_task(payload, out, label="evolink photo-scratch edit")
+    return out
+
+
+def edit_clothes_layer(
+    *,
+    prompt: str,
+    out: Path,
+    source_image: str | Path,
+    aspect_ratio: str = "9:16",
+    model: str | None = None,
+) -> Path:
+    """Single-image outfit edit. EvoLink has no Flux Kontext; Seedream edit is the stand-in."""
+    return edit_photo_scratch_layer(
+        prompt=prompt,
+        out=out,
+        source_image=source_image,
+        aspect_ratio=aspect_ratio,
+        model=model,
+    )
 
 
 def edit_image_scenery(

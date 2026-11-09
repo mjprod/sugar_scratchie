@@ -18,7 +18,7 @@ DRESS_REFERENCE_TOKENS: dict[str, str] = {
     "evolink-seedance-2.0-reference": "@image1",
     "evolink-wan3.0-reference": "@image1",
 }
-SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite", "bfl"]
+SourceImageRoute = Literal["xai", "wavespeed", "seedream-v5-lite", "bfl", "evolink"]
 
 
 def normalize_provider(provider: str | None) -> AiProvider:
@@ -74,10 +74,24 @@ def uses_flux_klein(image_model: str | None) -> bool:
     return model == "flux-3-image-klein"
 
 
+def uses_evolink_image(image_model: str | None) -> bool:
+    model = (image_model or "").strip()
+    if not model:
+        return False
+    try:
+        return _spec("source_image", model).adapter == "evolink_image"
+    except Exception:
+        return False
+
+
 def source_image_route(provider: AiProvider, image_model: SourceImageModel) -> SourceImageRoute:
     # Klein is chosen by the source-image model, not by the x.ai / WaveSpeed toggle.
     if uses_flux_klein(image_model):
         return "bfl"
+    # Catalog provider wins over the draft toggle so EvoLink Seedream stills
+    # never fall through to WaveSpeed/x.ai with a doubao-* model id.
+    if uses_evolink_image(image_model) or provider == "evolink":
+        return "evolink"
     # The image-model dropdown is hidden for x.ai, so a leftover Seedream id
     # (the Video Flow default) must not send stills to WaveSpeed.
     if provider == "xai":
@@ -378,7 +392,8 @@ def edit_clothes_layer(
 
     Kontext keeps every pixel that the prompt doesn't ask to change — pose, framing,
     background, and face are locked by construction, so no Match alignment is needed.
-    Falls back to Grok edit when WaveSpeed key is unavailable.
+    Falls back to Grok edit when WaveSpeed key is unavailable. EvoLink has no Kontext,
+    so it uses Seedream-style image edit on that key instead.
     """
     if uses_flux_klein(image_model):
         return bfl.edit_photo_scratch_layer(
@@ -388,6 +403,14 @@ def edit_clothes_layer(
             aspect_ratio=aspect_ratio,
         )
     route = source_image_route(provider, image_model)
+    if route == "evolink":
+        return evolink.edit_clothes_layer(
+            prompt=prompt,
+            out=out,
+            source_image=source_image,
+            aspect_ratio=aspect_ratio,
+            model=_spec("source_image", image_model).endpoint_path,
+        )
     if route in ("wavespeed", "seedream-v5-lite"):
         return wavespeed.edit_clothes_layer_kontext(
             prompt=prompt,
@@ -445,6 +468,22 @@ def edit_photo_scratch_layer(
             named_images=images,
         )
     route = source_image_route(provider, image_model)
+    source_spec = _spec("source_image", image_model)
+    if route == "evolink":
+        from backend.services.image_refs import rewrite_image_tokens
+
+        text = rewrite_image_tokens(prompt, style="seedream") if images else prompt
+        return evolink.edit_photo_scratch_layer(
+            prompt=text,
+            out=out,
+            source_image=source_image if not images else images[0],
+            background_image=None if images else background_image,
+            face_image=None if images else face_image,
+            bikini_image=None if images else bikini_image,
+            aspect_ratio=aspect_ratio,
+            model=source_spec.endpoint_path,
+            named_images=images,
+        )
     if images:
         from backend.services.image_refs import rewrite_image_tokens
 
@@ -460,7 +499,7 @@ def edit_photo_scratch_layer(
                 "enable_sync_mode": False,
             }
             wavespeed.run_image_task(
-                wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
+                wavespeed.seedream_paths(source_spec.endpoint_path)[1],
                 payload,
                 out,
                 label="seedream photo-scratch edit",
@@ -497,7 +536,7 @@ def edit_photo_scratch_layer(
             "enable_sync_mode": False,
         }
         wavespeed.run_image_task(
-            wavespeed.seedream_paths(_spec("source_image", image_model).endpoint_path)[1],
+            wavespeed.seedream_paths(source_spec.endpoint_path)[1],
             payload,
             out,
             label="seedream photo-scratch edit",
