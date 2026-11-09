@@ -148,7 +148,24 @@ def test_unreachable_sidecar_falls_back_to_the_api(monkeypatch, tmp_path: Path):
     out = tmp_path / "out.png"
     bfl.generate(prompt="A studio portrait.", out=out)
     assert out.read_bytes() == b"cloud"
+    assert calls[0].full_url.startswith("https://flux.mxjprod.work/")
     assert calls[1].full_url.startswith("https://api.bfl.ai/")
+
+
+def test_unreachable_klein_names_the_configured_url(monkeypatch, tmp_path: Path):
+    import urllib.error
+
+    monkeypatch.setenv("FLUX_KLEIN_URL", "https://flux.mxjprod.work")
+    monkeypatch.delenv("BFL_API_KEY", raising=False)
+    _install_http(
+        monkeypatch,
+        [
+            urllib.error.URLError("[Errno 54] Connection reset by peer"),
+        ],
+    )
+    with pytest.raises(RuntimeError, match=r"flux\.mxjprod\.work") as raised:
+        bfl.generate(prompt="A studio portrait.", out=tmp_path / "out.png")
+    assert "BFL_API_KEY" not in str(raised.value)
 
 
 def test_missing_key_and_sidecar_raises(monkeypatch, tmp_path: Path):

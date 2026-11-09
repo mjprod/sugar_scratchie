@@ -371,8 +371,7 @@ def generate(
         except SidecarUnreachable as exc:
             if not api_key():
                 raise RuntimeError(
-                    "FLUX Klein server is unreachable and BFL_API_KEY is not set. "
-                    f"Check FLUX_KLEIN_URL. ({exc})"
+                    f"FLUX Klein server at {local} is unreachable ({exc})."
                 ) from exc
             print(f"FLUX Klein server unreachable ({exc}); using the Black Forest Labs API ...")
     return _generate_cloud(payload, out, label=label)
