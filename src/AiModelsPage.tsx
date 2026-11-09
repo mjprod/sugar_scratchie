@@ -229,13 +229,13 @@ export function AiModelsPage() {
       ),
   );
   const addingKlein = provider === "bfl" && !editing;
-
-  const adapterNeedsEndpoint = Boolean(selectedAdapter?.needs_endpoint);
+  // x.ai also has needs_endpoint false, but a new row still needs a model id.
+  // Only Klein is complete with an empty path.
   const readyToSave = Boolean(
     form &&
       form.label.trim() &&
       form.id.trim() &&
-      (editing || !adapterNeedsEndpoint || form.endpoint_path.trim()) &&
+      (editing || selectedAdapter?.provider === "bfl" || form.endpoint_path.trim()) &&
       !(addingKlein && kleinAlready),
   );
 
