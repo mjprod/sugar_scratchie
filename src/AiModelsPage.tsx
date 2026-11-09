@@ -243,12 +243,16 @@ export function AiModelsPage() {
     setForm((current) => {
       if (!current || editing) return current;
       const adapter = adapterFor(adapters, current.role, next);
+      const token = current.reference_token.trim();
+      // Empty (e.g. after x.ai) or the stock WaveSpeed/EvoLink token → fill the
+      // adapter default. Keep any custom token the operator already typed.
+      const stockToken = token === "@Image 1" || token === "@image1";
       return {
         ...current,
         adapter: adapter?.id ?? current.adapter,
         endpoint_path: "",
         reference_token: adapter?.needs_reference_token
-          ? current.reference_token === "@Image 1" || current.reference_token === "@image1"
+          ? !token || stockToken
             ? defaultReferenceToken(adapter)
             : current.reference_token
           : "",
