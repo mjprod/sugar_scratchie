@@ -43,7 +43,7 @@ const ROLE_HELP: Record<GenerationModelRole, string> = {
 
 const ROLES: GenerationModelRole[] = ["background_video", "dress_video", "source_image"];
 
-type ProviderName = "wavespeed" | "xai";
+type ProviderName = "wavespeed" | "xai" | "evolink";
 
 type FormState = {
   id: string;
@@ -133,7 +133,9 @@ function toPayload(form: FormState, adapter: GenerationAdapter | undefined) {
     label: form.label.trim(),
     adapter: form.adapter,
     endpoint_path:
-      adapter?.needs_endpoint || adapter?.provider === "xai" ? form.endpoint_path.trim() : "",
+      adapter?.needs_endpoint || adapter?.provider === "xai" || adapter?.provider === "evolink"
+        ? form.endpoint_path.trim()
+        : "",
     reference_token: adapter?.needs_reference_token ? form.reference_token.trim() : "",
     variant: adapter?.needs_variant ? form.variant : "",
     enabled: form.enabled,
@@ -141,7 +143,9 @@ function toPayload(form: FormState, adapter: GenerationAdapter | undefined) {
 }
 
 function formProvider(provider: string): ProviderName {
-  return provider === "xai" ? "xai" : "wavespeed";
+  if (provider === "xai") return "xai";
+  if (provider === "evolink") return "evolink";
+  return "wavespeed";
 }
 
 function isBflBuiltin(model: GenerationModelInfo | null): boolean {
@@ -151,13 +155,28 @@ function isBflBuiltin(model: GenerationModelInfo | null): boolean {
 function providerLabel(provider: string): string {
   if (provider === "xai") return "x.ai";
   if (provider === "bfl") return "Black Forest";
+  if (provider === "evolink") return "EvoLink";
   return "WaveSpeed";
 }
 
-function providerColor(provider: string): "orange" | "cyan" | "green" {
+function providerColor(provider: string): "orange" | "cyan" | "green" | "purple" {
   if (provider === "wavespeed") return "orange";
   if (provider === "bfl") return "green";
+  if (provider === "evolink") return "purple";
   return "cyan";
+}
+
+function endpointFieldLabel(provider: ProviderName | string, editingProvider?: string): string {
+  if (editingProvider === "bfl") return "Server address comes from FLUX_KLEIN_URL";
+  if (provider === "xai") return "x.ai model id";
+  if (provider === "evolink") return "EvoLink model id";
+  return "WaveSpeed path";
+}
+
+function searchPlaceholder(provider: ProviderName): string {
+  if (provider === "xai") return "grok imagine video";
+  if (provider === "evolink") return "seedance or seedream";
+  return "seedance or wan";
 }
 
 export function AiModelsPage() {
@@ -210,6 +229,12 @@ export function AiModelsPage() {
     setForm(formFromModel(model));
   }
 
+  function defaultReferenceToken(adapter: GenerationAdapter | undefined): string {
+    if (!adapter?.needs_reference_token) return "";
+    if (adapter.provider === "evolink") return "@image1";
+    return "@Image 1";
+  }
+
   function chooseProvider(next: ProviderName) {
     setProvider(next);
     setLookupResults([]);
@@ -222,7 +247,9 @@ export function AiModelsPage() {
         ...current,
         adapter: adapter?.id ?? current.adapter,
         endpoint_path: "",
-        reference_token: adapter?.needs_reference_token ? current.reference_token || "@Image 1" : "",
+        reference_token: adapter?.needs_reference_token
+          ? current.reference_token || defaultReferenceToken(adapter)
+          : "",
         variant: adapter?.needs_variant ? current.variant || "seedance" : "",
       };
     });
@@ -236,7 +263,9 @@ export function AiModelsPage() {
         ...current,
         role,
         adapter: adapter?.id ?? current.adapter,
-        reference_token: adapter?.needs_reference_token ? current.reference_token || "@Image 1" : "",
+        reference_token: adapter?.needs_reference_token
+          ? current.reference_token || defaultReferenceToken(adapter)
+          : "",
         variant: adapter?.needs_variant ? current.variant || "wan30" : "",
       };
     });
@@ -371,8 +400,8 @@ export function AiModelsPage() {
               </Text>
               <Heading size="7">AI models</Heading>
               <Text color="gray" size="2">
-                These are the choices in the Video Flow dropdowns. To add one, search your WaveSpeed or
-                x.ai account and pick a model that is actually there.
+                These are the choices in the Video Flow dropdowns. To add one, search your WaveSpeed,
+                x.ai, or EvoLink account and pick a model that is actually there.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -435,6 +464,18 @@ export function AiModelsPage() {
                         Grok Imagine image and video
                       </Text>
                     </button>
+                    <button
+                      type="button"
+                      className={provider === "evolink" ? "ai-model-choice is-selected" : "ai-model-choice"}
+                      onClick={() => chooseProvider("evolink")}
+                    >
+                      <Text as="div" weight="bold">
+                        EvoLink
+                      </Text>
+                      <Text as="div" color="gray" size="2">
+                        Seedance, WAN, Seedream
+                      </Text>
+                    </button>
                   </Flex>
                 )}
 
@@ -447,7 +488,7 @@ export function AiModelsPage() {
                     <Box style={{ flex: "1 1 240px" }}>
                       <TextField.Root
                         value={lookupQuery}
-                        placeholder={provider === "xai" ? "grok imagine video" : "seedance or wan"}
+                        placeholder={searchPlaceholder(provider)}
                         onChange={(event) => setLookupQuery(event.currentTarget.value)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
@@ -617,11 +658,7 @@ export function AiModelsPage() {
                         </label>
                         <label>
                           <Text as="div" mb="1" size="1" weight="medium" color="gray">
-                            {editing?.provider === "bfl"
-                              ? "Server address comes from FLUX_KLEIN_URL"
-                              : provider === "xai"
-                                ? "x.ai model id"
-                                : "WaveSpeed path"}
+                            {endpointFieldLabel(provider, editing?.provider)}
                           </Text>
                           <TextField.Root
                             value={form.endpoint_path}

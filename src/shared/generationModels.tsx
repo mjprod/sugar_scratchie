@@ -13,7 +13,7 @@ export type GenerationAdapter = {
   id: string;
   label: string;
   roles: GenerationModelRole[];
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed" | "bfl" | "evolink";
   needs_endpoint: boolean;
   needs_reference_token: boolean;
   needs_variant: boolean;
@@ -24,7 +24,7 @@ export type GenerationModelInfo = {
   id: string;
   role: GenerationModelRole;
   label: string;
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed" | "bfl" | "evolink";
   adapter: string;
   endpoint_path: string;
   reference_token: string;
@@ -157,7 +157,7 @@ export async function deleteGenerationModel(role: GenerationModelRole, modelId: 
 }
 
 export type RemoteProviderModel = {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed" | "bfl" | "evolink";
   model_id: string;
   name: string;
   kind: string;
@@ -168,7 +168,7 @@ export type RemoteProviderModel = {
 };
 
 export async function lookupProviderModels(input: {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed" | "bfl" | "evolink";
   query?: string;
   role?: GenerationModelRole | "";
 }): Promise<RemoteProviderModel[]> {
@@ -184,7 +184,7 @@ export async function lookupProviderModels(input: {
 }
 
 export async function checkProviderModel(input: {
-  provider: "xai" | "wavespeed" | "bfl";
+  provider: "xai" | "wavespeed" | "bfl" | "evolink";
   model_id: string;
 }): Promise<RemoteProviderModel> {
   return api<RemoteProviderModel>("/api/generation-models/check", {

@@ -192,14 +192,14 @@ class GenerationModel(Base):
             name="generation_models_role_chk",
         ),
         CheckConstraint(
-            "provider IN ('xai','wavespeed','bfl')",
+            "provider IN ('xai','wavespeed','bfl','evolink')",
             name="generation_models_provider_chk",
         ),
         CheckConstraint(
             "adapter IN ("
             "'grok_image','seedream_image','grok_i2v','wan_spicy_i2v',"
             "'grok_video_edit','prompt_video_edit','reference_video_edit',"
-            "'flux_klein_image'"
+            "'flux_klein_image','evolink_image','evolink_i2v','evolink_reference_video'"
             ")",
             name="generation_models_adapter_chk",
         ),

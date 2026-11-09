@@ -3137,6 +3137,8 @@ def _provider_for_source_image_model(image_model: str) -> str:
         provider = ""
     if uses_flux_klein(model) or provider == "bfl":
         return "bfl"
+    if provider == "evolink":
+        return "evolink"
     if provider == "wavespeed" or model == "seedream-v5-lite":
         return "wavespeed"
     return "xai"
