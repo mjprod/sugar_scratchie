@@ -57,6 +57,16 @@ SEEDREAM_PROMPT_WITH_FACE_PREFIX = (
 
 MAX_EDIT_DURATION_S = 15.0
 MAX_EDIT_SHORT_SIDE = 2160
+# Cloudflare's Browser Integrity Check blocks urllib's default Python-urllib UA.
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _headers(extra: dict[str, str]) -> dict[str, str]:
+    return {"User-Agent": USER_AGENT, "Accept": "application/json", **extra}
 
 
 def api_key() -> str:
@@ -126,7 +136,9 @@ def api_post(path: str, payload: dict, key: str) -> dict:
     req = urllib.request.Request(
         api_base() + path,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers=_headers(
+            {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        ),
         method="POST",
     )
     return send(req)
@@ -135,7 +147,7 @@ def api_post(path: str, payload: dict, key: str) -> dict:
 def api_get(path: str, key: str) -> dict:
     req = urllib.request.Request(
         api_base() + path,
-        headers={"Authorization": f"Bearer {key}"},
+        headers=_headers({"Authorization": f"Bearer {key}"}),
         method="GET",
     )
     return send(req)
@@ -168,10 +180,12 @@ def upload_file(path: Path, key: str | None = None) -> str:
     req = urllib.request.Request(
         files_base() + UPLOAD_STREAM_PATH,
         data=body,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
+        headers=_headers(
+            {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            }
+        ),
         method="POST",
     )
     print(f"Uploading {src.name} to EvoLink files API ...")
