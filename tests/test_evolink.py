@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from pathlib import Path
 from urllib.request import Request
 
@@ -45,6 +46,8 @@ def test_image_to_video_uploads_submits_polls_and_downloads(monkeypatch, tmp_pat
         calls.append((method, url))
         user_agent = req.get_header("User-agent")
         assert user_agent and not user_agent.startswith("Python-urllib")
+        assert req.get_header("Authorization") == "Bearer ev-test"
+        assert "Authorization" not in req.headers
         if url.endswith("/api/v1/files/upload/stream"):
             assert method == "POST"
             assert b"still.png" in (req.data or b"")
@@ -145,6 +148,21 @@ def test_edit_video_reference_sends_video_and_image_urls(monkeypatch, tmp_path):
     )
     assert out.read_bytes() == b"edited"
     assert uploaded == ["https://files.evolink.test/outfit", "https://files.evolink.test/clip"]
+
+
+def test_authorization_is_dropped_on_redirect():
+    req = evolink._request("https://api.evolink.test/v1/models", "secret-token", method="GET")
+    assert req.get_header("Authorization") == "Bearer secret-token"
+    redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+        req,
+        None,
+        302,
+        "Found",
+        {},
+        "https://evil.example/collect",
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") is None
 
 
 def test_api_key_required(monkeypatch):
