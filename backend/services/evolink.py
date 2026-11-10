@@ -65,8 +65,30 @@ USER_AGENT = (
 )
 
 
-def _headers(extra: dict[str, str]) -> dict[str, str]:
-    return {"User-Agent": USER_AGENT, "Accept": "application/json", **extra}
+def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    return {"User-Agent": USER_AGENT, "Accept": "application/json", **(extra or {})}
+
+
+def _request(
+    url: str,
+    key: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    method: str,
+) -> urllib.request.Request:
+    """Build a request whose bearer token is not forwarded on redirects.
+
+    urllib copies ``Request.headers`` onto the next hop and only drops
+    Content-* headers, including across hosts.
+    """
+    if headers and any(k.lower() == "authorization" for k in headers):
+        raise ValueError(
+            "Do not pass Authorization via headers; it is set via add_unredirected_header() to avoid redirect leaks."
+        )
+    req = urllib.request.Request(url, data=data, headers=_headers(headers), method=method)
+    req.add_unredirected_header("Authorization", f"Bearer {key}")
+    return req
 
 
 def api_key() -> str:
@@ -133,23 +155,18 @@ def send(req: urllib.request.Request, *, retries: int = API_MAX_RETRIES) -> dict
 
 
 def api_post(path: str, payload: dict, key: str) -> dict:
-    req = urllib.request.Request(
+    req = _request(
         api_base() + path,
+        key,
         data=json.dumps(payload).encode("utf-8"),
-        headers=_headers(
-            {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        ),
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     return send(req)
 
 
 def api_get(path: str, key: str) -> dict:
-    req = urllib.request.Request(
-        api_base() + path,
-        headers=_headers({"Authorization": f"Bearer {key}"}),
-        method="GET",
-    )
+    req = _request(api_base() + path, key, method="GET")
     return send(req)
 
 
@@ -177,15 +194,11 @@ def upload_file(path: Path, key: str | None = None) -> str:
         raise RuntimeError(f"File not found: {src}")
     token = key or api_key()
     body, boundary = _multipart_file(src)
-    req = urllib.request.Request(
+    req = _request(
         files_base() + UPLOAD_STREAM_PATH,
+        token,
         data=body,
-        headers=_headers(
-            {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            }
-        ),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
     print(f"Uploading {src.name} to EvoLink files API ...")
