@@ -43,6 +43,8 @@ def test_image_to_video_uploads_submits_polls_and_downloads(monkeypatch, tmp_pat
         url = req.full_url
         method = req.get_method()
         calls.append((method, url))
+        user_agent = req.get_header("User-agent")
+        assert user_agent and not user_agent.startswith("Python-urllib")
         if url.endswith("/api/v1/files/upload/stream"):
             assert method == "POST"
             assert b"still.png" in (req.data or b"")
