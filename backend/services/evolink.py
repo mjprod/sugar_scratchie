@@ -82,6 +82,10 @@ def _request(
     urllib copies ``Request.headers`` onto the next hop and only drops
     Content-* headers, including across hosts.
     """
+    if headers and any(k.lower() == "authorization" for k in headers):
+        raise ValueError(
+            "Do not pass Authorization via headers; it is set via add_unredirected_header() to avoid redirect leaks."
+        )
     req = urllib.request.Request(url, data=data, headers=_headers(headers), method=method)
     req.add_unredirected_header("Authorization", f"Bearer {key}")
     return req
