@@ -45,6 +45,7 @@ frontend-new/
 
 # Nested promoter app (own git history)
 /mjpromoter/
+mjpromoter/
 
 # Generated ControlNet frames and output
 public/cards/controlnet-frames/
