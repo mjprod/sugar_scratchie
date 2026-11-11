@@ -43,6 +43,9 @@ build/
 # Nested frontend repo (own git history: sugar-scratch-merged2)
 frontend-new/
 
+# Nested promoter app (own git history)
+/mjpromoter/
+
 # Generated ControlNet frames and output
 public/cards/controlnet-frames/
 public/cards/controlnet-output/
