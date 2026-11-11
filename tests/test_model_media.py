@@ -32,9 +32,7 @@ def _png(width: int, height: int) -> bytes:
 def _rgba_png(width: int, height: int) -> bytes:
     img = Image.new("RGBA", (width, height), (40, 40, 50, 0))
     # Opaque vertical stripe so the encoder keeps a real alpha channel.
-    for x in range(width // 4, (3 * width) // 4):
-        for y in range(height):
-            img.putpixel((x, y), (180, 180, 190, 255))
+    img.paste((180, 180, 190, 255), (width // 4, 0, (3 * width) // 4, height))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
