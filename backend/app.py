@@ -107,6 +107,7 @@ from backend.models_store import (
     upload_model_avatar,
     upload_model_flag_svg,
     upload_model_poster,
+    upload_model_profile_dress,
     upload_model_swipe_poster,
     upload_model_theme_avatar,
     upload_model_video,
@@ -1525,6 +1526,16 @@ async def post_model_cover(
     file: UploadFile = File(...),
 ) -> dict:
     model = await upload_model_poster(db, MODELS_DIR, model_id, "cover", file)
+    return model.dict()
+
+
+@app.post("/api/models/{model_id}/profile-dress")
+async def post_model_profile_dress(
+    model_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+) -> dict:
+    model = await upload_model_profile_dress(db, MODELS_DIR, model_id, file)
     return model.dict()
 
 

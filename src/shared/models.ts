@@ -57,6 +57,10 @@ export type ModelGlobalMedia = {
   ultraCardTrailerPosterUrl?: string | null;
   /** Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp". */
   coverUrl?: string | null;
+  /** Transparent profile dress cutout 1× (347×626), e.g. "/models/julianaval/profile-dress.webp". */
+  profileDressUrl?: string | null;
+  /** Transparent profile dress cutout 2× (566×1024). */
+  profileDress2xUrl?: string | null;
   /** Product label for foil pack 1 (replaces "Pack Nº …" when set). */
   cardPackName?: string | null;
   /** Product label for foil pack 2. */
@@ -80,7 +84,8 @@ export type ModelPosterKind =
   | "pack-face-2-poster"
   | "swipe-poster"
   | "ultra-card-trailer-poster"
-  | "cover";
+  | "cover"
+  | "profile-dress";
 
 export const MODEL_VIDEO_POSTER_KIND: Record<ModelVideoKind, ModelPosterKind> = {
   "pack-face": "pack-face-poster",
@@ -431,6 +436,13 @@ export async function uploadModelSwipePoster(
 
 export async function uploadModelCover(modelId: string, file: File): Promise<ModelInfo> {
   return uploadModelPoster(modelId, "cover", file);
+}
+
+export async function uploadModelProfileDress(
+  modelId: string,
+  file: File,
+): Promise<ModelInfo> {
+  return uploadModelPoster(modelId, "profile-dress", file);
 }
 
 export async function uploadModelPoster(

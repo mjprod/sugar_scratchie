@@ -29,6 +29,11 @@ VIDEO_EXTENSIONS = {".mp4", ".webm"}
 AVATAR_MAX_PX = 512
 # 2× the recommended 820×312 cover.
 COVER_MAX_PX = 1640
+# Transparent profile dress cutout (1× / 2× portrait).
+PROFILE_DRESS_MAX_PX = 626
+PROFILE_DRESS_2X_MAX_PX = 1024
+PROFILE_DRESS_STEM = "profile-dress"
+PROFILE_DRESS_2X_STEM = "profile-dress-2x"
 STILL_WEBP_QUALITY = 82
 IMAGE_BACKUP_DIRNAME = ".image-backups"
 
@@ -40,17 +45,23 @@ MODEL_VIDEO_STEMS: dict[str, str] = {
     "ultra-card-trailer": "ultraCardTrailerUrl",
 }
 
-# Still images: video-paired posters + standalone model cover.
+# Still images: video-paired posters + standalone model cover / profile dress.
 MODEL_POSTER_STEMS: dict[str, str] = {
     "pack-face-poster": "packFacePosterUrl",
     "pack-face-2-poster": "packFacePosterUrl2",
     "swipe-poster": "swipePosterUrl",
     "ultra-card-trailer-poster": "ultraCardTrailerPosterUrl",
     "cover": "coverUrl",
+    PROFILE_DRESS_STEM: "profileDressUrl",
+    PROFILE_DRESS_2X_STEM: "profileDress2xUrl",
 }
 
 # Poster stems that are re-encoded on upload; video-paired posters keep their bytes.
-POSTER_MAX_PX: dict[str, int] = {"cover": COVER_MAX_PX}
+POSTER_MAX_PX: dict[str, int] = {
+    "cover": COVER_MAX_PX,
+    PROFILE_DRESS_STEM: PROFILE_DRESS_MAX_PX,
+    PROFILE_DRESS_2X_STEM: PROFILE_DRESS_2X_MAX_PX,
+}
 
 # Still image paired with swipe motion video (discovery/admin poster).
 SWIPE_POSTER_STEM = "swipe-poster"
@@ -123,6 +134,10 @@ class ModelInfo(BaseModel):
     ultraCardTrailerPosterUrl: str | None = None
     # Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp".
     coverUrl: str | None = None
+    # Transparent profile dress cutout 1× (347×626), e.g. "/models/julianaval/profile-dress.webp".
+    profileDressUrl: str | None = None
+    # Transparent profile dress cutout 2× (566×1024).
+    profileDress2xUrl: str | None = None
     # theme_id → public URL for model×theme collection avatar.
     theme_avatars: dict[str, str] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
@@ -359,6 +374,8 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         ultraCardTrailerUrl=videos.get("ultraCardTrailerUrl"),
         ultraCardTrailerPosterUrl=posters.get("ultraCardTrailerPosterUrl"),
         coverUrl=posters.get("coverUrl"),
+        profileDressUrl=posters.get("profileDressUrl"),
+        profileDress2xUrl=posters.get("profileDress2xUrl"),
         theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
         tags=_normalize_tags(row.tags),
     )
@@ -749,6 +766,41 @@ async def upload_model_swipe_poster(
     upload: UploadFile,
 ) -> ModelInfo:
     return await upload_model_poster(db, models_dir, model_id, SWIPE_POSTER_STEM, upload)
+
+
+async def upload_model_profile_dress(
+    db: Session,
+    models_dir: Path,
+    model_id: str,
+    upload: UploadFile,
+) -> ModelInfo:
+    """Write both 1× and 2× profile-dress WebPs from a single upload."""
+    row = _require_creator(db, model_id)
+    model_dir = models_dir / row.id
+    model_dir.mkdir(parents=True, exist_ok=True)
+    original = Path(upload.filename or "").name
+    ext = Path(original).suffix.lower()
+    if ext not in AVATAR_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Profile dress must be JPG, PNG, or WebP")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded profile dress is empty")
+    backup_root = image_backup_dir(models_dir, row.id)
+    write_optimized_still(
+        model_dir,
+        PROFILE_DRESS_2X_STEM,
+        data,
+        PROFILE_DRESS_2X_MAX_PX,
+        backup=backup_root / f"{PROFILE_DRESS_2X_STEM}{ext}",
+    )
+    write_optimized_still(
+        model_dir,
+        PROFILE_DRESS_STEM,
+        data,
+        PROFILE_DRESS_MAX_PX,
+        backup=backup_root / f"{PROFILE_DRESS_STEM}{ext}",
+    )
+    return _row_to_info(row, models_dir)
 
 
 async def upload_model_theme_avatar(

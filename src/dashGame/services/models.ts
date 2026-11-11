@@ -33,6 +33,10 @@ export type BackendModel = {
   ultraCardTrailerPosterUrl?: string | null;
   /** Landscape model cover (recommended 820×312), e.g. "/models/julianaval/cover.webp". */
   coverUrl?: string | null;
+  /** Transparent profile dress cutout 1× (347×626). */
+  profileDressUrl?: string | null;
+  /** Transparent profile dress cutout 2× (566×1024). */
+  profileDress2xUrl?: string | null;
   theme_avatars?: Record<string, string> | null;
   tags?: string[];
 };
@@ -288,6 +292,11 @@ export function modelAvatarUrl(model: BackendModel | null | undefined) {
 
 export function modelCoverUrl(model: BackendModel | null | undefined) {
   return optionalMedia(model?.coverUrl);
+}
+
+/** Prefer 2× dress cutout when present; fall back to 1×. */
+export function modelProfileDressUrl(model: BackendModel | null | undefined) {
+  return optionalMedia(model?.profileDress2xUrl) || optionalMedia(model?.profileDressUrl);
 }
 
 export function modelSwipePosterUrl(model: BackendModel | null | undefined) {
