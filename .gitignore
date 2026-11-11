@@ -43,6 +43,10 @@ build/
 # Nested frontend repo (own git history: sugar-scratch-merged2)
 frontend-new/
 
+# Nested MJ Promoter repo (own git history). Sugar Scratchie reports sales;
+# promoter owns commission percentages.
+mjpromoter/
+
 # Generated ControlNet frames and output
 public/cards/controlnet-frames/
 public/cards/controlnet-output/

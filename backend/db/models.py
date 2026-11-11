@@ -53,6 +53,8 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     gender_interest: Mapped[str | None] = mapped_column(Text, nullable=True)
     referral_code: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # MJ Promoter invite code from a manager. Not the player-to-player referral_code.
+    promoter_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     referred_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
@@ -376,6 +378,7 @@ class StorePurchase(Base):
     verified_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     gateway_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     credited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promoter_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 

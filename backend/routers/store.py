@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Literal
 
@@ -11,8 +12,11 @@ from backend.auth.sessions import current_user
 from backend.db.engine import get_session
 from backend.db.models import StoreProduct, StorePurchase, User, utcnow
 from backend.db.wallet import InsufficientFunds, apply_delta, ensure_wallet
+from backend.services.promoter import configured as promoter_configured
+from backend.services.promoter import track_sale
 
 router = APIRouter(prefix="/api/store", tags=["store"])
+logger = logging.getLogger("sugar.promoter")
 
 GatewayOutcome = Literal["completed", "cancelled", "closed", "failed", "pending"]
 
@@ -157,6 +161,31 @@ def create_purchase(
     return {"session": _session_public(row, product.title)}
 
 
+def _report_promoter_sale(row: StorePurchase, user: User, product: StoreProduct | None) -> None:
+    """Tell Promoter about a confirmed diamond purchase. Never undoes the credit."""
+    if row.promoter_reported_at is not None or row.verified_status != "confirmed":
+        return
+    if not user.promoter_ref or not row.gateway or product is None:
+        return
+    cents = product.price_amount_cents
+    if cents is None or cents <= 0 or not promoter_configured():
+        return
+    try:
+        reported = track_sale(
+            event_id=f"scratchie:{row.id}",
+            amount_cents=cents,
+            email=user.email,
+            uid=str(user.id),
+            ref_id=user.promoter_ref,
+            plan=product.id,
+        )
+    except Exception:
+        logger.exception("promoter sale report failed purchase=%s", row.id)
+        return
+    if reported:
+        row.promoter_reported_at = utcnow()
+
+
 @router.post("/purchases/{purchase_id}/verify")
 def verify_purchase(
     purchase_id: str,
@@ -190,6 +219,7 @@ def verify_purchase(
 
     if row.credited_at is not None:
         row.verified_status = "confirmed"
+        _report_promoter_sale(row, user, product)
         return {"status": "confirmed", "session": _session_public(row, title), "diamonds": 0, "coins": 0}
 
     if row.diamonds:
@@ -216,6 +246,7 @@ def verify_purchase(
         )
     row.credited_at = utcnow()
     row.verified_status = "confirmed"
+    _report_promoter_sale(row, user, product)
     wallet = ensure_wallet(db, user.id)
     return {
         "status": "confirmed",

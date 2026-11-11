@@ -31,6 +31,7 @@ from backend.routers import collection as collection_router
 from backend.routers import inbox as inbox_router
 from backend.routers import me as me_router
 from backend.routers import packs as packs_router
+from backend.routers import promoter as promoter_router
 from backend.routers import rewards as rewards_router
 from backend.routers import store as store_router
 from backend.routers import users_admin as users_admin_router
@@ -551,6 +552,7 @@ app.include_router(me_router.router)
 app.include_router(wallet_router.router)
 app.include_router(store_router.router)
 app.include_router(packs_router.router)
+app.include_router(promoter_router.router)
 app.include_router(collection_router.router)
 app.include_router(card_plays_router.router)
 app.include_router(board_router.router)

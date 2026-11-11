@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -40,6 +41,7 @@ from backend.db.models import EmailToken, User, utcnow
 from backend.db.models import Session as UserSession
 from backend.db.wallet import grant_welcome
 from backend.mail import send_reset_email, send_verify_email
+from backend.services.promoter import PromoterInviteRejected, accept_invite
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -64,6 +66,21 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=200)
     username: str | None = Field(default=None, max_length=40)
     display_name: str | None = Field(default=None, max_length=80)
+    promoter_ref: str | None = Field(default=None, max_length=64)
+
+
+_PROMOTER_REF = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+
+
+def _clean_promoter_ref(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if not _PROMOTER_REF.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Invite code is not valid.")
+    return cleaned
 
 
 class LoginRequest(BaseModel):
@@ -133,6 +150,7 @@ def public_user(user: User) -> dict:
         "avatarUrl": user.avatar_url,
         "genderInterest": user.gender_interest,
         "referralCode": user.referral_code,
+        "promoterRef": user.promoter_ref,
         "welcomeClaimed": user.welcome_claimed_at is not None,
         "homeTutorialDone": user.home_tutorial_done,
         "recommendationStatus": user.recommendation_status,
@@ -147,6 +165,7 @@ def _create_user(
     password: str | None = None,
     username: str | None = None,
     display_name: str | None = None,
+    promoter_ref: str | None = None,
     subject: str | None = None,
     apple_subject: str | None = None,
     verified: bool = False,
@@ -159,6 +178,7 @@ def _create_user(
         apple_subject=apple_subject,
         username=username,
         display_name=display_name or (username or email.split("@")[0]),
+        promoter_ref=promoter_ref,
         email_verified_at=utcnow() if verified else None,
         referral_code=new_referral_code(),
     )
@@ -276,6 +296,17 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
     existing = db.query(User).filter(User.email == email).one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Unable to create account. Please try again.")
+    promoter_ref = _clean_promoter_ref(body.promoter_ref)
+    if promoter_ref:
+        try:
+            accept_invite(
+                email=email,
+                password=body.password,
+                display_name=body.display_name,
+                invite_code=promoter_ref,
+            )
+        except PromoterInviteRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     user = _create_user(
         db,
         email=email,
@@ -283,6 +314,7 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
         password=body.password,
         username=body.username,
         display_name=body.display_name,
+        promoter_ref=promoter_ref,
     )
     code = _issue_verify_code(db, user)
     send_verify_email(to=email, code=code)
