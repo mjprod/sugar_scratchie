@@ -18,6 +18,7 @@ logger = logging.getLogger("sugar.promoter")
 
 INVITE_TIMEOUT_S = 4.0
 SALE_TIMEOUT_S = 4.0
+WEBHOOK_TIMEOUT_S = 4.0
 
 
 class PromoterInviteRejected(Exception):
@@ -32,6 +33,7 @@ class InviteLookup:
     status_code: int
     detail: str
     campaign_name: str | None = None
+    invitee_email: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -50,8 +52,52 @@ def _account_id() -> str:
     return os.environ.get("MJPROMOTER_ACCOUNT_ID", "").strip()
 
 
+def _webhook_url() -> str:
+    return os.environ.get("MJPROMOTER_WEBHOOK_URL", "").strip().rstrip("/")
+
+
+def _webhook_secret() -> str:
+    return os.environ.get("MJPROMOTER_WEBHOOK_SECRET", "").strip()
+
+
 def configured() -> bool:
     return bool(_api_url() and _bearer() and _account_id())
+
+
+def webhook_configured() -> bool:
+    return bool(_webhook_url() and _webhook_secret())
+
+
+def _lp_public_url() -> str:
+    """Origin for published influencer LPs (frontend-new player app)."""
+    return (
+        os.environ.get("PREINFLUENCER_LP_PUBLIC_URL", "").strip().rstrip("/")
+        or "https://localhost:5174"
+    )
+
+
+def _default_lp_model() -> str:
+    return os.environ.get("PREINFLUENCER_LP_MODEL", "").strip() or "julianaval"
+
+
+def _default_lp_card() -> str:
+    return os.environ.get("PREINFLUENCER_LP_CARD", "").strip() or "juliana_1"
+
+
+def build_landing_page_url(
+    *,
+    model: str | None = None,
+    card: str | None = None,
+) -> str:
+    """Player /join freeplay URL after AM orders the landing page."""
+    model_id = (model or "").strip() or _default_lp_model()
+    card_id = (card or "").strip() or _default_lp_card()
+    return (
+        f"{_lp_public_url()}/join"
+        f"?model={quote(model_id, safe='')}"
+        f"&freeplay=1"
+        f"&card={quote(card_id, safe='')}"
+    )
 
 
 def _error_text(response: httpx.Response) -> str:
@@ -66,6 +112,18 @@ def _error_text(response: httpx.Response) -> str:
     return ""
 
 
+def _invitee_email_from_referral(referral: object) -> str | None:
+    if not isinstance(referral, dict):
+        return None
+    meta = referral.get("metadata")
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("inviteeEmail")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return None
+
+
 def lookup_invite(code: str) -> InviteLookup:
     if not configured():
         return InviteLookup(503, "Promoter is not configured.")
@@ -78,6 +136,7 @@ def lookup_invite(code: str) -> InviteLookup:
         return InviteLookup(502, "Could not check this invite.")
     if response.status_code == 200:
         name = None
+        invitee_email = None
         try:
             body = response.json()
         except Exception:
@@ -86,7 +145,8 @@ def lookup_invite(code: str) -> InviteLookup:
         campaign = referral.get("campaign") if isinstance(referral, dict) else None
         if isinstance(campaign, dict) and isinstance(campaign.get("name"), str):
             name = campaign["name"]
-        return InviteLookup(200, "", name)
+        invitee_email = _invitee_email_from_referral(referral)
+        return InviteLookup(200, "", name, invitee_email)
     if response.status_code == 404:
         return InviteLookup(404, "This invite is not valid.")
     text = _error_text(response).lower()
@@ -96,6 +156,56 @@ def lookup_invite(code: str) -> InviteLookup:
         return InviteLookup(400, "This invite is no longer active.")
     logger.warning("promoter invite lookup status=%s code=%s", response.status_code, code)
     return InviteLookup(502, "Could not check this invite.")
+
+
+def notify_step(
+    *,
+    email: str,
+    invite_code: str,
+    current_step: int,
+    status: str,
+    asset_link: str | None = None,
+) -> bool:
+    """Push pre-influencer step to MJ Promoter's teaseme-step webhook."""
+    if not webhook_configured():
+        return False
+    payload: dict[str, object] = {
+        "email": email,
+        "inviteCode": invite_code,
+        "currentStep": current_step,
+        "status": status,
+    }
+    if asset_link:
+        payload["assetLink"] = asset_link
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "x-webhook-secret": _webhook_secret(),
+    }
+    try:
+        with httpx.Client(timeout=WEBHOOK_TIMEOUT_S) as client:
+            response = client.post(_webhook_url(), json=payload, headers=headers)
+    except httpx.HTTPError:
+        logger.warning(
+            "promoter step webhook failed invite=%s step=%s",
+            invite_code,
+            current_step,
+        )
+        return False
+    if response.status_code in (200, 201):
+        logger.info(
+            "promoter step webhook ok invite=%s step=%s",
+            invite_code,
+            current_step,
+        )
+        return True
+    logger.warning(
+        "promoter step webhook status=%s invite=%s step=%s",
+        response.status_code,
+        invite_code,
+        current_step,
+    )
+    return False
 
 
 def _split_name(display_name: str | None, email: str) -> tuple[str, str | None]:

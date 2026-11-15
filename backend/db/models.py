@@ -29,6 +29,35 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class PreInfluencer(Base):
+    """MJ Promoter invitee before a landing page exists (Sugar Scratchie funnel)."""
+
+    __tablename__ = "pre_influencers"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','confirmed','building','live')",
+            name="pre_influencers_status_chk",
+        ),
+        CheckConstraint(
+            "survey_step >= 0 AND survey_step <= 2",
+            name="pre_influencers_survey_step_chk",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(CITEXT, nullable=False)
+    full_name: Mapped[str] = mapped_column(Text, nullable=False)
+    invite_code: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    survey_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mjfp_last_notified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    asset_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (

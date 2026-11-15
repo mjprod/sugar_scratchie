@@ -5,6 +5,7 @@ import { Theme } from "@radix-ui/themes";
 import { Dashboard } from "./Dashboard";
 import { DashboardLoginPage } from "./DashboardLoginPage";
 import { GamePage } from "./GamePage";
+import { JoinConfirmPage } from "./JoinConfirmPage";
 import { ModelsPage } from "./ModelsPage";
 import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
@@ -101,6 +102,9 @@ function HomePage() {
 function pickApp(pathname: string) {
   const path = normalizePath(pathname);
   if (path === "/dashboard/login") return DashboardLoginPage;
+  // Invitee confirms email/name — public. Freeplay LP lives in frontend-new
+  // (e.g. https://localhost:5174/join?model=…&freeplay=1&card=…), not here.
+  if (path === "/join" || path === "/dashboard/join") return JoinConfirmPage;
   if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
   if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;

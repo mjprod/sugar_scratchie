@@ -241,3 +241,206 @@ def test_promoter_sale_error_still_credits_diamonds(client, promoter_env):
     )
     assert verified.status_code == 200, verified.text
     assert verified.json()["wallet"]["diamonds"] >= product["diamonds"]
+
+
+@pytest.fixture
+def promoter_webhook_env(promoter_env, monkeypatch: pytest.MonkeyPatch):
+    del promoter_env
+    monkeypatch.setenv("MJPROMOTER_WEBHOOK_URL", "http://promoter.test/api/webhooks/teaseme-step")
+    monkeypatch.setenv("MJPROMOTER_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("MJPROMOTER_INTERNAL_TOKEN", "internal_test")
+    _Client.post_response = _Response(200, {"ok": True, "matched": True})
+    return None
+
+
+def test_confirm_pre_influencer_notifies_webhook(client, promoter_webhook_env):
+    del promoter_webhook_env
+    invite_code = f"Conf{uuid.uuid4().hex[:8]}"
+    email = f"confirm-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie – Influencer Referral Campaign"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": invite_code,
+            "email": email,
+            "full_name": "Dev MJ",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["email"] == email
+    assert body["fullName"] == "Dev MJ"
+    assert body["surveyStep"] == 1
+    assert body["status"] == "confirmed"
+    assert body["notified"] is True
+    webhook_posts = [
+        post for post in _Client.posts if post["url"].endswith("/webhooks/teaseme-step")
+    ]
+    assert len(webhook_posts) == 1
+    assert webhook_posts[0]["headers"]["x-webhook-secret"] == "whsec_test"
+    assert webhook_posts[0]["json"]["inviteCode"] == invite_code
+    assert webhook_posts[0]["json"]["currentStep"] == 1
+    assert webhook_posts[0]["json"]["status"] == "confirmed"
+
+
+def test_confirm_pre_influencer_rejects_wrong_email(client, promoter_webhook_env):
+    del promoter_webhook_env
+    invite_code = f"Wrong{uuid.uuid4().hex[:8]}"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": "dev.mjpro@gmail.com"},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": invite_code,
+            "email": "other@example.com",
+            "full_name": "Other Person",
+        },
+    )
+    assert response.status_code == 400
+    assert "different email" in response.json()["detail"]
+
+
+def test_confirm_pre_influencer_does_not_regress_step_two(client, promoter_webhook_env):
+    del promoter_webhook_env
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": "keep@example.com"},
+            }
+        },
+    )
+    first = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": "KeepStep2Code",
+            "email": "keep@example.com",
+            "full_name": "Keep Step",
+        },
+    )
+    assert first.status_code == 200, first.text
+    ordered = client.post(
+        "/api/promoter/pre-influencers/order-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": "KeepStep2Code", "invitee_email": "keep@example.com"},
+    )
+    assert ordered.status_code == 200, ordered.text
+    assert ordered.json()["survey_step"] == 2
+    assert ordered.json()["status"] == "live"
+
+    again = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": "KeepStep2Code",
+            "email": "keep@example.com",
+            "full_name": "Keep Step Updated",
+        },
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["surveyStep"] == 2
+    assert again.json()["status"] == "live"
+    assert again.json()["fullName"] == "Keep Step Updated"
+
+
+def test_order_landing_page_requires_internal_token(client, promoter_webhook_env):
+    del promoter_webhook_env
+    response = client.post(
+        "/api/promoter/pre-influencers/order-landing-page",
+        json={"invite_code": "Ab12_cd34E", "invitee_email": "dev.mjpro@gmail.com"},
+    )
+    assert response.status_code == 401
+
+
+def test_order_landing_page_publishes_player_join_url(client, promoter_webhook_env, monkeypatch):
+    del promoter_webhook_env
+    monkeypatch.setenv("PREINFLUENCER_LP_PUBLIC_URL", "https://localhost:5174")
+    invite_code = f"Order{uuid.uuid4().hex[:8]}"
+    email = f"lp-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    confirmed = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": invite_code,
+            "email": email,
+            "full_name": "LP Person",
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    _Client.posts.clear()
+
+    response = client.post(
+        "/api/promoter/pre-influencers/order-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": invite_code, "invitee_email": email},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "live"
+    assert body["survey_step"] == 2
+    assert (
+        body["asset_link"]
+        == "https://localhost:5174/join?model=julianaval&freeplay=1&card=juliana_1"
+    )
+    assert body["notified"] is True
+    webhook_posts = [
+        post for post in _Client.posts if post["url"].endswith("/webhooks/teaseme-step")
+    ]
+    assert len(webhook_posts) == 1
+    assert webhook_posts[0]["json"]["currentStep"] == 2
+    assert webhook_posts[0]["json"]["status"] == "live"
+    assert webhook_posts[0]["json"]["assetLink"] == body["asset_link"]
+
+
+def test_confirm_without_webhook_still_saves(client, promoter_env, monkeypatch):
+    del promoter_env
+    monkeypatch.delenv("MJPROMOTER_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("MJPROMOTER_WEBHOOK_SECRET", raising=False)
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": "offline@example.com"},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": "NoWebhook01",
+            "email": "offline@example.com",
+            "full_name": "Offline User",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["surveyStep"] == 1
+    assert response.json()["notified"] is False
+    assert not any(
+        post["url"].endswith("/webhooks/teaseme-step") for post in _Client.posts
+    )
