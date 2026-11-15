@@ -1,4 +1,4 @@
-from backend.routers import auth, card_plays, collection, inbox, me, packs, rewards, store, users_admin, wallet
+from backend.routers import auth, card_plays, collection, inbox, me, packs, promoter, rewards, store, users_admin, wallet
 
 __all__ = [
     "auth",
@@ -7,6 +7,7 @@ __all__ = [
     "inbox",
     "me",
     "packs",
+    "promoter",
     "rewards",
     "store",
     "users_admin",

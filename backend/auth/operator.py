@@ -109,6 +109,12 @@ def needs_operator(scope: Scope) -> bool:
     # The n8n form runs the Mac steps with its own token. The route checks that token.
     if method == "POST" and path == "/api/internal/influencer-run":
         return False
+    # Invitee confirms name/email from the public join link (no operator cookie).
+    if method == "POST" and path == "/api/promoter/pre-influencers/confirm":
+        return False
+    # MJ Promoter orders the landing page with X-Internal-Token (route checks it).
+    if method == "POST" and path == "/api/promoter/pre-influencers/order-landing-page":
+        return False
     if path.startswith("/api/jobs"):
         return True
     # Player PII — require operator token for every method, including GET.
