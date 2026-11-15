@@ -45,6 +45,7 @@ frontend-new/
 
 # Nested MJ Promoter repo (own git history). Sugar Scratchie reports sales;
 # promoter owns commission percentages.
+/mjpromoter/
 mjpromoter/
 
 # Generated ControlNet frames and output

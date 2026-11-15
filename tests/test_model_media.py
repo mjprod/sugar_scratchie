@@ -13,14 +13,26 @@ from backend.db.models import Creator
 from backend.models_store import (
     AVATAR_MAX_PX,
     COVER_MAX_PX,
+    PROFILE_DRESS_2X_MAX_PX,
+    PROFILE_DRESS_MAX_PX,
     upload_model_avatar,
     upload_model_poster,
+    upload_model_profile_dress,
     upload_model_theme_avatar,
 )
 
 
 def _png(width: int, height: int) -> bytes:
     img = Image.radial_gradient("L").resize((width, height)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _rgba_png(width: int, height: int) -> bytes:
+    img = Image.new("RGBA", (width, height), (40, 40, 50, 0))
+    # Opaque vertical stripe so the encoder keeps a real alpha channel.
+    img.paste((180, 180, 190, 255), (width // 4, 0, (3 * width) // 4, height))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -77,6 +89,31 @@ def test_cover_upload_is_resized_webp(db_session, model):
     with Image.open(models_dir / model_id / "cover.webp") as img:
         assert img.format == "WEBP"
         assert img.size == (COVER_MAX_PX, 624)
+
+
+def test_profile_dress_upload_writes_1x_and_2x_webp(db_session, model):
+    model_id, models_dir = model
+    data = _rgba_png(1132, 2048)
+
+    info = asyncio.run(
+        upload_model_profile_dress(
+            db_session, models_dir, model_id, _upload(data, "dress.png")
+        )
+    )
+
+    assert _path(info.profileDressUrl) == f"/models/{model_id}/profile-dress.webp"
+    assert _path(info.profileDress2xUrl) == f"/models/{model_id}/profile-dress-2x.webp"
+    with Image.open(models_dir / model_id / "profile-dress.webp") as img:
+        assert img.format == "WEBP"
+        assert img.mode == "RGBA"
+        assert max(img.size) == PROFILE_DRESS_MAX_PX
+        assert img.size[1] == PROFILE_DRESS_MAX_PX
+        assert abs(img.size[0] / img.size[1] - 1132 / 2048) < 0.01
+    with Image.open(models_dir / model_id / "profile-dress-2x.webp") as img:
+        assert img.format == "WEBP"
+        assert img.mode == "RGBA"
+        assert max(img.size) == PROFILE_DRESS_2X_MAX_PX
+        assert img.size == (566, PROFILE_DRESS_2X_MAX_PX)
 
 
 def test_theme_avatar_upload_is_resized_webp(db_session, model):

@@ -69,6 +69,7 @@ import {
   uploadModelVideo,
   uploadModelPoster,
   uploadModelCover,
+  uploadModelProfileDress,
   MODEL_SOCIAL_FIELDS,
   MODEL_VIDEO_POSTER_KIND,
   type CardPricing,
@@ -602,6 +603,7 @@ export function ModelsPage() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const modelPosterInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
+  const profileDressInputRef = useRef<HTMLInputElement>(null);
   const trailerPosterInputRef = useRef<HTMLInputElement>(null);
   const motionPosterInputRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState("");
@@ -623,6 +625,7 @@ export function ModelsPage() {
     kind: ModelVideoKind;
   } | null>(null);
   const [coverTargetId, setCoverTargetId] = useState("");
+  const [profileDressTargetId, setProfileDressTargetId] = useState("");
   /** First-frame poster previews keyed by `modelVideoPosterKey`. */
   const [videoPosters, setVideoPosters] = useState<Record<string, string>>({});
 
@@ -1210,6 +1213,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleProfileDressUpload(modelId: string, file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      await uploadModelProfileDress(modelId, file);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleGenerateModelPoster(
     modelId: string,
     kind: ModelVideoKind,
@@ -1418,6 +1434,10 @@ export function ModelsPage() {
               onCoverClick={() => {
                 setCoverTargetId(selectedModel.id);
                 coverInputRef.current?.click();
+              }}
+              onProfileDressClick={() => {
+                setProfileDressTargetId(selectedModel.id);
+                profileDressInputRef.current?.click();
               }}
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
               onSaveSocials={(socials) => void handleSaveSocials(selectedModel.id, socials)}
@@ -1845,6 +1865,19 @@ export function ModelsPage() {
           if (file && coverTargetId) void handleCoverUpload(coverTargetId, file);
         }}
       />
+      <input
+        ref={profileDressInputRef}
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        hidden
+        type="file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file && profileDressTargetId) {
+            void handleProfileDressUpload(profileDressTargetId, file);
+          }
+        }}
+      />
     </main>
   );
 }
@@ -2008,6 +2041,15 @@ const MODEL_COVER_THUMB = {
   marginBottom: 8,
 } as const;
 
+/** Transparent profile dress cutout (1× 347×626 / 2× 566×1024). */
+const MODEL_PROFILE_DRESS_THUMB = {
+  width: "100%",
+  maxWidth: 200,
+  aspectRatio: "347 / 626",
+  borderRadius: 8,
+  marginBottom: 8,
+} as const;
+
 const MODEL_MEDIA_CARD_STYLE = {
   border: "1px solid var(--gray-a6)",
   borderRadius: 12,
@@ -2120,6 +2162,125 @@ function ModelCoverSlot({
                   width: "100%",
                   height: "100%",
                   objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </Box>
+            <Flex justify="end">
+              <Dialog.Close>
+                <Button size="2" variant="soft">
+                  Close
+                </Button>
+              </Dialog.Close>
+            </Flex>
+          </Dialog.Content>
+        </Dialog.Root>
+      ) : null}
+    </Box>
+  );
+}
+
+function ModelProfileDressSlot({
+  busy,
+  pathHint,
+  url,
+  url2x,
+  onUpload,
+}: {
+  busy: boolean;
+  pathHint: string;
+  url?: string | null;
+  url2x?: string | null;
+  onUpload: () => void;
+}) {
+  const src1x = url?.trim() || "";
+  const src2x = url2x?.trim() || "";
+  const src = src2x || src1x;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const thumbShellStyle = {
+    position: "relative" as const,
+    ...MODEL_PROFILE_DRESS_THUMB,
+    overflow: "hidden" as const,
+    background: "var(--gray-a3)",
+  };
+
+  return (
+    <Box style={{ ...MODEL_MEDIA_CARD_STYLE, height: "auto" }}>
+      <Text as="div" mb="1" size="1" weight="medium">
+        Profile Dress Image
+      </Text>
+      <Text as="div" color="gray" mb="2" size="1">
+        Recommended 347 × 626 (1×). 2× file is 566 × 1024. Transparent cutout.
+      </Text>
+      {src ? (
+        <button
+          type="button"
+          aria-label="Enlarge profile dress image preview"
+          title="Click preview to enlarge"
+          onClick={() => setPreviewOpen(true)}
+          style={{
+            ...thumbShellStyle,
+            display: "block",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+          }}
+        >
+          <img
+            alt="Profile dress"
+            src={src}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+            }}
+          />
+        </button>
+      ) : (
+        <Box
+          style={{
+            ...thumbShellStyle,
+            display: "grid",
+            placeItems: "center",
+            color: "var(--gray-a9)",
+            fontSize: 12,
+          }}
+        >
+          No dress yet
+        </Box>
+      )}
+      <Text as="div" color="gray" mb="2" size="1">
+        <CodeInline>{pathHint}</CodeInline>
+        {src1x ? ` · ${mediaPathBasename(src1x)}` : null}
+        {src2x ? ` · ${mediaPathBasename(src2x)}` : null}
+      </Text>
+      <Flex gap="2" wrap="wrap">
+        <Button disabled={busy} size="1" variant="soft" onClick={onUpload}>
+          <Upload {...iconProps} />
+          {src ? "Replace dress" : "Upload dress"}
+        </Button>
+      </Flex>
+      {src ? (
+        <Dialog.Root open={previewOpen} onOpenChange={setPreviewOpen}>
+          <Dialog.Content style={{ maxWidth: 420 }}>
+            <Dialog.Title>Profile Dress Image</Dialog.Title>
+            <Box
+              my="3"
+              style={{
+                aspectRatio: "347 / 626",
+                overflow: "hidden",
+                borderRadius: 8,
+                background: "var(--gray-a3)",
+              }}
+            >
+              <img
+                alt="Profile dress"
+                src={src}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
                   display: "block",
                 }}
               />
@@ -2456,6 +2617,7 @@ function ModelDetail({
   onGeneratePoster,
   onSwipePosterClick,
   onCoverClick,
+  onProfileDressClick,
   onSaveTags,
   onSaveSocials,
   onSaveCardPricing,
@@ -2521,6 +2683,7 @@ function ModelDetail({
   onGeneratePoster: (kind: ModelVideoKind, videoUrl: string) => void;
   onSwipePosterClick: () => void;
   onCoverClick: () => void;
+  onProfileDressClick: () => void;
   onSaveTags: (tags: string[]) => void;
   onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
   onSaveCardPricing: (cardId: string, pricing: CardPricing) => void;
@@ -2889,17 +3052,25 @@ function ModelDetail({
             Global media
           </Text>
           <Text as="div" color="gray" mb="2" size="1">
-            Cover, home swipe, and ultra trailer for this model — served to the product app via{" "}
-            <CodeInline>/api/models</CodeInline>. Foil packs are on the Packs page.
+            Cover, profile dress, home swipe, and ultra trailer for this model — served to the
+            product app via <CodeInline>/api/models</CodeInline>. Foil packs are on the Packs
+            page.
           </Text>
-          <Box mb="3">
+          <Grid columns={{ initial: "1", sm: "2" }} gap="3" mb="3" style={{ alignItems: "stretch" }}>
             <ModelCoverSlot
               busy={busy}
               pathHint={`models/${model.id}/cover.*`}
               url={model.coverUrl}
               onUpload={onCoverClick}
             />
-          </Box>
+            <ModelProfileDressSlot
+              busy={busy}
+              pathHint={`models/${model.id}/profile-dress.webp`}
+              url={model.profileDressUrl}
+              url2x={model.profileDress2xUrl}
+              onUpload={onProfileDressClick}
+            />
+          </Grid>
           <Grid columns={{ initial: "1", sm: "2" }} gap="3" style={{ alignItems: "stretch" }}>
             <SwipeMotionVideoSlot
               busy={busy}

@@ -23,6 +23,10 @@ from backend.models_store import (  # noqa: E402
     AVATAR_EXTENSIONS,
     AVATAR_MAX_PX,
     COVER_MAX_PX,
+    PROFILE_DRESS_2X_MAX_PX,
+    PROFILE_DRESS_2X_STEM,
+    PROFILE_DRESS_MAX_PX,
+    PROFILE_DRESS_STEM,
     image_backup_dir,
     write_optimized_still,
 )
@@ -36,6 +40,8 @@ def _targets(models_dir: Path) -> list[tuple[Path, str, int]]:
     for model_dir in sorted(p for p in models_dir.iterdir() if p.is_dir()):
         found.append((model_dir, "avatar", AVATAR_MAX_PX))
         found.append((model_dir, "cover", COVER_MAX_PX))
+        found.append((model_dir, PROFILE_DRESS_STEM, PROFILE_DRESS_MAX_PX))
+        found.append((model_dir, PROFILE_DRESS_2X_STEM, PROFILE_DRESS_2X_MAX_PX))
         themes = model_dir / "themes"
         if themes.is_dir():
             for theme_dir in sorted(p for p in themes.iterdir() if p.is_dir()):
