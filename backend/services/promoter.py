@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("sugar.promoter")
@@ -423,32 +424,46 @@ def mark_package_ready_for_model(model_id: str) -> bool:
         session.close()
 
 
-def backfill_live_pre_influencer_models(db: Session, models_dir: Path) -> int:
-    """Create catalog models for live invites that never got one."""
+def catch_up_live_pre_influencer_step(db: Session) -> int:
+    """Notify Promoter that legacy live invites are already on step 3.
+
+    Migration 0024 moves old live rows from step 2 to step 3 without a
+    webhook. Those rows never went through Make package and have no pack
+    video. Do not create a catalog model for them — an empty model makes
+    order-landing-page return 409, so Promoter stays on step 2 while Sugar
+    is already complete.
+    """
     from backend.db.models import PreInfluencer, utcnow
 
     rows = (
         db.query(PreInfluencer)
         .filter(
             PreInfluencer.status == "live",
-            PreInfluencer.model_id.is_(None),
+            PreInfluencer.survey_step >= 3,
+            or_(
+                PreInfluencer.mjfp_last_notified_step.is_(None),
+                PreInfluencer.mjfp_last_notified_step < 3,
+            ),
         )
         .order_by(PreInfluencer.created_at.asc())
         .all()
     )
-    created = 0
+    notified_count = 0
     for row in rows:
-        row.model_id = ensure_pre_influencer_model(
-            db,
-            models_dir,
-            full_name=row.full_name,
-            model_id=None,
+        notified = notify_step(
+            email=row.email,
+            invite_code=row.invite_code,
+            current_step=3,
+            status="live",
+            asset_link=row.asset_link,
         )
+        if not notified:
+            continue
+        row.mjfp_last_notified_step = 3
         row.updated_at = utcnow()
-        created += 1
+        notified_count += 1
         logger.info(
-            "pre-influencer model backfill invite=%s model=%s",
+            "pre-influencer step-3 catch-up invite=%s",
             row.invite_code,
-            row.model_id,
         )
-    return created
+    return notified_count

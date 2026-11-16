@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.engine import get_session
 from backend.db.models import MotionCard, PreInfluencer, utcnow
+from backend.models_store import CATALOG_LABEL_MAX
 from backend.services.promoter import (
     build_landing_page_url,
     ensure_pre_influencer_model,
@@ -41,7 +42,7 @@ _SLUG = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 class ConfirmPreInfluencerBody(BaseModel):
     invite_code: str = Field(min_length=4, max_length=64)
     email: str = Field(min_length=3, max_length=320)
-    full_name: str = Field(min_length=1, max_length=200)
+    full_name: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
 
 
 class InviteeBody(BaseModel):
@@ -381,29 +382,39 @@ def order_landing_page(
             detail="Make the n8n package before ordering a landing page.",
         )
 
-    # Reuse the confirm-time model (create if an older row never got one).
-    model_id = ensure_pre_influencer_model(
-        db,
-        _MODELS_DIR,
-        full_name=row.full_name,
-        model_id=row.model_id,
+    # Pre-migration live rows finished Order LP before Make package existed.
+    # They have no pack video. Creating a model here attaches an empty catalog
+    # row and the pack check below would 409, so Promoter never gets step 3
+    # even though migration 0024 already marked Sugar complete.
+    legacy_live = row.status == "live" and not model_has_pack_video(
+        _MODELS_DIR, row.model_id
     )
-    row.model_id = model_id
-    if not model_has_pack_video(_MODELS_DIR, model_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Pack video not ready on model {model_id}. "
-                "Finish Make package before ordering the landing page."
-            ),
+    if legacy_live:
+        asset_link = (row.asset_link or "").strip() or build_landing_page_url()
+    else:
+        # Reuse the confirm-time model (create if an older row never got one).
+        model_id = ensure_pre_influencer_model(
+            db,
+            _MODELS_DIR,
+            full_name=row.full_name,
+            model_id=row.model_id,
         )
+        row.model_id = model_id
+        if not model_has_pack_video(_MODELS_DIR, model_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Pack video not ready on model {model_id}. "
+                    "Finish Make package before ordering the landing page."
+                ),
+            )
 
-    # Publish this invitee's model. A card is included only when it belongs
-    # to that model — a foreign card (the Juliana template) opens the wrong LP.
-    publish_card = card if _card_belongs_to_model(db, card, model_id) else None
-    if not publish_card:
-        publish_card = first_model_card_id(db, model_id)
-    asset_link = build_landing_page_url(model=model_id, card=publish_card)
+        # Publish this invitee's model. A card is included only when it belongs
+        # to that model — a foreign card (the Juliana template) opens the wrong LP.
+        publish_card = card if _card_belongs_to_model(db, card, model_id) else None
+        if not publish_card:
+            publish_card = first_model_card_id(db, model_id)
+        asset_link = build_landing_page_url(model=model_id, card=publish_card)
     row.survey_step = 3
     row.status = "live"
     row.asset_link = asset_link

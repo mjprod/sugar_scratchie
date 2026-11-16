@@ -101,6 +101,9 @@ _INFLUENCER_COLUMNS = {
 }
 
 SOCIAL_URL_MAX_LENGTH = 300
+# Catalog label and influencer name. Confirm accepts this same limit so a
+# public name cannot reach CreateModelRequest and surface as a 500.
+CATALOG_LABEL_MAX = 120
 
 
 class ModelInfo(BaseModel):
@@ -145,8 +148,8 @@ class ModelInfo(BaseModel):
 
 class CreateModelRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
-    label: str = Field(min_length=1, max_length=120)
-    influencerName: str | None = Field(default=None, max_length=120)
+    label: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
+    influencerName: str | None = Field(default=None, max_length=CATALOG_LABEL_MAX)
     influencerCity: str | None = Field(default=None, max_length=120)
     influencerCountry: str | None = Field(default=None, max_length=120)
     influencerFlag: str | None = Field(default=None, max_length=16)
@@ -164,8 +167,8 @@ class CreateModelRequest(BaseModel):
 
 
 class UpdateModelRequest(BaseModel):
-    label: str | None = Field(default=None, min_length=1, max_length=120)
-    influencerName: str | None = Field(default=None, max_length=120)
+    label: str | None = Field(default=None, min_length=1, max_length=CATALOG_LABEL_MAX)
+    influencerName: str | None = Field(default=None, max_length=CATALOG_LABEL_MAX)
     influencerCity: str | None = Field(default=None, max_length=120)
     influencerCountry: str | None = Field(default=None, max_length=120)
     influencerFlag: str | None = Field(default=None, max_length=16)
@@ -507,17 +510,33 @@ def _next_available_model_id(db: Session, base: str) -> str:
         n += 1
 
 
+def _fit_catalog_label(base: str, suffix: str = "") -> str:
+    """Keep a catalog label inside CATALOG_LABEL_MAX, preserving `suffix`."""
+    room = CATALOG_LABEL_MAX - len(suffix)
+    if room < 1:
+        raise HTTPException(status_code=422, detail="Name is too long.")
+    trimmed = base[:room].rstrip()
+    if not trimmed:
+        trimmed = "Influencer"[:room]
+    return f"{trimmed}{suffix}"
+
+
+def _label_taken(db: Session, label: str) -> bool:
+    return (
+        db.scalar(select(Creator.id).where(func.lower(Creator.label) == label.lower()).limit(1))
+        is not None
+    )
+
+
 def _next_available_label(db: Session, base: str) -> str:
-    clash = db.scalar(select(Creator.id).where(func.lower(Creator.label) == base.lower()).limit(1))
-    if clash is None:
-        return base
+    plain = _fit_catalog_label(base)
+    if not _label_taken(db, plain):
+        return plain
     n = 2
     while True:
-        candidate = f"{base} ({n})"
-        clash = db.scalar(
-            select(Creator.id).where(func.lower(Creator.label) == candidate.lower()).limit(1)
-        )
-        if clash is None:
+        # " (n)" sits on top of the name and must still fit the 120-char field.
+        candidate = _fit_catalog_label(base, f" ({n})")
+        if not _label_taken(db, candidate):
             return candidate
         n += 1
 
@@ -537,6 +556,11 @@ def ensure_named_model(
     name = " ".join(full_name.split())
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
+    if len(name) > CATALOG_LABEL_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Name must be at most {CATALOG_LABEL_MAX} characters.",
+        )
 
     preferred: str | None = None
     if model_id:

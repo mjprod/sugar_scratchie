@@ -7,6 +7,9 @@ Create Date: 2026-11-16
 Sugar Scratchie now mirrors TeaseMe's 3-step completion count:
   1 Email & Name → 2 Make package (n8n) → 3 Make landing page.
 Rows already live at the old step 2 (Order LP done) move to step 3.
+This UPDATE does not call Promoter. Those rows have no model and no pack
+video; startup catch_up_live_pre_influencer_step sends the step-3 webhook
+without creating an empty catalog model.
 """
 
 from alembic import op
