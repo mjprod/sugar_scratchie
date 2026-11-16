@@ -101,6 +101,9 @@ _INFLUENCER_COLUMNS = {
 }
 
 SOCIAL_URL_MAX_LENGTH = 300
+# Catalog label and influencer name. Confirm accepts this same limit so a
+# public name cannot reach CreateModelRequest and surface as a 500.
+CATALOG_LABEL_MAX = 120
 
 
 class ModelInfo(BaseModel):
@@ -145,8 +148,8 @@ class ModelInfo(BaseModel):
 
 class CreateModelRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
-    label: str = Field(min_length=1, max_length=120)
-    influencerName: str | None = Field(default=None, max_length=120)
+    label: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
+    influencerName: str | None = Field(default=None, max_length=CATALOG_LABEL_MAX)
     influencerCity: str | None = Field(default=None, max_length=120)
     influencerCountry: str | None = Field(default=None, max_length=120)
     influencerFlag: str | None = Field(default=None, max_length=16)
@@ -164,8 +167,8 @@ class CreateModelRequest(BaseModel):
 
 
 class UpdateModelRequest(BaseModel):
-    label: str | None = Field(default=None, min_length=1, max_length=120)
-    influencerName: str | None = Field(default=None, max_length=120)
+    label: str | None = Field(default=None, min_length=1, max_length=CATALOG_LABEL_MAX)
+    influencerName: str | None = Field(default=None, max_length=CATALOG_LABEL_MAX)
     influencerCity: str | None = Field(default=None, max_length=120)
     influencerCountry: str | None = Field(default=None, max_length=120)
     influencerFlag: str | None = Field(default=None, max_length=16)
@@ -483,6 +486,104 @@ def create_model(db: Session, models_dir: Path, request: CreateModelRequest) -> 
     return _row_to_info(row, models_dir)
 
 
+def slugify_model_id(name: str) -> str:
+    """Turn a display name into a catalog id: ``Glauco Martins`` → ``glauco_martins``."""
+    slug = re.sub(r"[^a-z0-9_]+", "_", name.strip().lower()).strip("_")
+    if not slug:
+        slug = "influencer"
+    if not slug[0].isalpha():
+        slug = f"m_{slug}"
+    return slug[:64]
+
+
+def _next_available_model_id(db: Session, base: str) -> str:
+    if db.get(Creator, base) is None and MODEL_ID_PATTERN.match(base):
+        return base
+    n = 2
+    while True:
+        suffix = f"_{n}"
+        candidate = f"{base[: max(1, 64 - len(suffix))]}{suffix}"
+        if not MODEL_ID_PATTERN.match(candidate):
+            candidate = f"m{candidate}"[:64]
+        if db.get(Creator, candidate) is None:
+            return candidate
+        n += 1
+
+
+def _fit_catalog_label(base: str, suffix: str = "") -> str:
+    """Keep a catalog label inside CATALOG_LABEL_MAX, preserving `suffix`."""
+    room = CATALOG_LABEL_MAX - len(suffix)
+    if room < 1:
+        raise HTTPException(status_code=422, detail="Name is too long.")
+    trimmed = base[:room].rstrip()
+    if not trimmed:
+        trimmed = "Influencer"[:room]
+    return f"{trimmed}{suffix}"
+
+
+def _label_taken(db: Session, label: str) -> bool:
+    return (
+        db.scalar(select(Creator.id).where(func.lower(Creator.label) == label.lower()).limit(1))
+        is not None
+    )
+
+
+def _next_available_label(db: Session, base: str) -> str:
+    plain = _fit_catalog_label(base)
+    if not _label_taken(db, plain):
+        return plain
+    n = 2
+    while True:
+        # " (n)" sits on top of the name and must still fit the 120-char field.
+        candidate = _fit_catalog_label(base, f" ({n})")
+        if not _label_taken(db, candidate):
+            return candidate
+        n += 1
+
+
+def ensure_named_model(
+    db: Session,
+    models_dir: Path,
+    *,
+    full_name: str,
+    model_id: str | None = None,
+) -> str:
+    """Create an empty catalog model once for this name, or reuse ``model_id``.
+
+    Used when an AM confirms an invite. The landing-page URL uses this model
+    and, once one exists, this model's own card.
+    """
+    name = " ".join(full_name.split())
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    if len(name) > CATALOG_LABEL_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Name must be at most {CATALOG_LABEL_MAX} characters.",
+        )
+
+    preferred: str | None = None
+    if model_id:
+        try:
+            preferred = safe_model_id(model_id)
+        except HTTPException:
+            preferred = None
+        else:
+            if db.get(Creator, preferred) is not None:
+                return preferred
+
+    new_id = preferred if preferred and db.get(Creator, preferred) is None else None
+    if new_id is None:
+        new_id = _next_available_model_id(db, slugify_model_id(name))
+    label = _next_available_label(db, name)
+    create_model(
+        db,
+        models_dir,
+        CreateModelRequest(id=new_id, label=label, influencerName=name),
+    )
+    return new_id
+
+
 def update_model(
     db: Session,
     models_dir: Path,
@@ -719,6 +820,13 @@ async def upload_model_video(
         if old.exists():
             old.unlink()
     (model_dir / f"{stem}{ext}").write_bytes(data)
+    if stem in ("pack-face", "pack-face-2"):
+        try:
+            from backend.services.promoter import mark_package_ready_for_model
+
+            mark_package_ready_for_model(row.id)
+        except Exception:
+            pass
     return _row_to_info(row, models_dir)
 
 

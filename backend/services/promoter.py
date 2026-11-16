@@ -10,9 +10,12 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger("sugar.promoter")
 
@@ -89,15 +92,41 @@ def build_landing_page_url(
     model: str | None = None,
     card: str | None = None,
 ) -> str:
-    """Player /join freeplay URL after AM orders the landing page."""
-    model_id = (model or "").strip() or _default_lp_model()
-    card_id = (card or "").strip() or _default_lp_card()
-    return (
+    """Player /join freeplay URL after AM orders the landing page.
+
+    ``model`` is the invitee's catalog model. ``card`` is included only when
+    that model has a card of its own. Omitting both falls back to the template
+    model and card.
+    """
+    explicit_model = (model or "").strip()
+    model_id = explicit_model or _default_lp_model()
+    card_id = (card or "").strip()
+    if not card_id and not explicit_model:
+        card_id = _default_lp_card()
+    url = (
         f"{_lp_public_url()}/join"
         f"?model={quote(model_id, safe='')}"
         f"&freeplay=1"
-        f"&card={quote(card_id, safe='')}"
     )
+    if card_id:
+        url += f"&card={quote(card_id, safe='')}"
+    return url
+
+
+def first_model_card_id(db: Session, model_id: str) -> str | None:
+    """Lowest sort-order motion card published on this model, if any."""
+    from backend.db.models import MotionCard
+
+    cleaned = (model_id or "").strip()
+    if not cleaned:
+        return None
+    row = (
+        db.query(MotionCard.id)
+        .filter(MotionCard.model_id == cleaned)
+        .order_by(MotionCard.sort_order.asc(), MotionCard.id.asc())
+        .first()
+    )
+    return row[0] if row else None
 
 
 def _error_text(response: httpx.Response) -> str:
@@ -300,3 +329,141 @@ def track_sale(
         event_id,
     )
     return False
+
+
+def ensure_pre_influencer_model(
+    db: Session,
+    models_dir: Path,
+    *,
+    full_name: str,
+    model_id: str | None,
+) -> str:
+    """Create or reuse the empty operator model for this invitee."""
+    from backend.models_store import ensure_named_model
+
+    return ensure_named_model(
+        db,
+        models_dir,
+        full_name=full_name,
+        model_id=model_id,
+    )
+
+
+def model_has_pack_video(models_dir: Path, model_id: str | None) -> bool:
+    """True when foil 1 or foil 2 pack video is on disk for this model."""
+    from backend.models_store import find_model_video
+
+    cleaned = (model_id or "").strip()
+    if not cleaned:
+        return False
+    model_dir = models_dir / cleaned
+    if not model_dir.is_dir():
+        return False
+    return bool(
+        find_model_video(model_dir, "pack-face")
+        or find_model_video(model_dir, "pack-face-2")
+    )
+
+
+def mark_package_ready_for_model(model_id: str) -> bool:
+    """Advance a pre-influencer to survey_step 2 when their pack video lands.
+
+    Called from foil / pack upload paths. Opens its own DB session so n8n
+    workers can notify without a request-scoped session. Returns True when a
+    row was advanced (or already at step ≥ 2).
+    """
+    from backend.db import engine as db_engine
+    from backend.db.models import PreInfluencer, utcnow
+
+    cleaned = (model_id or "").strip()
+    if not cleaned:
+        return False
+    if db_engine.SessionLocal is None:
+        db_engine.get_engine()
+    assert db_engine.SessionLocal is not None
+    session = db_engine.SessionLocal()
+    try:
+        row = (
+            session.query(PreInfluencer)
+            .filter(PreInfluencer.model_id == cleaned)
+            .one_or_none()
+        )
+        if row is None:
+            return False
+        if row.survey_step >= 2:
+            return True
+        if row.survey_step < 1:
+            # Confirm must happen first; ignore stray pack writes.
+            return False
+        row.survey_step = 2
+        row.updated_at = utcnow()
+        notified = False
+        if row.mjfp_last_notified_step is None or row.mjfp_last_notified_step < 2:
+            notified = notify_step(
+                email=row.email,
+                invite_code=row.invite_code,
+                current_step=2,
+                status=row.status,
+                asset_link=row.asset_link,
+            )
+            if notified:
+                row.mjfp_last_notified_step = 2
+        session.commit()
+        logger.info(
+            "pre-influencer package ready invite=%s model=%s notified=%s",
+            row.invite_code,
+            cleaned,
+            notified,
+        )
+        return True
+    except Exception:
+        session.rollback()
+        logger.exception("pre-influencer package ready failed model=%s", cleaned)
+        return False
+    finally:
+        session.close()
+
+
+def catch_up_live_pre_influencer_step(db: Session) -> int:
+    """Notify Promoter that legacy live invites are already on step 3.
+
+    Migration 0024 moves old live rows from step 2 to step 3 without a
+    webhook. Those rows never went through Make package and have no pack
+    video. Do not create a catalog model for them — an empty model makes
+    order-landing-page return 409, so Promoter stays on step 2 while Sugar
+    is already complete.
+    """
+    from backend.db.models import PreInfluencer, utcnow
+
+    rows = (
+        db.query(PreInfluencer)
+        .filter(
+            PreInfluencer.status == "live",
+            PreInfluencer.survey_step >= 3,
+            or_(
+                PreInfluencer.mjfp_last_notified_step.is_(None),
+                PreInfluencer.mjfp_last_notified_step < 3,
+            ),
+        )
+        .order_by(PreInfluencer.created_at.asc())
+        .all()
+    )
+    notified_count = 0
+    for row in rows:
+        notified = notify_step(
+            email=row.email,
+            invite_code=row.invite_code,
+            current_step=3,
+            status="live",
+            asset_link=row.asset_link,
+        )
+        if not notified:
+            continue
+        row.mjfp_last_notified_step = 3
+        row.updated_at = utcnow()
+        notified_count += 1
+        logger.info(
+            "pre-influencer step-3 catch-up invite=%s",
+            row.invite_code,
+        )
+    return notified_count

@@ -39,7 +39,7 @@ class PreInfluencer(Base):
             name="pre_influencers_status_chk",
         ),
         CheckConstraint(
-            "survey_step >= 0 AND survey_step <= 2",
+            "survey_step >= 0 AND survey_step <= 3",
             name="pre_influencers_survey_step_chk",
         ),
     )
@@ -52,6 +52,9 @@ class PreInfluencer(Base):
     survey_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mjfp_last_notified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     asset_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Operator catalog model created at confirm so Send influencer / foil n8n
+    # can run as onboarding step 2 before Order Landing Page (step 3).
+    model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
