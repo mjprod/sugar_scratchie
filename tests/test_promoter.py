@@ -727,3 +727,178 @@ def test_confirm_without_webhook_still_saves(client, promoter_env, monkeypatch):
     assert not any(
         post["url"].endswith("/webhooks/teaseme-step") for post in _Client.posts
     )
+
+
+def test_order_landing_page_legacy_live_notifies_without_pack(
+    client, promoter_webhook_env
+):
+    """Live rows from before Make package have no model and no pack video."""
+    del promoter_webhook_env
+    from uuid import uuid4
+
+    from sqlalchemy.orm import Session
+
+    from backend.db.engine import get_engine
+    from backend.db.models import Creator, PreInfluencer
+
+    invite_code = f"Legacy{uuid.uuid4().hex[:8]}"
+    email = f"legacy-{uuid.uuid4().hex[:8]}@example.com"
+    full_name = f"Legacy Live {uuid.uuid4().hex[:6]}"
+    asset_link = "https://localhost:5174/join?model=julianaval&freeplay=1&card=juliana_1"
+    with Session(get_engine()) as db:
+        db.add(
+            PreInfluencer(
+                id=uuid4(),
+                email=email,
+                full_name=full_name,
+                invite_code=invite_code,
+                status="live",
+                survey_step=3,
+                mjfp_last_notified_step=2,
+                asset_link=asset_link,
+                model_id=None,
+            )
+        )
+        db.commit()
+
+    _Client.posts.clear()
+    response = client.post(
+        "/api/promoter/pre-influencers/order-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": invite_code, "invitee_email": email},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "live"
+    assert body["survey_step"] == 3
+    assert body["asset_link"] == asset_link
+    assert body["model_id"] is None
+    assert body["notified"] is True
+    webhook_posts = [
+        post for post in _Client.posts if post["url"].endswith("/webhooks/teaseme-step")
+    ]
+    assert len(webhook_posts) == 1
+    assert webhook_posts[0]["json"]["currentStep"] == 3
+    assert webhook_posts[0]["json"]["status"] == "live"
+    assert webhook_posts[0]["json"]["assetLink"] == asset_link
+
+    with Session(get_engine()) as db:
+        created = db.query(Creator).filter(Creator.label == full_name).one_or_none()
+        assert created is None
+
+
+def test_order_landing_page_still_requires_pack_before_live(client, promoter_webhook_env):
+    del promoter_webhook_env
+    from sqlalchemy.orm import Session
+
+    from backend.db.engine import get_engine
+    from backend.db.models import PreInfluencer
+
+    invite_code = f"Early{uuid.uuid4().hex[:8]}"
+    email = f"early-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    confirmed = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": invite_code,
+            "email": email,
+            "full_name": f"Early Person {uuid.uuid4().hex[:6]}",
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    with Session(get_engine()) as db:
+        row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == invite_code).one()
+        row.survey_step = 2
+        db.commit()
+
+    response = client.post(
+        "/api/promoter/pre-influencers/order-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": invite_code, "invitee_email": email},
+    )
+    assert response.status_code == 409
+    assert "Pack video not ready" in response.json()["detail"]
+
+
+def test_catch_up_live_step_does_not_create_a_model(db_session, promoter_webhook_env):
+    del promoter_webhook_env
+    from uuid import uuid4
+
+    from backend.db.models import Creator, PreInfluencer
+    from backend.services.promoter import catch_up_live_pre_influencer_step
+
+    full_name = f"Catch Up {uuid.uuid4().hex[:6]}"
+    row = PreInfluencer(
+        id=uuid4(),
+        email=f"catch-{uuid.uuid4().hex[:8]}@example.com",
+        full_name=full_name,
+        invite_code=f"Catch{uuid.uuid4().hex[:8]}",
+        status="live",
+        survey_step=3,
+        mjfp_last_notified_step=2,
+        asset_link="https://localhost:5174/join?model=julianaval&freeplay=1",
+        model_id=None,
+    )
+    db_session.add(row)
+    db_session.flush()
+    _Client.posts.clear()
+
+    assert catch_up_live_pre_influencer_step(db_session) >= 1
+    assert row.model_id is None
+    assert row.mjfp_last_notified_step == 3
+    assert db_session.query(Creator).filter(Creator.label == full_name).one_or_none() is None
+    webhook_posts = [
+        post for post in _Client.posts if post["url"].endswith("/webhooks/teaseme-step")
+    ]
+    assert any(post["json"]["currentStep"] == 3 for post in webhook_posts)
+
+
+def test_confirm_rejects_name_longer_than_catalog_label(client, promoter_webhook_env):
+    del promoter_webhook_env
+    email = f"long-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/confirm",
+        json={
+            "invite_code": f"Long{uuid.uuid4().hex[:8]}",
+            "email": email,
+            "full_name": "N" * 121,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_ensure_named_model_suffix_stays_within_label_limit(db_session, tmp_path):
+    from fastapi import HTTPException
+
+    from backend.db.models import Creator
+    from backend.models_store import CATALOG_LABEL_MAX, ensure_named_model
+
+    name = "A" * CATALOG_LABEL_MAX
+    first = ensure_named_model(db_session, tmp_path, full_name=name)
+    second = ensure_named_model(db_session, tmp_path, full_name=name)
+    assert first != second
+    label = db_session.get(Creator, second).label
+    assert len(label) <= CATALOG_LABEL_MAX
+    assert label.endswith(" (2)")
+    assert len(db_session.get(Creator, second).influencer_name) <= CATALOG_LABEL_MAX
+
+    with pytest.raises(HTTPException) as exc:
+        ensure_named_model(db_session, tmp_path, full_name="B" * (CATALOG_LABEL_MAX + 1))
+    assert exc.value.status_code == 422
