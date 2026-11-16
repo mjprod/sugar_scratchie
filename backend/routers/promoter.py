@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
@@ -18,10 +19,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_session
-from backend.db.models import PreInfluencer, utcnow
-from backend.services.promoter import build_landing_page_url, lookup_invite, notify_step
+from backend.db.models import MotionCard, PreInfluencer, utcnow
+from backend.services.promoter import (
+    build_landing_page_url,
+    ensure_pre_influencer_model,
+    first_model_card_id,
+    lookup_invite,
+    model_has_pack_video,
+    notify_step,
+)
 
 router = APIRouter(prefix="/api/promoter", tags=["promoter"])
+
+_MODELS_DIR = Path(__file__).resolve().parents[2] / "public" / "models"
 
 _CODE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -34,9 +44,12 @@ class ConfirmPreInfluencerBody(BaseModel):
     full_name: str = Field(min_length=1, max_length=200)
 
 
-class OrderLandingPageBody(BaseModel):
+class InviteeBody(BaseModel):
     invite_code: str = Field(min_length=4, max_length=64)
     invitee_email: str = Field(min_length=3, max_length=320)
+
+
+class OrderLandingPageBody(InviteeBody):
     model: str | None = Field(default=None, max_length=80)
     card: str | None = Field(default=None, max_length=80)
 
@@ -128,13 +141,21 @@ def confirm_pre_influencer(
             )
         row.full_name = full_name
         row.updated_at = utcnow()
-        # Never move a building/live / step-2 row backwards.
+        # Never move a building/live / later-step row backwards.
         if row.survey_step < 1:
             row.survey_step = 1
         if row.status == "pending":
             row.status = "confirmed"
         elif row.status not in ("building", "live") and row.survey_step < 2:
             row.status = "confirmed"
+
+    # Empty operator model so Send influencer / foil n8n can run as step 2.
+    row.model_id = ensure_pre_influencer_model(
+        db,
+        _MODELS_DIR,
+        full_name=row.full_name,
+        model_id=row.model_id,
+    )
 
     notified = False
     if row.mjfp_last_notified_step is None or row.mjfp_last_notified_step < row.survey_step:
@@ -158,8 +179,21 @@ def confirm_pre_influencer(
         "inviteCode": row.invite_code,
         "status": row.status,
         "surveyStep": row.survey_step,
+        "modelId": row.model_id,
         "notified": notified,
     }
+
+
+def _card_belongs_to_model(db: Session, card_id: str | None, model_id: str) -> bool:
+    cleaned = (card_id or "").strip()
+    if not cleaned:
+        return False
+    row = (
+        db.query(MotionCard.id)
+        .filter(MotionCard.id == cleaned, MotionCard.model_id == model_id)
+        .first()
+    )
+    return row is not None
 
 
 def _optional_slug(raw: str | None, *, field: str) -> str | None:
@@ -173,6 +207,150 @@ def _optional_slug(raw: str | None, *, field: str) -> str | None:
     return value
 
 
+@router.post("/pre-influencers/package-workspace")
+def package_workspace(
+    body: InviteeBody,
+    db: Annotated[Session, Depends(get_session)],
+    _: None = Depends(_require_internal_token),
+):
+    """Return the operator packs URL for this invite (does not advance steps)."""
+    code = _normalize_code(body.invite_code)
+    email = _normalize_email(str(body.invitee_email))
+
+    row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == code).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pre-influencer not found.")
+    if row.email.lower() != email:
+        raise HTTPException(
+            status_code=400,
+            detail="invitee_email does not match this invite.",
+        )
+    if row.survey_step < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm email and name before making the package.",
+        )
+
+    row.model_id = ensure_pre_influencer_model(
+        db,
+        _MODELS_DIR,
+        full_name=row.full_name,
+        model_id=row.model_id,
+    )
+    ready = model_has_pack_video(_MODELS_DIR, row.model_id)
+    # Repair false step-2 advances (no pack on disk yet).
+    if (
+        not ready
+        and row.survey_step >= 2
+        and row.status not in ("building", "live")
+    ):
+        row.survey_step = 1
+        row.updated_at = utcnow()
+        if notify_step(
+            email=row.email,
+            invite_code=row.invite_code,
+            current_step=1,
+            status=row.status,
+            asset_link=row.asset_link,
+        ):
+            row.mjfp_last_notified_step = 1
+    row.updated_at = utcnow()
+    db.commit()
+    db.refresh(row)
+
+    packs_path = f"/dashboard/packs?model={row.model_id}&embed=1"
+    return {
+        "ok": True,
+        "pre_influencer_id": str(row.id),
+        "model_id": row.model_id,
+        "survey_step": row.survey_step,
+        "package_ready": ready,
+        "packs_path": packs_path,
+    }
+
+
+@router.post("/pre-influencers/make-package")
+def make_package(
+    body: InviteeBody,
+    db: Annotated[Session, Depends(get_session)],
+    _: None = Depends(_require_internal_token),
+):
+    """Complete Sugar step 2 only when foil pack video exists on the model."""
+    code = _normalize_code(body.invite_code)
+    email = _normalize_email(str(body.invitee_email))
+
+    row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == code).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pre-influencer not found.")
+    if row.email.lower() != email:
+        raise HTTPException(
+            status_code=400,
+            detail="invitee_email does not match this invite.",
+        )
+    if row.survey_step < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm email and name before making the package.",
+        )
+
+    row.model_id = ensure_pre_influencer_model(
+        db,
+        _MODELS_DIR,
+        full_name=row.full_name,
+        model_id=row.model_id,
+    )
+    db.flush()
+
+    if not model_has_pack_video(_MODELS_DIR, row.model_id):
+        if row.survey_step >= 2 and row.status not in ("building", "live"):
+            row.survey_step = 1
+            row.updated_at = utcnow()
+            if notify_step(
+                email=row.email,
+                invite_code=row.invite_code,
+                current_step=1,
+                status=row.status,
+                asset_link=row.asset_link,
+            ):
+                row.mjfp_last_notified_step = 1
+            db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pack video not ready on model {row.model_id}. "
+                "Use Create with n8n or upload on the packs page first."
+            ),
+        )
+
+    if row.survey_step < 2:
+        row.survey_step = 2
+        row.updated_at = utcnow()
+
+    notified = False
+    if row.mjfp_last_notified_step is None or row.mjfp_last_notified_step < 2:
+        notified = notify_step(
+            email=row.email,
+            invite_code=row.invite_code,
+            current_step=2,
+            status=row.status,
+            asset_link=row.asset_link,
+        )
+        if notified:
+            row.mjfp_last_notified_step = 2
+
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "pre_influencer_id": str(row.id),
+        "status": row.status,
+        "survey_step": row.survey_step,
+        "model_id": row.model_id,
+        "package_ready": True,
+        "notified": notified,
+    }
+
+
 @router.post("/pre-influencers/order-landing-page")
 def order_landing_page(
     body: OrderLandingPageBody,
@@ -181,7 +359,7 @@ def order_landing_page(
 ):
     code = _normalize_code(body.invite_code)
     email = _normalize_email(str(body.invitee_email))
-    model = _optional_slug(body.model, field="model")
+    _optional_slug(body.model, field="model")
     card = _optional_slug(body.card, field="card")
 
     row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == code).one_or_none()
@@ -197,10 +375,36 @@ def order_landing_page(
             status_code=400,
             detail="Confirm email and name before ordering a landing page.",
         )
+    if row.survey_step < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Make the n8n package before ordering a landing page.",
+        )
 
-    # Jorlyn's Order Landing Page publishes the player freeplay join URL.
-    asset_link = build_landing_page_url(model=model, card=card)
-    row.survey_step = 2
+    # Reuse the confirm-time model (create if an older row never got one).
+    model_id = ensure_pre_influencer_model(
+        db,
+        _MODELS_DIR,
+        full_name=row.full_name,
+        model_id=row.model_id,
+    )
+    row.model_id = model_id
+    if not model_has_pack_video(_MODELS_DIR, model_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pack video not ready on model {model_id}. "
+                "Finish Make package before ordering the landing page."
+            ),
+        )
+
+    # Publish this invitee's model. A card is included only when it belongs
+    # to that model — a foreign card (the Juliana template) opens the wrong LP.
+    publish_card = card if _card_belongs_to_model(db, card, model_id) else None
+    if not publish_card:
+        publish_card = first_model_card_id(db, model_id)
+    asset_link = build_landing_page_url(model=model_id, card=publish_card)
+    row.survey_step = 3
     row.status = "live"
     row.asset_link = asset_link
     row.updated_at = utcnow()
@@ -208,12 +412,12 @@ def order_landing_page(
     notified = notify_step(
         email=row.email,
         invite_code=row.invite_code,
-        current_step=2,
+        current_step=3,
         status="live",
         asset_link=asset_link,
     )
     if notified:
-        row.mjfp_last_notified_step = 2
+        row.mjfp_last_notified_step = 3
 
     db.commit()
     db.refresh(row)
@@ -223,5 +427,6 @@ def order_landing_page(
         "status": row.status,
         "survey_step": row.survey_step,
         "asset_link": row.asset_link,
+        "model_id": row.model_id,
         "notified": notified,
     }

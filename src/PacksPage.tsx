@@ -44,6 +44,18 @@ function readSelectedModelId(): string {
   return new URLSearchParams(window.location.search).get("model")?.trim() ?? "";
 }
 
+function readEmbedMode(): boolean {
+  return new URLSearchParams(window.location.search).get("embed") === "1";
+}
+
+function notifyParentPackSaved(modelId: string) {
+  if (window.parent === window) return;
+  window.parent.postMessage(
+    { type: "sugar-pack-saved", modelId },
+    "*",
+  );
+}
+
 function modelTitle(model: ModelInfo): string {
   return model.influencerName?.trim() || model.label;
 }
@@ -62,6 +74,7 @@ export function PacksPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const selectedModelId = readSelectedModelId();
+  const embed = readEmbedMode();
 
   async function refresh() {
     const next = await fetchModels();
@@ -96,8 +109,32 @@ export function PacksPage() {
 
   return (
     <main className="dashboard-root">
-      <Container size="4">
-        <Flex direction="column" gap="4" py="6">
+      <Container size={embed ? "3" : "4"}>
+        <Flex direction="column" gap="4" py={embed ? "3" : "6"}>
+          {embed ? (
+            <Flex align="center" justify="between" wrap="wrap" gap="2">
+              <Box>
+                <Heading size="5">Make package</Heading>
+                <Text color="gray" size="2">
+                  Use Create with n8n (or upload) for foil 1. When the pack saves, the
+                  promoter card moves to step 2.
+                </Text>
+              </Box>
+              <Button
+                color="gray"
+                variant="soft"
+                onClick={() => {
+                  setError("");
+                  void refresh().catch((caught: unknown) => {
+                    setError(caught instanceof Error ? caught.message : String(caught));
+                  });
+                }}
+              >
+                <LoaderCircle {...iconProps} />
+                Refresh
+              </Button>
+            </Flex>
+          ) : (
           <Flex align="center" justify="between" wrap="wrap" gap="3">
             <Box>
               <Text className="eyebrow" size="2">
@@ -142,6 +179,7 @@ export function PacksPage() {
               </Button>
             </Flex>
           </Flex>
+          )}
 
           {error ? (
             <Callout.Root color="red">
@@ -168,8 +206,10 @@ export function PacksPage() {
           ) : selected ? (
             <PackEditor
               model={selected}
+              embed={embed}
               onError={setError}
               onSaved={() => {
+                notifyParentPackSaved(selected.id);
                 void refresh().catch((caught: unknown) => {
                   setError(caught instanceof Error ? caught.message : String(caught));
                 });
@@ -240,10 +280,12 @@ function PackModelList({
 
 function PackEditor({
   model,
+  embed = false,
   onError,
   onSaved,
 }: {
   model: ModelInfo;
+  embed?: boolean;
   onError: (message: string) => void;
   onSaved: () => void;
 }) {
@@ -339,29 +381,33 @@ function PackEditor({
 
   return (
     <Flex direction="column" gap="3">
-      <Flex gap="2" wrap="wrap">
-        <Button asChild color="gray" size="2" variant="soft">
-          <a href="/dashboard/packs">
-            <ArrowLeft {...iconProps} />
-            All packs
-          </a>
-        </Button>
-        <Button asChild size="2" variant="soft">
-          <a href={`/dashboard/models?model=${encodeURIComponent(model.id)}`}>Open model</a>
-        </Button>
-      </Flex>
+      {embed ? null : (
+        <Flex gap="2" wrap="wrap">
+          <Button asChild color="gray" size="2" variant="soft">
+            <a href="/dashboard/packs">
+              <ArrowLeft {...iconProps} />
+              All packs
+            </a>
+          </Button>
+          <Button asChild size="2" variant="soft">
+            <a href={`/dashboard/models?model=${encodeURIComponent(model.id)}`}>Open model</a>
+          </Button>
+        </Flex>
+      )}
 
       <Box>
         <Flex align="center" gap="2" wrap="wrap" mb="1">
-          <Heading size="5">{modelTitle(model)}</Heading>
+          <Heading size={embed ? "4" : "5"}>{modelTitle(model)}</Heading>
           <Badge color="plum" variant="soft">
             {model.id}
           </Badge>
         </Flex>
-        <Text as="div" color="gray" size="2">
-          Card pack names replace “Pack Nº …” under the foil packs in the product app. Create with
-          n8n sends the pack video to the foil flow and saves a package you can apply below.
-        </Text>
+        {embed ? null : (
+          <Text as="div" color="gray" size="2">
+            Card pack names replace “Pack Nº …” under the foil packs in the product app. Create with
+            n8n sends the pack video to the foil flow and saves a package you can apply below.
+          </Text>
+        )}
       </Box>
 
       <Grid columns={{ initial: "1", sm: "2" }} gap="3" style={{ alignItems: "stretch" }}>

@@ -566,6 +566,7 @@ app.include_router(users_admin_router.router)
 def ensure_indexes() -> None:
     # Catalog metadata lives in Postgres; seed from on-disk legacy files if empty.
     import backend.db.engine as db_engine
+    from backend.services.promoter import backfill_live_pre_influencer_models
 
     db_engine.get_engine()
     assert db_engine.SessionLocal is not None
@@ -577,6 +578,7 @@ def ensure_indexes() -> None:
         ensure_cards_bootstrapped(session, ROOT, CARDS_DIR, MESH_DIR)
         ensure_symbols_bootstrapped(session, LOTTIES_DIR)
         ensure_photo_scratch_bootstrapped(session, ROOT)
+        backfill_live_pre_influencer_models(session, MODELS_DIR)
         session.commit()
     except Exception:
         session.rollback()

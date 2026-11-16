@@ -112,8 +112,12 @@ def needs_operator(scope: Scope) -> bool:
     # Invitee confirms name/email from the public join link (no operator cookie).
     if method == "POST" and path == "/api/promoter/pre-influencers/confirm":
         return False
-    # MJ Promoter orders the landing page with X-Internal-Token (route checks it).
-    if method == "POST" and path == "/api/promoter/pre-influencers/order-landing-page":
+    # MJ Promoter hits these with X-Internal-Token (route checks it).
+    if method == "POST" and path in (
+        "/api/promoter/pre-influencers/order-landing-page",
+        "/api/promoter/pre-influencers/make-package",
+        "/api/promoter/pre-influencers/package-workspace",
+    ):
         return False
     if path.startswith("/api/jobs"):
         return True

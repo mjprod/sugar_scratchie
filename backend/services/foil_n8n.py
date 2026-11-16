@@ -317,6 +317,13 @@ def write_pack_video(models_dir: Path, model_id: str, kind: str, data: bytes, ex
     dest.write_bytes(data)
     public = f"/models/{model_id}/{kind}{ext}"
     print(f"Saved foil pack video to {public}")
+    # Sugar onboarding step 2: pack ready → teaseme-step webhook.
+    try:
+        from backend.services.promoter import mark_package_ready_for_model
+
+        mark_package_ready_for_model(model_id)
+    except Exception as exc:
+        print(f"pre-influencer package-ready notify skipped: {exc}")
     return public
 
 

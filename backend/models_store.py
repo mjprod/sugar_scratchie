@@ -483,6 +483,83 @@ def create_model(db: Session, models_dir: Path, request: CreateModelRequest) -> 
     return _row_to_info(row, models_dir)
 
 
+def slugify_model_id(name: str) -> str:
+    """Turn a display name into a catalog id: ``Glauco Martins`` → ``glauco_martins``."""
+    slug = re.sub(r"[^a-z0-9_]+", "_", name.strip().lower()).strip("_")
+    if not slug:
+        slug = "influencer"
+    if not slug[0].isalpha():
+        slug = f"m_{slug}"
+    return slug[:64]
+
+
+def _next_available_model_id(db: Session, base: str) -> str:
+    if db.get(Creator, base) is None and MODEL_ID_PATTERN.match(base):
+        return base
+    n = 2
+    while True:
+        suffix = f"_{n}"
+        candidate = f"{base[: max(1, 64 - len(suffix))]}{suffix}"
+        if not MODEL_ID_PATTERN.match(candidate):
+            candidate = f"m{candidate}"[:64]
+        if db.get(Creator, candidate) is None:
+            return candidate
+        n += 1
+
+
+def _next_available_label(db: Session, base: str) -> str:
+    clash = db.scalar(select(Creator.id).where(func.lower(Creator.label) == base.lower()).limit(1))
+    if clash is None:
+        return base
+    n = 2
+    while True:
+        candidate = f"{base} ({n})"
+        clash = db.scalar(
+            select(Creator.id).where(func.lower(Creator.label) == candidate.lower()).limit(1)
+        )
+        if clash is None:
+            return candidate
+        n += 1
+
+
+def ensure_named_model(
+    db: Session,
+    models_dir: Path,
+    *,
+    full_name: str,
+    model_id: str | None = None,
+) -> str:
+    """Create an empty catalog model once for this name, or reuse ``model_id``.
+
+    Used when an AM confirms an invite. The landing-page URL uses this model
+    and, once one exists, this model's own card.
+    """
+    name = " ".join(full_name.split())
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    preferred: str | None = None
+    if model_id:
+        try:
+            preferred = safe_model_id(model_id)
+        except HTTPException:
+            preferred = None
+        else:
+            if db.get(Creator, preferred) is not None:
+                return preferred
+
+    new_id = preferred if preferred and db.get(Creator, preferred) is None else None
+    if new_id is None:
+        new_id = _next_available_model_id(db, slugify_model_id(name))
+    label = _next_available_label(db, name)
+    create_model(
+        db,
+        models_dir,
+        CreateModelRequest(id=new_id, label=label, influencerName=name),
+    )
+    return new_id
+
+
 def update_model(
     db: Session,
     models_dir: Path,
@@ -719,6 +796,13 @@ async def upload_model_video(
         if old.exists():
             old.unlink()
     (model_dir / f"{stem}{ext}").write_bytes(data)
+    if stem in ("pack-face", "pack-face-2"):
+        try:
+            from backend.services.promoter import mark_package_ready_for_model
+
+            mark_package_ready_for_model(row.id)
+        except Exception:
+            pass
     return _row_to_info(row, models_dir)
 
 
