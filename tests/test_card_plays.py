@@ -203,7 +203,13 @@ def test_played_list_requires_auth(client):
 
 
 def _wait_for_wallet_waiter(db: Session, box: dict, thread: Thread) -> int:
-    deadline = time.monotonic() + 5
+    """Return the backend blocked by this connection's wallet row lock.
+
+    Row-lock waits usually show up as ``transactionid`` locks, and
+    ``pg_stat_activity.query`` does not always contain the table name, so
+    matching ``query ILIKE '%wallets%'`` misses a waiter that is blocked.
+    """
+    deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if not thread.is_alive() and "result" in box:
             raise AssertionError(f"work finished without waiting on the wallet: {box['result']}")
@@ -212,11 +218,11 @@ def _wait_for_wallet_waiter(db: Session, box: dict, thread: Thread) -> int:
         pid = db.execute(
             text(
                 """
-                SELECT pid
-                FROM pg_stat_activity
-                WHERE pid <> pg_backend_pid()
-                  AND wait_event_type = 'Lock'
-                  AND query ILIKE '%wallets%'
+                SELECT a.pid
+                FROM pg_stat_activity AS a
+                WHERE a.pid <> pg_backend_pid()
+                  AND a.wait_event_type = 'Lock'
+                  AND pg_backend_pid() = ANY (pg_blocking_pids(a.pid))
                 LIMIT 1
                 """
             )
@@ -224,7 +230,18 @@ def _wait_for_wallet_waiter(db: Session, box: dict, thread: Thread) -> int:
         if pid is not None:
             return int(pid)
         time.sleep(0.02)
-    raise AssertionError("timed out waiting for a wallet lock")
+    activity = db.execute(
+        text(
+            """
+            SELECT pid, wait_event_type, wait_event, state,
+                   pg_blocking_pids(pid) AS blockers, left(query, 140)
+            FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND pid <> pg_backend_pid()
+            """
+        )
+    ).all()
+    raise AssertionError(f"timed out waiting for a wallet lock; activity={activity!r}")
 
 
 def _holds_granted_tuple_lock(db: Session, pid: int, relation: str) -> bool:
