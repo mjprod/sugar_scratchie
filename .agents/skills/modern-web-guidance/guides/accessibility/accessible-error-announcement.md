@@ -264,6 +264,11 @@ const UserInvalidFallback = (() => {
     if (event.type === 'input' || event.type === 'change') {
       const state = dirtyState.get(input) || { hasInteracted: false, hasBlurred: false };
       state.hasInteracted = true;
+      // Checkboxes, radios, and selects commit on change and can become invalid
+      // without blurring. Text fields still wait until blur.
+      const commitsWithoutBlur = event.type === 'change'
+        && input.matches('input[type="checkbox"], input[type="radio"], select');
+      if (commitsWithoutBlur) state.hasBlurred = true;
       dirtyState.set(input, state);
       if (state.hasBlurred) {
         updateState(input);
