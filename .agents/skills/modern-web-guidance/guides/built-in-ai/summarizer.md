@@ -37,8 +37,9 @@ const availability = await Summarizer.availability(options);
 if (availability === 'available') {
   const summarizer = await Summarizer.create(options);
   // Ready to use immediately
-} else if (availability === 'downloadable') {
-  // A user gesture is strictly required to start the download
+} else if (availability === 'downloadable' || availability === 'downloading') {
+  // A user gesture is required in both states. downloadable starts the model
+  // download; downloading attaches create() to a download already in progress.
   document.getElementById('start-download-btn').addEventListener('click', async () => {
     const summarizer = await Summarizer.create({
       ...options,
@@ -49,6 +50,9 @@ if (availability === 'available') {
       },
     });
   });
+} else {
+  // unavailable: the model or device cannot run Summarizer.
+  console.warn('Summarizer is unavailable on this device.');
 }
 ```
 
