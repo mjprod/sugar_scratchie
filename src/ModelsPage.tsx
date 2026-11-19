@@ -890,7 +890,10 @@ export function ModelsPage() {
     }
   }
 
-  async function handleSetDefaultModal(modelId: string, cardId: string | null) {
+  async function handleSetDefaultModal(
+    modelId: string,
+    cardId: string | null,
+  ): Promise<boolean> {
     setBusy(true);
     setError("");
     try {
@@ -906,8 +909,10 @@ export function ModelsPage() {
         });
       }
       await refresh();
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1708,7 +1713,8 @@ export function ModelsPage() {
                                   void handleSetDefaultModal(
                                     addDefaultModelId,
                                     addDefaultCardId,
-                                  ).then(() => {
+                                  ).then((ok) => {
+                                    if (!ok) return;
                                     setAddDefaultOpen(false);
                                     setAddDefaultModelId("");
                                     setAddDefaultCardId("");
@@ -3309,7 +3315,17 @@ function ModelDetail({
                 <Select.Root
                   size="2"
                   value={defaultCardId}
-                  onValueChange={setDefaultCardId}
+                  onValueChange={(value) => {
+                    setDefaultCardId(value);
+                    // Already a default: persist the new card immediately.
+                    if (
+                      model.defaultModal &&
+                      value &&
+                      value !== (model.defaultModalCardId || "")
+                    ) {
+                      onSetDefaultModal(value);
+                    }
+                  }}
                   disabled={busy}
                 >
                   <Select.Trigger placeholder="Pick a card" />
@@ -3323,15 +3339,27 @@ function ModelDetail({
                 </Select.Root>
               </Box>
               {model.defaultModal ? (
-                <Button
-                  color="red"
-                  size="2"
-                  variant="soft"
-                  disabled={busy}
-                  onClick={() => onSetDefaultModal(null)}
-                >
-                  Remove default
-                </Button>
+                <>
+                  {defaultCardId &&
+                  defaultCardId !== (model.defaultModalCardId || "") ? (
+                    <Button
+                      size="2"
+                      disabled={busy}
+                      onClick={() => onSetDefaultModal(defaultCardId)}
+                    >
+                      Save demo card
+                    </Button>
+                  ) : null}
+                  <Button
+                    color="red"
+                    size="2"
+                    variant="soft"
+                    disabled={busy}
+                    onClick={() => onSetDefaultModal(null)}
+                  >
+                    Remove default
+                  </Button>
+                </>
               ) : (
                 <Button
                   size="2"
