@@ -695,6 +695,21 @@ export function ModelsPage() {
     return map;
   }, [cards, draftCards]);
 
+  /** Published motion cards only — invite demos cannot use video-flow drafts. */
+  const publishedCardsByModel = useMemo(() => {
+    const map = new Map<string, CardInfo[]>();
+    for (const card of cards) {
+      if (!card.model_id || card.id === "original" || card.draft) continue;
+      const bucket = map.get(card.model_id) ?? [];
+      bucket.push(card);
+      map.set(card.model_id, bucket);
+    }
+    for (const [modelId, bucket] of map) {
+      map.set(modelId, sortModelCards(bucket));
+    }
+    return map;
+  }, [cards]);
+
   const importableCards = useMemo(
     () => cards.filter((card) => card.id !== "original"),
     [cards],
@@ -763,10 +778,11 @@ export function ModelsPage() {
       models
         .filter(
           (model) =>
-            !model.defaultModal && (cardsByModel.get(model.id) ?? []).length > 0,
+            !model.defaultModal &&
+            (publishedCardsByModel.get(model.id) ?? []).length > 0,
         )
         .sort((a, b) => a.id.localeCompare(b.id)),
-    [cardsByModel, models],
+    [models, publishedCardsByModel],
   );
 
   async function handleNewModelFlagCountrySelect(countryCode: string) {
@@ -1613,7 +1629,7 @@ export function ModelsPage() {
                           } else if (addableDefaultModels[0]) {
                             const first = addableDefaultModels[0];
                             setAddDefaultModelId(first.id);
-                            const firstCards = cardsByModel.get(first.id) ?? [];
+                            const firstCards = publishedCardsByModel.get(first.id) ?? [];
                             setAddDefaultCardId(firstCards[0]?.id ?? "");
                           }
                         }}
@@ -1631,7 +1647,8 @@ export function ModelsPage() {
                         <Dialog.Content style={{ maxWidth: 440 }}>
                           <Dialog.Title>Add default influencer</Dialog.Title>
                           <Dialog.Description size="2" mb="3">
-                            Pick a model and which of their motion cards the invite demo plays.
+                            Pick a model and which of their published motion cards the invite
+                            demo plays.
                           </Dialog.Description>
                           <Flex direction="column" gap="3">
                             <label>
@@ -1643,7 +1660,7 @@ export function ModelsPage() {
                                 value={addDefaultModelId}
                                 onValueChange={(value) => {
                                   setAddDefaultModelId(value);
-                                  const nextCards = cardsByModel.get(value) ?? [];
+                                  const nextCards = publishedCardsByModel.get(value) ?? [];
                                   setAddDefaultCardId(nextCards[0]?.id ?? "");
                                 }}
                               >
@@ -1669,11 +1686,13 @@ export function ModelsPage() {
                               >
                                 <Select.Trigger placeholder="Pick a card" />
                                 <Select.Content>
-                                  {(cardsByModel.get(addDefaultModelId) ?? []).map((card) => (
-                                    <Select.Item key={card.id} value={card.id}>
-                                      {card.label} ({card.id})
-                                    </Select.Item>
-                                  ))}
+                                  {(publishedCardsByModel.get(addDefaultModelId) ?? []).map(
+                                    (card) => (
+                                      <Select.Item key={card.id} value={card.id}>
+                                        {card.label} ({card.id})
+                                      </Select.Item>
+                                    ),
+                                  )}
                                 </Select.Content>
                               </Select.Root>
                             </label>
@@ -1711,7 +1730,7 @@ export function ModelsPage() {
                     ) : (
                       <Flex direction="column" gap="2">
                         {defaultInfluencers.map((model) => {
-                          const count = (cardsByModel.get(model.id) ?? []).length;
+                          const count = (publishedCardsByModel.get(model.id) ?? []).length;
                           return (
                             <Flex
                               key={model.id}

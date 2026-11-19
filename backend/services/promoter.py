@@ -122,21 +122,38 @@ def build_landing_page_url(
 
 
 def pick_default_modal_demo(db: Session) -> tuple[str, str] | None:
-    """Lowest-id flagged demo model and its card, or None when none are set."""
-    from backend.db.models import Creator
+    """Lowest-id flagged demo model and its card, or None when none are set.
 
-    row = (
-        db.query(Creator.id, Creator.default_modal_card_id)
+    Skips (and heals) rows whose card is missing or no longer owned by the model.
+    """
+    from backend.db.models import Creator, MotionCard
+
+    rows = (
+        db.query(Creator)
         .filter(
             Creator.default_modal.is_(True),
             Creator.default_modal_card_id.isnot(None),
         )
         .order_by(Creator.id.asc())
-        .first()
+        .all()
     )
-    if row is None or not row[1]:
-        return None
-    return row[0], row[1]
+    for creator in rows:
+        card_id = (creator.default_modal_card_id or "").strip()
+        if not card_id:
+            creator.default_modal = False
+            creator.default_modal_card_id = None
+            continue
+        owned = (
+            db.query(MotionCard.id)
+            .filter(MotionCard.id == card_id, MotionCard.model_id == creator.id)
+            .first()
+        )
+        if owned is None:
+            creator.default_modal = False
+            creator.default_modal_card_id = None
+            continue
+        return creator.id, card_id
+    return None
 
 
 def first_model_card_id(db: Session, model_id: str) -> str | None:

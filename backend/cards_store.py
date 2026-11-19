@@ -182,6 +182,18 @@ def _card_count(db: Session) -> int:
     return int(db.scalar(select(func.count()).select_from(MotionCard)) or 0)
 
 
+def _clear_models_defaulting_to_card(db: Session, card_id: str) -> None:
+    """Drop invite-demo flags that pointed at this card (delete or reassign)."""
+    cleaned = (card_id or "").strip()
+    if not cleaned:
+        return
+    for creator in db.scalars(
+        select(Creator).where(Creator.default_modal_card_id == cleaned)
+    ).all():
+        creator.default_modal = False
+        creator.default_modal_card_id = None
+
+
 def _validate_model_id(db: Session, model_id: str | None) -> str | None:
     if model_id is None:
         return None
@@ -425,6 +437,9 @@ def update_card(
         new_model = _validate_model_id(db, request.model_id)
         if new_model and new_model != previous and request.sort_order is None:
             row.sort_order = _next_sort_order(db, new_model)
+        if new_model != previous:
+            # Card left its owner — drop any invite-demo flag that pointed at it.
+            _clear_models_defaulting_to_card(db, row.id)
         row.model_id = new_model
 
     if request.sort_order is not None:
@@ -529,6 +544,9 @@ def delete_card(
         return
 
     if row is not None:
+        # FK only nulls default_modal_card_id; clear the flag so dashboards
+        # and pick_default_modal_demo stay aligned.
+        _clear_models_defaulting_to_card(db, row.id)
         db.delete(row)
         db.flush()
 
