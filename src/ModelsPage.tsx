@@ -594,6 +594,9 @@ export function ModelsPage() {
   const [newCardLabel, setNewCardLabel] = useState("");
   const [themeCatalog, setThemeCatalog] = useState<ThemeInfo[]>([]);
   const [createModelOpen, setCreateModelOpen] = useState(false);
+  const [addDefaultOpen, setAddDefaultOpen] = useState(false);
+  const [addDefaultModelId, setAddDefaultModelId] = useState("");
+  const [addDefaultCardId, setAddDefaultCardId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState(readSelectedModelId);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const themeAvatarInputRef = useRef<HTMLInputElement>(null);
@@ -726,6 +729,8 @@ export function ModelsPage() {
   const filteredModels = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     return models.filter((model) => {
+      // Default influencers live only in the section above — not duplicated here.
+      if (model.defaultModal) return false;
       const tags = modelTags(model);
       if (selectedTags.length > 0 && !selectedTags.every((tag) => tags.includes(tag))) {
         return false;
@@ -744,6 +749,25 @@ export function ModelsPage() {
       return haystack.includes(query);
     });
   }, [modelSearch, models, selectedTags]);
+
+  const defaultInfluencers = useMemo(
+    () =>
+      models
+        .filter((model) => model.defaultModal)
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    [models],
+  );
+
+  const addableDefaultModels = useMemo(
+    () =>
+      models
+        .filter(
+          (model) =>
+            !model.defaultModal && (cardsByModel.get(model.id) ?? []).length > 0,
+        )
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    [cardsByModel, models],
+  );
 
   async function handleNewModelFlagCountrySelect(countryCode: string) {
     setError("");
@@ -842,6 +866,29 @@ export function ModelsPage() {
     setError("");
     try {
       await updateModel(modelId, { tags });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetDefaultModal(modelId: string, cardId: string | null) {
+    setBusy(true);
+    setError("");
+    try {
+      if (cardId) {
+        await updateModel(modelId, {
+          defaultModal: true,
+          defaultModalCardId: cardId,
+        });
+      } else {
+        await updateModel(modelId, {
+          defaultModal: false,
+          defaultModalCardId: null,
+        });
+      }
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1440,6 +1487,9 @@ export function ModelsPage() {
                 profileDressInputRef.current?.click();
               }}
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
+              onSetDefaultModal={(cardId) =>
+                void handleSetDefaultModal(selectedModel.id, cardId)
+              }
               onSaveSocials={(socials) => void handleSaveSocials(selectedModel.id, socials)}
               onSaveCardPricing={(cardId, pricing) => void handleSaveCardPricing(cardId, pricing)}
               onCancelCreateCard={closeCreateCard}
@@ -1544,6 +1594,185 @@ export function ModelsPage() {
 
               {models.length > 0 ? (
                 <Flex direction="column" gap="3">
+                  <Card size="3">
+                    <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+                      <Box>
+                        <Heading size="4">Default influencers</Heading>
+                        <Text as="div" color="gray" size="2">
+                          Invite landing demos. When a new influencer has no card yet, the page
+                          scratches one of these.
+                        </Text>
+                      </Box>
+                      <Dialog.Root
+                        open={addDefaultOpen}
+                        onOpenChange={(open) => {
+                          setAddDefaultOpen(open);
+                          if (!open) {
+                            setAddDefaultModelId("");
+                            setAddDefaultCardId("");
+                          } else if (addableDefaultModels[0]) {
+                            const first = addableDefaultModels[0];
+                            setAddDefaultModelId(first.id);
+                            const firstCards = cardsByModel.get(first.id) ?? [];
+                            setAddDefaultCardId(firstCards[0]?.id ?? "");
+                          }
+                        }}
+                      >
+                        <Dialog.Trigger>
+                          <Button
+                            size="2"
+                            variant="soft"
+                            disabled={addableDefaultModels.length === 0}
+                          >
+                            <Plus {...iconProps} />
+                            Add default
+                          </Button>
+                        </Dialog.Trigger>
+                        <Dialog.Content style={{ maxWidth: 440 }}>
+                          <Dialog.Title>Add default influencer</Dialog.Title>
+                          <Dialog.Description size="2" mb="3">
+                            Pick a model and which of their motion cards the invite demo plays.
+                          </Dialog.Description>
+                          <Flex direction="column" gap="3">
+                            <label>
+                              <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                                Model
+                              </Text>
+                              <Select.Root
+                                size="2"
+                                value={addDefaultModelId}
+                                onValueChange={(value) => {
+                                  setAddDefaultModelId(value);
+                                  const nextCards = cardsByModel.get(value) ?? [];
+                                  setAddDefaultCardId(nextCards[0]?.id ?? "");
+                                }}
+                              >
+                                <Select.Trigger placeholder="Pick a model" />
+                                <Select.Content>
+                                  {addableDefaultModels.map((model) => (
+                                    <Select.Item key={model.id} value={model.id}>
+                                      {modelDisplayTitle(model)} ({model.id})
+                                    </Select.Item>
+                                  ))}
+                                </Select.Content>
+                              </Select.Root>
+                            </label>
+                            <label>
+                              <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                                Motion card
+                              </Text>
+                              <Select.Root
+                                size="2"
+                                value={addDefaultCardId}
+                                onValueChange={setAddDefaultCardId}
+                                disabled={!addDefaultModelId}
+                              >
+                                <Select.Trigger placeholder="Pick a card" />
+                                <Select.Content>
+                                  {(cardsByModel.get(addDefaultModelId) ?? []).map((card) => (
+                                    <Select.Item key={card.id} value={card.id}>
+                                      {card.label} ({card.id})
+                                    </Select.Item>
+                                  ))}
+                                </Select.Content>
+                              </Select.Root>
+                            </label>
+                            <Flex gap="2" justify="end">
+                              <Dialog.Close>
+                                <Button color="gray" disabled={busy} variant="soft">
+                                  Cancel
+                                </Button>
+                              </Dialog.Close>
+                              <Button
+                                disabled={busy || !addDefaultModelId || !addDefaultCardId}
+                                onClick={() => {
+                                  void handleSetDefaultModal(
+                                    addDefaultModelId,
+                                    addDefaultCardId,
+                                  ).then(() => {
+                                    setAddDefaultOpen(false);
+                                    setAddDefaultModelId("");
+                                    setAddDefaultCardId("");
+                                  });
+                                }}
+                              >
+                                Add
+                              </Button>
+                            </Flex>
+                          </Flex>
+                        </Dialog.Content>
+                      </Dialog.Root>
+                    </Flex>
+                    {defaultInfluencers.length === 0 ? (
+                      <Text color="gray" size="2">
+                        None yet. Use Add default, or open a model and turn on Invite demo
+                        default.
+                      </Text>
+                    ) : (
+                      <Flex direction="column" gap="2">
+                        {defaultInfluencers.map((model) => {
+                          const count = (cardsByModel.get(model.id) ?? []).length;
+                          return (
+                            <Flex
+                              key={model.id}
+                              align="center"
+                              gap="3"
+                              justify="between"
+                              wrap="wrap"
+                              className="models-list-card"
+                              style={{ textDecoration: "none" }}
+                            >
+                              <a
+                                href={modelDetailHref(model.id)}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 12,
+                                  minWidth: 0,
+                                  flex: 1,
+                                  textDecoration: "none",
+                                  color: "inherit",
+                                }}
+                              >
+                                <ModelAvatar model={model} size={44} />
+                                <Box style={{ minWidth: 0 }}>
+                                  <Text as="div" size="3" weight="bold" truncate>
+                                    <Flex align="center" gap="2" asChild>
+                                      <span>
+                                        <ModelFlagMark model={model} size={16} />
+                                        {modelDisplayTitle(model)}
+                                      </span>
+                                    </Flex>
+                                  </Text>
+                                  <Text as="div" color="gray" size="2">
+                                    Demo card: {model.defaultModalCardId || "—"} · {count}{" "}
+                                    motion card{count === 1 ? "" : "s"}
+                                  </Text>
+                                </Box>
+                              </a>
+                              <Flex gap="2" align="center">
+                                <Badge color="pink" size="1" variant="solid">
+                                  default
+                                </Badge>
+                                <Button
+                                  color="red"
+                                  size="1"
+                                  variant="soft"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    void handleSetDefaultModal(model.id, null);
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </Flex>
+                            </Flex>
+                          );
+                        })}
+                      </Flex>
+                    )}
+                  </Card>
+
                   <Heading size="4">Models</Heading>
                   <TextField.Root
                     placeholder="Search name, city, country, or tag"
@@ -2619,6 +2848,7 @@ function ModelDetail({
   onCoverClick,
   onProfileDressClick,
   onSaveTags,
+  onSetDefaultModal,
   onSaveSocials,
   onSaveCardPricing,
 }: {
@@ -2685,6 +2915,7 @@ function ModelDetail({
   onCoverClick: () => void;
   onProfileDressClick: () => void;
   onSaveTags: (tags: string[]) => void;
+  onSetDefaultModal: (cardId: string | null) => void;
   onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
   onSaveCardPricing: (cardId: string, pricing: CardPricing) => void;
 }) {
@@ -2703,6 +2934,14 @@ function ModelDetail({
   const tagsSaveTimer = useRef<number | null>(null);
   const savedSocials = modelSocials(model);
   const [socialsDraft, setSocialsDraft] = useState(savedSocials);
+  const firstPublishedCardId = publishedCards[0]?.id || "";
+  const [defaultCardId, setDefaultCardId] = useState(
+    model.defaultModalCardId || firstPublishedCardId,
+  );
+
+  useEffect(() => {
+    setDefaultCardId(model.defaultModalCardId || firstPublishedCardId);
+  }, [model.id, model.defaultModalCardId, firstPublishedCardId]);
 
   useEffect(() => {
     setTagsDraft(formatTagsInput(model.tags));
@@ -3016,6 +3255,76 @@ function ModelDetail({
             />
           </Box>
         ) : null}
+
+        <Box mb="3">
+          <Flex align="center" justify="between" gap="2" mb="2" wrap="wrap">
+            <Box>
+              <Text as="div" size="2" weight="bold">
+                Invite demo default
+              </Text>
+              <Text as="div" color="gray" size="1">
+                When a new influencer has no motion card yet, the landing page scratches
+                this model’s card. Shows as a pink “default” badge on the Models list.
+              </Text>
+            </Box>
+            {model.defaultModal ? (
+              <Badge color="pink" variant="solid">
+                default
+              </Badge>
+            ) : (
+              <Badge color="gray" variant="soft">
+                off
+              </Badge>
+            )}
+          </Flex>
+          {publishedCards.length === 0 ? (
+            <Text color="gray" size="2">
+              Create a motion card first, then you can mark this model as the invite demo.
+            </Text>
+          ) : (
+            <Flex align="end" gap="2" wrap="wrap">
+              <Box style={{ minWidth: 220 }}>
+                <Text as="div" mb="1" size="1" weight="medium" color="gray">
+                  Demo card
+                </Text>
+                <Select.Root
+                  size="2"
+                  value={defaultCardId}
+                  onValueChange={setDefaultCardId}
+                  disabled={busy}
+                >
+                  <Select.Trigger placeholder="Pick a card" />
+                  <Select.Content>
+                    {publishedCards.map((card) => (
+                      <Select.Item key={card.id} value={card.id}>
+                        {card.label} ({card.id})
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </Box>
+              {model.defaultModal ? (
+                <Button
+                  color="red"
+                  size="2"
+                  variant="soft"
+                  disabled={busy}
+                  onClick={() => onSetDefaultModal(null)}
+                >
+                  Remove default
+                </Button>
+              ) : (
+                <Button
+                  size="2"
+                  disabled={busy || !defaultCardId}
+                  onClick={() => onSetDefaultModal(defaultCardId)}
+                >
+                  Make default
+                </Button>
+              )}
+            </Flex>
+          )}
+        </Box>
 
         <Box mb="3">
           <div className="model-tags-section">

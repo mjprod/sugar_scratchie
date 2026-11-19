@@ -288,6 +288,13 @@ class Creator(Base):
     tiktok_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     x_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     onlyfans_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Invite-landing demo: scratch this model's card when the invitee has none.
+    default_modal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_modal_card_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("cards.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 CARD_TIERS = ("standard", "premium", "ultra")

@@ -71,12 +71,16 @@ def webhook_configured() -> bool:
     return bool(_webhook_url() and _webhook_secret())
 
 
-def _lp_public_url() -> str:
+def lp_public_url() -> str:
     """Origin for published influencer LPs (frontend-new player app)."""
     return (
         os.environ.get("PREINFLUENCER_LP_PUBLIC_URL", "").strip().rstrip("/")
         or "https://localhost:5174"
     )
+
+
+def _lp_public_url() -> str:
+    return lp_public_url()
 
 
 def _default_lp_model() -> str:
@@ -91,12 +95,13 @@ def build_landing_page_url(
     *,
     model: str | None = None,
     card: str | None = None,
+    lp_model: str | None = None,
 ) -> str:
     """Player /join freeplay URL after AM orders the landing page.
 
-    ``model`` is the invitee's catalog model. ``card`` is included only when
-    that model has a card of its own. Omitting both falls back to the template
-    model and card.
+    ``model`` / ``card`` are the scratch demo. ``lp_model`` pins the landing
+    page to an influencer when the scratch demo is a shared template. Omitting
+    both model and card falls back to the env template pair.
     """
     explicit_model = (model or "").strip()
     model_id = explicit_model or _default_lp_model()
@@ -108,9 +113,30 @@ def build_landing_page_url(
         f"?model={quote(model_id, safe='')}"
         f"&freeplay=1"
     )
+    pinned = (lp_model or "").strip()
+    if pinned:
+        url += f"&lpModel={quote(pinned, safe='')}"
     if card_id:
         url += f"&card={quote(card_id, safe='')}"
     return url
+
+
+def pick_default_modal_demo(db: Session) -> tuple[str, str] | None:
+    """Lowest-id flagged demo model and its card, or None when none are set."""
+    from backend.db.models import Creator
+
+    row = (
+        db.query(Creator.id, Creator.default_modal_card_id)
+        .filter(
+            Creator.default_modal.is_(True),
+            Creator.default_modal_card_id.isnot(None),
+        )
+        .order_by(Creator.id.asc())
+        .first()
+    )
+    if row is None or not row[1]:
+        return None
+    return row[0], row[1]
 
 
 def first_model_card_id(db: Session, model_id: str) -> str | None:

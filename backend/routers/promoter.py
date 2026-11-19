@@ -28,6 +28,7 @@ from backend.services.promoter import (
     lookup_invite,
     model_has_pack_video,
     notify_step,
+    pick_default_modal_demo,
 )
 
 router = APIRouter(prefix="/api/promoter", tags=["promoter"])
@@ -411,10 +412,24 @@ def order_landing_page(
 
         # Publish this invitee's model. A card is included only when it belongs
         # to that model — a foreign card (the Juliana template) opens the wrong LP.
+        # When the invitee has no card, fall back to a flagged Default Modal demo
+        # and pin the LP chrome to the invitee via lpModel.
         publish_card = card if _card_belongs_to_model(db, card, model_id) else None
         if not publish_card:
             publish_card = first_model_card_id(db, model_id)
-        asset_link = build_landing_page_url(model=model_id, card=publish_card)
+        if publish_card:
+            asset_link = build_landing_page_url(model=model_id, card=publish_card)
+        else:
+            demo = pick_default_modal_demo(db)
+            if demo is not None:
+                demo_model, demo_card = demo
+                asset_link = build_landing_page_url(
+                    model=demo_model,
+                    card=demo_card,
+                    lp_model=model_id,
+                )
+            else:
+                asset_link = build_landing_page_url(model=model_id)
     row.survey_step = 3
     row.status = "live"
     row.asset_link = asset_link

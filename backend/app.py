@@ -1329,8 +1329,13 @@ def delete_photo_scratch_layer_endpoint(
 
 @app.get("/api/models")
 def get_models(db: Annotated[Session, Depends(get_session)]) -> dict:
+    from backend.services.promoter import lp_public_url
+
     models = list_models(db, MODELS_DIR)
-    return {"models": [model.dict() for model in models]}
+    return {
+        "models": [model.dict() for model in models],
+        "lpPublicUrl": lp_public_url(),
+    }
 
 
 @app.post("/api/models")

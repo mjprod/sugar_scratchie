@@ -388,8 +388,20 @@ def test_order_landing_page_requires_internal_token(client, promoter_webhook_env
 
 
 def test_order_landing_page_publishes_player_join_url(client, promoter_webhook_env, monkeypatch):
+    from sqlalchemy.orm import Session
+
+    from backend.db.engine import get_engine
+    from backend.db.models import Creator
+
     del promoter_webhook_env
     monkeypatch.setenv("PREINFLUENCER_LP_PUBLIC_URL", "https://localhost:5174")
+    # Other tests may leave demo flags on the shared DB; clear them so this
+    # invitee-without-card case keeps the plain model URL.
+    with Session(get_engine()) as db:
+        for row in db.query(Creator).filter(Creator.default_modal.is_(True)).all():
+            row.default_modal = False
+            row.default_modal_card_id = None
+        db.commit()
     invite_code = f"Order{uuid.uuid4().hex[:8]}"
     email = f"lp-{uuid.uuid4().hex[:8]}@example.com"
     _Client.get_response = _Response(
@@ -902,3 +914,85 @@ def test_ensure_named_model_suffix_stays_within_label_limit(db_session, tmp_path
     with pytest.raises(HTTPException) as exc:
         ensure_named_model(db_session, tmp_path, full_name="B" * (CATALOG_LABEL_MAX + 1))
     assert exc.value.status_code == 422
+
+
+def test_order_landing_page_uses_default_modal_demo(
+    client, promoter_webhook_env, monkeypatch
+):
+    """Invitee with no card gets a flagged demo model+card and lpModel=invitee."""
+    from sqlalchemy.orm import Session
+
+    from backend.db.engine import get_engine
+    from backend.db.models import Creator, MotionCard
+    from backend.services.promoter import mark_package_ready_for_model
+
+    del promoter_webhook_env
+    monkeypatch.setenv("PREINFLUENCER_LP_PUBLIC_URL", "https://localhost:5174")
+
+    suffix = uuid.uuid4().hex[:8]
+    demo_model = f"demo_{suffix}"
+    demo_card = f"{demo_model}_teacher"
+    with Session(get_engine()) as db:
+        for row in db.query(Creator).filter(Creator.default_modal.is_(True)).all():
+            row.default_modal = False
+            row.default_modal_card_id = None
+        db.add(Creator(id=demo_model, label=f"Demo {suffix}"))
+        db.flush()
+        db.add(MotionCard(id=demo_card, label="Teacher", model_id=demo_model, sort_order=0))
+        demo = db.get(Creator, demo_model)
+        assert demo is not None
+        demo.default_modal = True
+        demo.default_modal_card_id = demo_card
+        db.commit()
+
+    try:
+        invite_code = f"Demo{uuid.uuid4().hex[:8]}"
+        email = f"demo-lp-{uuid.uuid4().hex[:8]}@example.com"
+        full_name = f"Glauco Pereira {suffix}"
+        expected_model_id = f"glauco_pereira_{suffix}"
+        _Client.get_response = _Response(
+            200,
+            {
+                "referral": {
+                    "campaign": {"name": "Sugar Scratchie"},
+                    "metadata": {"inviteeEmail": email},
+                }
+            },
+        )
+        confirmed = client.post(
+            "/api/promoter/pre-influencers/confirm",
+            json={
+                "invite_code": invite_code,
+                "email": email,
+                "full_name": full_name,
+            },
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["modelId"] == expected_model_id
+
+        _touch_pack(expected_model_id)
+        assert mark_package_ready_for_model(expected_model_id) is True
+        _Client.posts.clear()
+
+        response = client.post(
+            "/api/promoter/pre-influencers/order-landing-page",
+            headers={"X-Internal-Token": "internal_test"},
+            json={"invite_code": invite_code, "invitee_email": email},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["model_id"] == expected_model_id
+        assert (
+            body["asset_link"]
+            == (
+                f"https://localhost:5174/join?model={demo_model}"
+                f"&freeplay=1&lpModel={expected_model_id}&card={demo_card}"
+            )
+        )
+    finally:
+        with Session(get_engine()) as db:
+            demo = db.get(Creator, demo_model)
+            if demo is not None:
+                demo.default_modal = False
+                demo.default_modal_card_id = None
+                db.commit()

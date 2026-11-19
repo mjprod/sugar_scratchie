@@ -434,3 +434,65 @@ def test_model_social_links_round_trip(client, dashboard_headers):
     assert model["tiktokUrl"] == "https://tiktok.com/@x"
     assert model["onlyfansUrl"] == "https://onlyfans.com/x"
     assert model["instagramUrl"] is None
+
+
+def test_default_modal_flag_requires_own_card(client, dashboard_headers):
+    suffix = uuid.uuid4().hex[:8]
+    model_a = f"dma_{suffix}"
+    model_b = f"dmb_{suffix}"
+    card_a = f"{model_a}_card"
+    card_b = f"{model_b}_card"
+    with Session(get_engine()) as db:
+        db.add_all(
+            [
+                Creator(id=model_a, label=f"DMA {suffix}"),
+                Creator(id=model_b, label=f"DMB {suffix}"),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                MotionCard(id=card_a, label="A", model_id=model_a),
+                MotionCard(id=card_b, label="B", model_id=model_b),
+            ]
+        )
+        db.commit()
+
+    listed = client.get("/api/models", headers=dashboard_headers)
+    assert listed.status_code == 200
+    assert "lpPublicUrl" in listed.json()
+
+    foreign = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True, "defaultModalCardId": card_b},
+        headers=dashboard_headers,
+    )
+    assert foreign.status_code == 422
+    assert "does not belong" in foreign.json()["detail"]
+
+    missing = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True},
+        headers=dashboard_headers,
+    )
+    assert missing.status_code == 422
+    assert "motion card" in missing.json()["detail"].lower()
+
+    added = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True, "defaultModalCardId": card_a},
+        headers=dashboard_headers,
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert body["defaultModal"] is True
+    assert body["defaultModalCardId"] == card_a
+
+    removed = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": False},
+        headers=dashboard_headers,
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["defaultModal"] is False
+    assert removed.json()["defaultModalCardId"] is None

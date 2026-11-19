@@ -74,6 +74,9 @@ export type ModelInfo = {
   created_at?: number | null;
   /** theme_id → public URL for model×theme collection avatar. */
   theme_avatars?: Record<string, string>;
+  /** Invite-landing demo: scratch this model's card when the invitee has none. */
+  defaultModal?: boolean;
+  defaultModalCardId?: string | null;
 } & ModelInfluencerProfile &
   ModelGlobalMedia;
 
@@ -112,6 +115,8 @@ export function modelPosterUrl(
 
 export type UpdateModelPayload = {
   label?: string;
+  defaultModal?: boolean;
+  defaultModalCardId?: string | null;
 } & ModelInfluencerProfile &
   Pick<ModelGlobalMedia, "cardPackName" | "cardPackName2">;
 
@@ -127,18 +132,32 @@ export type CardWithModel = {
   photos?: PhotoInfo[];
 };
 
+export type ModelsListResponse = {
+  models: ModelInfo[];
+  /** Player-app origin used for invite landing page URLs. */
+  lpPublicUrl?: string;
+};
+
 export async function fetchModels(): Promise<ModelInfo[]> {
+  const data = await fetchModelsList();
+  return data.models;
+}
+
+export async function fetchModelsList(): Promise<ModelsListResponse> {
   try {
-    const data = await api<{ models: ModelInfo[] }>("/api/models");
-    return data.models;
+    const data = await api<ModelsListResponse>("/api/models");
+    return {
+      models: data.models ?? [],
+      lpPublicUrl: data.lpPublicUrl,
+    };
   } catch {
     try {
       const response = await fetch("/models/index.json", { cache: "no-store" });
-      if (!response.ok) return [];
+      if (!response.ok) return { models: [] };
       const data = (await response.json()) as { models?: ModelInfo[] };
-      return data.models ?? [];
+      return { models: data.models ?? [] };
     } catch {
-      return [];
+      return { models: [] };
     }
   }
 }
