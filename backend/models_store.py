@@ -144,6 +144,9 @@ class ModelInfo(BaseModel):
     # theme_id → public URL for model×theme collection avatar.
     theme_avatars: dict[str, str] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    # Invite-landing demo flag + which of this model's cards the scratch plays.
+    defaultModal: bool = False
+    defaultModalCardId: str | None = None
 
 
 class CreateModelRequest(BaseModel):
@@ -183,6 +186,8 @@ class UpdateModelRequest(BaseModel):
     xUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
     onlyfansUrl: str | None = Field(default=None, max_length=SOCIAL_URL_MAX_LENGTH)
     tags: list[str] | None = None
+    defaultModal: bool | None = None
+    defaultModalCardId: str | None = Field(default=None, max_length=80)
 
 
 def safe_model_id(value: str) -> str:
@@ -381,6 +386,8 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         profileDress2xUrl=posters.get("profileDress2xUrl"),
         theme_avatars=find_theme_avatars(model_dir) if model_dir.is_dir() else {},
         tags=_normalize_tags(row.tags),
+        defaultModal=bool(row.default_modal),
+        defaultModalCardId=row.default_modal_card_id,
     )
 
 
@@ -613,9 +620,53 @@ def update_model(
     if "tags" in set_fields:
         row.tags = _normalize_tags(request.tags)
 
+    if "defaultModal" in set_fields or "defaultModalCardId" in set_fields:
+        _apply_default_modal(db, row, request, set_fields)
+
     row.updated_at = datetime.now(timezone.utc)
     db.flush()
     return _row_to_info(row, models_dir)
+
+
+def _apply_default_modal(
+    db: Session,
+    row: Creator,
+    request: UpdateModelRequest,
+    set_fields: set[str],
+) -> None:
+    """Add/remove the invite-demo flag. Add requires a card owned by this model."""
+    from backend.db.models import MotionCard
+
+    want_flag = row.default_modal
+    if "defaultModal" in set_fields:
+        want_flag = bool(request.defaultModal)
+
+    card_id: str | None = row.default_modal_card_id
+    if "defaultModalCardId" in set_fields:
+        card_id = _clean_optional_str(request.defaultModalCardId)
+
+    if not want_flag:
+        row.default_modal = False
+        row.default_modal_card_id = None
+        return
+
+    if not card_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Pick a motion card on this model before adding it as a default modal.",
+        )
+    owned = (
+        db.query(MotionCard.id)
+        .filter(MotionCard.id == card_id, MotionCard.model_id == row.id)
+        .first()
+    )
+    if owned is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Card “{card_id}” does not belong to model “{row.id}”.",
+        )
+    row.default_modal = True
+    row.default_modal_card_id = card_id
 
 
 def _linked_card_ids(

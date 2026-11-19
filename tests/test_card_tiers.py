@@ -434,3 +434,126 @@ def test_model_social_links_round_trip(client, dashboard_headers):
     assert model["tiktokUrl"] == "https://tiktok.com/@x"
     assert model["onlyfansUrl"] == "https://onlyfans.com/x"
     assert model["instagramUrl"] is None
+
+
+def test_default_modal_flag_requires_own_card(client, dashboard_headers):
+    suffix = uuid.uuid4().hex[:8]
+    model_a = f"dma_{suffix}"
+    model_b = f"dmb_{suffix}"
+    card_a = f"{model_a}_card"
+    card_b = f"{model_b}_card"
+    with Session(get_engine()) as db:
+        db.add_all(
+            [
+                Creator(id=model_a, label=f"DMA {suffix}"),
+                Creator(id=model_b, label=f"DMB {suffix}"),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                MotionCard(id=card_a, label="A", model_id=model_a),
+                MotionCard(id=card_b, label="B", model_id=model_b),
+            ]
+        )
+        db.commit()
+
+    listed = client.get("/api/models", headers=dashboard_headers)
+    assert listed.status_code == 200
+    assert "lpPublicUrl" in listed.json()
+
+    foreign = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True, "defaultModalCardId": card_b},
+        headers=dashboard_headers,
+    )
+    assert foreign.status_code == 422
+    assert "does not belong" in foreign.json()["detail"]
+
+    missing = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True},
+        headers=dashboard_headers,
+    )
+    assert missing.status_code == 422
+    assert "motion card" in missing.json()["detail"].lower()
+
+    added = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": True, "defaultModalCardId": card_a},
+        headers=dashboard_headers,
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert body["defaultModal"] is True
+    assert body["defaultModalCardId"] == card_a
+
+    removed = client.put(
+        f"/api/models/{model_a}",
+        json={"defaultModal": False},
+        headers=dashboard_headers,
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["defaultModal"] is False
+    assert removed.json()["defaultModalCardId"] is None
+
+
+def test_default_modal_cleared_when_demo_card_deleted_or_reassigned(
+    db_session, tmp_path: Path
+):
+    from backend.cards import UpdateCardRequest
+    from backend.cards_store import delete_card, update_card
+
+    suffix = uuid.uuid4().hex[:8]
+    model_a = f"dmd_{suffix}"
+    model_b = f"dme_{suffix}"
+    card_id = f"dmdcard_{suffix}"
+    cards_dir = tmp_path / "cards"
+    mesh_dir = tmp_path / "mesh"
+    card_dir = cards_dir / card_id
+    card_dir.mkdir(parents=True)
+    mesh_dir.mkdir(parents=True)
+    (card_dir / "background.mp4").write_bytes(b"x")
+    (card_dir / "foreground.mp4").write_bytes(b"x")
+
+    db_session.add_all(
+        [
+            Creator(id=model_a, label=f"DMD {suffix}"),
+            Creator(id=model_b, label=f"DME {suffix}"),
+        ]
+    )
+    db_session.flush()
+    db_session.add(MotionCard(id=card_id, label="Demo", model_id=model_a))
+    owner = db_session.get(Creator, model_a)
+    assert owner is not None
+    owner.default_modal = True
+    owner.default_modal_card_id = card_id
+    db_session.commit()
+
+    update_card(
+        db_session,
+        tmp_path,
+        cards_dir,
+        mesh_dir,
+        card_id,
+        UpdateCardRequest(model_id=model_b),
+    )
+    db_session.commit()
+    owner = db_session.get(Creator, model_a)
+    assert owner is not None
+    assert owner.default_modal is False
+    assert owner.default_modal_card_id is None
+
+    card = db_session.get(MotionCard, card_id)
+    assert card is not None
+    card.model_id = model_a
+    owner.default_modal = True
+    owner.default_modal_card_id = card_id
+    db_session.commit()
+
+    delete_card(db_session, tmp_path, cards_dir, mesh_dir, card_id)
+    db_session.commit()
+    owner = db_session.get(Creator, model_a)
+    assert owner is not None
+    assert owner.default_modal is False
+    assert owner.default_modal_card_id is None
