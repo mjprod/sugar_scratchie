@@ -47,13 +47,14 @@ class PreInfluencer(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(CITEXT, nullable=False)
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
+    social_handle: Mapped[str | None] = mapped_column(Text, nullable=True)
     invite_code: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     survey_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mjfp_last_notified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     asset_link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Operator catalog model created at confirm so Send influencer / foil n8n
-    # can run as onboarding step 2 before Order Landing Page (step 3).
+    # Operator catalog model created when the landing-page form is submitted
+    # so foil n8n can run as onboarding step 2 before Order Landing Page (step 3).
     model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

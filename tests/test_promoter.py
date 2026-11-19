@@ -265,7 +265,59 @@ def promoter_webhook_env(promoter_env, monkeypatch: pytest.MonkeyPatch):
     return None
 
 
-def test_confirm_pre_influencer_notifies_webhook(client, promoter_webhook_env):
+def test_default_landing_page_returns_demo_url(client, promoter_webhook_env, monkeypatch):
+    del promoter_webhook_env
+    monkeypatch.setenv("PREINFLUENCER_LP_PUBLIC_URL", "https://localhost:5174")
+    monkeypatch.setenv("PREINFLUENCER_LP_MODEL", "julianaval")
+    monkeypatch.setenv("PREINFLUENCER_LP_CARD", "juliana_1")
+    invite_code = f"Def{uuid.uuid4().hex[:8]}"
+    email = f"def-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/default-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": invite_code, "invitee_email": email},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["survey_step"] == 0
+    assert body["invite_code"] == invite_code
+    assert body["invitee_email"] == email
+    assert "inviteCode=" in body["asset_link"]
+    assert "inviteeEmail=" in body["asset_link"]
+    assert "/join?" in body["asset_link"]
+    # No pre_influencer row and no live status yet.
+    from sqlalchemy.orm import Session
+
+    from backend.db.engine import get_engine
+    from backend.db.models import PreInfluencer
+
+    with Session(get_engine()) as db:
+        assert (
+            db.query(PreInfluencer).filter(PreInfluencer.invite_code == invite_code).one_or_none()
+            is None
+        )
+
+
+def test_default_landing_page_requires_internal_token(client, promoter_webhook_env):
+    del promoter_webhook_env
+    response = client.post(
+        "/api/promoter/pre-influencers/default-landing-page",
+        json={"invite_code": "Ab12_cd34E", "invitee_email": "dev.mjpro@gmail.com"},
+    )
+    assert response.status_code == 401
+
+
+def test_form_pre_influencer_notifies_webhook(client, promoter_webhook_env):
     del promoter_webhook_env
     invite_code = f"Conf{uuid.uuid4().hex[:8]}"
     email = f"confirm-{uuid.uuid4().hex[:8]}@example.com"
@@ -279,18 +331,20 @@ def test_confirm_pre_influencer_notifies_webhook(client, promoter_webhook_env):
         },
     )
     response = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": "Dev MJ",
+            "first_name": "Dev MJ",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
     assert body["email"] == email
-    assert body["fullName"] == "Dev MJ"
+    assert body["fullName"] == "Dev MJ Invitee"
     assert body["surveyStep"] == 1
     assert body["status"] == "confirmed"
     assert body["modelId"]
@@ -305,7 +359,7 @@ def test_confirm_pre_influencer_notifies_webhook(client, promoter_webhook_env):
     assert webhook_posts[0]["json"]["status"] == "confirmed"
 
 
-def test_confirm_pre_influencer_rejects_wrong_email(client, promoter_webhook_env):
+def test_form_pre_influencer_rejects_wrong_email(client, promoter_webhook_env):
     del promoter_webhook_env
     invite_code = f"Wrong{uuid.uuid4().hex[:8]}"
     _Client.get_response = _Response(
@@ -318,18 +372,20 @@ def test_confirm_pre_influencer_rejects_wrong_email(client, promoter_webhook_env
         },
     )
     response = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": "other@example.com",
-            "full_name": "Other Person",
+            "first_name": "Other Person",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert response.status_code == 400
     assert "different email" in response.json()["detail"]
 
 
-def test_confirm_pre_influencer_does_not_regress_step_three(client, promoter_webhook_env):
+def test_form_pre_influencer_does_not_regress_step_three(client, promoter_webhook_env):
     del promoter_webhook_env
     _Client.get_response = _Response(
         200,
@@ -341,11 +397,13 @@ def test_confirm_pre_influencer_does_not_regress_step_three(client, promoter_web
         },
     )
     first = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": "KeepStep3Code",
             "email": "keep@example.com",
-            "full_name": "Keep Step",
+            "first_name": "Keep Step",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert first.status_code == 200, first.text
@@ -365,17 +423,19 @@ def test_confirm_pre_influencer_does_not_regress_step_three(client, promoter_web
     assert ordered.json()["status"] == "live"
 
     again = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": "KeepStep3Code",
             "email": "keep@example.com",
-            "full_name": "Keep Step Updated",
+            "first_name": "Keep Step Updated",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert again.status_code == 200, again.text
     assert again.json()["surveyStep"] == 3
     assert again.json()["status"] == "live"
-    assert again.json()["fullName"] == "Keep Step Updated"
+    assert again.json()["fullName"] == "Keep Step Updated Invitee"
 
 
 def test_order_landing_page_requires_internal_token(client, promoter_webhook_env):
@@ -417,11 +477,13 @@ def test_order_landing_page_publishes_player_join_url(client, promoter_webhook_e
     full_name = f"LP Person {suffix}"
     expected_model_id = f"lp_person_{suffix}"
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "LP",
+            "last_name": f"Person {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -433,7 +495,7 @@ def test_order_landing_page_publishes_player_join_url(client, promoter_webhook_e
         json={"invite_code": invite_code, "invitee_email": email},
     )
     assert too_early.status_code == 400
-    assert "n8n package" in too_early.json()["detail"]
+    assert "Finish n8n" in too_early.json()["detail"]
 
     from backend.services.promoter import mark_package_ready_for_model
 
@@ -483,11 +545,13 @@ def test_order_landing_page_creates_model_once(client, promoter_webhook_env, das
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "Glauco",
+            "last_name": f"Martins {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -547,11 +611,13 @@ def test_package_workspace_returns_packs_path(client, promoter_webhook_env):
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "Work",
+            "last_name": f"Person {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -586,11 +652,13 @@ def test_make_package_endpoint_requires_pack_video(client, promoter_webhook_env)
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "Make",
+            "last_name": f"Person {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -641,11 +709,13 @@ def test_package_workspace_repairs_false_step_two(client, promoter_webhook_env):
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "Fix",
+            "last_name": f"Person {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -686,11 +756,13 @@ def test_mark_package_ready_advances_to_step_two(client, promoter_webhook_env):
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": full_name,
+            "first_name": "Pack",
+            "last_name": f"Person {suffix}",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -712,7 +784,7 @@ def test_mark_package_ready_advances_to_step_two(client, promoter_webhook_env):
     assert mark_package_ready_for_model(expected_model_id) is True
 
 
-def test_confirm_without_webhook_still_saves(client, promoter_env, monkeypatch):
+def test_form_without_webhook_still_saves(client, promoter_env, monkeypatch):
     del promoter_env
     monkeypatch.delenv("MJPROMOTER_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("MJPROMOTER_WEBHOOK_SECRET", raising=False)
@@ -726,11 +798,13 @@ def test_confirm_without_webhook_still_saves(client, promoter_env, monkeypatch):
         },
     )
     response = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": "NoWebhook01",
             "email": "offline@example.com",
-            "full_name": "Offline User",
+            "first_name": "Offline User",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert response.status_code == 200, response.text
@@ -818,11 +892,13 @@ def test_order_landing_page_still_requires_pack_before_live(client, promoter_web
         },
     )
     confirmed = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": invite_code,
             "email": email,
-            "full_name": f"Early Person {uuid.uuid4().hex[:6]}",
+            "first_name": f"Early Person {uuid.uuid4().hex[:6]}",
+            "last_name": "Invitee",
+            "social_handle": "handle",
         },
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -873,7 +949,7 @@ def test_catch_up_live_step_does_not_create_a_model(db_session, promoter_webhook
     assert any(post["json"]["currentStep"] == 3 for post in webhook_posts)
 
 
-def test_confirm_rejects_name_longer_than_catalog_label(client, promoter_webhook_env):
+def test_form_rejects_name_longer_than_catalog_label(client, promoter_webhook_env):
     del promoter_webhook_env
     email = f"long-{uuid.uuid4().hex[:8]}@example.com"
     _Client.get_response = _Response(
@@ -886,11 +962,13 @@ def test_confirm_rejects_name_longer_than_catalog_label(client, promoter_webhook
         },
     )
     response = client.post(
-        "/api/promoter/pre-influencers/confirm",
+        "/api/promoter/pre-influencers/form",
         json={
             "invite_code": f"Long{uuid.uuid4().hex[:8]}",
             "email": email,
-            "full_name": "N" * 121,
+            "first_name": "N" * 121,
+            "last_name": "X",
+            "social_handle": "handle",
         },
     )
     assert response.status_code == 422
@@ -960,11 +1038,13 @@ def test_order_landing_page_uses_default_modal_demo(
             },
         )
         confirmed = client.post(
-            "/api/promoter/pre-influencers/confirm",
+            "/api/promoter/pre-influencers/form",
             json={
                 "invite_code": invite_code,
                 "email": email,
-                "full_name": full_name,
+                "first_name": "Glauco",
+                "last_name": f"Pereira {suffix}",
+                "social_handle": "handle",
             },
         )
         assert confirmed.status_code == 200, confirmed.text

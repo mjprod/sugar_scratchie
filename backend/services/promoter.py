@@ -96,12 +96,15 @@ def build_landing_page_url(
     model: str | None = None,
     card: str | None = None,
     lp_model: str | None = None,
+    invite_code: str | None = None,
+    invitee_email: str | None = None,
 ) -> str:
-    """Player /join freeplay URL after AM orders the landing page.
+    """Player /join freeplay URL for invite demos and published LPs.
 
     ``model`` / ``card`` are the scratch demo. ``lp_model`` pins the landing
     page to an influencer when the scratch demo is a shared template. Omitting
-    both model and card falls back to the env template pair.
+    both model and card falls back to the env template pair. ``invite_code`` /
+    ``invitee_email`` wire the Forms step on the default landing page.
     """
     explicit_model = (model or "").strip()
     model_id = explicit_model or _default_lp_model()
@@ -118,6 +121,12 @@ def build_landing_page_url(
         url += f"&lpModel={quote(pinned, safe='')}"
     if card_id:
         url += f"&card={quote(card_id, safe='')}"
+    code = (invite_code or "").strip()
+    if code:
+        url += f"&inviteCode={quote(code, safe='')}"
+    email = (invitee_email or "").strip().lower()
+    if email:
+        url += f"&inviteeEmail={quote(email, safe='')}"
     return url
 
 
@@ -436,7 +445,7 @@ def mark_package_ready_for_model(model_id: str) -> bool:
         if row.survey_step >= 2:
             return True
         if row.survey_step < 1:
-            # Confirm must happen first; ignore stray pack writes.
+            # Forms must happen first; ignore stray pack writes.
             return False
         row.survey_step = 2
         row.updated_at = utcnow()
