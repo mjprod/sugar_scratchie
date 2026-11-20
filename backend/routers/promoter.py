@@ -42,11 +42,17 @@ _SLUG = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _HANDLE = re.compile(r"^@?[A-Za-z0-9._-]{1,80}$")
 
 
+# The catalog label is "first last". Each part must leave room for the other
+# name (at least one character) and the space between them. The joined name is
+# checked again because the two parts share one CATALOG_LABEL_MAX budget.
+_NAME_PART_MAX = CATALOG_LABEL_MAX - 2
+
+
 class FormPreInfluencerBody(BaseModel):
     invite_code: str = Field(min_length=4, max_length=64)
     email: str = Field(min_length=3, max_length=320)
-    first_name: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
-    last_name: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
+    first_name: str = Field(min_length=1, max_length=_NAME_PART_MAX)
+    last_name: str = Field(min_length=1, max_length=_NAME_PART_MAX)
     social_handle: str = Field(min_length=1, max_length=80)
 
 
@@ -85,6 +91,17 @@ def _normalize_name(raw: str) -> str:
     if not name:
         raise HTTPException(status_code=422, detail="Name is required.")
     return name
+
+
+def _catalog_full_name(first_name: str, last_name: str) -> str:
+    """Join form names into the catalog label, which cannot exceed the label cap."""
+    full_name = _normalize_name(f"{first_name} {last_name}")
+    if len(full_name) > CATALOG_LABEL_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Name must be at most {CATALOG_LABEL_MAX} characters.",
+        )
+    return full_name
 
 
 def _normalize_handle(raw: str) -> str:
@@ -219,7 +236,7 @@ def submit_pre_influencer_form(
     first_name = _normalize_name(body.first_name)
     last_name = _normalize_name(body.last_name)
     social_handle = _normalize_handle(body.social_handle)
-    full_name = _normalize_name(f"{first_name} {last_name}")
+    full_name = _catalog_full_name(first_name, last_name)
     _require_open_invite(code, email)
 
     row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == code).one_or_none()
