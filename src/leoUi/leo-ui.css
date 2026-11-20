@@ -672,6 +672,95 @@
   gap: 0.75rem;
 }
 
+/* Swimwear: col01 full-width until a pick; then [upload/or/gallery | selected]. */
+.leo-ui__bikini-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  width: 100%;
+  height: 8.75rem;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 1rem;
+  border-radius: 1.5rem;
+  border: 2px dashed rgba(255, 255, 255, 0.13);
+  background: linear-gradient(
+    233deg,
+    rgba(170, 170, 170, 0.08) 0%,
+    rgba(68, 68, 68, 0.03) 23.56%,
+    rgba(0, 0, 0, 0.1) 50%,
+    rgba(169, 169, 169, 0.08) 84.62%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.leo-ui__bikini-block.has-selection {
+  /* Same thumb width as Add Photo preview (4.8125rem); pad for × overhang. */
+  grid-template-columns: minmax(0, 1fr) 6.25rem;
+}
+
+.leo-ui__bikini-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.leo-ui__bikini-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.leo-ui__bikini-row .leo-ui__section-label {
+  text-align: center;
+  width: 100%;
+}
+
+/* Block owns the dashed chrome — keep the upload control as plain content.
+   Beat `.leo-ui__upload-card--host .leo-ui__dashed` height/max-height. */
+.leo-ui__upload-card--host .leo-ui__bikini-block .leo-ui__dashed {
+  width: 100%;
+  height: unset;
+  max-height: unset;
+  min-height: 0;
+  padding: 0.65rem 0.9rem;
+  align-self: stretch;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+
+.leo-ui__bikini-selected {
+  box-sizing: border-box;
+  width: 6.25rem;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  /* Room for the clear × which sits half outside the thumb. */
+  padding: 1.1875rem 1.1875rem 0 0;
+  overflow: visible;
+}
+
+.leo-ui__bikini-selected .leo-ui__preview-wrap {
+  margin-inline: 0;
+}
+
+.leo-ui__bikini-selected .leo-ui__preview {
+  width: 4.8125rem;
+  height: 6.75rem;
+  min-height: 0;
+  max-height: 6.75rem;
+  aspect-ratio: 77 / 108;
+  margin-inline: 0;
+}
+
 .leo-ui__stack--fill {
   flex: 1 1 auto;
   min-height: 0;
@@ -833,6 +922,7 @@
   left: calc(1.1875rem - 4.8125rem);
   top: 1.1875rem;
   object-fit: cover;
+  object-position: top center;
   filter: blur(12px);
   transform: scale(1.2);
   transform-origin: center;
@@ -867,6 +957,7 @@
   border: 1px solid var(--leo-border-strong);
   background: var(--leo-glass);
   pointer-events: none;
+  overflow: hidden;
   /* Blurred by default; Next FLIP unblurs into `.is-card`. */
   filter: blur(8px);
   opacity: 0.55;
@@ -883,6 +974,80 @@
 .leo-ui__upload-card-shell.is-card {
   filter: blur(0px);
   opacity: 1;
+}
+
+/* Selected photo settles into the shell on Swimwear (behind screen content).
+   Mask stops are CSS vars so GSAP can tween thumb (solid) → bg effect. */
+.leo-ui__upload-card-shell.is-card.is-photo-fill {
+  --shell-mask-0: #0000002b;
+  --shell-mask-1: #0000007d;
+  --shell-mask-2: #00000021;
+  z-index: 12;
+  background: #111;
+  filter: none;
+  opacity: 1;
+  -webkit-mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+  mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+}
+
+.leo-ui__stage.has-photo-shell .leo-ui__body {
+  position: relative;
+  z-index: 20;
+}
+
+.leo-ui__shell-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* FLIP layer: thumb → shell (and reverse). Lives above glass during the grow. */
+.leo-ui__photo-fly {
+  --shell-mask-0: #000;
+  --shell-mask-1: #000;
+  --shell-mask-2: #000;
+  position: absolute;
+  display: none;
+  z-index: 22;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--leo-radius);
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform;
+  box-shadow: 0 0 0 1px var(--leo-border-strong);
+  -webkit-mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+  mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+}
+
+.leo-ui__photo-fly img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
 }
 
 .leo-ui__upload-card-top {
@@ -993,6 +1158,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: top center;
   display: block;
 }
 
@@ -1013,6 +1179,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: top center;
   display: block;
 }
 
@@ -1038,6 +1205,57 @@
   font-weight: 400;
   font-size: 0.875rem;
   cursor: pointer;
+}
+
+/* Figma AddFaceHolder 348:3187 — 93×93, left, dashed square. */
+.leo-ui__face-btn {
+  align-self: flex-start;
+  box-sizing: border-box;
+  width: 5.8125rem;
+  height: 5.8125rem;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  border: 1px dashed rgba(255, 255, 255, 0.13);
+  border-radius: var(--leo-radius);
+  background: linear-gradient(
+    -47deg,
+    rgba(170, 170, 170, 0.164) 48%,
+    rgba(68, 68, 68, 0.07) 68%,
+    rgba(0, 0, 0, 0.2) 91%,
+    rgba(169, 169, 169, 0.164) 120%
+  );
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  color: #fff;
+  cursor: pointer;
+  font-family: var(--leo-ui);
+}
+
+.leo-ui__face-btn-label {
+  width: 3.6875rem;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  color: #fff;
+}
+
+.leo-ui__face-btn svg {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 0.125rem;
+}
+
+.leo-ui__face-btn.is-done {
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 .leo-ui__choices {
