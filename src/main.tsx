@@ -21,6 +21,7 @@ import { VideoFlowHubPage } from "./videoFlow/VideoFlowHubPage";
 import { LiteFlowPage } from "./videoFlow/lite/LiteFlowPage";
 import { VideoFlowRunPage } from "./videoFlow/VideoFlowRunPage";
 import { SugarDressPage } from "./sugarDress/SugarDressPage";
+import { LeoUiPage } from "./leoUi/LeoUiPage";
 import "@radix-ui/themes/styles.css";
 import "./styles.css";
 
@@ -120,6 +121,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard") return GatedDashboard;
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
+  if (path === "/leo-ui" || path === "/backend-leo-ui") return LeoUiPage;
   if (path === "/game") return GamePage;
   return HomePage;
 }
@@ -171,7 +173,11 @@ function App() {
 
   const Page = pickApp(location.path);
   const path = normalizePath(location.path);
-  const bare = path === "/dashboard/video-flow/dress" || path === "/dress";
+  const bare =
+    path === "/dashboard/video-flow/dress" ||
+    path === "/dress" ||
+    path === "/leo-ui" ||
+    path === "/backend-leo-ui";
   const page = <Page key={`${path}${location.search}`} />;
   if (bare) return page;
   return (

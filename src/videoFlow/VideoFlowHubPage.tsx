@@ -47,6 +47,17 @@ export function VideoFlowHubPage() {
             </a>
           </Card>
           <Card asChild className="video-flow-hub-card">
+            <a href="/leo-ui">
+              <Flex direction="column" gap="3" p="2">
+                <Sparkles {...iconProps} size={28} />
+                <Heading size="5">LeoUI</Heading>
+                <Text color="gray" size="2">
+                  Sleek app-style creator flow (GSAP). Same pipeline as Lite.
+                </Text>
+              </Flex>
+            </a>
+          </Card>
+          <Card asChild className="video-flow-hub-card">
             <a
               href={
                 activeProjectId

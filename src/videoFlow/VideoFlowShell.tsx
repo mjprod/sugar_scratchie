@@ -56,6 +56,7 @@ export function VideoFlowShell({
               <a className={active === "lite" ? "is-active" : ""} href="/dashboard/video-flow/lite">
                 Lite
               </a>
+              <a href="/leo-ui">LeoUI</a>
               <a
                 className={active === "picture" ? "is-active" : ""}
                 href="/dashboard/picture-flow"
