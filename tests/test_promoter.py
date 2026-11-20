@@ -1029,6 +1029,72 @@ def test_form_rejects_name_longer_than_catalog_label(client, promoter_webhook_en
     assert response.status_code == 422
 
 
+def test_form_rejects_combined_name_longer_than_catalog_label(client, promoter_webhook_env):
+    """Each part can fit its field while "first last" still exceeds the catalog label."""
+    del promoter_webhook_env
+    from backend.models_store import CATALOG_LABEL_MAX
+
+    email = f"long-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    # 60 + space + 61 = 122, and neither part exceeds the per-field cap.
+    first_name = "N" * 60
+    last_name = "X" * (CATALOG_LABEL_MAX - 59)
+    assert len(first_name) + 1 + len(last_name) > CATALOG_LABEL_MAX
+    response = client.post(
+        "/api/promoter/pre-influencers/form",
+        json={
+            "invite_code": f"Long{uuid.uuid4().hex[:8]}",
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "social_handle": "handle",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        f"Name must be at most {CATALOG_LABEL_MAX} characters."
+    )
+
+
+def test_form_accepts_combined_name_at_catalog_label_limit(client, promoter_webhook_env):
+    del promoter_webhook_env
+    from backend.models_store import CATALOG_LABEL_MAX
+
+    email = f"fit-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeEmail": email},
+            }
+        },
+    )
+    first_name = "N" * (CATALOG_LABEL_MAX - 2)
+    last_name = "X"
+    response = client.post(
+        "/api/promoter/pre-influencers/form",
+        json={
+            "invite_code": f"Fit{uuid.uuid4().hex[:8]}",
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "social_handle": "handle",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["fullName"] == f"{first_name} {last_name}"
+    assert len(response.json()["fullName"]) == CATALOG_LABEL_MAX
+
+
 def test_ensure_named_model_suffix_stays_within_label_limit(db_session, tmp_path):
     from fastapi import HTTPException
 
