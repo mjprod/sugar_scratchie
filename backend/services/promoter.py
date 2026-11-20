@@ -98,13 +98,15 @@ def build_landing_page_url(
     lp_model: str | None = None,
     invite_code: str | None = None,
     invitee_email: str | None = None,
+    invitee_username: str | None = None,
 ) -> str:
     """Player /join freeplay URL for invite demos and published LPs.
 
     ``model`` / ``card`` are the scratch demo. ``lp_model`` pins the landing
     page to an influencer when the scratch demo is a shared template. Omitting
-    both model and card falls back to the env template pair. ``invite_code`` /
-    ``invitee_email`` wire the Forms step on the default landing page.
+    both model and card falls back to the env template pair.     ``invite_code`` /
+    ``invitee_email`` / ``invitee_username`` wire the Forms step on the
+    default landing page. Username-only invites omit the email.
     """
     explicit_model = (model or "").strip()
     model_id = explicit_model or _default_lp_model()
@@ -127,6 +129,9 @@ def build_landing_page_url(
     email = (invitee_email or "").strip().lower()
     if email:
         url += f"&inviteeEmail={quote(email, safe='')}"
+    username = (invitee_username or "").strip().lstrip("@")
+    if username:
+        url += f"&inviteeUsername={quote(username, safe='')}"
     return url
 
 

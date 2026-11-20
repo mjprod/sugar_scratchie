@@ -55,6 +55,12 @@ class InviteeBody(BaseModel):
     invitee_email: str = Field(min_length=3, max_length=320)
 
 
+class DefaultLandingPageBody(BaseModel):
+    invite_code: str = Field(min_length=4, max_length=64)
+    invitee_email: str | None = Field(default=None, max_length=320)
+    invitee_username: str | None = Field(default=None, max_length=80)
+
+
 class OrderLandingPageBody(InviteeBody):
     model: str | None = Field(default=None, max_length=80)
     card: str | None = Field(default=None, max_length=80)
@@ -111,7 +117,25 @@ def _require_open_invite(code: str, email: str):
     return result
 
 
-def _default_demo_url(*, invite_code: str, invitee_email: str, db: Session) -> str:
+def _optional_email(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return _normalize_email(str(raw))
+
+
+def _optional_username(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return _normalize_handle(str(raw))
+
+
+def _default_demo_url(
+    *,
+    invite_code: str,
+    invitee_email: str | None,
+    invitee_username: str | None,
+    db: Session,
+) -> str:
     demo = pick_default_modal_demo(db)
     if demo is not None:
         demo_model, demo_card = demo
@@ -120,10 +144,12 @@ def _default_demo_url(*, invite_code: str, invitee_email: str, db: Session) -> s
             card=demo_card,
             invite_code=invite_code,
             invitee_email=invitee_email,
+            invitee_username=invitee_username,
         )
     return build_landing_page_url(
         invite_code=invite_code,
         invitee_email=invitee_email,
+        invitee_username=invitee_username,
     )
 
 
@@ -143,21 +169,41 @@ def get_invite(code: str):
 
 @router.post("/pre-influencers/default-landing-page")
 def default_landing_page(
-    body: InviteeBody,
+    body: DefaultLandingPageBody,
     db: Annotated[Session, Depends(get_session)],
     _: None = Depends(_require_internal_token),
 ):
-    """Return the shared demo /join URL for Forms. Does not advance steps."""
-    code = _normalize_code(body.invite_code)
-    email = _normalize_email(str(body.invitee_email))
-    _require_open_invite(code, email)
+    """Return the shared demo /join URL for Forms. Does not advance steps.
 
-    asset_link = _default_demo_url(invite_code=code, invitee_email=email, db=db)
+    Username-only invites omit ``invitee_email``. The join form collects the
+    address; promoter verifies it when the person becomes an influencer.
+    """
+    code = _normalize_code(body.invite_code)
+    email = _optional_email(body.invitee_email)
+    username = _optional_username(body.invitee_username)
+    if not email and not username:
+        raise HTTPException(status_code=422, detail="A username or email is required.")
+    result = lookup_invite(code)
+    if not result.ok:
+        raise HTTPException(status_code=result.status_code, detail=result.detail)
+    if email and result.invitee_email and result.invitee_email != email:
+        raise HTTPException(
+            status_code=400,
+            detail="This invite was sent to a different email.",
+        )
+
+    asset_link = _default_demo_url(
+        invite_code=code,
+        invitee_email=email,
+        invitee_username=username,
+        db=db,
+    )
     return {
         "ok": True,
         "asset_link": asset_link,
         "invite_code": code,
         "invitee_email": email,
+        "invitee_username": username,
         "survey_step": 0,
     }
 

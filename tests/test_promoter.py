@@ -308,6 +308,61 @@ def test_default_landing_page_returns_demo_url(client, promoter_webhook_env, mon
         )
 
 
+def test_default_landing_page_accepts_username_only(client, promoter_webhook_env, monkeypatch):
+    del promoter_webhook_env
+    monkeypatch.setenv("PREINFLUENCER_LP_PUBLIC_URL", "https://localhost:5174")
+    monkeypatch.setenv("PREINFLUENCER_LP_MODEL", "julianaval")
+    monkeypatch.setenv("PREINFLUENCER_LP_CARD", "juliana_1")
+    invite_code = f"Usr{uuid.uuid4().hex[:8]}"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeUsername": "jorlyn"},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/default-landing-page",
+        headers={"X-Internal-Token": "internal_test"},
+        json={"invite_code": invite_code, "invitee_username": "jorlyn"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["invitee_email"] is None
+    assert body["invitee_username"] == "jorlyn"
+    assert "inviteeUsername=jorlyn" in body["asset_link"]
+    assert "inviteeEmail=" not in body["asset_link"]
+
+
+def test_form_pre_influencer_accepts_email_for_username_invite(client, promoter_webhook_env):
+    del promoter_webhook_env
+    invite_code = f"Usr{uuid.uuid4().hex[:8]}"
+    email = f"later-{uuid.uuid4().hex[:8]}@example.com"
+    _Client.get_response = _Response(
+        200,
+        {
+            "referral": {
+                "campaign": {"name": "Sugar Scratchie"},
+                "metadata": {"inviteeUsername": "jorlyn"},
+            }
+        },
+    )
+    response = client.post(
+        "/api/promoter/pre-influencers/form",
+        json={
+            "invite_code": invite_code,
+            "email": email,
+            "first_name": "Jorlyn",
+            "last_name": "Invitee",
+            "social_handle": "jorlyn",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == email
+
+
 def test_default_landing_page_requires_internal_token(client, promoter_webhook_env):
     del promoter_webhook_env
     response = client.post(
