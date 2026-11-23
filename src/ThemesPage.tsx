@@ -466,6 +466,7 @@ export function ThemesPage() {
                 Categories for motion cards and photo scratch. Pick one in Video Flow Setup.
                 Upload intro videos on the model page under each theme header. Set the game’s
                 default music here, and optionally a track that replaces it for one theme.
+                Which of these themes players see is chosen on Sessions.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -485,6 +486,9 @@ export function ThemesPage() {
               </Button>
               <Button asChild variant="soft">
                 <a href="/dashboard/packs">Packs</a>
+              </Button>
+              <Button asChild variant="soft">
+                <a href="/dashboard/sessions">Sessions</a>
               </Button>
               <Button asChild variant="soft">
                 <a href="/dashboard/ai-models">AI models</a>

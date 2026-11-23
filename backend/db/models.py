@@ -217,6 +217,37 @@ class Theme(Base):
     card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ThemeSession(Base):
+    """One live window of catalog themes. Default has no start or end and means every theme."""
+
+    __tablename__ = "theme_sessions"
+    __table_args__ = (Index("theme_sessions_sort_order_idx", "sort_order"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    acronym: Mapped[str | None] = mapped_column(Text, nullable=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ThemeSessionTheme(Base):
+    """Themes picked for one custom session. Default has no rows."""
+
+    __tablename__ = "theme_session_themes"
+    __table_args__ = (Index("theme_session_themes_theme_idx", "theme_id"),)
+
+    session_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("theme_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    theme_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("themes.id", ondelete="CASCADE"), primary_key=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class GenerationModel(Base):
     """Operator catalog of Video Flow image and video models (provider endpoints, not weights)."""
 

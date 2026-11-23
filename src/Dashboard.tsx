@@ -1081,6 +1081,9 @@ export function Dashboard() {
                   <a href="/dashboard/themes">Themes</a>
                 </Button>
                 <Button asChild variant="soft">
+                  <a href="/dashboard/sessions">Sessions</a>
+                </Button>
+                <Button asChild variant="soft">
                   <a href="/dashboard/ai-models">
                     <WandSparkles {...iconProps} />
                     AI models
