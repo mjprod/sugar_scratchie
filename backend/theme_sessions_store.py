@@ -111,12 +111,17 @@ def _status(row: ThemeSession, now: datetime) -> str:
     return "running"
 
 
-def _running_row(rows: list[ThemeSession], now: datetime) -> ThemeSession:
+def _running_row(
+    rows: list[ThemeSession],
+    now: datetime,
+    memberships: dict[str, list[str]],
+) -> ThemeSession:
     default = next(row for row in rows if row.id == DEFAULT_SESSION_ID)
     candidates = [
         row
         for row in rows
         if row.id != DEFAULT_SESSION_ID
+        and memberships.get(row.id)
         and row.starts_at is not None
         and row.ends_at is not None
         and row.starts_at <= now
@@ -178,20 +183,26 @@ def list_theme_sessions(db: Session) -> list[ThemeSessionInfo]:
     ensure_default_theme_session(db)
     rows = _sorted_rows(list(db.scalars(select(ThemeSession)).all()))
     now = utcnow()
-    running = _running_row(rows, now)
     themes = _memberships(db)
+    running = _running_row(rows, now, themes)
     return [_to_info(row, themes.get(row.id, []), now, running.id) for row in rows]
 
 
 def running_theme_ids(db: Session, now: datetime | None = None) -> set[str] | None:
-    """Theme ids for the session running at `now`. None means every theme."""
+    """Theme ids for the session running at `now`. None means every theme.
+
+    An empty membership (a theme delete removed the last one) is not a filter.
+    Players keep seeing the full catalog instead of a blank collection.
+    """
     ensure_default_theme_session(db)
     moment = now or utcnow()
     rows = list(db.scalars(select(ThemeSession)).all())
-    running = _running_row(rows, moment)
-    if running.id == DEFAULT_SESSION_ID:
+    themes = _memberships(db)
+    running = _running_row(rows, moment, themes)
+    theme_ids = themes.get(running.id, [])
+    if running.id == DEFAULT_SESSION_ID or not theme_ids:
         return None
-    return set(_memberships(db).get(running.id, []))
+    return set(theme_ids)
 
 
 def _require(db: Session, session_id: str) -> ThemeSession:
@@ -246,7 +257,7 @@ def create_theme_session(db: Session, request: CreateThemeSessionRequest) -> The
     db.flush()
     now = utcnow()
     rows = list(db.scalars(select(ThemeSession)).all())
-    running = _running_row(rows, now)
+    running = _running_row(rows, now, _memberships(db))
     return _to_info(row, [], now, running.id)
 
 
@@ -304,7 +315,7 @@ def update_theme_session(
         row.updated_at = utcnow()
         db.flush()
         rows = list(db.scalars(select(ThemeSession)).all())
-        running = _running_row(rows, now := utcnow())
+        running = _running_row(rows, now := utcnow(), _memberships(db))
         return _to_info(row, _theme_ids_for(db, row.id), now, running.id)
     new_id = safe_session_id(request.id) if request.id else row.id
     if new_id != row.id:
@@ -314,7 +325,7 @@ def update_theme_session(
     row.updated_at = utcnow()
     db.flush()
     rows = list(db.scalars(select(ThemeSession)).all())
-    running = _running_row(rows, now := utcnow())
+    running = _running_row(rows, now := utcnow(), _memberships(db))
     return _to_info(row, _theme_ids_for(db, row.id), now, running.id)
 
 
@@ -353,7 +364,7 @@ def set_theme_session_themes(
     row.updated_at = now
     db.flush()
     rows = list(db.scalars(select(ThemeSession)).all())
-    running = _running_row(rows, now)
+    running = _running_row(rows, now, _memberships(db))
     return _to_info(row, [theme.id for theme in ordered], now, running.id)
 
 

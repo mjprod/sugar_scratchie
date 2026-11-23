@@ -358,3 +358,86 @@ def test_collection_follows_the_running_session(
     )
     assert back.status_code == 200, back.text
     assert theme_ids() == {theme_a, theme_b}
+
+
+def test_deleting_the_last_live_theme_keeps_the_catalog(
+    client: TestClient,
+    dashboard_headers: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restore_default: None,
+):
+    del restore_default
+    import backend.app as app_module
+
+    cards_dir = tmp_path / "cards"
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    monkeypatch.setattr(app_module, "ROOT", tmp_path)
+    monkeypatch.setattr(app_module, "CARDS_DIR", cards_dir)
+    monkeypatch.setattr(app_module, "MESH_DIR", mesh_dir)
+
+    suffix = uuid.uuid4().hex[:8]
+    model_id = f"sessmodel_{suffix}"
+    gone = f"gone_{suffix}"
+    stay = f"stay_{suffix}"
+    session_id = f"live_{suffix}"
+    with Session(get_engine()) as db:
+        db.add(Creator(id=model_id, label=f"Session model {suffix}"))
+        db.add_all(
+            [
+                Theme(id=gone, label=f"Gone {suffix}", sort_order=1),
+                Theme(id=stay, label=f"Stay {suffix}", sort_order=2),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                MotionCard(id=f"{model_id}_gone", label="Gone", model_id=model_id, theme_id=gone),
+                MotionCard(id=f"{model_id}_stay", label="Stay", model_id=model_id, theme_id=stay),
+            ]
+        )
+        db.commit()
+    for card_id in (f"{model_id}_gone", f"{model_id}_stay"):
+        card_dir = cards_dir / card_id
+        card_dir.mkdir(parents=True)
+        for name in ("background.mp4", "foreground.mp4"):
+            (card_dir / name).write_bytes(b"clip")
+
+    created = client.post(
+        "/api/theme-sessions",
+        headers=dashboard_headers,
+        json={"id": session_id, "label": "Live", "acronym": f"LV{suffix.upper()}"},
+    )
+    assert created.status_code == 200, created.text
+    saved = client.put(
+        f"/api/theme-sessions/{session_id}/themes",
+        headers=dashboard_headers,
+        json={"theme_ids": [gone]},
+    )
+    assert saved.status_code == 200, saved.text
+    started = client.put(
+        f"/api/theme-sessions/{session_id}/schedule",
+        headers=dashboard_headers,
+        json={
+            "starts_at": _iso(datetime.now(timezone.utc) - timedelta(hours=1)),
+            "ends_at": _iso(datetime.now(timezone.utc) + timedelta(hours=1)),
+        },
+    )
+    assert started.status_code == 200, started.text
+
+    def theme_ids() -> set[str | None]:
+        response = client.get(f"/api/collection?model={model_id}")
+        assert response.status_code == 200, response.text
+        return {group["themeId"] for group in response.json()["groups"]}
+
+    assert theme_ids() == {gone}
+
+    deleted = client.delete(f"/api/themes/{gone}", headers=dashboard_headers)
+    assert deleted.status_code == 200, deleted.text
+
+    assert stay in theme_ids()
+    sessions = {session["id"]: session for session in _sessions(client)}
+    assert sessions["default"]["is_running"] is True
+    assert sessions[session_id]["is_running"] is False
+    assert sessions[session_id]["theme_ids"] == []

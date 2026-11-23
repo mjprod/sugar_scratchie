@@ -134,6 +134,8 @@ def build_collection_catalog(
     theme_filter: str | None = None,
     allowed_theme_ids: set[str] | None = None,
 ) -> dict:
+    if allowed_theme_ids is not None and not allowed_theme_ids:
+        allowed_theme_ids = None
     models = list_models_standalone(models_dir)
     cards = list_cards_standalone(root, cards_dir, mesh_dir)
     themes = list_themes_standalone(themes_dir)
