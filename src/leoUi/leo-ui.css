@@ -119,7 +119,9 @@
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: none;
-  will-change: transform, opacity;
+  /* No permanent will-change — it creates a backdrop root and kills
+     backdrop-filter on Swimwear (.leo-ui__bikini-block). GSAP still
+     promotes layers while tweens run. */
 }
 
 .leo-ui__title {
@@ -640,17 +642,13 @@
   color: rgba(255, 255, 255, 0.55);
 }
 
-.leo-ui__field option {
-  color: #111;
-  background: #fff;
-}
-
 .leo-ui__field:focus {
   outline: 1px solid rgba(215, 0, 101, 0.5);
 }
 
 .leo-ui__select-wrap {
   position: relative;
+  z-index: 4;
 }
 
 .leo-ui__select-wrap::after {
@@ -666,20 +664,93 @@
   opacity: 0.85;
 }
 
+.leo-ui__select-wrap.is-open::after {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.leo-ui__select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  cursor: pointer;
+  padding-right: 2.5rem;
+}
+
+/* Custom menu — native <select> popups shrink under GSAP/preview transforms. */
+.leo-ui__select-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  border-radius: 14px;
+  border: 1px solid var(--leo-border-strong);
+  background: rgba(28, 28, 30, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  max-height: 14rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 6;
+}
+
+.leo-ui__select-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #fff;
+  font-family: var(--leo-ui);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.leo-ui__select-option:hover,
+.leo-ui__select-option:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.leo-ui__select-option.is-selected {
+  background: rgba(215, 0, 101, 0.22);
+}
+
+.leo-ui__select-option svg {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+}
+
 .leo-ui__stack {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-/* Swimwear: col01 full-width until a pick; then [upload/or/gallery | selected]. */
+/* Swimwear: always 2 cols. GSAP tweens --bikini-sel / --bikini-gap (not the
+   grid-template string — string interp crushed col1 on close). */
 .leo-ui__bikini-block {
+  --bikini-sel: 0px;
+  --bikini-gap: 0px;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--bikini-sel));
+  column-gap: var(--bikini-gap);
+  row-gap: 0;
+  align-items: center;
   width: 100%;
-  height: 8.75rem;
   min-width: 0;
   box-sizing: border-box;
   padding: 1rem;
@@ -694,18 +765,23 @@
   );
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  margin-top: auto; /* pin to bottom of the card stack */
+  /* Hidden until photo grow settles — GSAP revealBikiniBlock fades it in. */
+  opacity: 0;
 }
 
 .leo-ui__bikini-block.has-selection {
-  /* Same thumb width as Add Photo preview (4.8125rem); pad for × overhang. */
-  grid-template-columns: minmax(0, 1fr) 6.25rem;
+  /* Resting open state if GSAP hasn't run yet; tween overrides vars (px to match). */
+  --bikini-sel: 100px;
+  --bikini-gap: 12px;
 }
 
 .leo-ui__bikini-col {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0;
   min-width: 0;
+  width: 100%;
 }
 
 .leo-ui__bikini-row {
@@ -719,6 +795,15 @@
 .leo-ui__bikini-row .leo-ui__section-label {
   text-align: center;
   width: 100%;
+  padding: 0.65rem 0.9rem;
+  align-self: stretch;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 /* Block owns the dashed chrome — keep the upload control as plain content.
@@ -739,13 +824,20 @@
 
 .leo-ui__bikini-selected {
   box-sizing: border-box;
-  width: 6.25rem;
+  /* Fill the grid track — fixed width blocked 0fr collapse when unselected. */
+  width: 100%;
+  min-width: 0;
   display: flex;
   justify-content: flex-start;
   align-items: flex-start;
-  /* Room for the clear × which sits half outside the thumb. */
-  padding: 1.1875rem 1.1875rem 0 0;
-  overflow: visible;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.leo-ui__bikini-block.has-selection .leo-ui__bikini-selected {
+  pointer-events: auto;
 }
 
 .leo-ui__bikini-selected .leo-ui__preview-wrap {
@@ -826,6 +918,7 @@
 }
 
 .leo-ui__upload-card--host {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -837,9 +930,85 @@
   /* No mask here — it kills backdrop-filter on the clear ×. Fade lives on the shell. */
 }
 
-.leo-ui__upload-card--host > * {
+.leo-ui__upload-card--host > *:not(.leo-ui__host-photo) {
   position: relative;
   z-index: 1;
+}
+
+/* Swimwear stack fills the card so the bikini block can sit at the bottom. */
+.leo-ui__upload-card--host > .leo-ui__stack {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Processing step: photo-only host card (shell docks here; no face/bikini chrome). */
+.leo-ui__processing-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* Beat `.leo-ui__upload-card--host > *:not(.leo-ui__host-photo) { position: relative }`
+   so this overlay fills the card and can truly center. */
+.leo-ui__processing-card > .leo-ui__processing-lottie {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  place-content: center;
+  margin: 0;
+  pointer-events: none;
+}
+
+.leo-ui__processing-card .leo-ui__processing-lottie-player,
+.leo-ui__processing-card .leo-ui__processing-lottie-player canvas {
+  /* Source is 1000×1000 (1:1). 200px × 0.7 = 140px. */
+  width: 140px !important;
+  height: 140px !important;
+  margin: 0;
+}
+
+/* .leo-ui__host-photo.is-processing img — filter is GSAP-tweened on enter
+   (grayscale + blur); left inline so we don't snap past the beat. */
+
+/* Swimwear: photo sits under host content in the same stacking context so
+   .leo-ui__bikini-block can use real backdrop-filter (stage shell is outside body).
+   Mask matches .leo-ui__photo-fly settle (SHELL_MASK_FILL). */
+.leo-ui__host-photo {
+  --shell-mask-0: #0000002b;
+  --shell-mask-1: #0000007d;
+  --shell-mask-2: #00000000;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+  mask-image: linear-gradient(
+    var(--shell-mask-0) 0%,
+    var(--shell-mask-1) 30%,
+    var(--shell-mask-2)
+  );
+}
+
+.leo-ui__host-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
 }
 
 .leo-ui__upload-card--host .leo-ui__upload-slot {
@@ -976,26 +1145,14 @@
   opacity: 1;
 }
 
-/* Selected photo settles into the shell on Swimwear (behind screen content).
-   Mask stops are CSS vars so GSAP can tween thumb (solid) → bg effect. */
+/* Settled Swimwear: border only — photo is .leo-ui__host-photo with the fade mask. */
 .leo-ui__upload-card-shell.is-card.is-photo-fill {
-  --shell-mask-0: #0000002b;
-  --shell-mask-1: #0000007d;
-  --shell-mask-2: #00000021;
   z-index: 12;
-  background: #111;
+  background: transparent;
   filter: none;
   opacity: 1;
-  -webkit-mask-image: linear-gradient(
-    var(--shell-mask-0) 0%,
-    var(--shell-mask-1) 30%,
-    var(--shell-mask-2)
-  );
-  mask-image: linear-gradient(
-    var(--shell-mask-0) 0%,
-    var(--shell-mask-1) 30%,
-    var(--shell-mask-2)
-  );
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 70%, transparent 100%);
 }
 
 .leo-ui__stage.has-photo-shell .leo-ui__body {
@@ -1115,8 +1272,16 @@
 
 .leo-ui__or {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 0.75rem;
+  align-content: center;
+  justify-content: center;
+  width: 100%;
+  height: 1.8rem;
+  padding: 0;
+  gap: 0.65rem;
+  box-sizing: border-box;
+  border: none;
   color: rgba(255, 255, 255, 0.55);
   font-size: 0.85rem;
 }
@@ -1124,9 +1289,22 @@
 .leo-ui__or::before,
 .leo-ui__or::after {
   content: "";
-  flex: 1;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.15);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 0;
+  border-top: 1px solid #ffffff21;
+}
+
+.leo-ui__or > span {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.8rem;
+  padding: 0 0.85rem;
+  box-sizing: border-box;
+  border: 1px solid #ffffff21;
+  border-radius: 49rem;
 }
 
 .leo-ui__gallery {
@@ -1207,9 +1385,18 @@
   cursor: pointer;
 }
 
+/* Face slot stacks Add Face + selected thumb for handoff animation. */
+.leo-ui__face-slot {
+  align-self: flex-start;
+  position: relative;
+  width: 5.8125rem;
+  height: 5.8125rem;
+}
+
 /* Figma AddFaceHolder 348:3187 — 93×93, left, dashed square. */
 .leo-ui__face-btn {
-  align-self: flex-start;
+  position: absolute;
+  inset: 0;
   box-sizing: border-box;
   width: 5.8125rem;
   height: 5.8125rem;
@@ -1234,6 +1421,7 @@
   color: #fff;
   cursor: pointer;
   font-family: var(--leo-ui);
+  z-index: 1;
 }
 
 .leo-ui__face-btn-label {
@@ -1253,9 +1441,335 @@
   margin-top: 0.125rem;
 }
 
-.leo-ui__face-btn.is-done {
+.leo-ui__face-preview-wrap {
+  position: absolute;
+  inset: 0;
+  width: 5.8125rem;
+  height: 5.8125rem;
+  margin-inline: 0;
+  overflow: visible;
+  z-index: 2;
+}
+
+/* Beat .leo-ui__upload-card--host .leo-ui__preview portrait rules. */
+.leo-ui__upload-card--host .leo-ui__face-preview,
+.leo-ui__face-preview {
+  display: block;
+  box-sizing: border-box;
+  width: 5.8125rem;
+  height: 5.8125rem;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  aspect-ratio: 1;
+  border: 1px solid var(--leo-border);
+  border-radius: var(--leo-radius);
+  overflow: hidden;
+  background: #111;
+  cursor: pointer;
+}
+
+.leo-ui__face-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+.leo-ui__face-preview-wrap .leo-ui__preview-clear-glass img {
+  width: 5.8125rem;
+  height: 5.8125rem;
+  left: calc(1.1875rem - 5.8125rem);
+  top: 1.1875rem;
+}
+
+/* Confirm Photo — Figma Step03b: hero + side actions (side matches hero height). */
+.leo-ui__confirm {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.leo-ui__confirm-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.9375rem;
+  gap: 0.75rem;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.leo-ui__confirm-hero {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 227 / 404;
+  max-height: min(25.25rem, 52dvh);
+  border-radius: 11px;
+  overflow: hidden;
+  background: #111;
+  container-type: size;
+}
+
+.leo-ui__confirm-hero.has-clear {
+  overflow: visible;
+}
+
+.leo-ui__confirm-hero-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  border-radius: inherit;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+
+.leo-ui__confirm-hero-layer--gen {
+  z-index: 0;
+}
+
+.leo-ui__confirm-hero-layer--up {
+  z-index: 1;
+}
+
+/* Same circle-X as Swimwear face/bikini clears (2.375rem, half-out). */
+.leo-ui__confirm-hero-clear {
+  top: -1.1875rem;
+  right: -1.1875rem;
+}
+
+.leo-ui__confirm-hero-clear .leo-ui__preview-clear-glass img {
+  width: 100cqw;
+  height: 100cqh;
+  left: calc(1.1875rem - 100cqw);
+  top: 1.1875rem;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.leo-ui__confirm-hero-clear .leo-ui__preview-clear-mark {
+  font-size: 1.75rem;
+  line-height: 1;
+  font-weight: 400;
+}
+
+.leo-ui__confirm-thumbs {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+}
+
+.leo-ui__confirm-thumb {
+  flex: 0 0 2.75rem;
+  width: 2.75rem;
+  height: 3.75rem;
+  padding: 0;
+  border: 1px solid var(--leo-border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  cursor: pointer;
+}
+
+.leo-ui__confirm-thumb.is-selected {
+  border-color: rgba(215, 0, 101, 0.75);
+  box-shadow: 0 0 0 1px rgba(215, 0, 101, 0.35);
+}
+
+.leo-ui__confirm-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.leo-ui__confirm-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.55rem;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
+.leo-ui__confirm-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.4rem;
+  border: 1px solid var(--leo-border-strong);
+  border-radius: 10px;
+  background: var(--leo-glass);
+  color: var(--leo-muted);
+  font-family: var(--leo-sans);
+  font-size: 0.875rem;
+  letter-spacing: 0.02em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.leo-ui__confirm-card span,
+.leo-ui__confirm-card p {
+  margin: 0;
+  width: 100%;
+  color: var(--leo-muted);
+  font-size: 0.875rem;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+.leo-ui__confirm-card svg {
+  opacity: 0.5;
+  color: #fff;
+}
+
+.leo-ui__confirm-card--upload {
+  flex: 1 1 auto;
+  cursor: default;
+  padding: 0.55rem 0.35rem 0.75rem;
+  gap: 0.35rem;
+  min-height: 0;
+}
+
+.leo-ui__confirm-rerun {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 3.5rem;
+  margin: 0;
+  padding: 0.5rem;
+  border: 1px solid rgba(255, 3, 121, 0.2);
+  border-radius: 11px;
+  background: var(--leo-magenta-glass);
+  color: #fff;
+  font-family: var(--leo-ui);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.leo-ui__confirm-or {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  width: 100%;
+}
+
+.leo-ui__confirm-or-line {
+  flex: 1 1 auto;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.leo-ui__confirm-or-label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.3rem;
+  height: 1.3rem;
+  padding: 0 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 90px;
+  color: rgba(255, 255, 255, 0.3);
+  font-family: var(--leo-ui);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Match Add Face glass chip — solid edge, no dashed stroke. */
+.leo-ui__confirm-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  box-sizing: border-box;
+  width: 5.8125rem;
+  height: 5.8125rem;
+  margin: 0.35rem auto 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: var(--leo-radius);
+  background: linear-gradient(
+    -47deg,
+    rgba(170, 170, 170, 0.164) 48%,
+    rgba(68, 68, 68, 0.07) 68%,
+    rgba(0, 0, 0, 0.2) 91%,
+    rgba(169, 169, 169, 0.164) 120%
+  );
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  color: #fff;
+  font-family: var(--leo-ui);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.leo-ui__confirm-upload svg {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.leo-ui__confirm-upload.is-filled {
+  padding: 0;
+  overflow: hidden;
   border-style: solid;
-  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.leo-ui__confirm-upload.is-filled img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+.leo-ui__confirm-upload-preview {
+  position: relative;
+  width: fit-content;
+  margin: 0.35rem auto 0;
+  overflow: visible;
+}
+
+/* Match face-thumb frosted × glass (Add Face is 5.8125rem square). */
+.leo-ui__confirm-upload-preview .leo-ui__preview-clear {
+  top: -1.1875rem;
+  right: -1.1875rem;
+}
+
+.leo-ui__confirm-upload-preview .leo-ui__preview-clear-glass img {
+  width: 5.8125rem;
+  height: 5.8125rem;
+  left: calc(1.1875rem - 5.8125rem);
+  top: 1.1875rem;
+}
+
+.leo-ui__confirm-upload-preview .leo-ui__preview-clear-mark {
+  font-size: 1.75rem;
+  line-height: 1;
+  font-weight: 400;
 }
 
 .leo-ui__choices {
@@ -1442,6 +1956,109 @@
   color: #fff;
   font-size: 2.5rem;
   opacity: 0.9;
+}
+
+/* Confirm → Change Prompt modal (native dialog, top layer). */
+.leo-ui__prompt-dialog {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: min(22rem, calc(100vw - 2rem));
+  width: 100%;
+  overflow: visible;
+}
+
+.leo-ui__prompt-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.leo-ui__prompt-dialog.is-open::backdrop {
+  opacity: 1;
+}
+
+.leo-ui__prompt-dialog-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.25rem 1.15rem 1.15rem;
+  border: 1px solid var(--leo-border-strong);
+  border-radius: 14px;
+  background: linear-gradient(
+    180deg,
+    rgba(28, 28, 32, 0.96) 0%,
+    rgba(8, 8, 10, 0.98) 100%
+  );
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  color: #fff;
+  will-change: transform, opacity, filter;
+}
+
+.leo-ui__prompt-dialog-close {
+  position: absolute;
+  top: -0.85rem;
+  right: -0.85rem;
+  margin: 0;
+  z-index: 2;
+  font-size: 1.75rem;
+}
+
+.leo-ui__prompt-dialog-title {
+  margin: 0;
+  padding-right: 1.5rem;
+  font-family: var(--leo-serif);
+  font-weight: 400;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.leo-ui__prompt-dialog-sub {
+  margin: 0;
+  color: var(--leo-muted);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.leo-ui__prompt-dialog-input {
+  width: 100%;
+  min-height: 7.5rem;
+  margin: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--leo-border-strong);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-family: var(--leo-sans);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.leo-ui__prompt-dialog-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.leo-ui__prompt-dialog-input:focus {
+  outline: none;
+  border-color: rgba(215, 0, 101, 0.55);
+  box-shadow: 0 0 0 1px rgba(215, 0, 101, 0.25);
+}
+
+.leo-ui__prompt-dialog-actions {
+  display: flex;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
+}
+
+.leo-ui__prompt-dialog-actions .leo-ui__btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 3.25rem;
 }
 
 @media (min-width: 720px) {

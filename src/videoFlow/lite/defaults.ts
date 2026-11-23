@@ -36,16 +36,22 @@ export type LiteDraftInput = {
   costume: string;
   hasXai: boolean;
   hasWavespeed: boolean;
+  /** Optional Leo UI note appended to each picture take prompt. */
+  picturePromptExtra?: string;
 };
 
 /** Fixed settings for the lite canvas. Prompts are filled from the theme and never shown. */
 export function liteRequestBody(input: LiteDraftInput) {
   const imageModel = liteImageModel(input.hasXai, input.hasWavespeed);
   const wavespeed = liteUsesWavespeed(input.hasXai, input.hasWavespeed);
+  const extra = input.picturePromptExtra?.trim() ?? "";
+  const picturePrompts = defaultPicturePrompts(input.theme).map((prompt) =>
+    extra ? `${prompt}\n\nAdditional direction: ${extra}` : prompt,
+  );
   return flowStepBody({
     image: input.image,
     theme: input.theme,
-    picturePrompts: defaultPicturePrompts(input.theme),
+    picturePrompts,
     backgroundMotionPrompt: backgroundMotionPromptForTheme(input.theme),
     dressPrompt: dressPromptForThemeWithReference(input.theme),
     dressReferenceImage: input.costume,

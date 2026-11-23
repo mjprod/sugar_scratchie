@@ -1,6 +1,7 @@
 import { useGSAP } from "@gsap/react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import gsap from "gsap";
-import { Check, RotateCcw, Upload } from "lucide-react";
+import { Check, RotateCcw, SquarePen, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, uploadFile } from "../shared/api";
 import { createMotionCardDraft, fetchModels, type ModelInfo } from "../shared/models";
@@ -21,6 +22,7 @@ type LeoScreen =
   | "theme"
   | "photo"
   | "swimwear"
+  | "processing"
   | "confirm"
   | "animating"
   | "animated";
@@ -77,15 +79,33 @@ const SCREEN_ORDER: LeoScreen[] = [
   "theme",
   "photo",
   "swimwear",
+  "processing",
   "confirm",
   "animating",
   "animated",
 ];
+const PROCESSING_MIN_DWELL_MS = 1200;
+/** Flip on when layout is locked — auto-advance to confirm once options exist. */
+const PROCESSING_AUTO_ADVANCE = false;
+const PROCESSING_PHOTO_FILTER =
+  "grayscale(1) saturate(0) blur(12px) brightness(0.75)";
+const PROCESSING_PHOTO_FILTER_CLEAR =
+  "grayscale(0) saturate(1) blur(0px) brightness(1)";
+/** Desaturate + blur beat on enter processing. */
+const PROCESSING_BLUR_DURATION = 0.4;
+const PROCESSING_HANGER_LOTTIE = "/leo-ui/lottieClothesHanger.lottie";
 const leoHeld = new Set<string>();
 
 function phaseFor(screen: LeoScreen): number {
   if (screen === "influencer" || screen === "theme") return 0;
-  if (screen === "photo" || screen === "swimwear" || screen === "confirm") return 1;
+  if (
+    screen === "photo" ||
+    screen === "swimwear" ||
+    screen === "processing" ||
+    screen === "confirm"
+  ) {
+    return 1;
+  }
   if (screen === "animating" || screen === "animated") return 2;
   return 0;
 }
@@ -196,6 +216,8 @@ export function LeoUiPage() {
   const photoShellFromRef = useRef<DOMRect | null>(null);
   const photoShellGrowingRef = useRef(false);
   const photoFlyRef = useRef<HTMLDivElement | null>(null);
+  /** Confirm hero slot — fly docks here from processing. */
+  const confirmHeroRef = useRef<HTMLDivElement | null>(null);
   const shellPhotoRef = useRef<HTMLImageElement | null>(null);
   /** Last image seen while on Add Photo — distinguishes fresh select vs return. */
   const photoImageOnScreenRef = useRef("");
@@ -214,7 +236,16 @@ export function LeoUiPage() {
   const nextLabelReadyRef = useRef(false);
   const bikiniRef = useRef<HTMLInputElement | null>(null);
   const faceRef = useRef<HTMLInputElement | null>(null);
-  const uploadTargetRef = useRef<"photo" | "bikini" | "face">("photo");
+  const uploadTargetRef = useRef<"photo" | "bikini" | "face" | "confirm">("photo");
+  /** User-uploaded stand-in on Confirm; clear restores the generated option. */
+  const [confirmOverride, setConfirmOverride] = useState("");
+  /** Holds upload src through the exit scale/fade before unmount. */
+  const [confirmUploadExitSrc, setConfirmUploadExitSrc] = useState("");
+  /** Extra picture direction from Confirm → Change Prompt dialog. */
+  const [picturePromptExtra, setPicturePromptExtra] = useState("");
+  const [promptDraft, setPromptDraft] = useState("");
+  const promptDialogRef = useRef<HTMLDialogElement | null>(null);
+  const promptDialogBusyRef = useRef(false);
 
   const [screen, setScreen] = useState<LeoScreen>("influencer");
   const [viewScreen, setViewScreen] = useState<LeoScreen>("influencer");
@@ -228,9 +259,34 @@ export function LeoUiPage() {
   const [cardLabel, setCardLabel] = useState("");
   const [cardId, setCardId] = useState("");
   const [image, setImage] = useState("");
+  /** Host/shell photo fill only after grow settles — never under the entrance fly. */
+  const [photoFillReady, setPhotoFillReady] = useState(false);
   const [bikini, setBikini] = useState("");
+  /** Keeps the thumb mounted while the select-column closes. */
+  const [bikiniPanelSrc, setBikiniPanelSrc] = useState("");
+  const bikiniSelectReadyRef = useRef(false);
+  const bikiniColsProxyRef = useRef({ sel: 0, gap: 0 });
   const [face, setFace] = useState("");
+  /** Keeps the face thumb mounted while exit scales it out. */
+  const [facePanelSrc, setFacePanelSrc] = useState("");
+  const faceBtnRef = useRef<HTMLButtonElement | null>(null);
+  const faceThumbRef = useRef<HTMLButtonElement | null>(null);
+  const faceClearRef = useRef<HTMLButtonElement | null>(null);
+  /** Skip re-entrance when returning to Swimwear with a face already set. */
+  const faceOnScreenRef = useRef("");
+  const faceReadyRef = useRef(false);
+  /** Wall-clock when processing view mounted — gates min dwell before confirm. */
+  const processingEnteredAtRef = useRef(0);
+  /** True after picture options land and we swap to the processed photo. */
+  const [processingRevealed, setProcessingRevealed] = useState(false);
+  const processingRevealStartedRef = useRef(false);
+  /** Which photo-fly handoff the enter hook should run. */
+  const photoTravelKindRef = useRef<
+    "grow" | "shrink" | "to-processing" | "to-swimwear" | "to-confirm" | null
+  >(null);
   const [theme, setTheme] = useState("");
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeSelectRef = useRef<HTMLDivElement | null>(null);
   const [pictureChoice, setPictureChoice] = useState(1);
   const [flowState, setFlowState] = useState<LiteFlowState | null>(null);
   const [jobs, setJobs] = useState<JobInfo[]>([]);
@@ -257,6 +313,7 @@ export function LeoUiPage() {
     costume: "",
     hasXai: false,
     hasWavespeed: false,
+    picturePromptExtra: "",
   });
 
   fieldsRef.current = {
@@ -270,6 +327,7 @@ export function LeoUiPage() {
     costume: "",
     hasXai: Boolean(health?.xai_key_loaded),
     hasWavespeed: Boolean(health?.wavespeed_key_loaded),
+    picturePromptExtra,
   };
 
   const selectedModel =
@@ -372,6 +430,27 @@ export function LeoUiPage() {
     setFlowState(state);
     setJobs(jobData.jobs);
   }, []);
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      const root = themeSelectRef.current;
+      if (root && !root.contains(event.target as Node)) setThemeMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setThemeMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [themeMenuOpen]);
+
+  useEffect(() => {
+    if (viewScreen !== "theme") setThemeMenuOpen(false);
+  }, [viewScreen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -522,12 +601,38 @@ export function LeoUiPage() {
     if (status === "review" || status === "approved") setScreen("animated");
   }, [flowState, screen]);
 
-  // When picture hits review, land on confirm.
+  // Drop custom confirm upload when leaving the step.
   useEffect(() => {
-    if (flowState?.steps.picture?.status === "review" && (screen === "swimwear" || screen === "confirm")) {
-      setScreen("confirm");
+    if (screen !== "confirm") {
+      setConfirmOverride("");
+      setConfirmUploadExitSrc("");
     }
-  }, [flowState, screen]);
+  }, [screen]);
+
+  // Processing done → swap to processed photo + re-saturate (then optional auto-advance).
+  useEffect(() => {
+    if (screen !== "processing") {
+      processingRevealStartedRef.current = false;
+      setProcessingRevealed(false);
+      return;
+    }
+    if (viewScreen !== "processing" || processingRevealStartedRef.current) return;
+    const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+      (path) => pictureChoiceFromArtifact(path) != null,
+    );
+    if (artifacts.length === 0) return;
+    const started = processingEnteredAtRef.current || Date.now();
+    const wait = Math.max(0, PROCESSING_MIN_DWELL_MS - (Date.now() - started));
+    const timer = window.setTimeout(() => {
+      processingRevealStartedRef.current = true;
+      const img = screenRef.current?.querySelector<HTMLElement>(
+        ".leo-ui__host-photo.is-processing img",
+      );
+      if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+      setProcessingRevealed(true);
+    }, wait);
+    return () => window.clearTimeout(timer);
+  }, [flowState, screen, viewScreen]);
 
   function cardNameChipMode(forScreen: LeoScreen): "edit" | "card" | "hidden" {
     if (forScreen === "theme") return "edit";
@@ -536,7 +641,11 @@ export function LeoUiPage() {
   }
 
   function cardShellMode(forScreen: LeoScreen): "edit" | "card" | "hidden" {
-    return cardNameChipMode(forScreen);
+    if (forScreen === "theme") return "edit";
+    if (forScreen === "photo" || forScreen === "swimwear" || forScreen === "processing") {
+      return "card";
+    }
+    return "hidden";
   }
 
   const SHELL_BLUR = "blur(8px)";
@@ -550,7 +659,7 @@ export function LeoUiPage() {
   const SHELL_MASK_FILL = {
     "--shell-mask-0": "#0000002b",
     "--shell-mask-1": "#0000007d",
-    "--shell-mask-2": "#00000021",
+    "--shell-mask-2": "#00000000",
   } as gsap.TweenVars;
 
   function stageEl() {
@@ -561,6 +670,408 @@ export function LeoUiPage() {
     return Boolean(cardShellRef.current?.classList.contains("is-photo-fill"));
   }
 
+  function bikiniBlockEl() {
+    return screenRef.current?.querySelector<HTMLElement>(".leo-ui__bikini-block") ?? null;
+  }
+
+  function hideBikiniBlock() {
+    const block = bikiniBlockEl();
+    if (!block) return;
+    gsap.killTweensOf(block);
+    gsap.set(block, { opacity: 0, y: 18 });
+  }
+
+  /** Fade/slide bikini chrome in after the photo grow has settled. */
+  function revealBikiniBlock() {
+    const block = bikiniBlockEl();
+    if (!block) return;
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    gsap.killTweensOf(block);
+    if (reduce) {
+      gsap.set(block, { opacity: 1, y: 0, clearProps: "transform" });
+      return;
+    }
+    gsap.fromTo(
+      block,
+      { opacity: 0, y: 18 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.48,
+        delay: 0.55,
+        ease: "power3.out",
+        clearProps: "transform",
+        overwrite: true,
+      },
+    );
+  }
+
+  // Thumb column width/gap in px — tweened via proxy so grid tracks lerp cleanly.
+  const BIKINI_SEL_PX = 100; /* 6.25rem */
+  const BIKINI_GAP_PX = 12; /* 0.75rem */
+
+  // Selected swimwear: animate col1 shrink + selected column in (and reverse).
+  useGSAP(
+    () => {
+      if (viewScreen !== "swimwear") {
+        bikiniSelectReadyRef.current = false;
+        return;
+      }
+      const block = bikiniBlockEl();
+      if (!block) return;
+      const selected = block.querySelector<HTMLElement>(".leo-ui__bikini-selected");
+      const thumb = selected?.querySelector<HTMLElement>(".leo-ui__preview") ?? null;
+      const clear = selected?.querySelector<HTMLElement>(".leo-ui__preview-clear") ?? null;
+      const labels = block.querySelectorAll<HTMLElement>(
+        ".leo-ui__dashed, .leo-ui__bikini-row .leo-ui__section-label",
+      );
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const open = Boolean(bikini.trim());
+
+      if (open) setBikiniPanelSrc(bikini);
+
+      const applyCols = (selPx: number, gapPx: number) => {
+        block.style.setProperty("--bikini-sel", `${selPx}px`);
+        block.style.setProperty("--bikini-gap", `${gapPx}px`);
+      };
+      const readSelPx = () => {
+        const raw = getComputedStyle(block).getPropertyValue("--bikini-sel").trim();
+        const n = Number.parseFloat(raw);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const cols = bikiniColsProxyRef.current;
+
+      if (!bikiniSelectReadyRef.current) {
+        bikiniSelectReadyRef.current = true;
+        cols.sel = open ? BIKINI_SEL_PX : 0;
+        cols.gap = open ? BIKINI_GAP_PX : 0;
+        applyCols(cols.sel, cols.gap);
+        if (selected) {
+          gsap.set(selected, {
+            opacity: open ? 1 : 0,
+            overflow: open ? "visible" : "hidden",
+          });
+        }
+        if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+        if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        return;
+      }
+
+      gsap.killTweensOf(
+        [cols, block, selected, thumb, clear, ...Array.from(labels)].filter(Boolean),
+      );
+
+      if (reduce) {
+        cols.sel = open ? BIKINI_SEL_PX : 0;
+        cols.gap = open ? BIKINI_GAP_PX : 0;
+        applyCols(cols.sel, cols.gap);
+        if (selected) {
+          gsap.set(selected, {
+            opacity: open ? 1 : 0,
+            overflow: open ? "visible" : "hidden",
+          });
+        }
+        if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+        if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        if (!open) setBikiniPanelSrc("");
+        return;
+      }
+
+      cols.sel = readSelPx();
+      if (cols.sel <= 0) cols.gap = 0;
+      else if (cols.sel >= BIKINI_SEL_PX) cols.gap = BIKINI_GAP_PX;
+
+      if (open) {
+        if (selected) gsap.set(selected, { overflow: "hidden", opacity: 1 });
+        // Same as Add Photo: scale + slight rise — no horizontal slide.
+        if (thumb) {
+          gsap.set(thumb, { opacity: 0, scale: 0.86, y: 14, transformOrigin: "50% 50%" });
+        }
+        if (clear) gsap.set(clear, { scale: 0.5, transformOrigin: "50% 50%" });
+        gsap.to(cols, {
+          sel: BIKINI_SEL_PX,
+          gap: BIKINI_GAP_PX,
+          duration: 0.5,
+          ease: "power3.inOut",
+          overwrite: true,
+          onUpdate: () => applyCols(cols.sel, cols.gap),
+          onComplete: () => {
+            applyCols(BIKINI_SEL_PX, BIKINI_GAP_PX);
+            if (selected) gsap.set(selected, { overflow: "visible" });
+          },
+        });
+        if (thumb) {
+          gsap.to(thumb, {
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 0.4,
+            ease: "power2.out",
+            delay: 0.12,
+            clearProps: "transform",
+            overwrite: true,
+          });
+        }
+        if (clear) {
+          gsap.to(clear, {
+            scale: 1,
+            duration: 0.3,
+            ease: "back.out(1.7)",
+            delay: 0.28,
+            clearProps: "transform",
+            overwrite: true,
+          });
+        }
+        if (labels.length) {
+          gsap.fromTo(
+            labels,
+            { opacity: 0.35 },
+            { opacity: 1, duration: 0.32, ease: "power2.out", overwrite: true },
+          );
+        }
+      } else {
+        if (selected) gsap.set(selected, { overflow: "hidden" });
+        if (clear) {
+          gsap.to(clear, {
+            scale: 0.5,
+            duration: 0.22,
+            ease: "power2.in",
+            transformOrigin: "50% 50%",
+            overwrite: true,
+          });
+        }
+        if (thumb) {
+          gsap.to(thumb, {
+            opacity: 0,
+            scale: 0.86,
+            y: 14,
+            duration: 0.32,
+            ease: "power2.in",
+            transformOrigin: "50% 50%",
+            overwrite: true,
+          });
+        }
+        gsap.to(selected, {
+          opacity: 0,
+          duration: 0.28,
+          ease: "power2.in",
+          delay: 0.08,
+          overwrite: true,
+        });
+        gsap.to(cols, {
+          sel: 0,
+          gap: 0,
+          duration: 0.45,
+          ease: "power3.inOut",
+          delay: 0.04,
+          overwrite: true,
+          onUpdate: () => applyCols(cols.sel, cols.gap),
+          onComplete: () => {
+            applyCols(0, 0);
+            setBikiniPanelSrc("");
+          },
+        });
+        if (labels.length) {
+          gsap.fromTo(
+            labels,
+            { opacity: 0.35 },
+            { opacity: 1, duration: 0.32, ease: "power2.out", delay: 0.08, overwrite: true },
+          );
+        }
+      }
+    },
+    { dependencies: [bikini, viewScreen], scope: rootRef },
+  );
+
+  // Face: anticipate → scale Add Face out → thumb in; reverse on remove.
+  useGSAP(
+    () => {
+      if (viewScreen !== "swimwear") {
+        faceOnScreenRef.current = "";
+        faceReadyRef.current = false;
+        return;
+      }
+      const btn = faceBtnRef.current;
+      const thumb = faceThumbRef.current;
+      const clear = faceClearRef.current;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const open = Boolean(face.trim());
+
+      if (open) setFacePanelSrc(face);
+
+      if (!faceReadyRef.current) {
+        faceReadyRef.current = true;
+        if (open) {
+          faceOnScreenRef.current = face;
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 0,
+              scale: 0,
+              visibility: "hidden",
+              pointerEvents: "none",
+            });
+          }
+          if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        } else if (btn) {
+          gsap.set(btn, {
+            opacity: 1,
+            scale: 1,
+            visibility: "visible",
+            pointerEvents: "auto",
+            clearProps: "transform",
+          });
+        }
+        return;
+      }
+
+      gsap.killTweensOf([btn, thumb, clear].filter(Boolean));
+
+      if (reduce) {
+        if (open) {
+          faceOnScreenRef.current = face;
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 0,
+              scale: 0,
+              visibility: "hidden",
+              pointerEvents: "none",
+            });
+          }
+          if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        } else {
+          faceOnScreenRef.current = "";
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 1,
+              scale: 1,
+              visibility: "visible",
+              pointerEvents: "auto",
+              clearProps: "transform",
+            });
+          }
+          setFacePanelSrc("");
+        }
+        return;
+      }
+
+      if (open) {
+        if (!btn || !thumb || !clear) return;
+        const returning = Boolean(faceOnScreenRef.current);
+        faceOnScreenRef.current = face;
+        if (returning) {
+          gsap.set(btn, {
+            opacity: 0,
+            scale: 0,
+            visibility: "hidden",
+            pointerEvents: "none",
+          });
+          gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          gsap.set(clear, { scale: 1, clearProps: "transform" });
+          return;
+        }
+
+        gsap.set(btn, {
+          opacity: 1,
+          scale: 1,
+          visibility: "visible",
+          pointerEvents: "none",
+          transformOrigin: "50% 50%",
+        });
+        gsap.set(thumb, { opacity: 0, scale: 0.86, y: 14, transformOrigin: "50% 50%" });
+        gsap.set(clear, { scale: 0.5, transformOrigin: "50% 50%" });
+
+        const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
+        // Anticipation — brief swell before the commit.
+        tl.to(btn, { scale: 1.08, duration: 0.12, ease: "power2.out" });
+        tl.to(btn, {
+          scale: 0,
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.in",
+          onComplete: () => {
+            gsap.set(btn, { visibility: "hidden" });
+          },
+        });
+        tl.to(
+          thumb,
+          {
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 0.4,
+            ease: "power2.out",
+            clearProps: "transform",
+          },
+          "-=0.04",
+        );
+        tl.to(
+          clear,
+          { scale: 1, duration: 0.3, ease: "back.out(1.7)", clearProps: "transform" },
+          "-=0.28",
+        );
+      } else {
+        // Reverse: thumb out → Add Face scales back in.
+        faceOnScreenRef.current = "";
+        if (!btn) {
+          setFacePanelSrc("");
+          return;
+        }
+        if (!thumb || !clear) {
+          gsap.set(btn, {
+            opacity: 1,
+            scale: 1,
+            visibility: "visible",
+            pointerEvents: "auto",
+            clearProps: "transform",
+          });
+          setFacePanelSrc("");
+          return;
+        }
+
+        gsap.set(btn, {
+          opacity: 0,
+          scale: 0,
+          visibility: "visible",
+          pointerEvents: "none",
+          transformOrigin: "50% 50%",
+        });
+        gsap.set(thumb, { opacity: 1, scale: 1, y: 0, transformOrigin: "50% 50%" });
+        gsap.set(clear, { scale: 1, transformOrigin: "50% 50%" });
+
+        const tl = gsap.timeline({
+          defaults: { overwrite: "auto" },
+          onComplete: () => setFacePanelSrc(""),
+        });
+        tl.to(clear, { scale: 0.5, duration: 0.18, ease: "power2.in" });
+        tl.to(
+          thumb,
+          { opacity: 0, scale: 0.86, y: 14, duration: 0.28, ease: "power2.in" },
+          0,
+        );
+        tl.to(btn, { scale: 1.08, opacity: 1, duration: 0.2, ease: "power2.out" }, "-=0.06");
+        tl.to(btn, {
+          scale: 1,
+          duration: 0.16,
+          ease: "power2.inOut",
+          clearProps: "transform",
+          onComplete: () => {
+            gsap.set(btn, { pointerEvents: "auto", visibility: "visible" });
+          },
+        });
+      }
+    },
+    { dependencies: [face, viewScreen], scope: rootRef },
+  );
+
   /** Photo fill sits behind screen content; glass shell stays above. */
   function setShellPhotoFill(on: boolean) {
     const shell = cardShellRef.current;
@@ -570,9 +1081,13 @@ export function LeoUiPage() {
     shell.classList.toggle("is-photo-fill", on);
     stage.classList.toggle("has-photo-shell", on);
     if (fill) {
+      // Image lives on .leo-ui__host-photo (masked). Shell keeps border only.
       if (on && image.trim()) fill.src = previewSource(image);
-      gsap.set(fill, { opacity: on ? 1 : 0 });
+      gsap.set(fill, { opacity: 0 });
     }
+    setPhotoFillReady(on);
+    if (on) revealBikiniBlock();
+    else hideBikiniBlock();
   }
 
   /** Shell is `position:absolute` in `.leo-ui__stage` — convert viewport rect → stage-local. */
@@ -802,6 +1317,9 @@ export function LeoUiPage() {
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    // Glass only during the fly — no settled photo / bikini chrome under the entrance.
+    setShellPhotoFill(false);
+    hideBikiniBlock();
     placeCardShell("card", false);
     const to = shell.getBoundingClientRect();
     if (to.width < 1 || to.height < 1) {
@@ -842,16 +1360,207 @@ export function LeoUiPage() {
         ease: "power3.inOut",
         overwrite: true,
         onComplete: () => {
-          setShellPhotoFill(true);
           gsap.set(fly, {
             display: "none",
             clearProps: "transform,--shell-mask-0,--shell-mask-1,--shell-mask-2",
           });
           photoShellGrowingRef.current = false;
           placeCardShell("card", false);
+          // Fill + bikini reveal (setShellPhotoFill → revealBikiniBlock).
+          setShellPhotoFill(true);
         },
       },
     );
+  }
+
+  /** Swimwear → processing: keep fly visible, dock to new slot, blur into host. */
+  function settleFlyIntoProcessing() {
+    const fly = photoFlyRef.current;
+    const shell = cardShellRef.current;
+    const src = image.trim();
+    if (!fly || !shell || !src) {
+      placeCardShell("card", false);
+      if (src) setShellPhotoFill(true);
+      return;
+    }
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    hideBikiniBlock();
+    placeCardShell("card", false);
+    setShellPhotoFill(true);
+    const to = shell.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    const clearFlyProps =
+      "transform,filter,opacity,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    if (!local || to.width < 1) {
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      return;
+    }
+
+    const host = screenRef.current?.querySelector<HTMLElement>(
+      ".leo-ui__host-photo.is-processing",
+    );
+    const img = host?.querySelector<HTMLElement>("img");
+
+    if (reduce) {
+      if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+      if (host) gsap.set(host, { opacity: 1, ...SHELL_MASK_FILL });
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    // Soft bottom mask fades back in while we blur + dock (fly starts solid on lift).
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      filter: PROCESSING_PHOTO_FILTER,
+      ...SHELL_MASK_FILL,
+      duration: PROCESSING_BLUR_DURATION,
+      ease: "power2.out",
+      overwrite: true,
+      onComplete: () => {
+        if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+        if (host) gsap.set(host, { opacity: 1, ...SHELL_MASK_FILL });
+        // Crossfade off the fly so the settled host mask doesn't pop.
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.25,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+            placeCardShell("card", false);
+          },
+        });
+      },
+    });
+  }
+
+  /** Processing → confirm: same fly layer morphs into the confirm hero slot. */
+  function settleFlyIntoConfirm() {
+    const fly = photoFlyRef.current;
+    const hero = confirmHeroRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const revealHero = () => {
+      if (hero) gsap.set(hero, { opacity: 1, visibility: "visible" });
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Keep the hero invisible until the traveling photo lands on it.
+    if (hero) gsap.set(hero, { opacity: 0, visibility: "hidden" });
+
+    if (!hero) {
+      revealHero();
+      return;
+    }
+
+    // Measure after layout — screen is at rest (x:0) before this runs.
+    const to = hero.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealHero();
+      return;
+    }
+
+    if (reduce) {
+      revealHero();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 11,
+      boxShadow: "0 0 0 0 transparent",
+      filter: PROCESSING_PHOTO_FILTER_CLEAR,
+      // Soft processing mask → solid cover so the hero handoff is seamless.
+      ...SHELL_MASK_THUMB,
+      duration: 0.75,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: revealHero,
+    });
+  }
+
+  /** Processing → swimwear: clear filter on fly, hand back to host + bikini. */
+  function settleFlyIntoSwimwear() {
+    const fly = photoFlyRef.current;
+    const shell = cardShellRef.current;
+    const src = image.trim();
+    if (!fly || !shell || !src) {
+      placeCardShell("card", false);
+      if (src) setShellPhotoFill(true);
+      return;
+    }
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    placeCardShell("card", false);
+    setShellPhotoFill(true);
+    const to = shell.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 1) {
+      gsap.set(fly, { display: "none", clearProps: "transform,filter" });
+      return;
+    }
+
+    if (reduce) {
+      gsap.set(fly, { display: "none", clearProps: "transform,filter" });
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      filter: PROCESSING_PHOTO_FILTER_CLEAR,
+      duration: 0.55,
+      ease: "power2.out",
+      overwrite: true,
+      onComplete: () => {
+        gsap.set(fly, { display: "none", clearProps: "transform,filter" });
+        photoShellGrowingRef.current = false;
+        placeCardShell("card", false);
+        setShellPhotoFill(true);
+      },
+    });
   }
 
   /** Reverse: photo-filled shell shrinks back to the Add Photo thumb. */
@@ -1133,6 +1842,7 @@ export function LeoUiPage() {
         }
       }
 
+      photoTravelKindRef.current = null;
       // Lift the selected thumb into the fly layer before the screen fades out.
       if (viewScreen === "photo" && screen === "swimwear" && image.trim()) {
         const thumb = previewThumbRef.current;
@@ -1140,6 +1850,7 @@ export function LeoUiPage() {
         if (thumb) {
           const box = thumb.getBoundingClientRect();
           photoShellFromRef.current = box;
+          photoTravelKindRef.current = "grow";
           placePhotoFly(box, image);
           gsap.set([thumb, clear].filter(Boolean), { opacity: 0 });
         }
@@ -1147,10 +1858,109 @@ export function LeoUiPage() {
         const shell = cardShellRef.current;
         if (shell && shellHasPhotoFill()) {
           photoShellFromRef.current = shell.getBoundingClientRect();
+          photoTravelKindRef.current = "shrink";
           setShellPhotoFill(false);
           placePhotoFly(photoShellFromRef.current, image);
         }
+      } else if (viewScreen === "swimwear" && screen === "processing" && image.trim()) {
+        // Lift host photo into the fly layer so it stays while the screen fades.
+        const host = screenRef.current?.querySelector<HTMLElement>(".leo-ui__host-photo");
+        const shell = cardShellRef.current;
+        const box = (host ?? shell)?.getBoundingClientRect();
+        if (box && box.width > 8 && box.height > 4) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-processing";
+          placePhotoFly(box, image);
+          const fly = photoFlyRef.current;
+          // Solid mask for travel — soft fill fades back in during settle.
+          if (fly) {
+            gsap.set(fly, {
+              filter: PROCESSING_PHOTO_FILTER_CLEAR,
+              opacity: 1,
+              ...SHELL_MASK_THUMB,
+            });
+          }
+          if (host) gsap.set(host, { opacity: 0 });
+          hideBikiniBlock();
+        }
+      } else if (viewScreen === "processing" && screen === "swimwear" && image.trim()) {
+        const host = screenRef.current?.querySelector<HTMLElement>(".leo-ui__host-photo");
+        const shell = cardShellRef.current;
+        const box = (host ?? shell)?.getBoundingClientRect();
+        if (box && box.width > 8 && box.height > 4) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-swimwear";
+          placePhotoFly(box, image);
+          const fly = photoFlyRef.current;
+          if (fly) {
+            gsap.set(fly, {
+              filter: PROCESSING_PHOTO_FILTER,
+              opacity: 1,
+              ...SHELL_MASK_FILL,
+            });
+          }
+          if (host) gsap.set(host, { opacity: 0 });
+        }
+      } else if (viewScreen === "processing" && screen === "confirm") {
+        const host = screenRef.current?.querySelector<HTMLElement>(".leo-ui__host-photo");
+        const shell = cardShellRef.current;
+        const box = (host ?? shell)?.getBoundingClientRect();
+        const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+          (path) => pictureChoiceFromArtifact(path) != null,
+        );
+        const resultSrc =
+          (processingRevealed
+            ? artifacts[pictureChoice - 1] || artifacts[0]
+            : "") || image;
+        if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-confirm";
+          placePhotoFly(box, resultSrc);
+          const fly = photoFlyRef.current;
+          if (fly) {
+            gsap.set(fly, {
+              filter: PROCESSING_PHOTO_FILTER_CLEAR,
+              opacity: 1,
+              scale: 1,
+              ...SHELL_MASK_FILL,
+            });
+          }
+          if (host) gsap.set(host, { opacity: 0 });
+        }
+        setShellPhotoFill(false);
+      } else if (viewScreen === "confirm" && screen === "processing") {
+        // Re-Run: hero flies back into the processing card and re-blurs.
+        const hero = confirmHeroRef.current;
+        const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+          (path) => pictureChoiceFromArtifact(path) != null,
+        );
+        const resultSrc =
+          confirmOverride ||
+          artifacts[pictureChoice - 1] ||
+          artifacts[0] ||
+          image;
+        const box = hero?.getBoundingClientRect();
+        if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-processing";
+          placePhotoFly(box, resultSrc);
+          const fly = photoFlyRef.current;
+          if (fly) {
+            gsap.set(fly, {
+              filter: PROCESSING_PHOTO_FILTER_CLEAR,
+              opacity: 1,
+              ...SHELL_MASK_THUMB,
+            });
+          }
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
+        setConfirmOverride("");
+        setConfirmUploadExitSrc("");
       } else if (viewScreen === "swimwear" && screen !== "photo") {
+        setShellPhotoFill(false);
+        const fly = photoFlyRef.current;
+        if (fly) gsap.set(fly, { display: "none", clearProps: "transform" });
+      } else if (viewScreen === "processing" && screen !== "swimwear") {
         setShellPhotoFill(false);
         const fly = photoFlyRef.current;
         if (fly) gsap.set(fly, { display: "none", clearProps: "transform" });
@@ -1158,10 +1968,18 @@ export function LeoUiPage() {
 
       if (!el || reduce) {
         const fly = photoFlyRef.current;
-        if (fly) gsap.set(fly, { display: "none", clearProps: "transform" });
-        if (screen === "swimwear" && image.trim()) setShellPhotoFill(true);
-        else setShellPhotoFill(false);
+        if (fly) gsap.set(fly, { display: "none", clearProps: "transform,filter" });
+        if (
+          (screen === "swimwear" || screen === "processing") &&
+          image.trim()
+        ) {
+          setShellPhotoFill(true);
+        } else {
+          setShellPhotoFill(false);
+        }
+        if (screen === "processing") processingEnteredAtRef.current = Date.now();
         photoShellFromRef.current = null;
+        photoTravelKindRef.current = null;
         setViewScreen(screen);
         setNavBusy(false);
         navBusyRef.current = false;
@@ -1200,10 +2018,22 @@ export function LeoUiPage() {
       photoShellFromRef.current = null;
       const chipMode = cardNameChipMode(viewScreen);
       const shellMode = cardShellMode(viewScreen);
-      const photoGrow = viewScreen === "swimwear" && Boolean(photoFrom) && Boolean(image.trim());
-      const photoShrink = viewScreen === "photo" && Boolean(photoFrom) && Boolean(image.trim());
+      const travel = photoTravelKindRef.current;
+      photoTravelKindRef.current = null;
+      const photoGrow = travel === "grow" && Boolean(photoFrom) && Boolean(image.trim());
+      const photoShrink = travel === "shrink" && Boolean(photoFrom) && Boolean(image.trim());
+      const photoToProcessing =
+        travel === "to-processing" && Boolean(photoFrom) && Boolean(image.trim());
+      const photoFromProcessing =
+        travel === "to-swimwear" && Boolean(photoFrom) && Boolean(image.trim());
+      const photoToConfirm = travel === "to-confirm" && Boolean(photoFrom);
       const flipping =
-        (Boolean(flipFrom || shellFrom) && chipMode !== "hidden") || photoGrow || photoShrink;
+        (Boolean(flipFrom || shellFrom) && chipMode !== "hidden") ||
+        photoGrow ||
+        photoShrink ||
+        photoToProcessing ||
+        photoFromProcessing ||
+        photoToConfirm;
 
       gsap.killTweensOf(el);
       // Measure destinations at rest — slide-in would skew slot rects by ~36px.
@@ -1214,16 +2044,31 @@ export function LeoUiPage() {
         placeCardNameChip(chipMode, true);
       }
       if (photoGrow && photoFrom) {
+        hideBikiniBlock();
         growPhotoIntoShell(photoFrom);
       } else if (photoShrink && photoFrom) {
         shrinkPhotoToThumb(photoFrom);
+      } else if (photoToProcessing) {
+        settleFlyIntoProcessing();
+      } else if (photoFromProcessing) {
+        settleFlyIntoSwimwear();
+      } else if (photoToConfirm) {
+        settleFlyIntoConfirm();
       } else if (shellFrom && shellMode !== "hidden") {
         flipCardShell(shellFrom, shellMode);
       } else if (shellMode !== "hidden") {
-        if (viewScreen === "swimwear" && image.trim()) setShellPhotoFill(true);
+        if (
+          (viewScreen === "swimwear" || viewScreen === "processing") &&
+          image.trim()
+        ) {
+          setShellPhotoFill(true);
+        }
         placeCardShell(shellMode, true);
       } else {
         placeCardShell("hidden", false);
+      }
+      if (viewScreen === "processing") {
+        processingEnteredAtRef.current = Date.now();
       }
       gsap.fromTo(
         el,
@@ -1233,7 +2078,8 @@ export function LeoUiPage() {
           x: 0,
           duration: 0.42,
           ease: "power3.out",
-          clearProps: "transform",
+          // Clear both — leftover opacity/transform makes a backdrop root.
+          clearProps: "transform,opacity",
           onComplete: () => {
             navBusyRef.current = false;
             setNavBusy(false);
@@ -1241,11 +2087,13 @@ export function LeoUiPage() {
         },
       );
 
-      // Keep upload-card host still while shell + chip Flip into place.
+      // Keep upload-card / confirm hero still while the photo fly morphs into place.
       const bits = el.querySelectorAll(
-        flipping
-          ? ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__choices, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn"
-          : ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__upload-card, .leo-ui__choices, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn",
+        photoToConfirm
+          ? ".leo-ui__title, .leo-ui__sub, .leo-ui__confirm-side, .leo-ui__confirm-thumbs"
+          : flipping
+            ? ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__choices, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn"
+            : ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__upload-card, .leo-ui__choices, .leo-ui__confirm, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn",
       );
       if (bits.length) {
         gsap.fromTo(
@@ -1658,6 +2506,10 @@ export function LeoUiPage() {
       if (target === "photo") setImage(uploaded.path);
       if (target === "bikini") setBikini(uploaded.path);
       if (target === "face") setFace(uploaded.path);
+      if (target === "confirm") {
+        setConfirmUploadExitSrc("");
+        setConfirmOverride(uploaded.path);
+      }
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -1665,10 +2517,14 @@ export function LeoUiPage() {
     }
   }
 
-  function openUpload(target: "photo" | "bikini" | "face") {
+  function openUpload(target: "photo" | "bikini" | "face" | "confirm") {
     uploadTargetRef.current = target;
     const input =
-      target === "photo" ? fileRef.current : target === "bikini" ? bikiniRef.current : faceRef.current;
+      target === "bikini"
+        ? bikiniRef.current
+        : target === "face"
+          ? faceRef.current
+          : fileRef.current;
     input?.click();
   }
 
@@ -1746,8 +2602,18 @@ export function LeoUiPage() {
         return;
       }
       if (screen === "swimwear") {
+        setScreen("processing");
+        setError("");
+        try {
+          await ensureCardAndRunPicture(false);
+        } catch (caught) {
+          // Picture already in review — stay on processing without the banner.
+          if (!/already exists/i.test(errorText(caught))) throw caught;
+        }
+        return;
+      }
+      if (screen === "processing") {
         setScreen("confirm");
-        await ensureCardAndRunPicture(false);
         return;
       }
       if (screen === "confirm") {
@@ -1793,15 +2659,87 @@ export function LeoUiPage() {
     if (screen === "theme") setScreen("influencer");
     else if (screen === "photo") setScreen("theme");
     else if (screen === "swimwear") setScreen("photo");
+    else if (screen === "processing") setScreen("swimwear");
     else if (screen === "confirm") setScreen("swimwear");
     else if (screen === "animated") setScreen("confirm");
   }
 
+  function openPromptDialog() {
+    const dialog = promptDialogRef.current;
+    if (!dialog || promptDialogBusyRef.current) return;
+    setPromptDraft(picturePromptExtra);
+    setError("");
+    dialog.showModal();
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__prompt-dialog-panel");
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() => dialog.classList.add("is-open"));
+    if (!panel || reduce) return;
+    gsap.killTweensOf(panel);
+    gsap.fromTo(
+      panel,
+      { y: 56, opacity: 0, filter: "blur(14px)" },
+      {
+        y: 0,
+        opacity: 1,
+        filter: "blur(0px)",
+        duration: 0.42,
+        ease: "power3.out",
+        overwrite: true,
+      },
+    );
+  }
+
+  function closePromptDialog(after?: () => void) {
+    const dialog = promptDialogRef.current;
+    if (!dialog?.open || promptDialogBusyRef.current) {
+      after?.();
+      return;
+    }
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__prompt-dialog-panel");
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const finish = () => {
+      promptDialogBusyRef.current = false;
+      dialog.classList.remove("is-open");
+      gsap.set(panel, { clearProps: "transform,opacity,filter" });
+      dialog.close();
+      after?.();
+    };
+    dialog.classList.remove("is-open");
+    if (!panel || reduce) {
+      finish();
+      return;
+    }
+    promptDialogBusyRef.current = true;
+    gsap.killTweensOf(panel);
+    gsap.to(panel, {
+      y: 56,
+      opacity: 0,
+      filter: "blur(14px)",
+      duration: 0.32,
+      ease: "power2.in",
+      overwrite: true,
+      onComplete: finish,
+    });
+  }
+
+  function savePromptDialog() {
+    closePromptDialog(() => setPicturePromptExtra(promptDraft.trim()));
+  }
+
   async function retryPicture() {
     setError("");
+    setConfirmOverride("");
+    setConfirmUploadExitSrc("");
+    processingRevealStartedRef.current = false;
+    setProcessingRevealed(false);
+    // Hero flies back into processing; job runs there.
+    setScreen("processing");
     try {
       await ensureCardAndRunPicture(true);
-      setScreen("confirm");
     } catch (caught) {
       setPendingStep(null);
       setError(errorText(caught));
@@ -1826,6 +2764,131 @@ export function LeoUiPage() {
   const isGalleryImage = (value: string, item: GalleryImage) =>
     Boolean(value) && (value === item.path || value === item.url);
   const hasGallerySelection = photoGallery.some((item) => isGalleryImage(image, item));
+
+  // Processing cold-enter: blur host when no fly handoff is in progress.
+  useGSAP(
+    () => {
+      if (viewScreen !== "processing" || processingRevealed) return;
+      const fly = photoFlyRef.current;
+      if (fly && getComputedStyle(fly).display !== "none") return;
+      if (photoShellGrowingRef.current) return;
+      const img = screenRef.current?.querySelector<HTMLElement>(
+        ".leo-ui__host-photo.is-processing img",
+      );
+      if (!img) return;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      gsap.killTweensOf(img);
+      if (reduce) {
+        gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+        return;
+      }
+      gsap.fromTo(
+        img,
+        { filter: PROCESSING_PHOTO_FILTER_CLEAR },
+        {
+          filter: PROCESSING_PHOTO_FILTER,
+          duration: PROCESSING_BLUR_DURATION,
+          ease: "power2.out",
+          delay: 0.04,
+          overwrite: true,
+        },
+      );
+    },
+    { dependencies: [viewScreen, photoFillReady, image, processingRevealed], scope: rootRef },
+  );
+
+  // Processing finished: re-saturate the swapped processed photo + fade the hanger.
+  useGSAP(
+    () => {
+      if (viewScreen !== "processing" || !processingRevealed) return;
+      const img = screenRef.current?.querySelector<HTMLElement>(
+        ".leo-ui__host-photo.is-processing img",
+      );
+      const lottie = screenRef.current?.querySelector<HTMLElement>(
+        ".leo-ui__processing-lottie",
+      );
+      if (!img) return;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      gsap.killTweensOf([img, lottie].filter(Boolean));
+      if (reduce) {
+        gsap.set(img, { filter: PROCESSING_PHOTO_FILTER_CLEAR });
+        if (lottie) gsap.set(lottie, { opacity: 0 });
+        if (PROCESSING_AUTO_ADVANCE) setScreen("confirm");
+        return;
+      }
+      gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+      if (lottie) {
+        gsap.to(lottie, { opacity: 0, duration: 0.35, ease: "power2.out", overwrite: true });
+      }
+      gsap.to(img, {
+        filter: PROCESSING_PHOTO_FILTER_CLEAR,
+        duration: 0.85,
+        ease: "power2.out",
+        overwrite: true,
+        onComplete: () => {
+          if (PROCESSING_AUTO_ADVANCE) setScreen("confirm");
+        },
+      });
+    },
+    { dependencies: [viewScreen, processingRevealed], scope: rootRef },
+  );
+
+  // Confirm hero: scale/fade processed ↔ uploaded (and reverse on remove).
+  useGSAP(
+    () => {
+      if (viewScreen !== "confirm") return;
+      const hero = confirmHeroRef.current;
+      if (!hero) return;
+      const gen = hero.querySelector<HTMLElement>(".leo-ui__confirm-hero-layer--gen");
+      const up = hero.querySelector<HTMLElement>(".leo-ui__confirm-hero-layer--up");
+      if (!gen) return;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      gsap.killTweensOf([gen, up].filter(Boolean));
+
+      if (confirmOverride && up) {
+        if (reduce) {
+          gsap.set(gen, { opacity: 0, scale: 0.9 });
+          gsap.set(up, { opacity: 1, scale: 1 });
+          return;
+        }
+        gsap.set(gen, { transformOrigin: "50% 50%", opacity: 1, scale: 1 });
+        gsap.set(up, { transformOrigin: "50% 50%", opacity: 0, scale: 1.08 });
+        gsap
+          .timeline({ defaults: { overwrite: "auto" } })
+          .to(gen, { opacity: 0, scale: 0.9, duration: 0.28, ease: "power2.in" })
+          .to(up, { opacity: 1, scale: 1, duration: 0.36, ease: "power2.out" }, 0.1);
+        return;
+      }
+
+      if (confirmUploadExitSrc && up) {
+        if (reduce) {
+          gsap.set(up, { opacity: 0, scale: 0.9 });
+          gsap.set(gen, { opacity: 1, scale: 1 });
+          setConfirmUploadExitSrc("");
+          return;
+        }
+        gsap.set(up, { transformOrigin: "50% 50%", opacity: 1, scale: 1 });
+        gsap.set(gen, { transformOrigin: "50% 50%", opacity: 0, scale: 1.08 });
+        gsap
+          .timeline({
+            defaults: { overwrite: "auto" },
+            onComplete: () => setConfirmUploadExitSrc(""),
+          })
+          .to(up, { opacity: 0, scale: 0.9, duration: 0.28, ease: "power2.in" })
+          .to(gen, { opacity: 1, scale: 1, duration: 0.36, ease: "power2.out" }, 0.1);
+        return;
+      }
+
+      gsap.set(gen, { opacity: 1, scale: 1, clearProps: "transform" });
+    },
+    { dependencies: [viewScreen, confirmOverride, confirmUploadExitSrc], scope: rootRef },
+  );
 
   // Gallery select/deselect: ease opacity + scale (not an instant class toggle).
   useGSAP(
@@ -2011,36 +3074,60 @@ export function LeoUiPage() {
                   Gym001 etc.
                 </p>
                 <div className="leo-ui__stack leo-ui__stack--fill">
-                  <div className="leo-ui__select-wrap">
-                    <select
-                      className={`leo-ui__field${!theme ? " is-placeholder" : ""}`}
-                      value={theme}
-                      onChange={(e) => {
-                        const nextTheme = e.target.value;
-                        setTheme(nextTheme);
-                        const digits = cardNameDigits(cardLabel);
-                        const next = buildCardName(nextTheme, digits, Boolean(digits));
-                        setCardLabel(next);
-                        setCardNameFocused(true);
-                        requestAnimationFrame(() => {
-                          const el = cardNameRef.current;
-                          if (!el) return;
-                          el.focus();
-                          const pos = next.length;
-                          el.setSelectionRange(pos, pos);
-                        });
-                      }}
+                  <div
+                    className={`leo-ui__select-wrap${themeMenuOpen ? " is-open" : ""}`}
+                    ref={themeSelectRef}
+                  >
+                    <button
+                      type="button"
+                      className={`leo-ui__field leo-ui__select-trigger${!theme ? " is-placeholder" : ""}`}
+                      aria-haspopup="listbox"
+                      aria-expanded={themeMenuOpen}
                       aria-label="Select theme"
+                      onClick={() => setThemeMenuOpen((open) => !open)}
                     >
-                      <option value="" disabled>
-                        Select Theme
-                      </option>
-                      {themes.map((entry) => (
-                        <option key={entry.id} value={entry.label}>
-                          {entry.label}
-                        </option>
-                      ))}
-                    </select>
+                      {theme || "Select Theme"}
+                    </button>
+                    {themeMenuOpen ? (
+                      <ul className="leo-ui__select-menu" role="listbox" aria-label="Themes">
+                        {themes.map((entry) => {
+                          const selected = theme === entry.label;
+                          return (
+                            <li key={entry.id} role="presentation">
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                className={`leo-ui__select-option${selected ? " is-selected" : ""}`}
+                                onClick={() => {
+                                  const nextTheme = entry.label;
+                                  setTheme(nextTheme);
+                                  setThemeMenuOpen(false);
+                                  const digits = cardNameDigits(cardLabel);
+                                  const next = buildCardName(
+                                    nextTheme,
+                                    digits,
+                                    Boolean(digits),
+                                  );
+                                  setCardLabel(next);
+                                  setCardNameFocused(true);
+                                  requestAnimationFrame(() => {
+                                    const el = cardNameRef.current;
+                                    if (!el) return;
+                                    el.focus();
+                                    const pos = next.length;
+                                    el.setSelectionRange(pos, pos);
+                                  });
+                                }}
+                              >
+                                {selected ? <Check size={16} aria-hidden /> : null}
+                                <span>{entry.label}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
                   </div>
                   <div className="leo-ui__stack-center">
                     <div className="leo-ui__card-name-stage">
@@ -2164,7 +3251,9 @@ export function LeoUiPage() {
                         </div>
                       ) : null}
                     </div>
-                    <div className="leo-ui__or">or</div>
+                    <div className="leo-ui__or">
+                      <span>or</span>
+                    </div>
                     <p className="leo-ui__section-label">Choose from Influencer Gallery</p>
                     <div className="leo-ui__gallery-scroll">
                       <div
@@ -2203,22 +3292,64 @@ export function LeoUiPage() {
                   from gallery.
                 </p>
                 <div className="leo-ui__upload-card leo-ui__upload-card--host" ref={cardShellCardSlotRef}>
+                  {/* Same-context photo for bikini backdrop-filter — only after grow settles. */}
+                  {photoFillReady && image ? (
+                    <div className="leo-ui__host-photo" aria-hidden>
+                      <img src={previewSource(image)} alt="" />
+                    </div>
+                  ) : null}
                   <div
                     className="leo-ui__upload-card-top leo-ui__upload-card-top--slot"
                     ref={cardNameCardSlotRef}
                     aria-hidden
                   />
                   <div className="leo-ui__stack">
-                    <button
-                      type="button"
-                      className={`leo-ui__face-btn${face ? " is-done" : ""}`}
-                      onClick={() => openUpload("face")}
-                    >
-                      <span className="leo-ui__face-btn-label">
-                        {face ? "Face added" : "Add Face?"}
-                      </span>
-                      <Upload size={24} aria-hidden />
-                    </button>
+                    <div className="leo-ui__face-slot">
+                      <button
+                        ref={faceBtnRef}
+                        type="button"
+                        className="leo-ui__face-btn"
+                        onClick={() => openUpload("face")}
+                        aria-hidden={Boolean(face)}
+                        tabIndex={face ? -1 : 0}
+                      >
+                        <span className="leo-ui__face-btn-label">Add Face?</span>
+                        <Upload size={24} aria-hidden />
+                      </button>
+                      {/* facePanelSrc holds the thumb through the remove exit. */}
+                      {facePanelSrc || face ? (
+                        <div className="leo-ui__preview-wrap leo-ui__face-preview-wrap">
+                          <button
+                            ref={faceThumbRef}
+                            type="button"
+                            className="leo-ui__face-preview"
+                            onClick={() => openUpload("face")}
+                            aria-label="Replace face photo"
+                            tabIndex={face ? 0 : -1}
+                          >
+                            <img
+                              src={previewSource(facePanelSrc || face)}
+                              alt="Selected face"
+                            />
+                          </button>
+                          <button
+                            ref={faceClearRef}
+                            type="button"
+                            className="leo-ui__clear leo-ui__preview-clear"
+                            aria-label="Remove face"
+                            tabIndex={face ? 0 : -1}
+                            onClick={() => setFace("")}
+                          >
+                            <span className="leo-ui__preview-clear-glass" aria-hidden>
+                              <img src={previewSource(facePanelSrc || face)} alt="" />
+                            </span>
+                            <span className="leo-ui__preview-clear-mark" aria-hidden>
+                              ×
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                     <div
                       className={`leo-ui__bikini-block${bikini ? " has-selection" : ""}`}
                     >
@@ -2231,21 +3362,33 @@ export function LeoUiPage() {
                             onClick={() => openUpload("bikini")}
                           >
                             <Upload size={18} />
-                            {bikini ? "Swimwear added ✓" : "Upload Bikini"}
+                            {bikini ? "Upload" : "Upload Swimwear"}
                           </button>
                         </div>
                         <div className="leo-ui__bikini-row">
-                          <div className="leo-ui__or">or</div>
+                          <div className="leo-ui__or">
+                            <span>or</span>
+                          </div>
                         </div>
                         <div className="leo-ui__bikini-row">
-                          <p className="leo-ui__section-label">Select from Gallery</p>
+                          <p className="leo-ui__section-label">
+                            {bikini ? "+ Gallery" : "Select from Gallery"}
+                          </p>
                         </div>
                       </div>
-                      {bikini ? (
-                        <div className="leo-ui__bikini-selected" aria-live="polite">
+                      <div
+                        className="leo-ui__bikini-selected"
+                        aria-live="polite"
+                        aria-hidden={!(bikiniPanelSrc || bikini)}
+                      >
+                        {/* bikini keeps thumb mounted on select; bikiniPanelSrc holds it through close. */}
+                        {bikiniPanelSrc || bikini ? (
                           <div className="leo-ui__preview-wrap">
                             <div className="leo-ui__preview">
-                              <img src={previewSource(bikini)} alt="Selected swimwear" />
+                              <img
+                                src={previewSource(bikiniPanelSrc || bikini)}
+                                alt="Selected swimwear"
+                              />
                             </div>
                             <button
                               type="button"
@@ -2254,16 +3397,54 @@ export function LeoUiPage() {
                               onClick={() => setBikini("")}
                             >
                               <span className="leo-ui__preview-clear-glass" aria-hidden>
-                                <img src={previewSource(bikini)} alt="" />
+                                <img src={previewSource(bikiniPanelSrc || bikini)} alt="" />
                               </span>
                               <span className="leo-ui__preview-clear-mark" aria-hidden>
                                 ×
                               </span>
                             </button>
                           </div>
-                        </div>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "processing" ? (
+              <>
+                <h1 className="leo-ui__title">Processing…</h1>
+                <p className="leo-ui__sub">
+                  Creating photo options from your swimwear and face picks.
+                </p>
+                <div
+                  className="leo-ui__upload-card leo-ui__upload-card--host leo-ui__processing-card"
+                  ref={cardShellCardSlotRef}
+                >
+                  {photoFillReady && image ? (
+                    <div className="leo-ui__host-photo is-processing" aria-hidden>
+                      <img
+                        src={previewSource(
+                          processingRevealed
+                            ? pictureArtifacts[pictureChoice - 1] ||
+                                pictureArtifacts[0] ||
+                                image
+                            : image,
+                        )}
+                        alt=""
+                      />
+                    </div>
+                  ) : null}
+                  <div className="leo-ui__processing-lottie" aria-hidden>
+                    <DotLottieReact
+                      src={PROCESSING_HANGER_LOTTIE}
+                      autoplay
+                      loop
+                      mode="reverse"
+                      className="leo-ui__processing-lottie-player"
+                      style={{ width: 140, height: 140, pointerEvents: "none" }}
+                    />
                   </div>
                 </div>
               </>
@@ -2279,26 +3460,136 @@ export function LeoUiPage() {
                 {pictureBusy || pictureArtifacts.length === 0 ? (
                   <p className="leo-ui__busy">Generating picture options…</p>
                 ) : (
-                  <div className="leo-ui__choices">
-                    {pictureArtifacts.map((path) => {
-                      const choice = pictureChoiceFromArtifact(path) ?? 1;
-                      return (
+                  <div className="leo-ui__confirm">
+                    <div className="leo-ui__confirm-row">
+                      <div
+                        className={`leo-ui__confirm-hero${
+                          confirmOverride || confirmUploadExitSrc ? " has-clear" : ""
+                        }`}
+                        ref={confirmHeroRef}
+                      >
+                        <img
+                          className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
+                          src={previewSource(
+                            pictureArtifacts[pictureChoice - 1] || pictureArtifacts[0],
+                          )}
+                          alt="Selected photo option"
+                        />
+                        {confirmOverride || confirmUploadExitSrc ? (
+                          <img
+                            className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--up"
+                            src={previewSource(confirmOverride || confirmUploadExitSrc)}
+                            alt="Uploaded photo"
+                          />
+                        ) : null}
+                        {confirmOverride ? (
+                          <button
+                            type="button"
+                            className="leo-ui__clear leo-ui__preview-clear leo-ui__confirm-hero-clear"
+                            aria-label="Remove uploaded photo"
+                            onClick={() => {
+                              setConfirmUploadExitSrc(confirmOverride);
+                              setConfirmOverride("");
+                            }}
+                          >
+                            <span className="leo-ui__preview-clear-glass" aria-hidden>
+                              <img src={previewSource(confirmOverride)} alt="" />
+                            </span>
+                            <span className="leo-ui__preview-clear-mark" aria-hidden>
+                              ×
+                            </span>
+                          </button>
+                        ) : null}
+                      </div>
+                      <aside className="leo-ui__confirm-side">
                         <button
-                          key={path}
                           type="button"
-                          className={`leo-ui__choice${pictureChoice === choice ? " is-selected" : ""}`}
-                          onClick={() => setPictureChoice(choice)}
+                          className="leo-ui__confirm-card"
+                          onClick={openPromptDialog}
                         >
-                          <img src={previewSource(path)} alt={`Option ${choice}`} />
+                          <span>Change Prompt?</span>
+                          <SquarePen size={22} strokeWidth={1.5} aria-hidden />
                         </button>
-                      );
-                    })}
+                        <button
+                          type="button"
+                          className="leo-ui__confirm-rerun"
+                          onClick={() => void retryPicture()}
+                        >
+                          <RotateCcw size={15} aria-hidden />
+                          Re-Run
+                        </button>
+                        <div className="leo-ui__confirm-or" aria-hidden>
+                          <span className="leo-ui__confirm-or-line" />
+                          <span className="leo-ui__confirm-or-label">or</span>
+                          <span className="leo-ui__confirm-or-line" />
+                        </div>
+                        <div className="leo-ui__confirm-card leo-ui__confirm-card--upload">
+                          <p>Upload your own image?</p>
+                          {confirmOverride ? (
+                            <div className="leo-ui__confirm-upload-preview">
+                              <div className="leo-ui__confirm-upload is-filled">
+                                <img src={previewSource(confirmOverride)} alt="" />
+                              </div>
+                              <button
+                                type="button"
+                                className="leo-ui__clear leo-ui__preview-clear"
+                                aria-label="Remove uploaded photo"
+                                onClick={() => {
+                                  setConfirmUploadExitSrc(confirmOverride);
+                                  setConfirmOverride("");
+                                }}
+                              >
+                                <span className="leo-ui__preview-clear-glass" aria-hidden>
+                                  <img src={previewSource(confirmOverride)} alt="" />
+                                </span>
+                                <span className="leo-ui__preview-clear-mark" aria-hidden>
+                                  ×
+                                </span>
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="leo-ui__confirm-upload"
+                              onClick={() => openUpload("confirm")}
+                              disabled={uploading}
+                            >
+                              <span>Upload</span>
+                              <Upload size={22} strokeWidth={1.75} aria-hidden />
+                            </button>
+                          )}
+                        </div>
+                      </aside>
+                    </div>
+                    {pictureArtifacts.length > 1 ? (
+                      <div className="leo-ui__confirm-thumbs" role="listbox" aria-label="Photo options">
+                        {pictureArtifacts.map((path) => {
+                          const choice = pictureChoiceFromArtifact(path) ?? 1;
+                          return (
+                            <button
+                              key={path}
+                              type="button"
+                              role="option"
+                              aria-selected={!confirmOverride && pictureChoice === choice}
+                              className={`leo-ui__confirm-thumb${
+                                !confirmOverride && pictureChoice === choice ? " is-selected" : ""
+                              }`}
+                              onClick={() => {
+                                if (confirmOverride) {
+                                  setConfirmUploadExitSrc(confirmOverride);
+                                  setConfirmOverride("");
+                                }
+                                setPictureChoice(choice);
+                              }}
+                            >
+                              <img src={previewSource(path)} alt={`Option ${choice}`} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                 )}
-                <button type="button" className="leo-ui__ghost-btn" onClick={() => void retryPicture()}>
-                  <RotateCcw size={16} />
-                  Re-Run
-                </button>
               </>
             ) : null}
 
@@ -2338,7 +3629,9 @@ export function LeoUiPage() {
           </div>
         </div>
 
-        {error ? <p className="leo-ui__error">{error}</p> : null}
+        {error && viewScreen !== "processing" ? (
+          <p className="leo-ui__error">{error}</p>
+        ) : null}
 
         <div className="leo-ui__upload-card-shell" ref={cardShellRef} aria-hidden>
           <img className="leo-ui__shell-photo" ref={shellPhotoRef} alt="" />
@@ -2422,6 +3715,53 @@ export function LeoUiPage() {
           e.currentTarget.value = "";
         }}
       />
+
+      <dialog
+        ref={promptDialogRef}
+        className="leo-ui__prompt-dialog"
+        onCancel={(e) => {
+          e.preventDefault();
+          closePromptDialog();
+        }}
+      >
+        <div className="leo-ui__prompt-dialog-panel">
+          <button
+            type="button"
+            className="leo-ui__clear leo-ui__prompt-dialog-close"
+            aria-label="Close"
+            onClick={() => closePromptDialog()}
+          >
+            ×
+          </button>
+          <h2 className="leo-ui__prompt-dialog-title">Change Prompt</h2>
+          <p className="leo-ui__prompt-dialog-sub">
+            Add direction for the next picture run. Save, then press Re-Run.
+          </p>
+          <textarea
+            className="leo-ui__prompt-dialog-input"
+            value={promptDraft}
+            onChange={(e) => setPromptDraft(e.target.value)}
+            rows={5}
+            placeholder="e.g. warmer light, soft smile, keep the same pose…"
+          />
+          <div className="leo-ui__prompt-dialog-actions">
+            <button
+              type="button"
+              className="leo-ui__btn leo-ui__btn--back"
+              onClick={() => closePromptDialog()}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="leo-ui__btn leo-ui__btn--next"
+              onClick={savePromptDialog}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </dialog>
     </main>
   );
 }
