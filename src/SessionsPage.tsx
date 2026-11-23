@@ -29,7 +29,7 @@ import {
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 const SESSION_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-const ACRONYM_PATTERN = /^[A-Za-z0-9]{2,12}$/;
+const ACRONYM_PATTERN = /^[A-Za-z]{2}$/;
 
 const STATUS_LABEL: Record<ThemeSessionStatus, string> = {
   fallback: "Fallback",
@@ -154,9 +154,9 @@ export function SessionsPage() {
               <Text className="eyebrow" size="2">
                 Sugar Scratchie
               </Text>
-              <Heading size="7">Sessions</Heading>
+              <Heading size="7">Seasons</Heading>
               <Text color="gray" size="2">
-                Default is the normal theme list. A session replaces it only between its start
+                Default is the normal theme list. A season replaces it only between its start
                 and end. Outside those times, players see Default again.
               </Text>
             </Box>
@@ -195,7 +195,7 @@ export function SessionsPage() {
           <Grid columns={{ initial: "1", md: "2" }} gap="4">
             <Card>
               <Heading as="h2" size="4" mb="3">
-                {editing ? "Update session" : "Add session"}
+                {editing ? "Update season" : "Add season"}
               </Heading>
               <Flex direction="column" gap="2">
                 <label>
@@ -228,11 +228,16 @@ export function SessionsPage() {
                   </Text>
                   <TextField.Root
                     value={createAcronym}
-                    placeholder="SUM"
+                    placeholder="SM"
+                    maxLength={2}
                     autoCapitalize="characters"
                     autoCorrect="off"
                     spellCheck={false}
-                    onChange={(event) => setCreateAcronym(event.target.value)}
+                    onChange={(event) =>
+                      setCreateAcronym(
+                        event.target.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 2),
+                      )
+                    }
                   />
                 </label>
                 <Button
@@ -250,7 +255,7 @@ export function SessionsPage() {
                       }
                       if (!label) throw new Error("Name is required.");
                       if (!ACRONYM_PATTERN.test(acronym)) {
-                        throw new Error("Acronym must be 2–12 letters or numbers.");
+                        throw new Error("Acronym must be 2 letters.");
                       }
                       if (editing && selected) {
                         const updated = await updateThemeSession(selected.id, {
@@ -269,7 +274,7 @@ export function SessionsPage() {
                     })
                   }
                 >
-                  {editing ? "Update session" : "Create session"}
+                  {editing ? "Update season" : "Create season"}
                 </Button>
               </Flex>
             </Card>
@@ -277,7 +282,7 @@ export function SessionsPage() {
             <Card>
               <Flex align="center" justify="between" mb="3">
                 <Heading as="h2" size="4">
-                  All sessions
+                  All seasons
                 </Heading>
                 <Button
                   variant="soft"
@@ -290,12 +295,12 @@ export function SessionsPage() {
                     setCreateAcronym("");
                   }}
                 >
-                  New session
+                  New season
                 </Button>
               </Flex>
               {sessions.length === 0 ? (
                 <Text color="gray" size="2">
-                  Loading sessions…
+                  Loading seasons…
                 </Text>
               ) : (
                 <Flex direction="column" gap="2">
@@ -345,7 +350,7 @@ export function SessionsPage() {
                   </Flex>
                   <Text color="gray" size="2">
                     {selected.is_default
-                      ? "All themes, as usual. This is what players see outside any session dates."
+                      ? "All themes, as usual. This is what players see outside any season dates."
                       : `Id ${selected.id} · Start ${formatWhen(selected.starts_at)} · End ${formatWhen(selected.ends_at)}`}
                   </Text>
                 </Box>
@@ -353,12 +358,12 @@ export function SessionsPage() {
               </Flex>
 
               {selected.is_default ? (
-                <Text size="2">All themes. No dates. Players see this whenever no session is inside its start and end.</Text>
+                <Text size="2">All themes. No dates. Players see this whenever no season is inside its start and end.</Text>
               ) : (
                 <Flex direction="column" gap="4">
                   <Box>
                     <Heading as="h3" size="3" mb="2">
-                      Themes in this session
+                      Themes in this season
                     </Heading>
                     {themes.length === 0 ? (
                       <Text color="gray" size="2">
@@ -401,7 +406,7 @@ export function SessionsPage() {
                       Dates
                     </Heading>
                     <Text as="p" color="gray" size="2" mb="2">
-                      Players see this session’s themes from the start until the end. Outside those
+                      Players see this season’s themes from the start until the end. Outside those
                       times, they see Default.
                     </Text>
                     <Flex align="end" gap="2" wrap="wrap">
@@ -450,14 +455,14 @@ export function SessionsPage() {
                       disabled={busy}
                       onClick={() =>
                         run(async () => {
-                          if (!window.confirm(`Delete session “${selected.label}”?`)) return;
+                          if (!window.confirm(`Delete season “${selected.label}”?`)) return;
                           const next = await deleteThemeSession(selected.id);
                           applySessions(next, "default");
                         })
                       }
                     >
                       <Trash2 {...iconProps} />
-                      Delete session
+                      Delete season
                     </Button>
                   ) : null}
                 </Flex>

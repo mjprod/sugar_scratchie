@@ -113,7 +113,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/packs") return GatedPacksPage;
   if (path === "/dashboard/themes") return GatedThemesPage;
-  if (path === "/dashboard/sessions") return GatedSessionsPage;
+  if (path === "/dashboard/sessions" || path === "/dashboard/seasons") return GatedSessionsPage;
   if (path === "/dashboard/ai-models") return GatedAiModelsPage;
   if (path === "/dashboard/users") return GatedUsersPage;
   if (path === "/symbols" || path === "/dashboard/symbols") return GatedSymbolsPage;
