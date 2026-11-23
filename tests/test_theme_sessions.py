@@ -24,6 +24,16 @@ def _sessions(client: TestClient) -> list[dict]:
     return response.json()["sessions"]
 
 
+def _free_acronym(client: TestClient) -> str:
+    used = {(session.get("acronym") or "").upper() for session in _sessions(client)}
+    for first in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        for second in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            code = f"{first}{second}"
+            if code not in used:
+                return code
+    raise AssertionError("no free two-letter acronym")
+
+
 def _restore_default(client: TestClient, headers: dict[str, str]) -> None:
     """Leave Default running so later tests are not filtered by a custom session."""
     now = datetime.now(timezone.utc)
@@ -56,29 +66,30 @@ def test_default_session_is_the_fallback(client: TestClient, dashboard_headers: 
     assert default["theme_ids"] == []
     assert default["starts_at"] is None
     assert default["ends_at"] is None
-    assert default["acronym"] == "DEF"
+    assert default["acronym"] == "DF"
 
+    code = _free_acronym(client)
     renamed = client.put(
         "/api/theme-sessions/default",
         headers=dashboard_headers,
-        json={"id": "default", "label": "Everyday", "acronym": "ALL"},
+        json={"id": "default", "label": "Everyday", "acronym": code},
     )
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["label"] == "Everyday"
-    assert renamed.json()["acronym"] == "ALL"
+    assert renamed.json()["acronym"] == code
     assert renamed.json()["is_default"] is True
 
     blocked = client.put(
         "/api/theme-sessions/default",
         headers=dashboard_headers,
-        json={"id": "everyday", "label": "Everyday", "acronym": "ALL"},
+        json={"id": "everyday", "label": "Everyday", "acronym": code},
     )
     assert blocked.status_code == 400
 
     restored = client.put(
         "/api/theme-sessions/default",
         headers=dashboard_headers,
-        json={"id": "default", "label": "Default", "acronym": "DEF"},
+        json={"id": "default", "label": "Default", "acronym": "DF"},
     )
     assert restored.status_code == 200, restored.text
 
@@ -103,8 +114,7 @@ def test_session_lifecycle_and_theme_lists(
         )
         db.commit()
 
-    summer_code = f"S{suffix.upper()}"
-    winter_code = f"W{suffix.upper()}"
+    summer_code = _free_acronym(client)
     unauthorized = client.post(
         "/api/theme-sessions",
         json={"id": summer, "label": "Summer", "acronym": summer_code},
@@ -170,6 +180,7 @@ def test_session_lifecycle_and_theme_lists(
     )
     assert restored.status_code == 200, restored.text
 
+    winter_code = _free_acronym(client)
     other = client.post(
         "/api/theme-sessions",
         headers=dashboard_headers,
@@ -298,14 +309,14 @@ def test_collection_follows_the_running_session(
 
     assert theme_ids() == {theme_a, theme_b}
 
-    for session_id, label, acronym, themes in (
-        (summer, "Col Summer", f"CS{suffix.upper()}", [theme_a]),
-        (winter, "Col Winter", f"CW{suffix.upper()}", [theme_b]),
+    for session_id, label, themes in (
+        (summer, "Col Summer", [theme_a]),
+        (winter, "Col Winter", [theme_b]),
     ):
         created = client.post(
             "/api/theme-sessions",
             headers=dashboard_headers,
-            json={"id": session_id, "label": label, "acronym": acronym},
+            json={"id": session_id, "label": label, "acronym": _free_acronym(client)},
         )
         assert created.status_code == 200, created.text
         saved = client.put(
@@ -407,7 +418,7 @@ def test_deleting_the_last_live_theme_keeps_the_catalog(
     created = client.post(
         "/api/theme-sessions",
         headers=dashboard_headers,
-        json={"id": session_id, "label": "Live", "acronym": f"LV{suffix.upper()}"},
+        json={"id": session_id, "label": "Live", "acronym": _free_acronym(client)},
     )
     assert created.status_code == 200, created.text
     saved = client.put(

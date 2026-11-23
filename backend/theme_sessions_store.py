@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 from backend.db.models import Theme, ThemeSession, ThemeSessionTheme, utcnow
 
 DEFAULT_SESSION_ID = "default"
-DEFAULT_ACRONYM = "DEF"
+DEFAULT_ACRONYM = "DF"
 SESSION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
-ACRONYM_PATTERN = re.compile(r"^[A-Z0-9]{2,12}$")
+ACRONYM_PATTERN = re.compile(r"^[A-Z]{2}$")
 
 
 class ThemeSessionInfo(BaseModel):
@@ -38,13 +38,13 @@ class ThemeSessionInfo(BaseModel):
 class CreateThemeSessionRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=120)
-    acronym: str = Field(min_length=1, max_length=12)
+    acronym: str = Field(min_length=2, max_length=2)
 
 
 class UpdateThemeSessionRequest(BaseModel):
     id: str | None = Field(default=None, max_length=64)
     label: str = Field(min_length=1, max_length=120)
-    acronym: str | None = Field(default=None, max_length=12)
+    acronym: str | None = Field(default=None, min_length=2, max_length=2)
 
 
 class SetThemeSessionThemesRequest(BaseModel):
@@ -57,12 +57,9 @@ class SetThemeSessionWindowRequest(BaseModel):
 
 
 def safe_acronym(value: str) -> str:
-    acronym = re.sub(r"[^A-Za-z0-9]", "", value.strip()).upper()
+    acronym = re.sub(r"[^A-Za-z]", "", value.strip()).upper()
     if not ACRONYM_PATTERN.match(acronym):
-        raise HTTPException(
-            status_code=400,
-            detail="Acronym must be 2–12 letters or numbers",
-        )
+        raise HTTPException(status_code=400, detail="Acronym must be 2 letters")
     return acronym
 
 
@@ -71,7 +68,7 @@ def safe_session_id(value: str) -> str:
     if not slug or not SESSION_ID_PATTERN.match(slug):
         raise HTTPException(
             status_code=400,
-            detail="Session id must start with a letter and contain only lowercase letters, numbers, and underscores",
+            detail="Season id must start with a letter and contain only lowercase letters, numbers, and underscores",
         )
     return slug
 
@@ -210,20 +207,20 @@ def _require(db: Session, session_id: str) -> ThemeSession:
     slug = safe_session_id(session_id)
     row = db.get(ThemeSession, slug)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Session not found: {slug}")
+        raise HTTPException(status_code=404, detail=f"Season not found: {slug}")
     return row
 
 
 def _require_custom(db: Session, session_id: str) -> ThemeSession:
     row = _require(db, session_id)
     if row.id == DEFAULT_SESSION_ID:
-        raise HTTPException(status_code=400, detail="The default session cannot be changed this way")
+        raise HTTPException(status_code=400, detail="The default season cannot be changed this way")
     return row
 
 
 def _reject_ended(row: ThemeSession, now: datetime) -> None:
     if row.ends_at is not None and row.ends_at <= now:
-        raise HTTPException(status_code=400, detail="This session has ended")
+        raise HTTPException(status_code=400, detail="This season has ended")
 
 
 def _theme_ids_for(db: Session, session_id: str) -> list[str]:
@@ -243,12 +240,12 @@ def create_theme_session(db: Session, request: CreateThemeSessionRequest) -> The
     ensure_default_theme_session(db)
     session_id = safe_session_id(request.id)
     if session_id == DEFAULT_SESSION_ID:
-        raise HTTPException(status_code=400, detail="The default session already exists")
+        raise HTTPException(status_code=400, detail="The default season already exists")
     if db.get(ThemeSession, session_id) is not None:
-        raise HTTPException(status_code=409, detail=f"Session already exists: {session_id}")
+        raise HTTPException(status_code=409, detail=f"Season already exists: {session_id}")
     label = request.label.strip()
     if not label:
-        raise HTTPException(status_code=400, detail="Session name is required")
+        raise HTTPException(status_code=400, detail="Season name is required")
     acronym = safe_acronym(request.acronym)
     _reject_acronym_clash(db, acronym)
     max_sort = db.scalar(select(func.max(ThemeSession.sort_order))) or 0
@@ -263,9 +260,9 @@ def create_theme_session(db: Session, request: CreateThemeSessionRequest) -> The
 
 def _rename_session(db: Session, row: ThemeSession, new_id: str) -> ThemeSession:
     if new_id == DEFAULT_SESSION_ID:
-        raise HTTPException(status_code=400, detail="The default session already exists")
+        raise HTTPException(status_code=400, detail="The default season already exists")
     if db.get(ThemeSession, new_id) is not None:
-        raise HTTPException(status_code=409, detail=f"Session already exists: {new_id}")
+        raise HTTPException(status_code=409, detail=f"Season already exists: {new_id}")
     now = utcnow()
     kept_acronym = row.acronym
     row.acronym = None
@@ -302,14 +299,14 @@ def update_theme_session(
     row = _require(db, session_id)
     label = request.label.strip()
     if not label:
-        raise HTTPException(status_code=400, detail="Session name is required")
+        raise HTTPException(status_code=400, detail="Season name is required")
     acronym = safe_acronym(request.acronym) if request.acronym is not None else row.acronym
     if not acronym:
         raise HTTPException(status_code=400, detail="Acronym is required")
     _reject_acronym_clash(db, acronym, except_id=row.id)
     if row.id == DEFAULT_SESSION_ID:
         if request.id and safe_session_id(request.id) != DEFAULT_SESSION_ID:
-            raise HTTPException(status_code=400, detail="The default session id stays default")
+            raise HTTPException(status_code=400, detail="The default season id stays default")
         row.label = label
         row.acronym = acronym
         row.updated_at = utcnow()
@@ -351,7 +348,7 @@ def set_theme_session_themes(
     if missing:
         raise HTTPException(status_code=400, detail=f"Unknown theme: {missing[0]}")
     if row.starts_at is not None and not themes:
-        raise HTTPException(status_code=400, detail="A started session needs at least one theme")
+        raise HTTPException(status_code=400, detail="A started season needs at least one theme")
     ordered = sorted(themes, key=lambda theme: (theme.sort_order, theme.label.lower(), theme.id))
     existing = list(
         db.scalars(select(ThemeSessionTheme).where(ThemeSessionTheme.session_id == row.id)).all()
@@ -392,7 +389,7 @@ def delete_theme_session(db: Session, session_id: str) -> list[ThemeSessionInfo]
     if _status(row, utcnow()) == "running":
         raise HTTPException(
             status_code=400,
-            detail="Move the end date before deleting the session that is live",
+            detail="Move the end date before deleting the season that is live",
         )
     db.delete(row)
     db.flush()
