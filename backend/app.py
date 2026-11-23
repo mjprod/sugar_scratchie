@@ -113,6 +113,19 @@ from backend.models_store import (
     upload_model_theme_avatar,
     upload_model_video,
 )
+from backend.theme_sessions_store import (
+    CreateThemeSessionRequest,
+    SetThemeSessionThemesRequest,
+    SetThemeSessionWindowRequest,
+    UpdateThemeSessionRequest,
+    create_theme_session,
+    delete_theme_session,
+    list_theme_sessions,
+    running_theme_ids,
+    set_theme_session_themes,
+    set_theme_session_window,
+    update_theme_session,
+)
 from backend.themes_store import (
     CreateThemeRequest,
     ReorderThemesRequest,
@@ -1570,7 +1583,11 @@ def remove_model_theme_avatar(
 
 
 @app.get("/api/collection")
-def get_collection(model: str = "", theme: str = "") -> dict:
+def get_collection(
+    db: Annotated[Session, Depends(get_session)],
+    model: str = "",
+    theme: str = "",
+) -> dict:
     draft_themes: dict[str, str] = {}
     for flow in list_flows():
         card_id = str(flow.get("card_id") or "").strip()
@@ -1589,7 +1606,62 @@ def get_collection(model: str = "", theme: str = "") -> dict:
         draft_themes=draft_themes,
         model_filter=model or None,
         theme_filter=theme or None,
+        allowed_theme_ids=running_theme_ids(db),
     )
+
+
+@app.get("/api/theme-sessions")
+def get_theme_sessions(db: Annotated[Session, Depends(get_session)]) -> dict:
+    sessions = list_theme_sessions(db)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
+
+
+@app.post("/api/theme-sessions")
+def post_theme_session(
+    request: CreateThemeSessionRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = create_theme_session(db, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}")
+def put_theme_session(
+    session_id: str,
+    request: UpdateThemeSessionRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = update_theme_session(db, session_id, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}/themes")
+def put_theme_session_themes(
+    session_id: str,
+    request: SetThemeSessionThemesRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = set_theme_session_themes(db, session_id, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}/schedule")
+def put_theme_session_schedule(
+    session_id: str,
+    request: SetThemeSessionWindowRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    sessions = set_theme_session_window(db, session_id, request)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
+
+
+@app.delete("/api/theme-sessions/{session_id}")
+def remove_theme_session(
+    session_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    sessions = delete_theme_session(db, session_id)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
 
 
 @app.get("/api/themes")

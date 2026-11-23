@@ -132,6 +132,7 @@ def build_collection_catalog(
     draft_themes: dict[str, str] | None = None,
     model_filter: str | None = None,
     theme_filter: str | None = None,
+    allowed_theme_ids: set[str] | None = None,
 ) -> dict:
     models = list_models_standalone(models_dir)
     cards = list_cards_standalone(root, cards_dir, mesh_dir)
@@ -168,6 +169,10 @@ def build_collection_catalog(
                 draft_themes=drafts,
                 themes_dir=themes_dir,
             )
+            if allowed_theme_ids is not None and (
+                theme_id is None or theme_id not in allowed_theme_ids
+            ):
+                continue
             key = theme_id or theme_label.lower()
             if key not in cards_by_theme:
                 cards_by_theme[key] = []
