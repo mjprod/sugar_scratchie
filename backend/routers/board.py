@@ -104,7 +104,7 @@ def creator_board(
     theme free-play rule: played once and bought, pack-revealed, or free.
     """
     creator = db.get(Creator, model_id)
-    if creator is None:
+    if creator is None or creator.status == "unpublished":
         raise HTTPException(status_code=404, detail="Creator not found.")
 
     cards = list(
@@ -180,7 +180,7 @@ def creator_board(
         },
         "pack": (
             {"id": pack.id, "price": pack.diamond_cost, "priceAmountCents": pack.price_amount_cents}
-            if pack is not None
+            if pack is not None and creator.status == "published"
             else None
         ),
         "motionCardsOwned": sum(1 for card in cards if ("motion", card.id) in state.owned),

@@ -6,12 +6,13 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
 from backend.db.engine import get_session
 from backend.db.models import (
+    Creator,
     MotionCard,
     Pack,
     PackInstance,
@@ -178,7 +179,16 @@ def _card_model_theme(db: Session, card: PackOpeningCard, pack: Pack | None) -> 
 
 @router.get("/api/packs")
 def list_packs(db: Annotated[Session, Depends(get_session)]):
-    rows = db.query(Pack).filter(Pack.available.is_(True)).order_by(Pack.sort_order).all()
+    # Packs with no influencer stay listed. Unpublished and deprecated
+    # influencers are not for sale; owned instances still open from /api/me/packs.
+    rows = (
+        db.query(Pack)
+        .outerjoin(Creator, Creator.id == Pack.model_id)
+        .filter(Pack.available.is_(True))
+        .filter(or_(Pack.model_id.is_(None), Creator.status == "published"))
+        .order_by(Pack.sort_order)
+        .all()
+    )
     return {"packs": [_pack_public(p) for p in rows]}
 
 
@@ -190,9 +200,14 @@ def purchase_pack(
     user: Annotated[User, Depends(current_user)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
-    pack = db.get(Pack, pack_id)
-    if pack is None or not pack.available:
+    pack_row = db.execute(
+        select(Pack, Creator.status)
+        .outerjoin(Creator, Creator.id == Pack.model_id)
+        .where(Pack.id == pack_id)
+    ).one_or_none()
+    if pack_row is None or not pack_row[0].available:
         raise HTTPException(status_code=404, detail="Pack not found.")
+    pack, creator_status = pack_row
     key = idempotency_key or f"pack-buy:{user.id}:{pack_id}:{utcnow().isoformat()}"
     existing = db.query(PackPurchase).filter(PackPurchase.idempotency_key == key).one_or_none()
     if existing:
@@ -203,6 +218,9 @@ def purchase_pack(
             "instances": [_instance_public(i, pack) for i in instances],
             "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
         }
+
+    if pack.model_id and creator_status != "published":
+        raise HTTPException(status_code=404, detail="Pack not found.")
 
     unit = pack.diamond_cost
     cost = unit if body.quantity == 1 else unit * 3

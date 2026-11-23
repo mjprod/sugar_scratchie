@@ -7,7 +7,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth.sessions import current_user
-from backend.db.card_plays import FreePlayLocked, card_terms, is_free_playable, owns_from_pack, register_play
+from backend.db.card_plays import (
+    FreePlayLocked,
+    card_terms,
+    get_played,
+    is_free_playable,
+    owns_from_pack,
+    register_play,
+)
 from backend.db.engine import get_session
 from backend.db.models import User, UserCardPlayed
 from backend.db.wallet import InsufficientFunds
@@ -54,6 +61,14 @@ def play_card(
     if terms is None:
         raise HTTPException(status_code=404, detail="Card not found.")
     owned = owns_from_pack(db, user.id, body.cardKind, card_id)
+    # Deprecated and unpublished influencers are not for sale. A card the
+    # player already owns, or has played, still opens.
+    if (
+        not terms.for_sale
+        and not owned
+        and get_played(db, user.id, body.cardKind, card_id) is None
+    ):
+        raise HTTPException(status_code=403, detail="creator_unavailable")
     try:
         result = register_play(
             db, user.id, body.cardKind, card_id, terms, owned=owned, free_play=body.freePlay

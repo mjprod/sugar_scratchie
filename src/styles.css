@@ -6309,6 +6309,54 @@ dd {
   100% { opacity: 0; transform: scale(16); }
 }
 
+.influencer-status {
+  border: 1px solid var(--gray-a6);
+  border-radius: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px 12px;
+  min-inline-size: min(100%, 42rem);
+}
+
+.influencer-status legend {
+  padding-inline: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.influencer-status-hint {
+  margin: 0 0 8px;
+  color: var(--gray-11);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.influencer-status-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.influencer-status-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 24px;
+  cursor: pointer;
+}
+
+.influencer-status-options input {
+  accent-color: var(--accent-9, #171513);
+  inline-size: 1.05rem;
+  block-size: 1.05rem;
+}
+
+@media (pointer: coarse) {
+  .influencer-status-options label {
+    min-block-size: 48px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .stage.is-finale-charge .game-stage-canvas,
   .stage.is-finale-burst .game-stage-canvas {
