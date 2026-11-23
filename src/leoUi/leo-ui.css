@@ -1366,6 +1366,11 @@
   filter: grayscale(1) blur(2px) brightness(0.7);
 }
 
+/* Animating Image — match processing desaturate; GSAP owns the live filter. */
+.leo-ui__preview--animating.is-blurred img {
+  filter: grayscale(1) saturate(0) blur(12px) brightness(0.75);
+}
+
 .leo-ui__preview-overlay {
   position: absolute;
   inset: auto 0.75rem 0.75rem;
@@ -1938,6 +1943,13 @@
   margin: 0;
   color: var(--leo-muted);
   font-size: 0.85rem;
+}
+
+.leo-ui__confirm-empty {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  padding: 8px 0;
 }
 
 .leo-ui__hidden {
