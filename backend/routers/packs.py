@@ -219,6 +219,8 @@ def purchase_pack(
             "wallet": {"diamonds": wallet.diamonds, "coins": wallet.coins},
         }
 
+    # After the idempotent return above. A purchase that already committed
+    # must still replay its response once the influencer leaves the store.
     if pack.model_id and creator_status != "published":
         raise HTTPException(status_code=404, detail="Pack not found.")
 

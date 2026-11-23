@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_engine
-from backend.db.models import Creator, MotionCard, Pack, Theme, UserCard
+from backend.db.models import Creator, MotionCard, Pack, PhotoScratchCard, Theme, UserCard
 from backend.db.wallet import apply_delta
 from tests.conftest import register_and_login
 
@@ -82,6 +82,21 @@ def test_deprecated_blocks_new_sales_and_keeps_owned_cards(client, dashboard_hea
         db.flush()
         db.add(MotionCard(id=card_id, label="Card", model_id=model_id, theme_id=theme_id, price=10))
         db.add(
+            PhotoScratchCard(
+                id=f"{card_id}_slot_01",
+                card_id=card_id,
+                slot_id="slot_01",
+                label="Photo",
+                model_id=model_id,
+                theme_id=theme_id,
+                background="b",
+                bikini="k",
+                clothes="c",
+                mesh="m",
+                card_price=4,
+            )
+        )
+        db.add(
             Pack(
                 id=pack_id,
                 model_id=model_id,
@@ -128,6 +143,15 @@ def test_deprecated_blocks_new_sales_and_keeps_owned_cards(client, dashboard_hea
     assert board.status_code == 200, board.text
     assert board.json()["pack"] is None
     assert board.json()["creator"]["id"] == model_id
+    locked = board.json()["themes"][0]["motionCards"][0]
+    assert locked["id"] == card_id
+    assert locked["status"] == "locked"
+    assert locked["forSale"] is False
+    assert locked["price"] == 10
+    photo = locked["staticCards"][0]
+    assert photo["unlocked"] is False
+    assert photo["forSale"] is False
+    assert photo["price"] == 4
 
     with Session(get_engine()) as db:
         db.add(
@@ -144,6 +168,10 @@ def test_deprecated_blocks_new_sales_and_keeps_owned_cards(client, dashboard_hea
     owned = client.post("/api/me/cards/play", json={"cardKind": "motion", "cardId": card_id})
     assert owned.status_code == 200, owned.text
     assert owned.json()["pricePaid"] == 0
+    kept = client.get(f"/api/me/creators/{model_id}/board").json()
+    kept_card = kept["themes"][0]["motionCards"][0]
+    assert kept_card["status"] == "unlocked"
+    assert kept_card["forSale"] is False
 
     assert client.put(
         f"/api/models/{model_id}",

@@ -1350,7 +1350,8 @@ def get_models(request: Request, db: Annotated[Session, Depends(get_session)]) -
     from backend.services.promoter import lp_public_url
 
     models = list_models(db, MODELS_DIR)
-    # Players still receive deprecated influencers so owned cards can resolve.
+    # Deprecated stays in this public list so collection and profile links can
+    # resolve the creator. Store and swipe must skip anyone who is not published.
     # Unpublished stays on the operator catalog only.
     if not _operator_request(request):
         models = [model for model in models if model.status in PLAYER_MODEL_STATUSES]

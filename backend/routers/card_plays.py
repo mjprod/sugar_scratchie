@@ -61,8 +61,9 @@ def play_card(
     if terms is None:
         raise HTTPException(status_code=404, detail="Card not found.")
     owned = owns_from_pack(db, user.id, body.cardKind, card_id)
-    # Deprecated and unpublished influencers are not for sale. A card the
-    # player already owns, or has played, still opens.
+    # Deprecated and unpublished influencers are not for sale. Pack ownership
+    # or any previous play still opens the card. A previous play also lets
+    # register_play charge replay_price; this gate does not block that.
     if (
         not terms.for_sale
         and not owned
