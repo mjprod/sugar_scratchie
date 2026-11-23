@@ -59,21 +59,29 @@ class _UserCardState:
         }
 
 
-def _static_card(photo: PhotoScratchCard, state: _UserCardState) -> dict[str, Any]:
+def _static_card(
+    photo: PhotoScratchCard, state: _UserCardState, *, for_sale: bool
+) -> dict[str, Any]:
     price = photo.card_price or 0
     return {
         "id": photo.id,
         "slotId": photo.slot_id,
         "label": photo.label,
         "price": price,
+        # First-play offer. False on a departed influencer; an unlocked card still replays.
+        "forSale": for_sale,
         **state.describe("photo", photo.id, price),
     }
 
 
 def _motion_card(
-    card: MotionCard, photos: list[PhotoScratchCard], state: _UserCardState
+    card: MotionCard,
+    photos: list[PhotoScratchCard],
+    state: _UserCardState,
+    *,
+    for_sale: bool,
 ) -> dict[str, Any]:
-    statics = [_static_card(photo, state) for photo in photos]
+    statics = [_static_card(photo, state, for_sale=for_sale) for photo in photos]
     described = state.describe("motion", card.id, card.price)
     return {
         "id": card.id,
@@ -83,6 +91,8 @@ def _motion_card(
         "price": card.price,
         "replayPrice": card.replay_price,
         "maxWin": card.max_win,
+        # Same flag as the pack: locked + forSale false is not a purchase.
+        "forSale": for_sale,
         **described,
         "status": "unlocked" if described["unlocked"] else "locked",
         "staticCardsOwned": sum(1 for s in statics if s["owned"]),
@@ -100,11 +110,14 @@ def creator_board(
     """Everything the creator screen needs for one player, in one response.
 
     Prices are diamonds. A card is `unlocked` once revealed from a pack or
-    played (the first play is the purchase / unlock). `freePlayable` follows the
-    theme free-play rule: played once and bought, pack-revealed, or free.
+    played (the first play is the purchase / unlock). `forSale` is false when
+    the influencer has left the store: locked cards stay on the board, and the
+    client must not offer a first play. `freePlayable` follows the theme
+    free-play rule: played once and bought, pack-revealed, or free.
     """
     creator = db.get(Creator, model_id)
-    if creator is None:
+    # Unpublished is hidden from buyers too (use deprecated to keep the profile).
+    if creator is None or creator.status == "unpublished":
         raise HTTPException(status_code=404, detail="Creator not found.")
 
     cards = list(
@@ -134,8 +147,11 @@ def creator_board(
     )
     theme_entries: dict[str | None, dict[str, Any]] = {}
     ultra: dict[str, Any] | None = None
+    for_sale = creator.status == "published"
     for card in cards:
-        described = _motion_card(card, photos_by_card[card.id], state)
+        described = _motion_card(
+            card, photos_by_card[card.id], state, for_sale=for_sale
+        )
         if card.tier == "ultra":
             ultra = described
             continue
@@ -178,9 +194,10 @@ def creator_board(
             "onlyfansUrl": creator.onlyfans_url,
             "joinedAt": _ms(creator.created_at),
         },
+        # Deprecated creators keep the board, but the pack is not offered for sale.
         "pack": (
             {"id": pack.id, "price": pack.diamond_cost, "priceAmountCents": pack.price_amount_cents}
-            if pack is not None
+            if pack is not None and creator.status == "published"
             else None
         ),
         "motionCardsOwned": sum(1 for card in cards if ("motion", card.id) in state.owned),

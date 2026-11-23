@@ -325,11 +325,13 @@ def test_board_shape(client):
     [standard] = theme["motionCards"]
     assert standard["price"] == 10
     assert standard["status"] == "locked"
+    assert standard["forSale"] is True
     assert standard["staticCardsTotal"] == 2
     statics = {s["id"]: s for s in standard["staticCards"]}
     bought = statics[f"{ids['standard']}_slot_01"]
     assert bought["price"] == 5
     assert bought["unlocked"] is True
+    assert bought["forSale"] is True
     assert bought["freePlayable"] is True
     assert statics[f"{ids['standard']}_slot_02"]["freePlayable"] is False
 

@@ -38,6 +38,37 @@ export const MODEL_SOCIAL_FIELDS = [
 
 export type ModelSocialKey = (typeof MODEL_SOCIAL_FIELDS)[number]["key"];
 
+/** Live in the app, hidden, or retired while buyers keep what they already own. */
+export const INFLUENCER_STATUSES = ["published", "unpublished", "deprecated"] as const;
+export type InfluencerStatus = (typeof INFLUENCER_STATUSES)[number];
+
+export const INFLUENCER_STATUS_OPTIONS: {
+  value: InfluencerStatus;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "published",
+    label: "Published",
+    hint: "Visible in the app. Players can buy her packs and cards.",
+  },
+  {
+    value: "unpublished",
+    label: "Unpublished",
+    hint: "Hidden from players. They cannot find or buy her.",
+  },
+  {
+    value: "deprecated",
+    label: "Deprecated",
+    hint: "She is no longer with us. Hidden from the store, but players who already bought her packs and cards keep them.",
+  },
+];
+
+export function influencerStatusOf(model: { status?: string | null }): InfluencerStatus {
+  if (model.status === "unpublished" || model.status === "deprecated") return model.status;
+  return "published";
+}
+
 export type ModelGlobalMedia = {
   /** Foil 3D pack video 1, e.g. "/models/julianaval/pack-face.mp4". */
   packFaceVideoUrl?: string | null;
@@ -77,6 +108,7 @@ export type ModelInfo = {
   /** Invite-landing demo: scratch this model's card when the invitee has none. */
   defaultModal?: boolean;
   defaultModalCardId?: string | null;
+  status?: InfluencerStatus;
 } & ModelInfluencerProfile &
   ModelGlobalMedia;
 
@@ -117,6 +149,7 @@ export type UpdateModelPayload = {
   label?: string;
   defaultModal?: boolean;
   defaultModalCardId?: string | null;
+  status?: InfluencerStatus;
 } & ModelInfluencerProfile &
   Pick<ModelGlobalMedia, "cardPackName" | "cardPackName2">;
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_engine, get_session, ping_db
-from backend.auth.operator import OperatorAuthMiddleware
+from backend.auth.operator import OperatorAuthMiddleware, operator_secret_ok, provided_operator_secret
 from backend.logging_config import configure_logging
 from backend.middleware.request_timing import RequestTimingMiddleware
 from backend.routers import auth as auth_router
@@ -1340,11 +1340,21 @@ def delete_photo_scratch_layer_endpoint(
     return slot.model_dump()
 
 
+def _operator_request(request: Request) -> bool:
+    return operator_secret_ok(provided_operator_secret(request.headers))
+
+
 @app.get("/api/models")
-def get_models(db: Annotated[Session, Depends(get_session)]) -> dict:
+def get_models(request: Request, db: Annotated[Session, Depends(get_session)]) -> dict:
+    from backend.models_store import PLAYER_MODEL_STATUSES
     from backend.services.promoter import lp_public_url
 
     models = list_models(db, MODELS_DIR)
+    # Deprecated stays in this public list so collection and profile links can
+    # resolve the creator. Store and swipe must skip anyone who is not published.
+    # Unpublished stays on the operator catalog only.
+    if not _operator_request(request):
+        models = [model for model in models if model.status in PLAYER_MODEL_STATUSES]
     return {
         "models": [model.dict() for model in models],
         "lpPublicUrl": lp_public_url(),
@@ -1584,6 +1594,7 @@ def remove_model_theme_avatar(
 
 @app.get("/api/collection")
 def get_collection(
+    request: Request,
     db: Annotated[Session, Depends(get_session)],
     model: str = "",
     theme: str = "",
@@ -1607,6 +1618,7 @@ def get_collection(
         model_filter=model or None,
         theme_filter=theme or None,
         allowed_theme_ids=running_theme_ids(db),
+        player_catalog=not _operator_request(request),
     )
 
 

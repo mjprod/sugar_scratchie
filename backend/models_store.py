@@ -6,7 +6,7 @@ import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -105,6 +105,12 @@ SOCIAL_URL_MAX_LENGTH = 300
 # public name cannot reach CreateModelRequest and surface as a 500.
 CATALOG_LABEL_MAX = 120
 
+# published: store and discovery. unpublished: hidden from players.
+# deprecated: no longer with us; hidden from the store, buyers keep owned cards.
+INFLUENCER_STATUSES = ("published", "unpublished", "deprecated")
+InfluencerStatus = Literal["published", "unpublished", "deprecated"]
+PLAYER_MODEL_STATUSES = frozenset({"published", "deprecated"})
+
 
 class ModelInfo(BaseModel):
     id: str
@@ -147,6 +153,7 @@ class ModelInfo(BaseModel):
     # Invite-landing demo flag + which of this model's cards the scratch plays.
     defaultModal: bool = False
     defaultModalCardId: str | None = None
+    status: InfluencerStatus = "published"
 
 
 class CreateModelRequest(BaseModel):
@@ -188,6 +195,7 @@ class UpdateModelRequest(BaseModel):
     tags: list[str] | None = None
     defaultModal: bool | None = None
     defaultModalCardId: str | None = Field(default=None, max_length=80)
+    status: InfluencerStatus | None = None
 
 
 def safe_model_id(value: str) -> str:
@@ -388,6 +396,7 @@ def _row_to_info(row: Creator, models_dir: Path) -> ModelInfo:
         tags=_normalize_tags(row.tags),
         defaultModal=bool(row.default_modal),
         defaultModalCardId=row.default_modal_card_id,
+        status=row.status if row.status in INFLUENCER_STATUSES else "published",
     )
 
 
@@ -620,6 +629,13 @@ def update_model(
     if "tags" in set_fields:
         row.tags = _normalize_tags(request.tags)
 
+    if "status" in set_fields and request.status is not None:
+        row.status = request.status
+        # Invite demos only scratch a live influencer.
+        if row.status != "published":
+            row.default_modal = False
+            row.default_modal_card_id = None
+
     if "defaultModal" in set_fields or "defaultModalCardId" in set_fields:
         _apply_default_modal(db, row, request, set_fields)
 
@@ -634,7 +650,7 @@ def _apply_default_modal(
     request: UpdateModelRequest,
     set_fields: set[str],
 ) -> None:
-    """Add/remove the invite-demo flag. Add requires a card owned by this model."""
+    """Add/remove the invite-demo flag. Add requires a published model and its own card."""
     from backend.db.models import MotionCard
 
     want_flag = row.default_modal
@@ -649,6 +665,12 @@ def _apply_default_modal(
         row.default_modal = False
         row.default_modal_card_id = None
         return
+
+    if row.status != "published":
+        raise HTTPException(
+            status_code=422,
+            detail="Only a published influencer can be an invite demo.",
+        )
 
     if not card_id:
         raise HTTPException(

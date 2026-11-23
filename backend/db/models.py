@@ -300,9 +300,22 @@ class Creator(Base):
     """Admin catalog of creators / models (metadata only; avatars/flags/videos stay on disk)."""
 
     __tablename__ = "models"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('published','unpublished','deprecated')",
+            name="models_status_chk",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
+    # published: in the store. unpublished: hidden. deprecated: left, buyers keep what they own.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     influencer_name: Mapped[str | None] = mapped_column(Text, nullable=True)

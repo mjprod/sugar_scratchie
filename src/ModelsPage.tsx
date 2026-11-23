@@ -70,9 +70,12 @@ import {
   uploadModelPoster,
   uploadModelCover,
   uploadModelProfileDress,
+  INFLUENCER_STATUS_OPTIONS,
   MODEL_SOCIAL_FIELDS,
   MODEL_VIDEO_POSTER_KIND,
+  influencerStatusOf,
   type CardPricing,
+  type InfluencerStatus,
   type CardTier,
   type ModelInfo,
   type ModelSocialKey,
@@ -754,6 +757,7 @@ export function ModelsPage() {
       const haystack = [
         model.id,
         model.label,
+        model.status ?? "",
         model.influencerName ?? "",
         model.influencerCity ?? "",
         model.influencerCountry ?? "",
@@ -779,6 +783,7 @@ export function ModelsPage() {
         .filter(
           (model) =>
             !model.defaultModal &&
+            influencerStatusOf(model) === "published" &&
             (publishedCardsByModel.get(model.id) ?? []).length > 0,
         )
         .sort((a, b) => a.id.localeCompare(b.id)),
@@ -869,6 +874,19 @@ export function ModelsPage() {
       setEditingColorEnd("");
       setEditingLightColor1("");
       setEditingLightColor2("");
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveStatus(modelId: string, status: InfluencerStatus) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateModel(modelId, { status });
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1507,6 +1525,7 @@ export function ModelsPage() {
                 setProfileDressTargetId(selectedModel.id);
                 profileDressInputRef.current?.click();
               }}
+              onSaveStatus={(status) => void handleSaveStatus(selectedModel.id, status)}
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
               onSetDefaultModal={(cardId) =>
                 void handleSetDefaultModal(selectedModel.id, cardId)
@@ -1766,6 +1785,7 @@ export function ModelsPage() {
                                       <span>
                                         <ModelFlagMark model={model} size={16} />
                                         {modelDisplayTitle(model)}
+                                        <InfluencerStatusBadge status={model.status} />
                                       </span>
                                     </Flex>
                                   </Text>
@@ -1841,14 +1861,17 @@ export function ModelsPage() {
                       <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
                         <ModelAvatar model={model} size={44} />
                         <Box style={{ minWidth: 0 }}>
-                          <Text as="div" size="3" weight="bold" truncate>
-                            <Flex align="center" gap="2" asChild>
-                              <span>
-                                <ModelFlagMark model={model} size={16} />
-                                {modelDisplayTitle(model)}
-                              </span>
-                            </Flex>
-                          </Text>
+                          <Flex align="center" gap="2">
+                            <Text as="div" size="3" weight="bold" truncate>
+                              <Flex align="center" gap="2" asChild>
+                                <span>
+                                  <ModelFlagMark model={model} size={16} />
+                                  {modelDisplayTitle(model)}
+                                </span>
+                              </Flex>
+                            </Text>
+                            <InfluencerStatusBadge status={model.status} />
+                          </Flex>
                           <Text as="div" color="gray" size="2">
                             {location || `${count} motion card${count === 1 ? "" : "s"}`}
                           </Text>
@@ -2809,6 +2832,73 @@ function SwipeMotionVideoSlot({
   );
 }
 
+function InfluencerStatusBadge({ status }: { status?: string | null }) {
+  const value = influencerStatusOf({ status });
+  const color = value === "published" ? "green" : value === "deprecated" ? "amber" : "gray";
+  const label = INFLUENCER_STATUS_OPTIONS.find((option) => option.value === value)?.label ?? "Published";
+  return (
+    <Badge color={color} size="1" variant="soft">
+      {label}
+    </Badge>
+  );
+}
+
+function InfluencerStatusControl({
+  model,
+  busy,
+  onSave,
+}: {
+  model: ModelInfo;
+  busy: boolean;
+  onSave: (status: InfluencerStatus) => void;
+}) {
+  const current = influencerStatusOf(model);
+  const [draft, setDraft] = useState<InfluencerStatus>(current);
+  useEffect(() => {
+    setDraft(current);
+  }, [model.id, current]);
+  const selected =
+    INFLUENCER_STATUS_OPTIONS.find((option) => option.value === draft) ??
+    INFLUENCER_STATUS_OPTIONS[0];
+  const hintId = `influencer-status-hint-${model.id}`;
+  return (
+    <fieldset className="influencer-status" aria-describedby={hintId}>
+      <legend>Status</legend>
+      <p className="influencer-status-hint" id={hintId}>
+        {selected.hint}
+      </p>
+      <div className="influencer-status-options">
+        {INFLUENCER_STATUS_OPTIONS.map((option) => {
+          const id = `influencer-status-${model.id}-${option.value}`;
+          return (
+            <label key={option.value} htmlFor={id}>
+              <input
+                type="radio"
+                id={id}
+                name={`influencer-status-${model.id}`}
+                value={option.value}
+                checked={draft === option.value}
+                disabled={busy}
+                aria-describedby={hintId}
+                onChange={() => setDraft(option.value)}
+              />
+              {option.label}
+            </label>
+          );
+        })}
+      </div>
+      <Button
+        type="button"
+        size="1"
+        disabled={busy || draft === current}
+        onClick={() => onSave(draft)}
+      >
+        Save status
+      </Button>
+    </fieldset>
+  );
+}
+
 function ModelDetail({
   busy,
   creatingCardFor,
@@ -2872,6 +2962,7 @@ function ModelDetail({
   onSwipePosterClick,
   onCoverClick,
   onProfileDressClick,
+  onSaveStatus,
   onSaveTags,
   onSetDefaultModal,
   onSaveSocials,
@@ -2939,6 +3030,7 @@ function ModelDetail({
   onSwipePosterClick: () => void;
   onCoverClick: () => void;
   onProfileDressClick: () => void;
+  onSaveStatus: (status: InfluencerStatus) => void;
   onSaveTags: (tags: string[]) => void;
   onSetDefaultModal: (cardId: string | null) => void;
   onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
@@ -3171,6 +3263,7 @@ function ModelDetail({
                   <Badge color="plum" variant="soft">
                     {model.id}
                   </Badge>
+                  <InfluencerStatusBadge status={model.status} />
                   {modelTags(model).map((tag) => (
                     <Badge key={tag} color={tagColor(tag)} variant="soft">
                       {tag}
@@ -3222,6 +3315,12 @@ function ModelDetail({
             </Text>
           </Box>
         </Flex>
+
+        <InfluencerStatusControl
+          busy={busy}
+          model={model}
+          onSave={onSaveStatus}
+        />
 
         <Flex gap="2" mb={creatingCardFor === model.id ? "2" : "3"} wrap="wrap">
           {publishedCards.length > 0 ? (
