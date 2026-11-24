@@ -102,14 +102,19 @@ def _deal_pools(db: Session, pack: Pack) -> dict[str, list[DealCandidate]]:
     """Standard-tier catalog cards of the pack's creator. Premium / ultra are bought, not dealt."""
     if not pack.model_id:
         return {"motion": [], "photo": []}
-    standard = (MotionCard.model_id == pack.model_id, MotionCard.tier == "standard")
+    # Only published catalog cards enter new packs. Owners still open what they bought.
+    standard = (
+        MotionCard.model_id == pack.model_id,
+        MotionCard.tier == "standard",
+        MotionCard.status == "published",
+    )
     motion = [(card_id, None) for card_id in db.scalars(select(MotionCard.id).where(*standard))]
     photo = [
         (photo_id, slot_id)
         for photo_id, slot_id in db.execute(
             select(PhotoScratchCard.id, PhotoScratchCard.slot_id)
             .join(MotionCard, MotionCard.id == PhotoScratchCard.card_id)
-            .where(*standard)
+            .where(*standard, PhotoScratchCard.status == "published")
         )
     ]
     return {"motion": motion, "photo": photo}

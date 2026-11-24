@@ -345,6 +345,9 @@ class Creator(Base):
 CARD_TIERS = ("standard", "premium", "ultra")
 
 
+CARD_STATUSES = ("published", "unpublished")
+
+
 class MotionCard(Base):
     """Admin catalog of motion cards (metadata only; videos/mesh/photos stay on disk)."""
 
@@ -353,6 +356,10 @@ class MotionCard(Base):
         Index("cards_model_sort_idx", "model_id", "sort_order"),
         CheckConstraint("tier IN ('standard','premium','ultra')", name="cards_tier_chk"),
         CheckConstraint("price >= 0 AND replay_price >= 0 AND max_win >= 0", name="cards_prices_chk"),
+        CheckConstraint(
+            "status IN ('published','unpublished')",
+            name="cards_status_chk",
+        ),
         Index(
             "cards_premium_model_theme_uq",
             "model_id",
@@ -369,6 +376,13 @@ class MotionCard(Base):
     theme_id: Mapped[str | None] = mapped_column(Text, ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     photos: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    # published: in the store. unpublished: hidden unless the player already owns or played it.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     # Diamonds. `price` is the first play (the unlock for premium / ultra cards).
     price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tier: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
@@ -385,6 +399,10 @@ class PhotoScratchCard(Base):
     __table_args__ = (
         CheckConstraint("slot_id ~ '^slot_[0-9]{2}$'", name="photo_scratch_cards_slot_chk"),
         CheckConstraint("card_price IS NULL OR card_price >= 0", name="photo_scratch_cards_price_chk"),
+        CheckConstraint(
+            "status IN ('published','unpublished')",
+            name="photo_scratch_cards_status_chk",
+        ),
         UniqueConstraint("card_id", "slot_id", name="photo_scratch_cards_card_slot_uq"),
         Index("photo_scratch_cards_card_idx", "card_id"),
         Index("photo_scratch_cards_sort_idx", "sort_order"),
@@ -401,6 +419,13 @@ class PhotoScratchCard(Base):
     clothes: Mapped[str] = mapped_column(Text, nullable=False)
     mesh: Mapped[str] = mapped_column(Text, nullable=False)
     card_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # published: in the store. unpublished: hidden unless the player already owns or played it.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

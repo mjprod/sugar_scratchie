@@ -31,9 +31,13 @@ import {
   generatePhotoScratchLayer,
   photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
+  CARD_STATUS_OPTIONS,
+  cardStatusOf,
   setPhotoScratchClothesRef,
   setPhotoScratchSlotPrice,
+  setPhotoScratchSlotStatus,
   setPhotoScratchSlotPrompt,
+  type CardStatus,
   slotLayerPrompt,
   uploadPhotoScratchLayer,
   type PhotoScratchImageChoice,
@@ -911,6 +915,53 @@ function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
   if (!slot.mesh) return { color: "orange", label: "3 layers · needs mesh" };
   if (!slot.has_symbols) return { color: "orange", label: "3 layers · needs symbols" };
   return { color: "orange", label: "3 layers · Picture Flow" };
+}
+
+function SlotStatusControl({
+  cardId,
+  slotId,
+  status,
+  onSaved,
+}: {
+  cardId: string;
+  slotId: string;
+  status?: CardStatus;
+  onSaved: (status: CardStatus) => void;
+}) {
+  const current = cardStatusOf({ status });
+  const [draft, setDraft] = useState<CardStatus>(current);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setDraft(current), [current, slotId]);
+  return (
+    <Flex align="center" gap="2" wrap="wrap">
+      <select
+        aria-label="Photo card status"
+        disabled={busy}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value as CardStatus)}
+        style={{ fontSize: 12, minHeight: 28 }}
+      >
+        {CARD_STATUS_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <Button
+        type="button"
+        size="1"
+        disabled={busy || draft === current}
+        onClick={() => {
+          setBusy(true);
+          void setPhotoScratchSlotStatus(cardId, slotId, draft)
+            .then((result) => onSaved(cardStatusOf(result)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Save status
+      </Button>
+    </Flex>
+  );
 }
 
 function SlotPriceInput({
@@ -1958,6 +2009,12 @@ function CardPhotosPanel({
     }
   }
 
+  function handleSlotStatusSaved(slotId: string, status: CardStatus) {
+    setSlots((prev) =>
+      prev.map((slot) => (slot.id === slotId ? { ...slot, status } : slot)),
+    );
+  }
+
   const pendingByLayer = (layer: PhotoScratchLayerType) =>
     slots.filter((s) => pendingChoices(s, layer).length > 0);
 
@@ -2590,6 +2647,14 @@ function CardPhotosPanel({
                         value={slot.card_price}
                         onCommit={(next) => handleSlotPriceCommit(slot.id, next)}
                       />
+                      {slot.status ? (
+                        <SlotStatusControl
+                          cardId={cardId.trim()}
+                          slotId={slot.id}
+                          status={slot.status}
+                          onSaved={(next) => handleSlotStatusSaved(slot.id, next)}
+                        />
+                      ) : null}
                       <Badge color={status.color} variant="soft">
                         {status.label}
                       </Badge>

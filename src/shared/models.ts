@@ -69,6 +69,52 @@ export function influencerStatusOf(model: { status?: string | null }): Influence
   return "published";
 }
 
+/** Live in the store, or taken off while owners keep what they already have. */
+export const CARD_STATUSES = ["published", "unpublished"] as const;
+export type CardStatus = (typeof CARD_STATUSES)[number];
+
+export const CARD_STATUS_OPTIONS: {
+  value: CardStatus;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "published",
+    label: "Published",
+    hint: "Players can find and buy this card.",
+  },
+  {
+    value: "unpublished",
+    label: "Unpublished",
+    hint: "Hidden from the store. Players who already own it can still play it.",
+  },
+];
+
+export function cardStatusOf(card: { status?: string | null }): CardStatus {
+  return card.status === "unpublished" ? "unpublished" : "published";
+}
+
+export async function updateCardStatus(cardId: string, status: CardStatus): Promise<void> {
+  await api(`/api/cards/${encodeURIComponent(cardId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function setPhotoScratchSlotStatus(
+  cardId: string,
+  slotId: string,
+  status: CardStatus,
+): Promise<{ status: CardStatus }> {
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
 export type ModelGlobalMedia = {
   /** Foil 3D pack video 1, e.g. "/models/julianaval/pack-face.mp4". */
   packFaceVideoUrl?: string | null;
@@ -566,6 +612,8 @@ export type PhotoScratchSlot = {
   clothes_ref?: string;
   /** Whole-number price shown in the game UI; copied to the catalog on publish. */
   card_price?: number | null;
+  /** Catalog visibility once this slot is published as a photo game. */
+  status?: CardStatus;
   /** Per-slot static photo mesh URL (not the motion-card video mesh). */
   mesh?: string;
   has_symbols?: boolean;

@@ -31,36 +31,49 @@ class CardTerms:
     replay_price: int = 0
     tier: str = "standard"
     max_win: int = 0
-    # False when the influencer is unpublished or deprecated: no new purchase.
+    # False when the influencer or the card is off the store: no new purchase.
     for_sale: bool = True
 
 
-def _for_sale(model_id: str | None, status: str | None) -> bool:
+def _creator_for_sale(model_id: str | None, status: str | None) -> bool:
     if not model_id:
         return True
     return status == "published"
+
+
+def _card_for_sale(card_status: str | None) -> bool:
+    return card_status == "published"
 
 
 def card_terms(db: Session, kind: str, card_id: str) -> CardTerms | None:
     """Pricing for a catalog card, or None when the card is not in the catalog."""
     if kind == "photo":
         found = db.execute(
-            select(PhotoScratchCard, Creator.status)
+            select(PhotoScratchCard, Creator.status, MotionCard.status)
             .outerjoin(Creator, Creator.id == PhotoScratchCard.model_id)
+            .outerjoin(MotionCard, MotionCard.id == PhotoScratchCard.card_id)
             .where(PhotoScratchCard.id == card_id)
         ).one_or_none()
         if found is None:
             return None
-        photo, status = found
-        for_sale = _for_sale(photo.model_id, status)
+        photo, creator_status, parent_status = found
+        for_sale = (
+            _card_for_sale(photo.status)
+            and _card_for_sale(parent_status)
+            and _creator_for_sale(photo.model_id, creator_status)
+        )
         if not photo.model_id and photo.card_id:
             parent = db.execute(
-                select(MotionCard.model_id, Creator.status)
+                select(MotionCard.model_id, Creator.status, MotionCard.status)
                 .outerjoin(Creator, Creator.id == MotionCard.model_id)
                 .where(MotionCard.id == photo.card_id)
             ).one_or_none()
             if parent is not None:
-                for_sale = _for_sale(parent[0], parent[1])
+                for_sale = (
+                    _card_for_sale(photo.status)
+                    and _card_for_sale(parent[2])
+                    and _creator_for_sale(parent[0], parent[1])
+                )
         return CardTerms(price=photo.card_price or 0, for_sale=for_sale)
     found = db.execute(
         select(MotionCard, Creator.status)
@@ -70,7 +83,7 @@ def card_terms(db: Session, kind: str, card_id: str) -> CardTerms | None:
     if found is None:
         return None
     motion, status = found
-    for_sale = _for_sale(motion.model_id, status)
+    for_sale = _card_for_sale(motion.status) and _creator_for_sale(motion.model_id, status)
     if motion.tier == "standard":
         return CardTerms(price=motion.price, for_sale=for_sale)
     return CardTerms(

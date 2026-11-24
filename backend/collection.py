@@ -140,7 +140,9 @@ def build_collection_catalog(
     models = list_models_standalone(models_dir)
     if player_catalog:
         models = [model for model in models if model.status in PLAYER_MODEL_STATUSES]
-    cards = list_cards_standalone(root, cards_dir, mesh_dir)
+    cards = list_cards_standalone(
+        root, cards_dir, mesh_dir, player_catalog=player_catalog
+    )
     themes = list_themes_standalone(themes_dir)
     themes_by_id = {theme.id: theme.label for theme in themes}
     themes_info = {theme.id: theme for theme in themes}

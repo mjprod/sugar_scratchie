@@ -19,6 +19,8 @@ CARD_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CARD_PRICE_MAX = 2_147_483_647
 
 CardTier = Literal["standard", "premium", "ultra"]
+CardStatus = Literal["published", "unpublished"]
+CARD_STATUSES = ("published", "unpublished")
 
 ORIGINAL_ID = "original"
 ORIGINAL_BACKGROUND = "public/cards/ai girl 2.mp4"
@@ -64,6 +66,8 @@ class CardInfo(BaseModel):
     tier: CardTier = "standard"
     replay_price: int = 0
     max_win: int = 0
+    # published: in the store. unpublished: hidden unless already owned or played.
+    status: CardStatus = "published"
 
 
 class CreateCardRequest(BaseModel):
@@ -90,6 +94,7 @@ class UpdateCardRequest(BaseModel):
     tier: CardTier | None = None
     replay_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
     max_win: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
+    status: CardStatus | None = None
 
 
 class ReorderCardsRequest(BaseModel):

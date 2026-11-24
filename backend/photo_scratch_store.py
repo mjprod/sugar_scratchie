@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from backend.cards import optional_card_price
+from backend.cards import CardStatus, optional_card_price
 from backend.db.models import Creator, MotionCard, PhotoScratchCard, Theme
 from backend.themes_store import find_theme_intro
 
@@ -30,6 +30,8 @@ class PhotoScratchCardInfo(BaseModel):
     theme_id: str | None = None
     intro: str | None = None
     card_price: int | None = None
+    # published: in the store. unpublished: hidden unless already owned or played.
+    status: CardStatus = "published"
     sort_order: int = 0
 
 
@@ -94,16 +96,31 @@ def _row_to_info(row: PhotoScratchCard, themes_dir: Path) -> PhotoScratchCardInf
         theme_id=row.theme_id,
         intro=intro,
         card_price=row.card_price,
+        status=row.status if row.status in ("published", "unpublished") else "published",
         sort_order=row.sort_order,
     )
 
 
-def list_photo_scratch_cards(db: Session, root: Path) -> list[PhotoScratchCardInfo]:
+def list_photo_scratch_cards(
+    db: Session, root: Path, *, player_catalog: bool = False
+) -> list[PhotoScratchCardInfo]:
     themes_dir = _themes_dir(root)
     rows = db.scalars(
         select(PhotoScratchCard).order_by(PhotoScratchCard.sort_order, PhotoScratchCard.id)
     ).all()
-    return [_row_to_info(row, themes_dir) for row in rows]
+    infos = [_row_to_info(row, themes_dir) for row in rows]
+    if not player_catalog:
+        return infos
+    # A photo is player-visible only when it and its motion card are published.
+    parent_status = {
+        card_id: status
+        for card_id, status in db.execute(select(MotionCard.id, MotionCard.status))
+    }
+    return [
+        info
+        for info in infos
+        if info.status == "published" and parent_status.get(info.card_id) == "published"
+    ]
 
 
 def write_photo_scratch_index(db: Session, root: Path) -> None:
@@ -265,6 +282,23 @@ def set_published_card_price(
     row.card_price = card_price
     db.flush()
     return True
+
+
+def set_published_card_status(
+    db: Session, root: Path, card_id: str, slot_id: str, status: CardStatus
+) -> PhotoScratchCardInfo | None:
+    """Update status on an already-published slot; returns None if not published."""
+    row = db.scalars(
+        select(PhotoScratchCard).where(
+            PhotoScratchCard.card_id == card_id,
+            PhotoScratchCard.slot_id == slot_id,
+        )
+    ).first()
+    if row is None:
+        return None
+    row.status = status
+    db.flush()
+    return _row_to_info(row, _themes_dir(root))
 
 
 def prune_published_photo_scratch(db: Session, root: Path, card_id: str) -> int:
