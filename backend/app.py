@@ -122,6 +122,7 @@ from backend.theme_sessions_store import (
     create_theme_session,
     delete_theme_session,
     list_theme_sessions,
+    running_season_acronym,
     running_theme_ids,
     set_theme_session_themes,
     set_theme_session_window,
@@ -512,6 +513,7 @@ class Job:
     logs: list[str] = field(default_factory=list)
     progress_token: str = ""
     key_provider: str = "byebg"
+    folder_base: str = ""
 
     def public(self) -> dict:
         return {
@@ -679,6 +681,7 @@ def enqueue(
     job_id: str | None = None,
     progress_token: str = "",
     key_provider: str = "byebg",
+    folder_base: str = "",
 ) -> Job:
     job = Job(
         id=job_id or uuid.uuid4().hex[:12],
@@ -687,6 +690,7 @@ def enqueue(
         action=action,
         progress_token=progress_token,
         key_provider=key_provider or "byebg",
+        folder_base=folder_base.strip(),
     )
     with jobs_lock:
         jobs[job.id] = job
@@ -2699,6 +2703,7 @@ async def post_foil_n8n(
     import secrets
 
     from backend.services.foil_n8n import run_foil_pack_n8n, save_source
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import normalize_keyer, require_label
 
     if start != start or start < 0 or start > 60 * 60:
@@ -2706,14 +2711,15 @@ async def post_foil_n8n(
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or model.influencerName or model.label or model.id, "Name")
     influencer_code = require_label(code or model.id, "Code")
+    folder_base = pack_folder_base(influencer_name, running_season_acronym(db))
     chosen_keyer = normalize_keyer(keyer)
     source = save_source(ROOT, model.id, kind, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
     job = enqueue(
         "foil-n8n",
-        ["foil-n8n", model.id, kind, f"{start:.3f}", influencer_name, influencer_code],
-        lambda source=source, model_id=model.id, kind=kind, start=start, influencer_name=influencer_name, influencer_code=influencer_code, job_id=job_id, token=token: run_foil_pack_n8n(
+        ["foil-n8n", model.id, kind, f"{start:.3f}", influencer_name, influencer_code, folder_base],
+        lambda source=source, model_id=model.id, kind=kind, start=start, influencer_name=influencer_name, influencer_code=influencer_code, folder_base=folder_base, job_id=job_id, token=token: run_foil_pack_n8n(
             models_dir=MODELS_DIR,
             model_id=model_id,
             kind=kind,
@@ -2723,20 +2729,26 @@ async def post_foil_n8n(
             code=influencer_code,
             job_id=job_id,
             progress_token=token,
+            folder_base=folder_base,
         ),
         job_id=job_id,
         progress_token=token,
         key_provider=chosen_keyer,
+        folder_base=folder_base,
     )
     return job.public()
 
 
 @app.post("/api/internal/influencer-run")
-async def post_internal_influencer_run(request: Request) -> dict:
+async def post_internal_influencer_run(
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
     """n8n's form asks the Mac to run the creator steps. Docker cannot start After Effects."""
     import asyncio
     import secrets
 
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import FORM_RUN_TOKEN, normalize_keyer, require_label, run_form_steps
 
     token = request.headers.get("x-progress-token", "")
@@ -2751,6 +2763,9 @@ async def post_internal_influencer_run(request: Request) -> dict:
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
+    folder_base = str(payload.get("folderBase") or payload.get("folder_base") or "").strip()
+    if not folder_base:
+        folder_base = pack_folder_base(name, running_season_acronym(db))
     try:
         line = await asyncio.to_thread(
             run_form_steps,
@@ -2758,6 +2773,7 @@ async def post_internal_influencer_run(request: Request) -> dict:
             name=name,
             card_id=card,
             key_provider=normalize_keyer(str(payload.get("keyer") or "")),
+            folder_base=folder_base,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2776,6 +2792,7 @@ async def post_influencer_n8n(
     """Send an influencer name, id, and clip through the n8n creator steps."""
     import secrets
 
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import (
         normalize_keyer,
         require_label,
@@ -2786,23 +2803,26 @@ async def post_influencer_n8n(
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or (model.influencerName or ""), "Name")
     influencer_id = require_label(card_id or model.id, "Id")
+    folder_base = pack_folder_base(influencer_name, running_season_acronym(db))
     chosen_keyer = normalize_keyer(keyer)
     clip = save_clip(ROOT, model.id, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
     job = enqueue(
         "influencer-n8n",
-        ["influencer-n8n", model.id, influencer_id, influencer_name],
-        lambda clip=clip, influencer_name=influencer_name, influencer_id=influencer_id, job_id=job_id, token=token: run_influencer_n8n(
+        ["influencer-n8n", model.id, influencer_id, influencer_name, folder_base],
+        lambda clip=clip, influencer_name=influencer_name, influencer_id=influencer_id, folder_base=folder_base, job_id=job_id, token=token: run_influencer_n8n(
             clip=clip,
             name=influencer_name,
             card_id=influencer_id,
             job_id=job_id,
             progress_token=token,
+            folder_base=folder_base,
         ),
         job_id=job_id,
         progress_token=token,
         key_provider=chosen_keyer,
+        folder_base=folder_base,
     )
     return job.public()
 
@@ -2859,6 +2879,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
     card = str(payload.get("id") or payload.get("card_id") or "")
     kind = str(payload.get("kind") or "")
     pack_model_id = str(payload.get("model_id") or "")
+    folder_base = str(payload.get("folderBase") or payload.get("folder_base") or "").strip() or job.folder_base
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
@@ -2884,6 +2905,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
             models_dir=MODELS_DIR,
             report_line=report_line,
             key_provider=job.key_provider or "byebg",
+            folder_base=folder_base,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

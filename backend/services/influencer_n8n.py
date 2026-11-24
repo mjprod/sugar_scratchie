@@ -103,11 +103,17 @@ def influencer_jobs() -> Path:
     return _env_path("INFLUENCER_JOBS")
 
 
-def script_command(clip: Path, name: str, card_id: str) -> list[str]:
+def script_command(
+    clip: Path,
+    name: str,
+    card_id: str,
+    *,
+    folder_base: str = "",
+) -> list[str]:
     script = _env_path("INFLUENCER_N8N_SCRIPT")
     template = str(_env_path("INFLUENCER_TEMPLATE"))
     jobs = str(influencer_jobs())
-    return [
+    command = [
         sys.executable,
         str(script),
         "--template",
@@ -123,6 +129,10 @@ def script_command(clip: Path, name: str, card_id: str) -> list[str]:
         "--project",
         PROJECT_FILE,
     ]
+    base = folder_base.strip()
+    if base:
+        command.extend(["--folder-base", base])
+    return command
 
 
 def _destination_from_output(output: str) -> str:
@@ -135,8 +145,15 @@ def _destination_from_output(output: str) -> str:
     raise RuntimeError("The copy step did not report the new folder.")
 
 
-def run_copy(clip: Path, name: str, card_id: str, env: dict[str, str] | None = None) -> Path:
-    command = script_command(clip, name, card_id)
+def run_copy(
+    clip: Path,
+    name: str,
+    card_id: str,
+    env: dict[str, str] | None = None,
+    *,
+    folder_base: str = "",
+) -> Path:
+    command = script_command(clip, name, card_id, folder_base=folder_base)
     script = Path(command[1])
     if not script.is_file():
         raise RuntimeError(f"Influencer script not found: {script}")
@@ -331,6 +348,7 @@ def run_hosted_steps(
     models_dir: Path | None = None,
     report_line: Callable[[str], None] | None = None,
     key_provider: str = "byebg",
+    folder_base: str = "",
 ) -> str:
     """Mac steps used when n8n itself cannot launch After Effects.
 
@@ -354,7 +372,7 @@ def run_hosted_steps(
     if kind in FOIL_KINDS:
         child_env["FOIL_PACK_KIND"] = kind
     try:
-        destination = run_copy(clip, name, card_id, env=child_env)
+        destination = run_copy(clip, name, card_id, env=child_env, folder_base=folder_base)
         launch_after_effects(destination)
         if kind in FOIL_KINDS and model_id and models_dir is not None:
             from backend.services.foil_packages import publish_package_video
@@ -372,14 +390,35 @@ def run_hosted_steps(
         raise
 
 
-def run_form_steps(*, clip: Path, name: str, card_id: str, key_provider: str = "byebg") -> str:
+def run_form_steps(
+    *,
+    clip: Path,
+    name: str,
+    card_id: str,
+    key_provider: str = "byebg",
+    folder_base: str = "",
+) -> str:
     """Mac steps for the n8n form, which has no progress job."""
-    destination = run_copy(clip, name, card_id, env={"KEY_PROVIDER": key_provider or "byebg"})
+    destination = run_copy(
+        clip,
+        name,
+        card_id,
+        env={"KEY_PROVIDER": key_provider or "byebg"},
+        folder_base=folder_base,
+    )
     launch_after_effects(destination)
     return f"{RESULT_LINE} {destination}"
 
 
-def run_influencer_n8n(*, clip: Path, name: str, card_id: str, job_id: str, progress_token: str) -> str:
+def run_influencer_n8n(
+    *,
+    clip: Path,
+    name: str,
+    card_id: str,
+    job_id: str,
+    progress_token: str,
+    folder_base: str = "",
+) -> str:
     """Ask n8n to run the influencer steps and wait while it reports each line."""
     event = begin_wait(job_id)
     url = os.environ.get("N8N_INFLUENCER_WEBHOOK_URL", WEBHOOK_URL).strip() or WEBHOOK_URL
@@ -389,6 +428,7 @@ def run_influencer_n8n(*, clip: Path, name: str, card_id: str, job_id: str, prog
         "clip": str(clip),
         "progressUrl": progress_url_for(job_id),
         "progressToken": progress_token,
+        "folderBase": folder_base,
     }
     print("n8n: workflow started. Live lines show here while it runs.")
     try:

@@ -202,6 +202,26 @@ def running_theme_ids(db: Session, now: datetime | None = None) -> set[str] | No
     return set(theme_ids)
 
 
+def running_season_acronym(db: Session, now: datetime | None = None) -> str:
+    """Two-letter acronym of the season running at `now`.
+
+    Create with n8n captures this when the job is queued so pack folders stay
+    tied to the season that was active at click time.
+    """
+    ensure_default_theme_session(db)
+    moment = now or utcnow()
+    rows = list(db.scalars(select(ThemeSession)).all())
+    themes = _memberships(db)
+    running = _running_row(rows, moment, themes)
+    acronym = (running.acronym or "").strip().upper()
+    if not ACRONYM_PATTERN.match(acronym):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Running season “{running.label}” needs a 2-letter acronym",
+        )
+    return acronym
+
+
 def _require(db: Session, session_id: str) -> ThemeSession:
     ensure_default_theme_session(db)
     slug = safe_session_id(session_id)

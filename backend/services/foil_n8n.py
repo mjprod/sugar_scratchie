@@ -337,6 +337,7 @@ def start_foil_flow(
     kind: str,
     model_id: str,
     start: float,
+    folder_base: str = "",
 ) -> str:
     """Start the foil workflow and wait while it posts each line back."""
     from backend.services.influencer_n8n import (
@@ -359,6 +360,7 @@ def start_foil_flow(
         "duration": f"{FOIL_TRIM_SECONDS:.0f}",
         "progressUrl": progress_url_for(job_id),
         "progressToken": progress_token,
+        "folderBase": folder_base,
     }
     print(f"Starting the n8n foil flow for {name} / {code}")
     timeout_cfg = httpx.Timeout(60.0, connect=30.0)
@@ -400,6 +402,7 @@ def run_foil_pack_n8n(
     code: str,
     job_id: str,
     progress_token: str,
+    folder_base: str = "",
 ) -> str:
     """Trim the clip, then run the foil workflow with the name and the code."""
     del models_dir
@@ -415,6 +418,7 @@ def run_foil_pack_n8n(
             kind=kind,
             model_id=model_id,
             start=start,
+            folder_base=folder_base,
         )
     finally:
         source.unlink(missing_ok=True)

@@ -1,14 +1,16 @@
 """List, delete, and apply After Effects foil packages for one model.
 
 Create with n8n writes a folder under PackageMaker/jobs named
-``SS-{model id} {name}``, then ``SS-{model id} {name} 2``, and so on.
-Those folders are not tied to foil 1 or foil 2 until an operator picks one.
+``{initials}-{season}-{n}`` (for example ``GP-SN-1``). Older folders still use
+``SS-{model id} {name}``. Those folders are not tied to foil 1 or foil 2 until
+an operator picks one.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -28,6 +30,7 @@ REPORT_NAME = "ae-relink-report.json"
 AERENDER = Path("/Applications/Adobe After Effects 2026/aerender")
 # Card output is this 60fps comp. MainComp is the design comp nested inside it.
 COMP_NAME = "--Exporter60fps"
+FOLDER_BASE_PATTERN = re.compile(r"^[A-Z]{1,12}-[A-Z]{2}$")
 
 
 def jobs_dir() -> Path | None:
@@ -43,6 +46,30 @@ def folder_prefix(model_id: str) -> str:
     return f"SS-{model_id} "
 
 
+def influencer_initials(name: str) -> str:
+    """First letter of each word in the influencer name, uppercased."""
+    letters: list[str] = []
+    for word in name.split():
+        for char in word:
+            if char.isalpha():
+                letters.append(char.upper())
+                break
+    if not letters:
+        raise HTTPException(status_code=400, detail="Name needs at least one letter for initials")
+    return "".join(letters)
+
+
+def pack_folder_base(name: str, season_acronym: str) -> str:
+    """Build ``GP-SN`` from the influencer name and the running season acronym."""
+    acronym = re.sub(r"[^A-Za-z]", "", (season_acronym or "").strip()).upper()
+    if len(acronym) != 2:
+        raise HTTPException(status_code=400, detail="Season acronym must be 2 letters")
+    base = f"{influencer_initials(name)}-{acronym}"
+    if not FOLDER_BASE_PATTERN.match(base):
+        raise HTTPException(status_code=400, detail="Package folder base is not valid")
+    return base
+
+
 def _safe_name(name: str) -> str:
     text = name.strip()
     if (
@@ -56,6 +83,25 @@ def _safe_name(name: str) -> str:
     return text
 
 
+def _read_report(folder: Path) -> dict:
+    path = folder / REPORT_NAME
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def package_belongs_to_model(folder: Path, model_id: str) -> bool:
+    """True for legacy ``SS-{id} …`` folders or new folders whose report id matches."""
+    if folder.name.startswith(folder_prefix(model_id)):
+        return True
+    report_id = str(_read_report(folder).get("id") or "").strip()
+    return bool(report_id) and report_id == model_id
+
+
 def resolve_package(model_id: str, name: str) -> Path:
     """Return the job folder only when it is a direct child of the jobs directory."""
     folder_name = _safe_name(name)
@@ -63,9 +109,9 @@ def resolve_package(model_id: str, name: str) -> Path:
     dest = (root / folder_name).resolve()
     if dest.parent != root:
         raise HTTPException(status_code=400, detail="Package name is not valid")
-    if not folder_name.startswith(folder_prefix(model_id)):
-        raise HTTPException(status_code=404, detail="Package was not found")
     if not dest.is_dir():
+        raise HTTPException(status_code=404, detail="Package was not found")
+    if not package_belongs_to_model(dest, model_id):
         raise HTTPException(status_code=404, detail="Package was not found")
     return dest
 
@@ -83,16 +129,7 @@ def _read_result(folder: Path) -> str:
 
 
 def _read_kind(folder: Path) -> str:
-    path = folder / REPORT_NAME
-    if not path.is_file():
-        return ""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    kind = str(payload.get("kind") or "")
+    kind = str(_read_report(folder).get("kind") or "")
     return kind if kind in FOIL_KINDS else ""
 
 
@@ -100,7 +137,6 @@ def list_packages(model_id: str) -> list[dict]:
     root = jobs_dir()
     if root is None or not root.is_dir():
         return []
-    prefix = folder_prefix(model_id)
     resolved_root = root.resolve()
     rows: list[dict] = []
     try:
@@ -108,13 +144,15 @@ def list_packages(model_id: str) -> list[dict]:
     except OSError:
         return []
     for child in children:
-        if not child.is_dir() or not child.name.startswith(prefix):
+        if not child.is_dir():
             continue
         try:
             resolved = child.resolve()
         except OSError:
             continue
         if resolved.parent != resolved_root:
+            continue
+        if not package_belongs_to_model(child, model_id):
             continue
         modified = child.stat().st_mtime
         result = _read_result(child)

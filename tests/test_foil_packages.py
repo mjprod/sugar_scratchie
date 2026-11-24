@@ -10,7 +10,9 @@ from fastapi import HTTPException
 from backend.services.foil_packages import (
     apply_package,
     delete_package,
+    influencer_initials,
     list_packages,
+    pack_folder_base,
     render_main_comp,
     resolve_package,
 )
@@ -25,7 +27,16 @@ def _jobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def _package(root: Path, name: str, *, kind: str = "", saved: bool = True) -> Path:
+def _package(
+    root: Path,
+    name: str,
+    *,
+    kind: str = "",
+    saved: bool = True,
+    report_id: str = "ada",
+    report_name: str = "Ada",
+    write_report: bool | None = None,
+) -> Path:
     folder = root / name
     folder.mkdir()
     (folder / "ss-Influencer.aep").write_bytes(b"aep")
@@ -34,12 +45,28 @@ def _package(root: Path, name: str, *, kind: str = "", saved: bool = True) -> Pa
             "Saved Ada (ada). Relinked 6. Fitted the video inside the frame.\n",
             encoding="utf-8",
         )
-    if kind:
-        (folder / "ae-relink-report.json").write_text(
-            json.dumps({"name": "Ada", "id": "ada", "kind": kind}),
-            encoding="utf-8",
-        )
+    should_write = write_report if write_report is not None else bool(kind or report_id)
+    if should_write:
+        payload = {"name": report_name, "id": report_id}
+        if kind:
+            payload["kind"] = kind
+        (folder / "ae-relink-report.json").write_text(json.dumps(payload), encoding="utf-8")
     return folder
+
+
+def test_pack_folder_base_uses_initials_and_season():
+    assert influencer_initials("Glauco Pereira") == "GP"
+    assert influencer_initials("Ada") == "A"
+    assert pack_folder_base("Glauco Pereira", "SN") == "GP-SN"
+    assert pack_folder_base("  ada  vale  ", "df") == "AV-DF"
+
+    with pytest.raises(HTTPException) as bad_season:
+        pack_folder_base("Ada", "S")
+    assert bad_season.value.status_code == 400
+
+    with pytest.raises(HTTPException) as bad_name:
+        influencer_initials("123")
+    assert bad_name.value.status_code == 400
 
 
 def test_list_packages_is_empty_when_jobs_path_is_unset(monkeypatch: pytest.MonkeyPatch):
@@ -50,34 +77,46 @@ def test_list_packages_is_empty_when_jobs_path_is_unset(monkeypatch: pytest.Monk
 
 def test_list_packages_keeps_only_this_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = _jobs(tmp_path, monkeypatch)
-    older = _package(root, "SS-ada Ada", kind="pack-face")
-    newer = _package(root, "SS-ada Ada 2")
+    older = _package(root, "SS-ada Ada", kind="pack-face", write_report=True)
+    newer = _package(root, "SS-ada Ada 2", write_report=False)
+    numbered = _package(root, "GP-SN-1", kind="pack-face-2", report_id="ada")
     os.utime(older, (1_700_000_000, 1_700_000_000))
     os.utime(newer, (1_700_000_100, 1_700_000_100))
-    _package(root, "SS-ada2 Ada")
-    _package(root, "SS-other Ada")
+    os.utime(numbered, (1_700_000_200, 1_700_000_200))
+    _package(root, "SS-ada2 Ada", write_report=False)
+    _package(root, "SS-other Ada", write_report=False)
+    _package(root, "GP-SN-2", report_id="other", kind="pack-face")
     outside = tmp_path / "outside"
     outside.mkdir()
     (root / "SS-ada escape").symlink_to(outside, target_is_directory=True)
 
     names = [row["name"] for row in list_packages("ada")]
 
-    assert names == ["SS-ada Ada 2", "SS-ada Ada"]
-    first = list_packages("ada")[1]
+    assert names == ["GP-SN-1", "SS-ada Ada 2", "SS-ada Ada"]
+    first = list_packages("ada")[2]
     assert first["saved"] is True
     assert first["kind"] == "pack-face"
     assert first["hasProject"] is True
+    assert list_packages("ada")[0]["kind"] == "pack-face-2"
 
 
 def test_resolve_package_rejects_paths_outside_the_jobs_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     root = _jobs(tmp_path, monkeypatch)
-    _package(root, "SS-ada Ada")
+    _package(root, "SS-ada Ada", write_report=False)
+    _package(root, "GP-SN-1", report_id="ada")
+    _package(root, "GP-SN-9", report_id="other")
 
     with pytest.raises(HTTPException) as missing:
         resolve_package("ada", "SS-other Ada")
     assert missing.value.status_code == 404
+
+    with pytest.raises(HTTPException) as wrong_report:
+        resolve_package("ada", "GP-SN-9")
+    assert wrong_report.value.status_code == 404
+
+    assert resolve_package("ada", "GP-SN-1").name == "GP-SN-1"
 
     with pytest.raises(HTTPException) as slashed:
         resolve_package("ada", "SS-ada Ada/../../etc")
