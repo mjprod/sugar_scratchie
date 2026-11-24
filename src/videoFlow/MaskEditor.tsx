@@ -1,6 +1,12 @@
 import { Play, Square } from "lucide-react";
 import { Badge, Box, Button, Flex, Grid, Heading, Separator, Text } from "@radix-ui/themes";
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { api } from "../shared/api";
 import { Field, iconProps, previewSource } from "./ui";
 
@@ -127,9 +133,20 @@ export type MaskEditorProps = {
   onError: (message: string) => void;
   onSaved?: () => void;
   title?: string;
+  /** Stage-only (no left chrome) for Leo Adjust Mask overlay. */
+  embedded?: boolean;
 };
 
-export function MaskEditor({
+export type MaskEditorHandle = {
+  setBrushMode: (mode: "add" | "erase") => void;
+  setBrushRadius: (radius: number) => void;
+  getBrush: () => { mode: "add" | "erase"; radius: number };
+  /** Resolves true when the garment mask was written. */
+  save: () => Promise<boolean>;
+};
+
+export const MaskEditor = forwardRef<MaskEditorHandle, MaskEditorProps>(function MaskEditor(
+  {
   meshFile,
   meshSavePath,
   videoSrc = "",
@@ -138,7 +155,10 @@ export function MaskEditor({
   onError,
   onSaved,
   title = "Mask Editor",
-}: MaskEditorProps) {
+  embedded = false,
+}: MaskEditorProps,
+  ref,
+) {
   const stillMode = Boolean(imageSrc.trim());
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -563,7 +583,7 @@ export function MaskEditor({
   async function save() {
     const garment = garmentRef.current;
     const savePath = meshSavePath ?? meshFile;
-    if (!garment || !savePath) return;
+    if (!garment || !savePath) return false;
     setSaving(true);
     setSaveMsg("");
     onError("");
@@ -575,10 +595,12 @@ export function MaskEditor({
       setDirty(false);
       setSaveMsg(`Saved ${result.sum}/${result.total} scratchable cells.`);
       onSaved?.();
+      return true;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setSaveMsg("");
       onError(message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -727,7 +749,94 @@ export function MaskEditor({
     setBrushMode(mode);
   }
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      setBrushMode: selectBrushMode,
+      setBrushRadius: (radius: number) => {
+        const next = Math.min(
+          BRUSH_RADIUS_MAX,
+          Math.max(BRUSH_RADIUS_MIN, Math.round(radius)),
+        );
+        brushRef.current.radius = next;
+        setBrushRadius(next);
+      },
+      getBrush: () => ({
+        mode: brushRef.current.mode,
+        radius: brushRef.current.radius,
+      }),
+      save: () => save(),
+    }),
+    [],
+  );
+
   const coveragePct = coverage.total > 0 ? Math.round((coverage.on / coverage.total) * 100) : 0;
+
+  const stage = (
+        <Box
+          className="mask-editor-stage"
+          ref={stageRef}
+          onPointerMove={(event) => {
+            zoomPointerRef.current = { x: event.clientX, y: event.clientY };
+          }}
+        >
+          <div className="mask-editor-zoom" style={{ width: `${viewZoom * 100}%` }}>
+            {stillMode ? (
+              <img
+                ref={imageRef}
+                alt="Photo scratch layer"
+                className="mask-editor-video"
+                src={imageSrc}
+              />
+            ) : (
+              <video
+                autoPlay
+                className="mask-editor-video"
+                loop
+                muted
+                playsInline
+                preload="auto"
+                ref={videoRef}
+                src={videoSrc}
+                onPause={() => setPlaying(false)}
+                onPlay={() => setPlaying(true)}
+              />
+            )}
+            <canvas
+              ref={canvasRef}
+              className="mask-editor-canvas"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                drawingRef.current = true;
+                paintAt(event.clientX, event.clientY);
+              }}
+              onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
+              onPointerUp={() => {
+                drawingRef.current = false;
+                recomputeCoverage();
+              }}
+              onPointerLeave={() => {
+                drawingRef.current = false;
+                cursorRef.current = null;
+                recomputeCoverage();
+              }}
+            />
+          </div>
+        </Box>
+  );
+
+  if (embedded) {
+    return (
+      <div className="mask-editor-embedded" ref={rootRef}>
+        {stage}
+        {loadError ? (
+          <Text as="div" color="orange" size="1" weight="medium">
+            {loadError}
+          </Text>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <Grid ref={rootRef} columns={{ initial: "1", md: "2" }} gap="5">
@@ -900,56 +1009,7 @@ export function MaskEditor({
           </Flex>
         </Flex>
         <Separator size="4" />
-        <Box
-          className="mask-editor-stage"
-          ref={stageRef}
-          onPointerMove={(event) => {
-            zoomPointerRef.current = { x: event.clientX, y: event.clientY };
-          }}
-        >
-          <div className="mask-editor-zoom" style={{ width: `${viewZoom * 100}%` }}>
-            {stillMode ? (
-              <img
-                ref={imageRef}
-                alt="Photo scratch layer"
-                className="mask-editor-video"
-                src={imageSrc}
-              />
-            ) : (
-              <video
-                autoPlay
-                className="mask-editor-video"
-                loop
-                muted
-                playsInline
-                preload="auto"
-                ref={videoRef}
-                src={videoSrc}
-                onPause={() => setPlaying(false)}
-                onPlay={() => setPlaying(true)}
-              />
-            )}
-            <canvas
-              ref={canvasRef}
-              className="mask-editor-canvas"
-              onPointerDown={(event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                drawingRef.current = true;
-                paintAt(event.clientX, event.clientY);
-              }}
-              onPointerMove={(event) => paintAt(event.clientX, event.clientY)}
-              onPointerUp={() => {
-                drawingRef.current = false;
-                recomputeCoverage();
-              }}
-              onPointerLeave={() => {
-                drawingRef.current = false;
-                cursorRef.current = null;
-                recomputeCoverage();
-              }}
-            />
-          </div>
-        </Box>
+        {stage}
         {stillMode ? null : (
           <Flex align="center" className="mask-editor-seek" gap="2">
             <input
@@ -985,4 +1045,4 @@ export function MaskEditor({
       </Flex>
     </Grid>
   );
-}
+});

@@ -21,8 +21,20 @@ import { previewSource } from "../videoFlow/ui";
 import chevronUrl from "./assets/icon-chevron.svg";
 import searchUrl from "./assets/icon-search.svg";
 import logoUrl from "./assets/logo-sugar-scratch.svg";
+import symbolsChevronUrl from "./assets/symbols-tools/chevron.svg";
+import symbolsClearUrl from "./assets/symbols-tools/clear.svg";
+import symbolsDiceUrl from "./assets/symbols-tools/dice.svg";
+import symbolsHideMeshUrl from "./assets/symbols-tools/hide-mesh.svg";
+import symbolsHidePointsUrl from "./assets/symbols-tools/hide-points.svg";
+import symbolsUndoUrl from "./assets/symbols-tools/undo.svg";
+import maskSaveUrl from "./assets/mask-edit/save.svg";
+import { LeoFaceCropDialog } from "./LeoFaceCropDialog";
+import { LeoMaskEditOverlay } from "./LeoMaskEditOverlay";
 import { finishAndPublishCard } from "./finishPublish";
 import "./leo-ui.css";
+
+const SYMBOLS_SAVE_CHECK_MS = 2000;
+const SYMBOLS_SAVE_SLOT_PX = 16;
 
 const LeoTryMotionGame = lazy(() =>
   import("./LeoTryMotionGame").then((m) => ({ default: m.LeoTryMotionGame })),
@@ -130,16 +142,13 @@ const PROCESSING_BLUR_DURATION = 0.4;
 const PROCESSING_HANGER_LOTTIE = "/leo-ui/lottieClothesHanger.lottie";
 const ANIMATING_VIDEO_LOTTIE = "/leo-ui/lottieMakeVideo.lottie";
 const MESHING_LOTTIE = "/leo-ui/lottieMeshLoad.lottie";
-/** Game Created → try-motion: preview blur while the game stage scales up. */
-const TRY_MOTION_PREVIEW_BLUR = "blur(14px) brightness(0.72)";
-const TRY_MOTION_SCALE_DURATION = 0.55;
+/** Game Created ↔ try-motion: preview out, then game in (and reverse on close). */
+const TRY_MOTION_PREVIEW_OUT = 0.34;
+const TRY_MOTION_PREVIEW_IN = 0.38;
+const TRY_MOTION_STAGE_IN = 0.48;
+const TRY_MOTION_STAGE_OUT = 0.36;
 /** Max wait for scratch videos before revealing anyway. */
 const TRY_MOTION_READY_FALLBACK_MS = 6000;
-
-/** Uniform scale so a full-bleed stage matches the preview width (center origin). */
-function tryMotionScaleFromPreview(from: DOMRect, to: DOMRect): number {
-  return Math.min(1, from.width / Math.max(to.width, 1));
-}
 /** Stand-in processed still when the picture step has no artifacts yet (layout / morph testing). */
 const PLACEHOLDER_PROCESSED = "/leo-ui/placeholder-processed.png";
 /** Stand-in clip on Animating / Animated when background artifacts are missing. */
@@ -320,8 +329,22 @@ export function LeoUiPage() {
   const meshingPreviewRef = useRef<HTMLDivElement | null>(null);
   /** Adjust Mask hero — video fly docks here from meshing. */
   const maskHeroRef = useRef<HTMLDivElement | null>(null);
+  const [maskEditOpen, setMaskEditOpen] = useState(false);
+  const [maskEditFrom, setMaskEditFrom] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
   /** Place Symbols hero — video fly docks here from mask. */
   const symbolsHeroRef = useRef<HTMLDivElement | null>(null);
+  const symbolsSaveReelRef = useRef<HTMLSpanElement | null>(null);
+  const symbolsSaveSlotRef = useRef(0);
+  const symbolsSaveTimerRef = useRef(0);
+  const [symbolsToolsOpen, setSymbolsToolsOpen] = useState(false);
+  const [symbolsShowMesh, setSymbolsShowMesh] = useState(true);
+  const [symbolsShowPoints, setSymbolsShowPoints] = useState(true);
+  const [symbolsSaveOk, setSymbolsSaveOk] = useState(false);
   /** Game Created preview — video fly docks here from symbols (centered). */
   const createdPreviewRef = useRef<HTMLButtonElement | null>(null);
   /** Full-viewport try-motion dialog (Figma Step08 / 391:2643). */
@@ -369,6 +392,7 @@ export function LeoUiPage() {
   const outfitUploadBtnRef = useRef<HTMLButtonElement | null>(null);
   const outfitThumbRef = useRef<HTMLButtonElement | null>(null);
   const outfitClearRef = useRef<HTMLButtonElement | null>(null);
+  const outfitSlotRef = useRef<HTMLDivElement | null>(null);
   const outfitOnScreenRef = useRef("");
   const outfitReadyRef = useRef(false);
   /** Extra picture direction from Confirm → Change Prompt dialog. */
@@ -376,6 +400,8 @@ export function LeoUiPage() {
   const [promptDraft, setPromptDraft] = useState("");
   const promptDialogRef = useRef<HTMLDialogElement | null>(null);
   const promptDialogBusyRef = useRef(false);
+  const bikiniGalleryRef = useRef<HTMLDialogElement | null>(null);
+  const bikiniGalleryBusyRef = useRef(false);
 
   const [screen, setScreen] = useState<LeoScreen>("influencer");
   const [viewScreen, setViewScreen] = useState<LeoScreen>("influencer");
@@ -399,6 +425,10 @@ export function LeoUiPage() {
   const [face, setFace] = useState("");
   /** Keeps the face thumb mounted while exit scales it out. */
   const [facePanelSrc, setFacePanelSrc] = useState("");
+  /** Local object URL + name while the square face crop dialog is open. */
+  const [faceCrop, setFaceCrop] = useState<{ src: string; name: string } | null>(
+    null,
+  );
   const faceBtnRef = useRef<HTMLButtonElement | null>(null);
   const faceThumbRef = useRef<HTMLButtonElement | null>(null);
   const faceClearRef = useRef<HTMLButtonElement | null>(null);
@@ -424,6 +454,7 @@ export function LeoUiPage() {
     | "to-dressed"
     | "to-meshing"
     | "to-mask"
+    | "to-mask-back"
     | "to-symbols"
     | "to-created"
     | null
@@ -500,7 +531,7 @@ export function LeoUiPage() {
             : viewScreen === "mask"
               ? "Use This Mask"
               : viewScreen === "symbols"
-                ? "Done"
+                ? "Create Game"
                 : viewScreen === "created"
                   ? "Try Motion Card"
                   : "Next";
@@ -2889,6 +2920,21 @@ export function LeoUiPage() {
           placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
           if (hero) gsap.set(hero, { opacity: 0 });
         }
+      } else if (viewScreen === "symbols" && screen === "mask") {
+        // Back: centered Place Symbols hero flies into Adjust Mask (left column).
+        const hero = symbolsHeroRef.current;
+        const video = hero?.querySelector("video");
+        const box = hero?.getBoundingClientRect();
+        const src =
+          video?.getAttribute("src") ||
+          video?.currentSrc ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-mask-back";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
       } else if (viewScreen === "symbols" && screen === "created") {
         // Place Symbols hero morphs into the centered Game Created preview.
         const hero = symbolsHeroRef.current;
@@ -2987,6 +3033,7 @@ export function LeoUiPage() {
       const photoToDressed = travel === "to-dressed" && Boolean(photoFrom);
       const photoToMeshing = travel === "to-meshing" && Boolean(photoFrom);
       const photoToMask = travel === "to-mask" && Boolean(photoFrom);
+      const photoToMaskBack = travel === "to-mask-back" && Boolean(photoFrom);
       const photoToSymbols = travel === "to-symbols" && Boolean(photoFrom);
       const photoToCreated = travel === "to-created" && Boolean(photoFrom);
       const flipping =
@@ -3003,6 +3050,7 @@ export function LeoUiPage() {
         photoToDressed ||
         photoToMeshing ||
         photoToMask ||
+        photoToMaskBack ||
         photoToSymbols ||
         photoToCreated;
 
@@ -3039,6 +3087,9 @@ export function LeoUiPage() {
         settleFlyIntoMeshing();
       } else if (photoToMask) {
         settleFlyIntoMask();
+      } else if (photoToMaskBack) {
+        // Clear clip — same settle as Outfit/Symbols hero landings (no meshing blur).
+        settleFlyIntoHero(maskHeroRef.current);
       } else if (photoToSymbols) {
         settleFlyIntoSymbols();
       } else if (photoToCreated) {
@@ -3519,8 +3570,24 @@ export function LeoUiPage() {
     { dependencies: [nextLabel, showNextCheck], scope: rootRef },
   );
 
+  function closeFaceCrop() {
+    setFaceCrop((prev) => {
+      if (prev?.src.startsWith("blob:")) URL.revokeObjectURL(prev.src);
+      return null;
+    });
+  }
+
   async function handleUpload(file: File | undefined) {
     if (!file) return;
+    // Face uploads go through a square crop before hitting the API.
+    if (uploadTargetRef.current === "face") {
+      setError("");
+      setFaceCrop((prev) => {
+        if (prev?.src.startsWith("blob:")) URL.revokeObjectURL(prev.src);
+        return { src: URL.createObjectURL(file), name: file.name };
+      });
+      return;
+    }
     setUploading(true);
     setError("");
     try {
@@ -3528,7 +3595,6 @@ export function LeoUiPage() {
       const target = uploadTargetRef.current;
       if (target === "photo") setImage(uploaded.path);
       if (target === "bikini") setBikini(uploaded.path);
-      if (target === "face") setFace(uploaded.path);
       if (target === "confirm") {
         setConfirmUploadExitSrc("");
         setConfirmOverride(uploaded.path);
@@ -3537,6 +3603,20 @@ export function LeoUiPage() {
         setOutfitOverride(uploaded.path);
         setOutfitPanelSrc(uploaded.path);
       }
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function confirmFaceCrop(file: File) {
+    closeFaceCrop();
+    setUploading(true);
+    setError("");
+    try {
+      const uploaded = await uploadFile(file);
+      setFace(uploaded.path);
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -3773,17 +3853,76 @@ export function LeoUiPage() {
     );
   }
 
+  function clearSymbolsSaveTimer() {
+    if (symbolsSaveTimerRef.current) {
+      window.clearTimeout(symbolsSaveTimerRef.current);
+      symbolsSaveTimerRef.current = 0;
+    }
+  }
+
+  function setSymbolsSaveReelSlot(
+    slot: number,
+    animate: boolean,
+    onDone?: () => void,
+  ) {
+    const reel = symbolsSaveReelRef.current;
+    if (!reel) {
+      onDone?.();
+      return;
+    }
+    gsap.killTweensOf(reel);
+    const y = -slot * SYMBOLS_SAVE_SLOT_PX;
+    if (!animate || preferReducedMotion()) {
+      gsap.set(reel, { y });
+      symbolsSaveSlotRef.current = slot === 2 ? 0 : slot;
+      onDone?.();
+      return;
+    }
+    gsap.to(reel, {
+      y,
+      duration: 0.34,
+      ease: "power2.inOut",
+      onComplete: () => {
+        if (slot === 2) {
+          gsap.set(reel, { y: 0 });
+          symbolsSaveSlotRef.current = 0;
+        } else {
+          symbolsSaveSlotRef.current = slot;
+        }
+        onDone?.();
+      },
+    });
+  }
+
+  function ackSymbolsSave() {
+    clearSymbolsSaveTimer();
+    setSymbolsSaveOk(true);
+    setSymbolsSaveReelSlot(1, true);
+    symbolsSaveTimerRef.current = window.setTimeout(() => {
+      symbolsSaveTimerRef.current = 0;
+      setSymbolsSaveReelSlot(2, true, () => setSymbolsSaveOk(false));
+    }, SYMBOLS_SAVE_CHECK_MS);
+  }
+
+  useEffect(() => () => clearSymbolsSaveTimer(), []);
+
   function createdPreviewMedia(): HTMLElement | null {
     return (
       createdPreviewRef.current?.querySelector<HTMLElement>("video, img") ?? null
     );
   }
 
-  function clearCreatedPreviewBlur() {
+  function resetCreatedPreview() {
+    const preview = createdPreviewRef.current;
+    if (preview) {
+      gsap.killTweensOf(preview);
+      gsap.set(preview, { clearProps: "transform,opacity,filter" });
+    }
     const media = createdPreviewMedia();
-    if (!media) return;
-    gsap.killTweensOf(media);
-    gsap.set(media, { clearProps: "filter" });
+    if (media) {
+      gsap.killTweensOf(media);
+      gsap.set(media, { clearProps: "filter,opacity,transform" });
+    }
   }
 
   function finishTryMotionOpen() {
@@ -3794,7 +3933,6 @@ export function LeoUiPage() {
     }
     const stage = tryMotionStageRef.current;
     const cover = tryMotionCoverRef.current;
-    // Drop filter containing-block + hide cover so scratch / X / check receive hits.
     if (stage) {
       gsap.set(stage, {
         clearProps: "transform,transformOrigin,borderRadius,filter",
@@ -3815,7 +3953,7 @@ export function LeoUiPage() {
       ?.focus();
   }
 
-  /** Scale + unblur once the scratch card videos are decode-ready. */
+  /** After Game Created preview is gone — fade/scale the scratch stage in. */
   function revealTryMotion() {
     if (!tryMotionAwaitingReadyRef.current) return;
     tryMotionAwaitingReadyRef.current = false;
@@ -3833,42 +3971,53 @@ export function LeoUiPage() {
 
     tryMotionBusyRef.current = true;
     const reduce = preferReducedMotion();
-    const from = tryMotionFromRectRef.current;
     const targets = [stage, cover].filter(Boolean) as HTMLElement[];
     gsap.killTweensOf(targets);
 
-    if (reduce || !from) {
+    if (reduce) {
       finishTryMotionOpen();
       return;
     }
 
+    gsap.set(stage, {
+      opacity: 0,
+      scale: 0.92,
+      transformOrigin: "50% 50%",
+      borderRadius: 0,
+      filter: "none",
+    });
+    if (cover) {
+      gsap.set(cover, {
+        opacity: 1,
+        visibility: "visible",
+        pointerEvents: "auto",
+      });
+    }
+
     const tl = gsap.timeline({
-      defaults: { ease: "power2.inOut" },
+      defaults: { ease: "power2.out" },
       onComplete: finishTryMotionOpen,
     });
     tl.to(
       stage,
       {
+        opacity: 1,
         scale: 1,
-        borderRadius: 0,
-        filter: "blur(0px) brightness(1)",
-        duration: TRY_MOTION_SCALE_DURATION,
+        duration: TRY_MOTION_STAGE_IN,
       },
       0,
     );
     if (cover) {
-      // opacity alone leaves an invisible hit-target if pointer-events stayed auto.
       tl.to(
         cover,
         {
           opacity: 0,
-          duration: 0.35,
-          ease: "power2.out",
+          duration: 0.32,
           onComplete: () => {
             gsap.set(cover, { pointerEvents: "none", visibility: "hidden" });
           },
         },
-        TRY_MOTION_SCALE_DURATION * 0.25,
+        0.08,
       );
     }
   }
@@ -3882,74 +4031,62 @@ export function LeoUiPage() {
     if (dialog.open) return;
     setError("");
 
-    const previewMedia = createdPreviewMedia();
     const from = preview?.getBoundingClientRect() ?? null;
     const reduce = preferReducedMotion();
     tryMotionFromRectRef.current = from;
+    tryMotionBusyRef.current = true;
 
-    // Blur the Game Created preview while the try stage loads behind it.
-    if (previewMedia) {
-      gsap.killTweensOf(previewMedia);
-      if (reduce) {
-        gsap.set(previewMedia, { filter: TRY_MOTION_PREVIEW_BLUR });
-      } else {
-        gsap.to(previewMedia, {
-          filter: TRY_MOTION_PREVIEW_BLUR,
-          duration: 0.28,
-          ease: "power2.out",
-        });
-      }
-    }
+    const startDialog = () => {
+      tryMotionUrlRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      setTryMotionOpen(true);
+      dialog.showModal();
+      dialog.classList.add("is-open");
+      // Allow X while videos load.
+      tryMotionBusyRef.current = false;
+      tryMotionAwaitingReadyRef.current = true;
 
-    tryMotionUrlRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    setTryMotionOpen(true);
-    dialog.showModal();
-    dialog.classList.add("is-open");
-    // Not busy while waiting for videos — X can still dismiss.
-    tryMotionBusyRef.current = false;
-    tryMotionAwaitingReadyRef.current = true;
-
-    const parkAtPreview = () => {
-      // Cover blocks the loading game; must be cleared in finishTryMotionOpen.
+      gsap.killTweensOf([stage, cover].filter(Boolean));
+      // Park invisible — revealTryMotion fades the game in once ready.
+      gsap.set(stage, {
+        opacity: 0,
+        scale: 0.92,
+        transformOrigin: "50% 50%",
+        borderRadius: 0,
+        filter: "none",
+      });
       if (cover) {
         gsap.set(cover, {
           opacity: 1,
           visibility: "visible",
           pointerEvents: "auto",
         });
+        cover.removeAttribute("aria-hidden");
       }
 
-      if (!from || reduce) {
-        gsap.set(stage, {
-          clearProps: "transform,transformOrigin,borderRadius,filter",
-          opacity: 1,
-        });
-        return;
+      if (tryMotionReadyFallbackRef.current) {
+        window.clearTimeout(tryMotionReadyFallbackRef.current);
       }
-
-      // Park scaled + blurred until videos ready — then revealTryMotion() runs.
-      const to = stage.getBoundingClientRect();
-      const scale = tryMotionScaleFromPreview(from, to);
-      gsap.killTweensOf(stage);
-      gsap.set(stage, {
-        opacity: 1,
-        transformOrigin: "50% 50%",
-        x: 0,
-        y: 0,
-        scale,
-        borderRadius: 11,
-        filter: TRY_MOTION_PREVIEW_BLUR,
-      });
+      tryMotionReadyFallbackRef.current = window.setTimeout(() => {
+        revealTryMotion();
+      }, TRY_MOTION_READY_FALLBACK_MS);
     };
 
-    requestAnimationFrame(parkAtPreview);
-
-    if (tryMotionReadyFallbackRef.current) {
-      window.clearTimeout(tryMotionReadyFallbackRef.current);
+    // 1) Game Created clip scales down + fades out, then 2) dialog opens.
+    if (!preview || reduce) {
+      if (preview) gsap.set(preview, { opacity: 0, scale: 0.86 });
+      startDialog();
+      return;
     }
-    tryMotionReadyFallbackRef.current = window.setTimeout(() => {
-      revealTryMotion();
-    }, TRY_MOTION_READY_FALLBACK_MS);
+
+    gsap.killTweensOf(preview);
+    gsap.set(preview, { transformOrigin: "50% 50%" });
+    gsap.to(preview, {
+      opacity: 0,
+      scale: 0.86,
+      duration: TRY_MOTION_PREVIEW_OUT,
+      ease: "power2.in",
+      onComplete: startDialog,
+    });
   }
 
   function closeTryMotion(options?: {
@@ -3968,7 +4105,6 @@ export function LeoUiPage() {
     if (tryMotionBusyRef.current && !tryMotionAwaitingReadyRef.current) return;
 
     const reduce = preferReducedMotion();
-    const from = preview?.getBoundingClientRect() ?? tryMotionFromRectRef.current;
     const restoreUrl = options?.restoreUrl !== false;
     tryMotionBusyRef.current = true;
     tryMotionAwaitingReadyRef.current = false;
@@ -3976,6 +4112,34 @@ export function LeoUiPage() {
       window.clearTimeout(tryMotionReadyFallbackRef.current);
       tryMotionReadyFallbackRef.current = 0;
     }
+
+    const restorePreview = () => {
+      if (!preview || reduce) {
+        resetCreatedPreview();
+        tryMotionBusyRef.current = false;
+        if (!options?.onClosed) nextBtnRef.current?.focus();
+        options?.onClosed?.();
+        return;
+      }
+      gsap.killTweensOf(preview);
+      gsap.set(preview, {
+        opacity: 0,
+        scale: 0.86,
+        transformOrigin: "50% 50%",
+      });
+      gsap.to(preview, {
+        opacity: 1,
+        scale: 1,
+        duration: TRY_MOTION_PREVIEW_IN,
+        ease: "power2.out",
+        onComplete: () => {
+          gsap.set(preview, { clearProps: "transform,opacity" });
+          tryMotionBusyRef.current = false;
+          if (!options?.onClosed) nextBtnRef.current?.focus();
+          options?.onClosed?.();
+        },
+      });
+    };
 
     const finishClose = () => {
       dialog.classList.remove("is-open");
@@ -3993,47 +4157,44 @@ export function LeoUiPage() {
       }
       tryMotionUrlRef.current = "";
       tryMotionFromRectRef.current = null;
-      gsap.set(stage, {
-        clearProps: "transform,transformOrigin,borderRadius,filter,opacity",
-      });
+      if (stage) {
+        gsap.set(stage, {
+          clearProps: "transform,transformOrigin,borderRadius,filter,opacity",
+        });
+      }
       if (cover) {
         gsap.set(cover, {
           clearProps: "opacity,pointerEvents,visibility",
         });
         cover.removeAttribute("aria-hidden");
       }
-      clearCreatedPreviewBlur();
-      tryMotionBusyRef.current = false;
-      if (!options?.onClosed) nextBtnRef.current?.focus();
-      options?.onClosed?.();
+      // 2) After the game is gone, scale the Game Created clip back in.
+      restorePreview();
     };
 
-    if (!stage || !from || reduce) {
+    if (!stage || reduce) {
       finishClose();
       return;
     }
 
-    const to = stage.getBoundingClientRect();
-    const scale = tryMotionScaleFromPreview(from, to);
+    // 1) Scratch game scales down + fades out first.
     const targets = [stage, cover].filter(Boolean) as HTMLElement[];
     gsap.killTweensOf(targets);
-    const tl = gsap.timeline({
-      defaults: { ease: "power2.inOut" },
+    if (cover) {
+      gsap.set(cover, {
+        opacity: 0,
+        pointerEvents: "none",
+        visibility: "hidden",
+      });
+    }
+    gsap.to(stage, {
+      opacity: 0,
+      scale: 0.88,
+      transformOrigin: "50% 50%",
+      duration: TRY_MOTION_STAGE_OUT,
+      ease: "power2.in",
       onComplete: finishClose,
     });
-    if (cover) {
-      tl.to(cover, { opacity: 1, duration: 0.2, ease: "power2.in" }, 0);
-    }
-    tl.to(
-      stage,
-      {
-        scale,
-        borderRadius: 11,
-        filter: TRY_MOTION_PREVIEW_BLUR,
-        duration: TRY_MOTION_SCALE_DURATION * 0.9,
-      },
-      0,
-    );
   }
 
   /** Check: accept card, kick publish pipeline, go to that model's Models page. */
@@ -4121,6 +4282,67 @@ export function LeoUiPage() {
     closePromptDialog(() => setPicturePromptExtra(promptDraft.trim()));
   }
 
+  function openBikiniGallery() {
+    const dialog = bikiniGalleryRef.current;
+    if (!dialog || dialog.open || bikiniGalleryBusyRef.current) return;
+    setError("");
+    dialog.showModal();
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__gallery-dialog-panel");
+    const reduce = preferReducedMotion();
+    requestAnimationFrame(() => dialog.classList.add("is-open"));
+    if (!panel || reduce) return;
+    gsap.killTweensOf(panel);
+    gsap.fromTo(
+      panel,
+      { y: 56, opacity: 0, filter: "blur(14px)" },
+      {
+        y: 0,
+        opacity: 1,
+        filter: "blur(0px)",
+        duration: 0.42,
+        ease: "power3.out",
+        overwrite: true,
+      },
+    );
+  }
+
+  function closeBikiniGallery(after?: () => void) {
+    const dialog = bikiniGalleryRef.current;
+    if (!dialog?.open || bikiniGalleryBusyRef.current) {
+      after?.();
+      return;
+    }
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__gallery-dialog-panel");
+    const reduce = preferReducedMotion();
+    const finish = () => {
+      bikiniGalleryBusyRef.current = false;
+      dialog.classList.remove("is-open");
+      gsap.set(panel, { clearProps: "transform,opacity,filter" });
+      dialog.close();
+      after?.();
+    };
+    dialog.classList.remove("is-open");
+    if (!panel || reduce) {
+      finish();
+      return;
+    }
+    bikiniGalleryBusyRef.current = true;
+    gsap.killTweensOf(panel);
+    gsap.to(panel, {
+      y: 56,
+      opacity: 0,
+      filter: "blur(14px)",
+      duration: 0.32,
+      ease: "power2.in",
+      overwrite: true,
+      onComplete: finish,
+    });
+  }
+
+  function pickBikiniFromGallery(src: string) {
+    closeBikiniGallery(() => setBikini(src));
+  }
+
   async function retryPicture() {
     setError("");
     setConfirmOverride("");
@@ -4163,10 +4385,29 @@ export function LeoUiPage() {
     setScreen("meshing");
   }
 
+  function openMaskEdit() {
+    const hero = maskHeroRef.current;
+    const box = hero?.getBoundingClientRect();
+    setMaskEditFrom(
+      box
+        ? { left: box.left, top: box.top, width: box.width, height: box.height }
+        : null,
+    );
+    setMaskEditOpen(true);
+  }
+
+  function closeMaskEdit() {
+    setMaskEditOpen(false);
+    setMaskEditFrom(null);
+  }
+
   const photoGallery = gallery.length > 0 ? gallery : DESIGN_GALLERY_PLACEHOLDERS;
   const isGalleryImage = (value: string, item: GalleryImage) =>
     Boolean(value) && (value === item.path || value === item.url);
   const hasGallerySelection = photoGallery.some((item) => isGalleryImage(image, item));
+  const hasBikiniGallerySelection = photoGallery.some((item) =>
+    isGalleryImage(bikini, item),
+  );
 
   // Processing cold-enter: blur host when no fly handoff is in progress.
   useGSAP(
@@ -4379,6 +4620,7 @@ export function LeoUiPage() {
   );
 
   // Outfit upload thumb: scale in on add, scale out on × (same beat as Add Face).
+  // Slot height square ↔ 9∶16 is GSAP-tweened so remove doesn't snap.
   useGSAP(
     () => {
       if (viewScreen !== "outfit") {
@@ -4389,10 +4631,13 @@ export function LeoUiPage() {
       const btn = outfitUploadBtnRef.current;
       const thumb = outfitThumbRef.current;
       const clear = outfitClearRef.current;
+      const slot = outfitSlotRef.current;
       const reduce =
         typeof window !== "undefined" &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const open = Boolean(outfitOverride.trim());
+      const slotSquare = "5.8125rem";
+      const slotPortrait = `${(5.8125 * 16) / 9}rem`;
 
       if (open) setOutfitPanelSrc(outfitOverride);
 
@@ -4400,6 +4645,7 @@ export function LeoUiPage() {
         outfitReadyRef.current = true;
         if (open) {
           outfitOnScreenRef.current = outfitOverride;
+          if (slot) gsap.set(slot, { height: slotPortrait });
           if (btn) {
             gsap.set(btn, {
               opacity: 0,
@@ -4410,23 +4656,27 @@ export function LeoUiPage() {
           }
           if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
           if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
-        } else if (btn) {
-          gsap.set(btn, {
-            opacity: 1,
-            scale: 1,
-            visibility: "visible",
-            pointerEvents: "auto",
-            clearProps: "transform",
-          });
+        } else {
+          if (slot) gsap.set(slot, { height: slotSquare });
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 1,
+              scale: 1,
+              visibility: "visible",
+              pointerEvents: "auto",
+              clearProps: "transform",
+            });
+          }
         }
         return;
       }
 
-      gsap.killTweensOf([btn, thumb, clear].filter(Boolean));
+      gsap.killTweensOf([btn, thumb, clear, slot].filter(Boolean));
 
       if (reduce) {
         if (open) {
           outfitOnScreenRef.current = outfitOverride;
+          if (slot) gsap.set(slot, { height: slotPortrait });
           if (btn) {
             gsap.set(btn, {
               opacity: 0,
@@ -4439,6 +4689,7 @@ export function LeoUiPage() {
           if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
         } else {
           outfitOnScreenRef.current = "";
+          if (slot) gsap.set(slot, { height: slotSquare });
           if (btn) {
             gsap.set(btn, {
               opacity: 1,
@@ -4458,6 +4709,7 @@ export function LeoUiPage() {
         const returning = Boolean(outfitOnScreenRef.current);
         outfitOnScreenRef.current = outfitOverride;
         if (returning) {
+          if (slot) gsap.set(slot, { height: slotPortrait });
           gsap.set(btn, {
             opacity: 0,
             scale: 0,
@@ -4477,6 +4729,7 @@ export function LeoUiPage() {
         });
         gsap.set(thumb, { opacity: 0, scale: 0.86, y: 14, transformOrigin: "50% 50%" });
         gsap.set(clear, { scale: 0.5, transformOrigin: "50% 50%" });
+        if (slot) gsap.set(slot, { height: slotSquare });
         const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
         tl.to(btn, { scale: 1.08, duration: 0.12, ease: "power2.out" });
         tl.to(btn, {
@@ -4488,6 +4741,13 @@ export function LeoUiPage() {
             gsap.set(btn, { visibility: "hidden" });
           },
         });
+        if (slot) {
+          tl.to(
+            slot,
+            { height: slotPortrait, duration: 0.4, ease: "power2.inOut" },
+            "-=0.12",
+          );
+        }
         tl.to(
           thumb,
           {
@@ -4498,7 +4758,7 @@ export function LeoUiPage() {
             ease: "power2.out",
             clearProps: "transform",
           },
-          "-=0.04",
+          "-=0.36",
         );
         tl.to(
           clear,
@@ -4512,6 +4772,7 @@ export function LeoUiPage() {
           return;
         }
         if (!thumb || !clear) {
+          if (slot) gsap.set(slot, { height: slotSquare });
           gsap.set(btn, {
             opacity: 1,
             scale: 1,
@@ -4531,6 +4792,7 @@ export function LeoUiPage() {
         });
         gsap.set(thumb, { opacity: 1, scale: 1, y: 0, transformOrigin: "50% 50%" });
         gsap.set(clear, { scale: 1, transformOrigin: "50% 50%" });
+        if (slot) gsap.set(slot, { height: slotPortrait });
         const tl = gsap.timeline({
           defaults: { overwrite: "auto" },
           onComplete: () => setOutfitPanelSrc(""),
@@ -4541,7 +4803,14 @@ export function LeoUiPage() {
           { opacity: 0, scale: 0.86, y: 14, duration: 0.28, ease: "power2.in" },
           0,
         );
-        tl.to(btn, { scale: 1.08, opacity: 1, duration: 0.2, ease: "power2.out" }, "-=0.06");
+        if (slot) {
+          tl.to(
+            slot,
+            { height: slotSquare, duration: 0.36, ease: "power2.inOut" },
+            0.06,
+          );
+        }
+        tl.to(btn, { scale: 1.08, opacity: 1, duration: 0.2, ease: "power2.out" }, "-=0.12");
         tl.to(btn, {
           scale: 1,
           duration: 0.16,
@@ -5043,9 +5312,13 @@ export function LeoUiPage() {
                           </div>
                         </div>
                         <div className="leo-ui__bikini-row">
-                          <p className="leo-ui__section-label">
+                          <button
+                            type="button"
+                            className="leo-ui__section-label"
+                            onClick={openBikiniGallery}
+                          >
                             {bikini ? "+ Gallery" : "Select from Gallery"}
-                          </p>
+                          </button>
                         </div>
                       </div>
                       <div
@@ -5348,7 +5621,7 @@ export function LeoUiPage() {
                     <aside className="leo-ui__confirm-side leo-ui__confirm-side--bottom">
                       <div className="leo-ui__confirm-card leo-ui__confirm-card--upload">
                         <p>Upload your own outfit?</p>
-                        <div className="leo-ui__confirm-upload-slot">
+                        <div className="leo-ui__confirm-upload-slot" ref={outfitSlotRef}>
                           <button
                             ref={outfitUploadBtnRef}
                             type="button"
@@ -5533,7 +5806,11 @@ export function LeoUiPage() {
                 </p>
                 <div className="leo-ui__confirm">
                   <div className="leo-ui__confirm-row">
-                    <div className="leo-ui__confirm-hero" ref={maskHeroRef}>
+                    <div
+                      className="leo-ui__confirm-hero"
+                      ref={maskHeroRef}
+                      style={maskEditOpen ? { opacity: 0 } : undefined}
+                    >
                       <video
                         className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
                         src={previewSource(movingClip)}
@@ -5547,7 +5824,7 @@ export function LeoUiPage() {
                       <button
                         type="button"
                         className="leo-ui__confirm-card"
-                        onClick={openPromptDialog}
+                        onClick={openMaskEdit}
                       >
                         <span>Edit Mask</span>
                         <SquarePen size={22} strokeWidth={1.5} aria-hidden />
@@ -5569,11 +5846,9 @@ export function LeoUiPage() {
             {viewScreen === "symbols" ? (
               <>
                 <h1 className="leo-ui__title">Place Symbols</h1>
-                <p className="leo-ui__sub">
-                  Drop scratch symbols onto the card where you want them to land.
-                </p>
-                <div className="leo-ui__confirm">
-                  <div className="leo-ui__confirm-row">
+                <p className="leo-ui__sub">Tap to add by hand, then save.</p>
+                <div className="leo-ui__confirm leo-ui__confirm--solo">
+                  <div className="leo-ui__symbols-stage">
                     <div className="leo-ui__confirm-hero" ref={symbolsHeroRef}>
                       <video
                         className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
@@ -5583,6 +5858,145 @@ export function LeoUiPage() {
                         muted
                         playsInline
                       />
+                    </div>
+                    {/* Figma 391:2467 / EditSymbols 425:1909 — same expand pattern as mask tools. */}
+                    <div
+                      className={`leo-ui__symbols-tools${
+                        symbolsToolsOpen ? " is-open" : ""
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="leo-ui__mask-edit-chip leo-ui__symbols-tools-toggle"
+                        aria-expanded={symbolsToolsOpen}
+                        aria-label={
+                          symbolsToolsOpen
+                            ? "Hide symbol tools"
+                            : "Show symbol tools"
+                        }
+                        onClick={() => setSymbolsToolsOpen((v) => !v)}
+                      >
+                        <img
+                          src={symbolsChevronUrl}
+                          alt=""
+                          width={24}
+                          height={24}
+                          className="leo-ui__symbols-tools-chevron"
+                        />
+                      </button>
+                      <div
+                        className="leo-ui__symbols-drawer"
+                        aria-hidden={!symbolsToolsOpen}
+                      >
+                        <button
+                          type="button"
+                          className="leo-ui__mask-edit-chip"
+                          aria-label="Randomize symbols"
+                          onClick={() => undefined}
+                        >
+                          <img
+                            src={symbolsDiceUrl}
+                            alt=""
+                            width={24}
+                            height={24}
+                          />
+                        </button>
+                        <div className="leo-ui__symbols-drawer-cluster">
+                          <button
+                            type="button"
+                            className={`leo-ui__mask-edit-chip${
+                              !symbolsShowMesh ? " is-active" : ""
+                            }`}
+                            aria-label={
+                              symbolsShowMesh ? "Hide mesh" : "Show mesh"
+                            }
+                            aria-pressed={!symbolsShowMesh}
+                            onClick={() => setSymbolsShowMesh((v) => !v)}
+                          >
+                            <img
+                              src={symbolsHideMeshUrl}
+                              alt=""
+                              width={24}
+                              height={24}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className={`leo-ui__mask-edit-chip${
+                              !symbolsShowPoints ? " is-active" : ""
+                            }`}
+                            aria-label={
+                              symbolsShowPoints ? "Hide points" : "Show points"
+                            }
+                            aria-pressed={!symbolsShowPoints}
+                            onClick={() => setSymbolsShowPoints((v) => !v)}
+                          >
+                            <img
+                              src={symbolsHidePointsUrl}
+                              alt=""
+                              width={24}
+                              height={24}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className="leo-ui__mask-edit-chip"
+                            aria-label="Undo"
+                            onClick={() => undefined}
+                          >
+                            <img
+                              src={symbolsUndoUrl}
+                              alt=""
+                              width={24}
+                              height={24}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className="leo-ui__symbols-tool-asset"
+                            aria-label="Clear symbols"
+                            onClick={() => undefined}
+                          >
+                            <img
+                              src={symbolsClearUrl}
+                              alt=""
+                              width={38}
+                              height={38}
+                            />
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className={`leo-ui__symbols-save${
+                            symbolsSaveOk ? " is-saved" : ""
+                          }`}
+                          aria-label={symbolsSaveOk ? "Saved" : "Save symbols"}
+                          onClick={ackSymbolsSave}
+                        >
+                          <span className="leo-ui__symbols-save-window" aria-hidden>
+                            <span
+                              className="leo-ui__symbols-save-reel"
+                              ref={symbolsSaveReelRef}
+                            >
+                              <img
+                                src={maskSaveUrl}
+                                alt=""
+                                width={16}
+                                height={16}
+                              />
+                              <span className="leo-ui__symbols-save-check">
+                                <Check size={16} strokeWidth={2.6} />
+                              </span>
+                              <img
+                                src={maskSaveUrl}
+                                alt=""
+                                width={16}
+                                height={16}
+                              />
+                            </span>
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -5735,6 +6149,88 @@ export function LeoUiPage() {
               muted
               playsInline
             />
+          </div>
+        </div>
+      </dialog>
+
+      {faceCrop ? (
+        <LeoFaceCropDialog
+          src={faceCrop.src}
+          fileName={faceCrop.name}
+          busy={uploading}
+          onCancel={closeFaceCrop}
+          onConfirm={(file) => void confirmFaceCrop(file)}
+        />
+      ) : null}
+
+      {maskEditOpen ? (
+        <LeoMaskEditOverlay
+          open={maskEditOpen}
+          fromRect={maskEditFrom}
+          videoSrc={
+            cardId.trim()
+              ? `/cards/${encodeURIComponent(cardId.trim())}/foreground.mp4`
+              : previewSource(movingClip)
+          }
+          meshFile={cardId.trim() ? `${cardId.trim()}.json` : "draft.json"}
+          meshUrl={
+            cardId.trim()
+              ? `/mesh/${encodeURIComponent(cardId.trim())}.json`
+              : ""
+          }
+          onClose={closeMaskEdit}
+          onError={(message) => setError(message)}
+        />
+      ) : null}
+
+      <dialog
+        ref={bikiniGalleryRef}
+        className="leo-ui__gallery-dialog"
+        aria-labelledby="leo-bikini-gallery-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          closeBikiniGallery();
+        }}
+        onPointerDown={(e) => {
+          // Light-dismiss via our close tween (same as Cancel / Esc) — not closedby,
+          // which would snap shut and skip the exit animation.
+          if (e.target === e.currentTarget) closeBikiniGallery();
+        }}
+      >
+        <div className="leo-ui__gallery-dialog-panel">
+          <button
+            type="button"
+            className="leo-ui__clear leo-ui__gallery-dialog-close"
+            aria-label="Close"
+            onClick={() => closeBikiniGallery()}
+          >
+            ×
+          </button>
+          <h2 id="leo-bikini-gallery-title" className="leo-ui__gallery-dialog-title">
+            Choose from Influencer Gallery
+          </h2>
+          <div className="leo-ui__gallery-scroll leo-ui__gallery-dialog-scroll">
+            <div
+              className={`leo-ui__gallery${hasBikiniGallerySelection ? " has-selection" : ""}`}
+            >
+              {photoGallery.map((item) => {
+                const src = item.path || item.url;
+                const selected = isGalleryImage(bikini, item);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={selected ? "is-selected" : ""}
+                    onClick={() => {
+                      if (selected) closeBikiniGallery(() => setBikini(""));
+                      else pickBikiniFromGallery(src);
+                    }}
+                  >
+                    <img src={previewSource(item.url || item.path)} alt="" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </dialog>

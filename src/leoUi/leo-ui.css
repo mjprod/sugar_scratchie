@@ -838,6 +838,14 @@
   overflow: visible;
   font-weight: 700;
   letter-spacing: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.leo-ui__bikini-row .leo-ui__section-label:hover,
+.leo-ui__bikini-row .leo-ui__section-label:focus-visible {
+  opacity: 0.85;
 }
 
 /* Block owns the dashed chrome — keep the upload control as plain content.
@@ -1577,6 +1585,163 @@
   gap: 0.5rem;
 }
 
+/* Place Symbols — no side rail; hero matches Adjust Mask size, centered. */
+.leo-ui__confirm--solo {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.leo-ui__symbols-stage {
+  position: relative;
+  /* Same footprint as the left column of .leo-ui__confirm-row. */
+  width: min(100%, calc(100% - 6.9375rem - 0.75rem));
+}
+
+.leo-ui__symbols-stage .leo-ui__confirm-hero {
+  width: 100%;
+}
+
+/* Figma EditSymbols (425:1909) — chevron + drawer over hero, same beat as mask tools. */
+.leo-ui__symbols-tools {
+  position: absolute;
+  left: 50%;
+  top: -11px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(273px, calc(100% - 0.5rem));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.leo-ui__symbols-tools > * {
+  pointer-events: auto;
+}
+
+.leo-ui__symbols-tools-chevron {
+  transition: transform 0.28s ease;
+  transform: rotate(180deg);
+}
+
+.leo-ui__symbols-tools.is-open .leo-ui__symbols-tools-chevron {
+  transform: rotate(0deg);
+}
+
+.leo-ui__symbols-drawer {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 0;
+  padding: 0 16px;
+  overflow: hidden;
+  opacity: 0;
+  border-radius: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.43);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition:
+    height 0.32s ease,
+    opacity 0.28s ease,
+    padding 0.32s ease;
+}
+
+.leo-ui__symbols-tools.is-open .leo-ui__symbols-drawer {
+  height: 63px;
+  padding: 0 16px;
+  opacity: 1;
+}
+
+.leo-ui__symbols-drawer-cluster {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Full-asset Figma chips (clear / save are 38×38 SVGs with chrome baked in). */
+.leo-ui__symbols-tool-asset {
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.leo-ui__symbols-tool-asset img {
+  display: block;
+  max-width: none;
+}
+
+/* Same magenta glass CTA as .leo-ui__btn--next / .leo-ui__mask-edit-save. */
+.leo-ui__symbols-save {
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 3, 121, 0.2);
+  border-radius: 11px;
+  background: var(--leo-magenta-glass);
+  cursor: pointer;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.leo-ui__symbols-save-window {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+}
+
+.leo-ui__symbols-save-reel {
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+  will-change: transform;
+}
+
+.leo-ui__symbols-save-reel > img,
+.leo-ui__symbols-save-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
+.leo-ui__symbols-save-reel > img {
+  display: block;
+  max-width: none;
+}
+
+.leo-ui__symbols-save-check {
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leo-ui__symbols-tools-chevron,
+  .leo-ui__symbols-drawer {
+    transition: none;
+  }
+}
+
 .leo-ui__confirm-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 6.9375rem;
@@ -1733,7 +1898,6 @@
   padding: 0.55rem 0.35rem 0.75rem;
   gap: 0.35rem;
   min-height: 0;
-  max-height: 13.5rem;
 }
 
 .leo-ui__confirm-rerun {
@@ -1841,8 +2005,9 @@
 .leo-ui__confirm-upload-slot {
   position: relative;
   width: 5.8125rem;
-  height: 5.8125rem;
+  height: 5.8125rem; /* GSAP tweens ↔ 9∶16 when outfit thumb fills */
   margin: 0.35rem auto 0;
+  overflow: visible;
 }
 
 .leo-ui__confirm-upload-slot > .leo-ui__confirm-upload {
@@ -1884,6 +2049,10 @@
   height: 5.8125rem;
   left: calc(1.1875rem - 5.8125rem);
   top: 1.1875rem;
+}
+
+.leo-ui__confirm-upload-slot .leo-ui__confirm-upload-preview .leo-ui__preview-clear-glass img {
+  height: calc(5.8125rem * 16 / 9);
 }
 
 .leo-ui__confirm-upload-preview .leo-ui__preview-clear-mark {
@@ -1952,6 +2121,8 @@
   gap: 0.4rem;
   overflow: hidden;
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .leo-ui__btn:disabled {
@@ -2116,7 +2287,7 @@
   height: 10rem !important;
 }
 
-/* Game Created preview is a button — reset chrome, keep card look. */
+/* Game Created — same footprint as Place Symbols / confirm-hero (227∶404). */
 .leo-ui__preview--try {
   display: block;
   margin-inline: auto;
@@ -2127,6 +2298,11 @@
   color: inherit;
   font: inherit;
   text-align: inherit;
+  aspect-ratio: 227 / 404;
+  max-height: min(25.25rem, 52dvh);
+  /* Match .leo-ui__symbols-stage width so the FLIP lands 1∶1. */
+  width: min(100%, calc(100% - 6.9375rem - 0.75rem));
+  border-radius: 11px;
 }
 
 .leo-ui__preview--try:focus-visible {
@@ -2227,6 +2403,514 @@
   .leo-ui__try-motion-stage {
     will-change: auto;
   }
+}
+
+/* Adjust Mask → edit overlay (Figma 418:335). */
+.leo-ui__mask-edit {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  background: transparent;
+  overflow: hidden;
+  color: #fff;
+  box-sizing: border-box;
+}
+
+/* Hosts tools (sibling 0) + close X (sibling 1) for stagger. */
+.leo-ui__mask-edit-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.leo-ui__mask-edit:modal {
+  overscroll-behavior: contain;
+}
+
+.leo-ui__mask-edit::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.leo-ui__mask-edit.is-open::backdrop {
+  opacity: 1;
+}
+
+.leo-ui__mask-edit-close {
+  position: absolute;
+  top: 121px;
+  right: max(16px, calc(50% - 165px));
+  z-index: 3;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.43);
+  cursor: pointer;
+  color: #fff;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.leo-ui__mask-edit-close.is-settled {
+  pointer-events: auto;
+}
+
+.leo-ui__mask-edit-close-mark {
+  position: relative;
+  width: 24px;
+  height: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(90deg);
+}
+
+.leo-ui__mask-edit-close-mark img {
+  display: block;
+  width: 35px;
+  height: 6px;
+  max-width: none;
+}
+
+.leo-ui__mask-edit-close-mark img:first-child {
+  transform: scaleY(-1);
+}
+
+.leo-ui__mask-edit-stage {
+  position: fixed;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 11px;
+  background: #0a0a0c;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.leo-ui__mask-edit-video,
+.leo-ui__mask-edit-stage .mask-editor-embedded,
+.leo-ui__mask-edit-stage .mask-editor-stage {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+  aspect-ratio: auto;
+  display: block;
+  object-fit: cover;
+}
+
+.leo-ui__mask-edit-stage .mask-editor-zoom {
+  width: 100% !important;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+.leo-ui__mask-edit-tools {
+  position: absolute;
+  left: 50%;
+  top: 135px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(273px, calc(100vw - 2rem));
+  /* GSAP owns transform (xPercent -50 + enter y). */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.leo-ui__mask-edit-tools.is-settled > * {
+  pointer-events: auto;
+}
+
+.leo-ui__mask-edit-chip {
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.43);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+  color: #fff;
+}
+
+.leo-ui__mask-edit-chip.is-active {
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.leo-ui__mask-edit-chip img {
+  display: block;
+  max-width: none;
+}
+
+/* Brush add/erase — slot-machine vertical reel (add → erase → add). */
+.leo-ui__mask-edit-brush-window {
+  position: relative;
+  display: block;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+}
+
+.leo-ui__mask-edit-brush-reel {
+  display: flex;
+  flex-direction: column;
+  width: 24px;
+  will-change: transform;
+}
+
+.leo-ui__mask-edit-brush-reel img {
+  display: block;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.leo-ui__mask-edit-tools-toggle .leo-ui__mask-edit-tools-chevron {
+  transition: transform 0.28s ease;
+  transform: rotate(180deg);
+}
+
+.leo-ui__mask-edit-tools.is-open .leo-ui__mask-edit-tools-chevron {
+  transform: rotate(0deg);
+}
+
+.leo-ui__mask-edit-drawer {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 0;
+  padding: 0 16px;
+  overflow: hidden;
+  opacity: 0;
+  border-radius: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.43);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition:
+    height 0.32s ease,
+    opacity 0.28s ease,
+    padding 0.32s ease;
+}
+
+.leo-ui__mask-edit-tools.is-open .leo-ui__mask-edit-drawer {
+  height: 63px;
+  padding: 0 16px;
+  opacity: 1;
+}
+
+.leo-ui__mask-edit-size {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.leo-ui__mask-edit-size-value {
+  box-sizing: border-box;
+  min-width: 3.5rem; /* ~56px — holds “80px” without jumping from “8px” */
+  height: 38px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.43);
+  font-family: var(--leo-ui);
+  font-size: 14px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.leo-ui__mask-edit-save {
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 3, 121, 0.2);
+  border-radius: 11px;
+  background: var(--leo-magenta-glass);
+  cursor: pointer;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.leo-ui__mask-edit-save-window {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+}
+
+.leo-ui__mask-edit-save-reel {
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+  will-change: transform;
+}
+
+.leo-ui__mask-edit-save-reel img,
+.leo-ui__mask-edit-save-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
+.leo-ui__mask-edit-save-reel img {
+  display: block;
+  max-width: none;
+}
+
+.leo-ui__mask-edit-save:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leo-ui__mask-edit::backdrop,
+  .leo-ui__mask-edit-drawer,
+  .leo-ui__mask-edit-tools-toggle .leo-ui__mask-edit-tools-chevron {
+    transition: none;
+  }
+}
+
+/* Swimwear → influencer gallery picker (same enter/exit as Change Prompt). */
+.leo-ui__gallery-dialog {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  max-width: min(22.5rem, calc(100vw - 1.5rem));
+  width: 100%;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.leo-ui__gallery-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+.leo-ui__gallery-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.leo-ui__gallery-dialog.is-open::backdrop {
+  opacity: 1;
+}
+
+.leo-ui__gallery-dialog-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem 1rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, #2a2433 0%, #151218 100%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.leo-ui__gallery-dialog-close {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  z-index: 1;
+}
+
+.leo-ui__gallery-dialog-title {
+  margin: 0;
+  padding-right: 2rem;
+  font-family: var(--leo-ui);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+
+.leo-ui__gallery-dialog-scroll {
+  flex: none;
+  max-height: min(58vh, 22rem);
+  min-height: 10rem;
+}
+
+.leo-ui__gallery-dialog .leo-ui__gallery button.is-selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+/* Square face crop — opened from Add Face? / replace face. */
+.leo-ui__face-crop {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  max-width: min(22.5rem, calc(100vw - 1.5rem));
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.leo-ui__face-crop:modal {
+  overscroll-behavior: contain;
+}
+
+.leo-ui__face-crop::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.leo-ui__face-crop-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem 1rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, #2a2433 0%, #151218 100%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.leo-ui__face-crop-title {
+  margin: 0;
+  font-family: var(--leo-ui);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.leo-ui__face-crop-sub {
+  margin: 0;
+  font-family: var(--leo-ui);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.leo-ui__face-crop-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: min(58vh, 22rem);
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0a0a0c;
+  touch-action: none;
+  user-select: none;
+}
+
+.leo-ui__face-crop-stage img {
+  max-width: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.leo-ui__face-crop-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72);
+  cursor: grab;
+  touch-action: none;
+}
+
+.leo-ui__face-crop-frame:active {
+  cursor: grabbing;
+}
+
+.leo-ui__face-crop-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  border: 2px solid #fff;
+  border-radius: 2px;
+  background: #9b0048;
+  box-sizing: border-box;
+  cursor: nwse-resize;
+}
+
+.leo-ui__face-crop-handle--nw {
+  left: -7px;
+  top: -7px;
+  cursor: nwse-resize;
+}
+
+.leo-ui__face-crop-handle--ne {
+  right: -7px;
+  top: -7px;
+  cursor: nesw-resize;
+}
+
+.leo-ui__face-crop-handle--se {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize;
+}
+
+.leo-ui__face-crop-handle--sw {
+  left: -7px;
+  bottom: -7px;
+  cursor: nesw-resize;
+}
+
+.leo-ui__face-crop-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.leo-ui__face-crop-actions .leo-ui__btn {
+  flex: 1;
 }
 
 /* Confirm → Change Prompt modal (native dialog, top layer). */
