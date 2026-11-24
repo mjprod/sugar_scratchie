@@ -36,6 +36,9 @@ RESULT_NAME = "ae-relink-result.txt"
 JSX_NAME = "ae-relink.jsx"
 SAVED_PREFIX = "Saved "
 AE_WAIT_SECONDS = 180
+# AppleScript's default of 120 seconds fires while After Effects is still opening
+# the project. This stays above AE_WAIT_SECONDS so Python decides when to stop.
+AE_SCRIPT_TIMEOUT_SECONDS = 240
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 CLIP_EXTENSIONS = {".mp4", ".mov"}
 RESULT_LINE = "influencer-n8n-result:"
@@ -165,6 +168,9 @@ def run_copy(
     except HTTPException as exc:
         raise RuntimeError(str(exc.detail)) from exc
     child_env["KEY_PROVIDER"] = keyer
+    # The relink step opens the project. Opening the alpha here as well makes
+    # After Effects import and then discard the same job, and it crashes.
+    child_env["AE_SKIP_ALPHA_OPEN"] = "1"
     print(f"{keyer}: key the clip, then copy the template and write the name and id.")
     child_env["PYTHONUNBUFFERED"] = "1"
     env = child_env
@@ -242,7 +248,9 @@ def launch_after_effects(destination: Path) -> str:
         + json.dumps(str(jsx))
         + ') as «class utf8»\n'
         + f'tell application "{AE_APP_NAME}"\n'
-        + "  DoScript scriptText\n"
+        + f"  with timeout of {AE_SCRIPT_TIMEOUT_SECONDS} seconds\n"
+        + "    DoScript scriptText\n"
+        + "  end timeout\n"
         + "end tell\n"
     )
     print("Opening After Effects.")

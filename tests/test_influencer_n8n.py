@@ -105,6 +105,7 @@ def test_run_copy_reads_the_destination(tmp_path: Path, monkeypatch):
     def fake_popen(command, **kwargs):
         assert command[command.index("--name") + 1] == "Ada"
         assert command[command.index("--folder-base") + 1] == "A-SN"
+        assert kwargs["env"]["AE_SKIP_ALPHA_OPEN"] == "1"
         return FakeProcess(['Greenkey: uploading\n', 'AE_JOB {"destination": "/tmp/A-SN-1"}\n'])
 
     monkeypatch.setattr("backend.services.influencer_n8n.subprocess.Popen", fake_popen)
@@ -235,6 +236,7 @@ def test_launch_sends_the_project_when_after_effects_is_open(tmp_path: Path, mon
 
     def fake_popen(command, **kwargs):
         assert command[0] == "osascript"
+        assert "with timeout of 240 seconds" in command[-1]
         assert not kwargs.get("start_new_session")
         (destination / "ae-relink-result.txt").write_text("Saved the project\n")
         return Proc()
