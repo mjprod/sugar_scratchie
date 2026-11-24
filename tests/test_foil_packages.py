@@ -57,8 +57,11 @@ def _package(
 def test_pack_folder_base_uses_initials_and_season():
     assert influencer_initials("Glauco Pereira") == "GP"
     assert influencer_initials("Ada") == "A"
+    assert influencer_initials("Érica Silva") == "ES"
+    assert influencer_initials("Ángela") == "A"
     assert pack_folder_base("Glauco Pereira", "SN") == "GP-SN"
     assert pack_folder_base("  ada  vale  ", "df") == "AV-DF"
+    assert pack_folder_base("Érica Silva", "SN") == "ES-SN"
 
     with pytest.raises(HTTPException) as bad_season:
         pack_folder_base("Ada", "S")

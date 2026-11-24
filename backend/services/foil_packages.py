@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,13 +47,22 @@ def folder_prefix(model_id: str) -> str:
     return f"SS-{model_id} "
 
 
+def _ascii_letter(char: str) -> str | None:
+    """Map one character to A–Z, stripping accents. Non-Latin letters are dropped."""
+    for piece in unicodedata.normalize("NFKD", char):
+        if "A" <= piece.upper() <= "Z":
+            return piece.upper()
+    return None
+
+
 def influencer_initials(name: str) -> str:
-    """First letter of each word in the influencer name, uppercased."""
+    """First ASCII letter of each word, uppercased. Érica → E, Ángela → A."""
     letters: list[str] = []
     for word in name.split():
         for char in word:
-            if char.isalpha():
-                letters.append(char.upper())
+            letter = _ascii_letter(char)
+            if letter is not None:
+                letters.append(letter)
                 break
     if not letters:
         raise HTTPException(status_code=400, detail="Name needs at least one letter for initials")
