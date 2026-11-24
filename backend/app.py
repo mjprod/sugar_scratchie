@@ -56,6 +56,7 @@ from backend.cards_store import (
 from backend.cards import (
     CARD_PRICE_MAX,
     CardInfo,
+    CardStatus,
     CreateCardRequest,
     PhotoInfo,
     PhotoScratchSlot,
@@ -162,6 +163,7 @@ from backend.photo_scratch_store import (
     ensure_photo_scratch_bootstrapped,
     list_photo_scratch_cards,
     set_published_card_price,
+    set_published_card_status,
 )
 from backend.symbols_store import (
     CreateSymbolGroupRequest,
@@ -813,8 +815,18 @@ def assets(db: Annotated[Session, Depends(get_session)]) -> dict:
 
 
 @app.get("/api/cards")
-def get_cards(db: Annotated[Session, Depends(get_session)]) -> dict:
-    cards = list_cards(db, ROOT, CARDS_DIR, MESH_DIR)
+def get_cards(
+    request: Request, db: Annotated[Session, Depends(get_session)]
+) -> dict:
+    # Public list is the store shelf. Owned unpublished cards stay off this
+    # endpoint and show on the creator board instead.
+    cards = list_cards(
+        db,
+        ROOT,
+        CARDS_DIR,
+        MESH_DIR,
+        player_catalog=not _operator_request(request),
+    )
     return {"cards": [card.dict() for card in cards]}
 
 
@@ -936,8 +948,12 @@ def remove_card_motion_poster(
 
 
 @app.get("/api/photo-scratch")
-def get_published_photo_scratch(db: Annotated[Session, Depends(get_session)]) -> dict:
-    cards = list_photo_scratch_cards(db, ROOT)
+def get_published_photo_scratch(
+    request: Request, db: Annotated[Session, Depends(get_session)]
+) -> dict:
+    cards = list_photo_scratch_cards(
+        db, ROOT, player_catalog=not _operator_request(request)
+    )
     return {"cards": [card.dict() for card in cards]}
 
 
@@ -1002,10 +1018,31 @@ class SetSlotPriceRequest(BaseModel):
     card_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
 
 
+class SetSlotStatusRequest(BaseModel):
+    status: CardStatus
+
+
 @app.get("/api/cards/{card_id}/photo-scratch")
-def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
+def get_photo_scratch_slots(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    theme: str = "",
+) -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
-    return {"slots": [slot.model_dump() for slot in slots]}
+    # Disk slots are the build pipeline. Catalog status exists only after
+    # publish-game; slots without a photo_scratch_cards row have no status.
+    published = {
+        info.slot_id: info.status
+        for info in list_photo_scratch_cards(db, ROOT)
+        if info.card_id == card_id
+    }
+    payload = []
+    for slot in slots:
+        data = slot.model_dump()
+        if slot.id in published:
+            data["status"] = published[slot.id]
+        payload.append(data)
+    return {"slots": payload}
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/publish-game")
@@ -1231,7 +1268,32 @@ def patch_photo_scratch_slot_price(
     slot = set_photo_scratch_slot_price(
         CARDS_DIR, card_id, slot_id, request.card_price, theme
     )
-    return slot.model_dump()
+    data = slot.model_dump()
+    for info in list_photo_scratch_cards(db, ROOT):
+        if info.card_id == card_id and info.slot_id == slot_id:
+            data["status"] = info.status
+            break
+    return data
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/status")
+def patch_photo_scratch_slot_status(
+    card_id: str,
+    slot_id: str,
+    request: SetSlotStatusRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    info = set_published_card_status(db, ROOT, card_id, slot_id, request.status)
+    if info is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Publish this photo as a game before setting its status.",
+        )
+    return info.dict()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/generate")

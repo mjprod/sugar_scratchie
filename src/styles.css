@@ -3978,6 +3978,7 @@ dd {
 }
 
 .models-card-ps-thumb {
+  position: relative;
   display: block;
   width: 26px;
   height: 44px;
@@ -6315,6 +6316,61 @@ dd {
   margin: 0 0 12px;
   padding: 10px 12px 12px;
   min-inline-size: min(100%, 42rem);
+}
+
+.card-status {
+  margin-top: 8px;
+  background: var(--gray-a2);
+}
+
+.models-card-status-badge-btn {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.models-card-status-badge-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.models-card-status-badge-btn:focus-visible {
+  outline: 2px solid var(--accent-9, #171513);
+  outline-offset: 2px;
+}
+
+.models-card-ps-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.models-card-ps-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.models-card-ps-thumb-status {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.3;
+  text-transform: lowercase;
+}
+
+.models-card-ps-thumb.is-unpublished {
+  opacity: 0.55;
 }
 
 .influencer-status legend {
