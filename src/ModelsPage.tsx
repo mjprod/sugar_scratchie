@@ -2893,7 +2893,7 @@ function CardStatusBadge({
 }: {
   status?: string | null;
   busy?: boolean;
-  /** One-click flip between published and unpublished. */
+  /** One-click flip. Saves immediately — no draft/confirm step. */
   onToggle?: (status: CardStatus) => void;
 }) {
   const value = cardStatusOf({ status });

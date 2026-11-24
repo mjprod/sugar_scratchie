@@ -90,6 +90,7 @@ export const CARD_STATUS_OPTIONS: {
   },
 ];
 
+/** Missing status counts as published so older API payloads stay live. */
 export function cardStatusOf(card: { status?: string | null }): CardStatus {
   return card.status === "unpublished" ? "unpublished" : "published";
 }

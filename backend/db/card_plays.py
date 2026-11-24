@@ -36,12 +36,14 @@ class CardTerms:
 
 
 def _creator_for_sale(model_id: str | None, status: str | None) -> bool:
+    # Cards with no influencer stay sellable; a missing creator row is not.
     if not model_id:
         return True
     return status == "published"
 
 
 def _card_for_sale(card_status: str | None) -> bool:
+    # None means the join missed the row (or status was never set): treat as not for sale.
     return card_status == "published"
 
 
@@ -57,6 +59,7 @@ def card_terms(db: Session, kind: str, card_id: str) -> CardTerms | None:
         if found is None:
             return None
         photo, creator_status, parent_status = found
+        # Photo, its motion parent, and the influencer must all be published.
         for_sale = (
             _card_for_sale(photo.status)
             and _card_for_sale(parent_status)

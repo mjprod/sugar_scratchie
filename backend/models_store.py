@@ -677,6 +677,8 @@ def _apply_default_modal(
             status_code=422,
             detail="Pick a motion card on this model before adding it as a default modal.",
         )
+    # Ownership only. An unpublished demo card still attaches; play will 403 for
+    # strangers until the card is published again.
     owned = (
         db.query(MotionCard.id)
         .filter(MotionCard.id == card_id, MotionCard.model_id == row.id)

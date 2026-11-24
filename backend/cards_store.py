@@ -304,6 +304,7 @@ def list_cards(
     *,
     player_catalog: bool = False,
 ) -> list[CardInfo]:
+    # player_catalog drops unpublished rows. Owned unpublished cards resolve via the board.
     cards = [_original_card(root, cards_dir, mesh_dir)]
     rows = db.scalars(
         select(MotionCard).order_by(MotionCard.model_id.nullsfirst(), MotionCard.sort_order, MotionCard.id)

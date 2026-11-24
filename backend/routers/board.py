@@ -89,6 +89,7 @@ def _motion_card(
     *,
     creator_for_sale: bool,
 ) -> dict[str, Any]:
+    # Photo forSale also needs the parent motion published (via motion_for_sale).
     motion_for_sale = creator_for_sale and card.status == "published"
     statics = [
         _static_card(
@@ -111,6 +112,8 @@ def _motion_card(
         "forSale": motion_for_sale,
         **described,
         "status": "unlocked" if described["unlocked"] else "locked",
+        # Unpublished photos the player does not own are filtered out above, so
+        # this total shrinks for strangers when a photo is unpublished.
         "staticCardsOwned": sum(1 for s in statics if s["owned"]),
         "staticCardsTotal": len(statics),
         "staticCards": statics,

@@ -818,7 +818,8 @@ def assets(db: Annotated[Session, Depends(get_session)]) -> dict:
 def get_cards(
     request: Request, db: Annotated[Session, Depends(get_session)]
 ) -> dict:
-    # Players only see published motion cards. Operators keep the full catalog.
+    # Public list is the store shelf. Owned unpublished cards stay off this
+    # endpoint and show on the creator board instead.
     cards = list_cards(
         db,
         ROOT,
@@ -1028,7 +1029,8 @@ def get_photo_scratch_slots(
     theme: str = "",
 ) -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
-    # Disk slots carry draft/build state. Published status lives on the catalog row.
+    # Disk slots are the build pipeline. Catalog status exists only after
+    # publish-game; slots without a photo_scratch_cards row have no status.
     published = {
         info.slot_id: info.status
         for info in list_photo_scratch_cards(db, ROOT)

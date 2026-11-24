@@ -99,7 +99,11 @@ def _opening_session(opening: PackOpening, cards: list[PackOpeningCard], quantit
 
 
 def _deal_pools(db: Session, pack: Pack) -> dict[str, list[DealCandidate]]:
-    """Standard-tier catalog cards of the pack's creator. Premium / ultra are bought, not dealt."""
+    """Standard-tier catalog cards of the pack's creator. Premium / ultra are bought, not dealt.
+
+    Unpublished motion/photo rows are excluded so a sealed pack never deals
+    cards that are off the store shelf.
+    """
     if not pack.model_id:
         return {"motion": [], "photo": []}
     # Only published catalog cards enter new packs. Owners still open what they bought.
