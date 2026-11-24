@@ -320,6 +320,7 @@ def test_foil_n8n_queues_job(client, dashboard_headers, monkeypatch: pytest.Monk
         captured["kind"] = kind
         captured["command"] = command
         captured["action"] = action
+        captured["folder_base"] = kwargs.get("folder_base", "")
 
         class Job:
             def public(self) -> dict:
@@ -355,7 +356,9 @@ def test_foil_n8n_queues_job(client, dashboard_headers, monkeypatch: pytest.Monk
             "1.250",
             f"Foil {model_id}",
             model_id,
+            "FF-DF",
         ]
+        assert captured["folder_base"] == "FF-DF"
         assert callable(captured["action"])
 
         rejected = client.post(

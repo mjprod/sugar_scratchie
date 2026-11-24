@@ -86,6 +86,10 @@ def test_script_command_uses_name_id_and_clip(tmp_path: Path, monkeypatch):
     assert command[command.index("--id") + 1] == "234"
     assert command[command.index("--clip") + 1] == str(clip)
     assert command[command.index("--project") + 1] == "ss-Influencer.aep"
+    assert "--folder-base" not in command
+
+    with_base = script_command(clip, "Glauco Pereira", "glauco_pereira", folder_base="GP-SN")
+    assert with_base[with_base.index("--folder-base") + 1] == "GP-SN"
 
 
 def test_result_saved_accepts_only_the_saved_prefix():
@@ -100,15 +104,23 @@ def test_run_copy_reads_the_destination(tmp_path: Path, monkeypatch):
 
     def fake_popen(command, **kwargs):
         assert command[command.index("--name") + 1] == "Ada"
-        return FakeProcess(['Greenkey: uploading\n', 'AE_JOB {"destination": "/tmp/SS-234 Ada"}\n'])
+        assert command[command.index("--folder-base") + 1] == "A-SN"
+        return FakeProcess(['Greenkey: uploading\n', 'AE_JOB {"destination": "/tmp/A-SN-1"}\n'])
 
     monkeypatch.setattr("backend.services.influencer_n8n.subprocess.Popen", fake_popen)
     monkeypatch.setattr(
         "backend.services.influencer_n8n.script_command",
-        lambda path, name, card_id: ["python", str(tmp_path / "duplicate_job.py"), "--name", name],
+        lambda path, name, card_id, folder_base="": [
+            "python",
+            str(tmp_path / "duplicate_job.py"),
+            "--name",
+            name,
+            "--folder-base",
+            folder_base,
+        ],
     )
     (tmp_path / "duplicate_job.py").write_text("# test\n")
-    assert run_copy(clip, "Ada", "234") == Path("/tmp/SS-234 Ada")
+    assert run_copy(clip, "Ada", "234", folder_base="A-SN") == Path("/tmp/A-SN-1")
 
 
 def test_run_influencer_n8n_shows_lines_pushed_by_n8n(tmp_path: Path, monkeypatch):
@@ -156,6 +168,7 @@ def test_influencer_n8n_queues_job(client, dashboard_headers, monkeypatch):
         captured["kind"] = kind
         captured["command"] = command
         captured["action"] = action
+        captured["folder_base"] = kwargs.get("folder_base", "")
 
         class Job:
             def public(self) -> dict:
@@ -183,7 +196,8 @@ def test_influencer_n8n_queues_job(client, dashboard_headers, monkeypatch):
         )
         assert response.status_code == 200, response.text
         assert response.json()["kind"] == "influencer-n8n"
-        assert captured["command"] == ["influencer-n8n", model_id, "234", "Ada Vale"]
+        assert captured["command"] == ["influencer-n8n", model_id, "234", "Ada Vale", "AV-DF"]
+        assert captured["folder_base"] == "AV-DF"
         assert callable(captured["action"])
     finally:
         client.delete(f"/api/models/{model_id}", headers=dashboard_headers)
