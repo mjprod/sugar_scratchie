@@ -22,7 +22,7 @@ import {
 } from "@/services/scratchCoinReward";
 import { gameReturnHrefFromSearch } from "@/shared/navigation/collectionReturn";
 import { useMarkPageReady } from "@/shared/ui/usePageReady";
-import { Volume2, VolumeX } from "lucide-react";
+import { Check, Volume2, VolumeX, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -1412,8 +1412,10 @@ export function ScratchPrototype({
   skipToPlay = false,
   loopFromIntro = false,
   requireEntryTap = false,
+  tryChrome = false,
   onLeave,
   onFinish,
+  onPlayReady,
 }: {
   /**
    * Lab/sandbox: skip intro video + foil bar scratch + countdown.
@@ -1428,10 +1430,17 @@ export function ScratchPrototype({
    * black until the first scratch.
    */
   requireEntryTap?: boolean;
+  /**
+   * Leo Try Motion: X in the pause gutter, check in the diamonds gutter,
+   * no AutoScratch / currency (dock stays).
+   */
+  tryChrome?: boolean;
   /** When set, pause control is rendered in the top chrome left gutter. */
   onLeave?: () => void;
   /** Single-card play: called instead of returning to collection. */
   onFinish?: () => void;
+  /** Fires once when card videos are decode-ready for the stage. */
+  onPlayReady?: () => void;
 } = {}) {
   const { authed } = useAuth();
   const { addCoins, addDiamonds, spendCoins, spendDiamonds, coins, diamonds } =
@@ -1822,6 +1831,19 @@ export function ScratchPrototype({
    * Lab skipToPlay can show chrome immediately — video readiness still gates play.
    */
   const [gameVideosReady, setGameVideosReady] = useState(() => skipToPlay);
+  /** skipToPlay mounts ready=true then flips false→true; ignore the first true. */
+  const playReadyArmedRef = useRef(!skipToPlay);
+  const playReadySentRef = useRef(false);
+  useEffect(() => {
+    if (!onPlayReady || playReadySentRef.current) return;
+    if (!gameVideosReady) {
+      playReadyArmedRef.current = true;
+      return;
+    }
+    if (!playReadyArmedRef.current) return;
+    playReadySentRef.current = true;
+    onPlayReady();
+  }, [gameVideosReady, onPlayReady]);
   /**
    * Cold refresh has no audio gesture — wait for Tap to play so theme-intro
    * autoplay + game-clip play() land inside a user gesture (otherwise the
@@ -3707,6 +3729,9 @@ export function ScratchPrototype({
 
   useEffect(() => {
     if (typeof window === "undefined" || !cardsReady) return;
+    // Embedded try chrome must not rewrite /leo-ui (or the host) query —
+    // that stomps the real card id and breaks check → Models?model=.
+    if (tryChrome) return;
     const url = new URL(window.location.href);
     if (activeModelId) url.searchParams.set("model", activeModelId);
     else url.searchParams.delete("model");
@@ -3730,6 +3755,7 @@ export function ScratchPrototype({
     cardsReady,
     gameMode,
     modelCards,
+    tryChrome,
     playlistMode,
     selectedCardId,
   ]);
@@ -6325,10 +6351,23 @@ export function ScratchPrototype({
           >
             <div className="stage-game__top-chrome-row is-controls">
               <div className="stage-game__top-chrome-side is-start">
-                {onLeave ? <GamePauseButton onLeave={onLeave} /> : null}
+                {onLeave && tryChrome ? (
+                  <button
+                    type="button"
+                    className="stage-game__pause"
+                    aria-label="Close try"
+                    autoFocus
+                    onClick={onLeave}
+                  >
+                    <X aria-hidden="true" size={18} strokeWidth={2.4} />
+                  </button>
+                ) : onLeave ? (
+                  <GamePauseButton onLeave={onLeave} />
+                ) : null}
               </div>
               <div className="stage-game__top-chrome-center">
-                {iconRevealerShown &&
+                {!tryChrome &&
+                iconRevealerShown &&
                 dockHidden &&
                 (skipToPlay || hasPlayableCard) &&
                 !motionResult ? (
@@ -6408,7 +6447,16 @@ export function ScratchPrototype({
                 ) : null}
               </div>
               <div className="stage-game__top-chrome-side is-end">
-                {topBarPhase === "docked" ? (
+                {tryChrome && (onFinish || onLeave) ? (
+                  <button
+                    type="button"
+                    className="stage-game__pause"
+                    aria-label="Done"
+                    onClick={onFinish ?? onLeave}
+                  >
+                    <Check aria-hidden="true" size={18} strokeWidth={2.6} />
+                  </button>
+                ) : topBarPhase === "docked" ? (
                   <div className="stage-game__diamond-enter">
                     <CurrencyBalances
                       coins={coins}

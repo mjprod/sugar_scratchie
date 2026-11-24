@@ -130,6 +130,7 @@
   font-weight: 400;
   font-size: clamp(2rem, 7vw, 2.7rem);
   line-height: 1.05;
+  color: #fff;
   text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
 }
 
@@ -138,6 +139,39 @@
   color: var(--leo-muted);
   font-size: 0.875rem;
   line-height: 1.4;
+}
+
+/* Animating page — slot-machine status lines. */
+.leo-ui__sub--slots {
+  display: block;
+  overflow: hidden;
+}
+
+.leo-ui__sub-slots-window {
+  height: 1.4em;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 18%,
+    #000 82%,
+    transparent 100%
+  );
+}
+
+.leo-ui__sub-slots-reel {
+  will-change: transform;
+}
+
+.leo-ui__sub-slots-line {
+  margin: 0;
+  height: 1.4em;
+  line-height: 1.4;
+  color: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .leo-ui__search {
@@ -1199,12 +1233,17 @@
   );
 }
 
-.leo-ui__photo-fly img {
+.leo-ui__photo-fly img,
+.leo-ui__photo-fly video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: top center;
   display: block;
+}
+
+.leo-ui__photo-fly video {
+  display: none;
 }
 
 .leo-ui__upload-card-top {
@@ -1366,9 +1405,23 @@
   filter: grayscale(1) blur(2px) brightness(0.7);
 }
 
-/* Animating Image — match processing desaturate; GSAP owns the live filter. */
-.leo-ui__preview--animating.is-blurred img {
+/* Animating / Animated — preview sits in the leftover column space under title/sub. */
+.leo-ui__preview--animating,
+.leo-ui__preview--animated {
+  margin-block: auto;
+  flex: 0 0 auto;
+}
+
+/* Match processing desaturate; GSAP owns the live filter. */
+.leo-ui__preview--animating.is-blurred img,
+.leo-ui__preview--animating.is-blurred video {
   filter: grayscale(1) saturate(0) blur(12px) brightness(0.75);
+}
+
+/* Generating Mesh — full color, soft blur + half opacity (GSAP may set the same). */
+.leo-ui__preview--meshing video {
+  filter: grayscale(0) saturate(1) blur(12px) brightness(1);
+  opacity: 0.5;
 }
 
 .leo-ui__preview-overlay {
@@ -1388,6 +1441,31 @@
   font-weight: 400;
   font-size: 0.875rem;
   cursor: pointer;
+}
+
+/* Animated result — Try Again pinned full-bleed to the preview bottom. */
+.leo-ui__preview--animated .leo-ui__preview-overlay {
+  inset: auto 0 0;
+  width: 100%;
+  display: block;
+}
+
+.leo-ui__preview--animated .leo-ui__ghost-btn {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  margin: 0;
+  border-radius: 0 0 12px 12px;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  padding: 0.75rem 1rem;
+  min-height: 3.5rem;
+  font-weight: 700;
 }
 
 /* Face slot stacks Add Face + selected thumb for handoff animation. */
@@ -1606,6 +1684,14 @@
   align-self: stretch;
 }
 
+.leo-ui__confirm-side--bottom {
+  justify-content: flex-end;
+}
+
+.leo-ui__confirm-side--top {
+  justify-content: flex-start;
+}
+
 .leo-ui__confirm-card {
   display: flex;
   flex-direction: column;
@@ -1647,6 +1733,7 @@
   padding: 0.55rem 0.35rem 0.75rem;
   gap: 0.35rem;
   min-height: 0;
+  max-height: 13.5rem;
 }
 
 .leo-ui__confirm-rerun {
@@ -1751,11 +1838,39 @@
   display: block;
 }
 
+.leo-ui__confirm-upload-slot {
+  position: relative;
+  width: 5.8125rem;
+  height: 5.8125rem;
+  margin: 0.35rem auto 0;
+}
+
+.leo-ui__confirm-upload-slot > .leo-ui__confirm-upload {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
 .leo-ui__confirm-upload-preview {
   position: relative;
   width: fit-content;
   margin: 0.35rem auto 0;
   overflow: visible;
+}
+
+.leo-ui__confirm-upload-slot .leo-ui__confirm-upload-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+}
+
+.leo-ui__confirm-upload-slot .leo-ui__confirm-upload-preview .leo-ui__confirm-upload {
+  margin: 0;
+  width: 100%;
+  height: 100%;
 }
 
 /* Match face-thumb frosted × glass (Add Face is 5.8125rem square). */
@@ -1965,9 +2080,153 @@
   inset: 0;
   display: grid;
   place-items: center;
+  place-content: center;
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+/* Source lottie is 250×250 — keep a square slot so the canvas never stretches. */
+.leo-ui__play-mark-lottie {
+  box-sizing: border-box;
+  width: 5rem;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  margin: 0;
+}
+
+.leo-ui__play-mark-lottie-player,
+.leo-ui__play-mark-lottie-player canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+}
+
+/* Mesh lottie: 2× the default 5rem slot; canvas sized via inline px (DotLottie). */
+.leo-ui__play-mark-lottie--wide {
+  width: 10rem;
+  height: 10rem;
+  aspect-ratio: 1 / 1;
+}
+
+.leo-ui__play-mark-lottie--wide .leo-ui__play-mark-lottie-player,
+.leo-ui__play-mark-lottie--wide .leo-ui__play-mark-lottie-player canvas {
+  width: 10rem !important;
+  height: 10rem !important;
+}
+
+/* Game Created preview is a button — reset chrome, keep card look. */
+.leo-ui__preview--try {
+  display: block;
+  margin-inline: auto;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+
+.leo-ui__preview--try:focus-visible {
+  outline: 2px solid rgba(215, 0, 101, 0.85);
+  outline-offset: 3px;
+}
+
+/* Try Motion Card — fullscreen game stage (Figma 391:2643). */
+.leo-ui__try-motion {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  background: #000;
+  overflow: hidden;
   color: #fff;
-  font-size: 2.5rem;
-  opacity: 0.9;
+  box-sizing: border-box;
+}
+
+.leo-ui__try-motion:not([open]) {
+  display: none;
+}
+
+.leo-ui__try-motion[open] {
+  display: block;
+}
+
+.leo-ui__try-motion:modal {
+  overscroll-behavior: contain;
+}
+
+.leo-ui__try-motion::backdrop {
+  background: #000;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.leo-ui__try-motion-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  transform-origin: 50% 50%;
+}
+
+/* Real scratch game fill (juliana_1 via skipToPlay). */
+.leo-ui__try-motion-game {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  background: #121018;
+}
+
+.leo-ui__try-motion-game .app-shell--game,
+.leo-ui__try-motion-game .stage-game {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Holds the Game Created clip over the loading scratch stage.
+   While loading, JS sets pointer-events:auto; after reveal it must be none
+   or the invisible cover eats every scratch / X / check hit. */
+.leo-ui__try-motion-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  background: #000;
+  pointer-events: none;
+}
+
+.leo-ui__try-motion-cover[aria-hidden="true"] {
+  pointer-events: none !important;
+  visibility: hidden;
+}
+
+.leo-ui__try-motion-cover video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  filter: blur(14px) brightness(0.72);
+  transform: scale(1.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leo-ui__try-motion-stage {
+    will-change: auto;
+  }
 }
 
 /* Confirm → Change Prompt modal (native dialog, top layer). */

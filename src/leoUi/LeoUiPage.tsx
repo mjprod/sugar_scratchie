@@ -2,7 +2,15 @@ import { useGSAP } from "@gsap/react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import gsap from "gsap";
 import { Check, RotateCcw, SquarePen, Upload } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { api, uploadFile } from "../shared/api";
 import { createMotionCardDraft, fetchModels, type ModelInfo } from "../shared/models";
 import { fetchThemes, type ThemeInfo } from "../shared/themes";
@@ -13,7 +21,12 @@ import { previewSource } from "../videoFlow/ui";
 import chevronUrl from "./assets/icon-chevron.svg";
 import searchUrl from "./assets/icon-search.svg";
 import logoUrl from "./assets/logo-sugar-scratch.svg";
+import { finishAndPublishCard } from "./finishPublish";
 import "./leo-ui.css";
+
+const LeoTryMotionGame = lazy(() =>
+  import("./LeoTryMotionGame").then((m) => ({ default: m.LeoTryMotionGame })),
+);
 
 gsap.registerPlugin(useGSAP);
 
@@ -25,7 +38,14 @@ type LeoScreen =
   | "processing"
   | "confirm"
   | "animating"
-  | "animated";
+  | "animated"
+  | "outfit"
+  | "dressing"
+  | "dressed"
+  | "meshing"
+  | "mask"
+  | "symbols"
+  | "created";
 
 type JobInfo = {
   id: string;
@@ -83,19 +103,74 @@ const SCREEN_ORDER: LeoScreen[] = [
   "confirm",
   "animating",
   "animated",
+  "outfit",
+  "dressing",
+  "dressed",
+  "meshing",
+  "mask",
+  "symbols",
+  "created",
 ];
 const PROCESSING_MIN_DWELL_MS = 1200;
 /** Flip on when layout is locked — auto-advance past processing once the first picture exists. */
 const PROCESSING_AUTO_ADVANCE = false;
-/** Confirm / multi-option pick is parked — always use the first processed picture. */
-const SKIP_CONFIRM = true;
+/** Confirm / multi-option pick — set true to auto-use picture-1 and jump to Animating. */
+const SKIP_CONFIRM = false;
 const PROCESSING_PHOTO_FILTER =
   "grayscale(1) saturate(0) blur(12px) brightness(0.75)";
 const PROCESSING_PHOTO_FILTER_CLEAR =
   "grayscale(0) saturate(1) blur(0px) brightness(1)";
+/** Meshing preview — color stays, soft blur + half opacity.
+ *  Same filter fn list as CLEAR so GSAP can tween blur ↔ sharp. */
+const MESHING_PHOTO_FILTER =
+  "grayscale(0) saturate(1) blur(12px) brightness(1)";
+const MESHING_PHOTO_OPACITY = 0.5;
 /** Desaturate + blur beat on enter processing. */
 const PROCESSING_BLUR_DURATION = 0.4;
 const PROCESSING_HANGER_LOTTIE = "/leo-ui/lottieClothesHanger.lottie";
+const ANIMATING_VIDEO_LOTTIE = "/leo-ui/lottieMakeVideo.lottie";
+const MESHING_LOTTIE = "/leo-ui/lottieMeshLoad.lottie";
+/** Game Created → try-motion: preview blur while the game stage scales up. */
+const TRY_MOTION_PREVIEW_BLUR = "blur(14px) brightness(0.72)";
+const TRY_MOTION_SCALE_DURATION = 0.55;
+/** Max wait for scratch videos before revealing anyway. */
+const TRY_MOTION_READY_FALLBACK_MS = 6000;
+
+/** Uniform scale so a full-bleed stage matches the preview width (center origin). */
+function tryMotionScaleFromPreview(from: DOMRect, to: DOMRect): number {
+  return Math.min(1, from.width / Math.max(to.width, 1));
+}
+/** Stand-in processed still when the picture step has no artifacts yet (layout / morph testing). */
+const PLACEHOLDER_PROCESSED = "/leo-ui/placeholder-processed.png";
+/** Stand-in clip on Animating / Animated when background artifacts are missing. */
+const PLACEHOLDER_ANIMATING_VIDEO = "/leo-ui/placeholder-animating.mp4";
+/** Animating subtitle — slot-machine reel copy. */
+const ANIMATING_SLOT_LINES = [
+  "Waking up the pixels...",
+  "Teaching stillness to dance...",
+  "Stitching motion into reality...",
+  "Convincing physics to cooperate...",
+  "Adding a little cinematic chaos...",
+  "Bringing your imagination to life..",
+] as const;
+const DRESSING_SLOT_LINES = [
+  "Trying the outfit on for size...",
+  "Smoothing every fold into place...",
+  "Matching fabric to the motion...",
+  "Keeping the silhouette honest...",
+  "One last tug at the hem...",
+  "Locking the look into the clip...",
+] as const;
+const MESHING_SLOT_LINES = [
+  "Reading the silhouette...",
+  "Pinning points to the fabric...",
+  "Weaving the UV lattice...",
+  "Tracking every fold...",
+  "Smoothing the mesh field...",
+  "Almost ready to scratch...",
+] as const;
+const ANIMATING_SLOT_SPIN = 0.55;
+const ANIMATING_SLOT_HOLD = 1.45;
 const leoHeld = new Set<string>();
 
 function phaseFor(screen: LeoScreen): number {
@@ -109,6 +184,17 @@ function phaseFor(screen: LeoScreen): number {
     return 1;
   }
   if (screen === "animating" || screen === "animated") return 2;
+  if (screen === "outfit") return 3;
+  if (
+    screen === "dressing" ||
+    screen === "dressed" ||
+    screen === "meshing" ||
+    screen === "mask" ||
+    screen === "symbols" ||
+    screen === "created"
+  ) {
+    return 4;
+  }
   return 0;
 }
 
@@ -222,6 +308,37 @@ export function LeoUiPage() {
   const confirmHeroRef = useRef<HTMLDivElement | null>(null);
   /** Animating preview slot — fly docks here from confirm. */
   const animatingPreviewRef = useRef<HTMLDivElement | null>(null);
+  /** Animated preview slot — video fly docks here from animating. */
+  const animatedPreviewRef = useRef<HTMLDivElement | null>(null);
+  /** Choose Outfit hero — video fly docks here from animated. */
+  const outfitHeroRef = useRef<HTMLDivElement | null>(null);
+  /** Dressing preview — video fly docks here from outfit. */
+  const dressingPreviewRef = useRef<HTMLDivElement | null>(null);
+  /** Dressed preview — video fly docks here from dressing. */
+  const dressedPreviewRef = useRef<HTMLDivElement | null>(null);
+  /** Meshing preview — video fly docks here from dressed (full color). */
+  const meshingPreviewRef = useRef<HTMLDivElement | null>(null);
+  /** Adjust Mask hero — video fly docks here from meshing. */
+  const maskHeroRef = useRef<HTMLDivElement | null>(null);
+  /** Place Symbols hero — video fly docks here from mask. */
+  const symbolsHeroRef = useRef<HTMLDivElement | null>(null);
+  /** Game Created preview — video fly docks here from symbols (centered). */
+  const createdPreviewRef = useRef<HTMLButtonElement | null>(null);
+  /** Full-viewport try-motion dialog (Figma Step08 / 391:2643). */
+  const tryMotionRef = useRef<HTMLDialogElement | null>(null);
+  const tryMotionStageRef = useRef<HTMLDivElement | null>(null);
+  const tryMotionCoverRef = useRef<HTMLDivElement | null>(null);
+  const tryMotionBusyRef = useRef(false);
+  /** True after dialog is parked at preview scale, waiting for game videos. */
+  const tryMotionAwaitingReadyRef = useRef(false);
+  const tryMotionReadyFallbackRef = useRef(0);
+  const tryMotionFromRectRef = useRef<DOMRect | null>(null);
+  /** URL before skipToPlay rewrites ?model=&card= — restored on close. */
+  const tryMotionUrlRef = useRef("");
+  const [tryMotionOpen, setTryMotionOpen] = useState(false);
+  const animatingSlotsRef = useRef<HTMLDivElement | null>(null);
+  const dressingSlotsRef = useRef<HTMLDivElement | null>(null);
+  const meshingSlotsRef = useRef<HTMLDivElement | null>(null);
   const shellPhotoRef = useRef<HTMLImageElement | null>(null);
   /** Last image seen while on Add Photo — distinguishes fresh select vs return. */
   const photoImageOnScreenRef = useRef("");
@@ -240,11 +357,20 @@ export function LeoUiPage() {
   const nextLabelReadyRef = useRef(false);
   const bikiniRef = useRef<HTMLInputElement | null>(null);
   const faceRef = useRef<HTMLInputElement | null>(null);
-  const uploadTargetRef = useRef<"photo" | "bikini" | "face" | "confirm">("photo");
+  const uploadTargetRef = useRef<"photo" | "bikini" | "face" | "confirm" | "outfit">("photo");
   /** User-uploaded stand-in on Confirm; clear restores the generated option. */
   const [confirmOverride, setConfirmOverride] = useState("");
   /** Holds upload src through the exit scale/fade before unmount. */
   const [confirmUploadExitSrc, setConfirmUploadExitSrc] = useState("");
+  /** User-uploaded outfit reference on Choose Outfit (thumb only — hero stays the video). */
+  const [outfitOverride, setOutfitOverride] = useState("");
+  /** Keeps the outfit thumb mounted while exit scales it out. */
+  const [outfitPanelSrc, setOutfitPanelSrc] = useState("");
+  const outfitUploadBtnRef = useRef<HTMLButtonElement | null>(null);
+  const outfitThumbRef = useRef<HTMLButtonElement | null>(null);
+  const outfitClearRef = useRef<HTMLButtonElement | null>(null);
+  const outfitOnScreenRef = useRef("");
+  const outfitReadyRef = useRef(false);
   /** Extra picture direction from Confirm → Change Prompt dialog. */
   const [picturePromptExtra, setPicturePromptExtra] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
@@ -292,6 +418,14 @@ export function LeoUiPage() {
     | "to-swimwear"
     | "to-confirm"
     | "to-animating"
+    | "to-animated"
+    | "to-outfit"
+    | "to-dressing"
+    | "to-dressed"
+    | "to-meshing"
+    | "to-mask"
+    | "to-symbols"
+    | "to-created"
     | null
   >(null);
   const [theme, setTheme] = useState("");
@@ -345,16 +479,31 @@ export function LeoUiPage() {
   // Pill tracks the destination step so it slides during exit, not after swap.
   const phase = phaseFor(screen);
   // Back expands toward destination while content exits (same chain as phase pill).
-  const showBack = screen !== "influencer" && screen !== "animating";
-  const showNextCheck = viewScreen === "confirm" || viewScreen === "animated";
+  const showBack = screen !== "influencer";
+  const showNextCheck =
+    viewScreen === "confirm" ||
+    viewScreen === "animated" ||
+    viewScreen === "outfit" ||
+    viewScreen === "dressed" ||
+    viewScreen === "mask" ||
+    viewScreen === "symbols" ||
+    viewScreen === "created";
   const nextLabel =
     viewScreen === "confirm"
       ? "Use This Image"
       : viewScreen === "animated"
         ? "Use This Video"
-        : viewScreen === "animating"
-          ? "Working…"
-          : "Next";
+        : viewScreen === "outfit"
+          ? "Use This Outfit"
+          : viewScreen === "dressed"
+            ? "Use This Video"
+            : viewScreen === "mask"
+              ? "Use This Mask"
+              : viewScreen === "symbols"
+                ? "Done"
+                : viewScreen === "created"
+                  ? "Try Motion Card"
+                  : "Next";
 
   useEffect(() => {
     if (!modelId) return;
@@ -492,7 +641,10 @@ export function LeoUiPage() {
           setPictureChoice(1);
           setScreen(SKIP_CONFIRM ? "processing" : "confirm");
         } catch {
-          /* fresh start */
+          // Missing card in ?card= — drop the query so we don't keep 404ing draft.
+          if (bootCard) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
         }
       } catch (caught) {
         if (!cancelled) setError(errorText(caught));
@@ -613,22 +765,44 @@ export function LeoUiPage() {
     });
   }, [cardId, enqueue, flowState, pendingStep, runningJob]);
 
-  // Leave animating once background is in review/approved.
+  // Leave animating once a background job finishes — not when it was already done
+  // (so Confirm → Animating layout can be inspected on completed cards).
   useEffect(() => {
-    const status = flowState?.steps.background?.status;
     if (screen !== "animating") return;
-    if (status === "review" || status === "approved") setScreen("animated");
-  }, [flowState, screen]);
+    const bgBusy =
+      pendingStep === "background" || runningJob?.command[1] === "background";
+    if (bgBusy) return;
+    const status = flowState?.steps.background?.status;
+    if (status !== "review" && status !== "approved") return;
+    const ran = cardJobs.some((job) => job.command[1] === "background");
+    if (!ran) return;
+    setScreen("animated");
+  }, [cardJobs, flowState, pendingStep, runningJob, screen]);
 
-  // Drop custom confirm upload when leaving the step.
+  // Drop custom confirm / outfit uploads when leaving those steps.
   useEffect(() => {
     if (screen !== "confirm") {
       setConfirmOverride("");
       setConfirmUploadExitSrc("");
     }
+    if (
+      screen !== "outfit" &&
+      screen !== "dressing" &&
+      screen !== "dressed" &&
+      screen !== "meshing" &&
+      screen !== "mask" &&
+      screen !== "symbols" &&
+      screen !== "created"
+    ) {
+      setOutfitOverride("");
+      setOutfitPanelSrc("");
+      outfitOnScreenRef.current = "";
+      outfitReadyRef.current = false;
+    }
   }, [screen]);
 
   // Processing done → swap to processed photo + re-saturate (then optional auto-advance).
+  // Uses real picture artifacts when present; otherwise PLACEHOLDER_PROCESSED after min dwell.
   useEffect(() => {
     if (screen !== "processing") {
       processingRevealStartedRef.current = false;
@@ -636,10 +810,6 @@ export function LeoUiPage() {
       return;
     }
     if (viewScreen !== "processing" || processingRevealStartedRef.current) return;
-    const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
-      (path) => pictureChoiceFromArtifact(path) != null,
-    );
-    if (artifacts.length === 0) return;
     const started = processingEnteredAtRef.current || Date.now();
     const wait = Math.max(0, PROCESSING_MIN_DWELL_MS - (Date.now() - started));
     const timer = window.setTimeout(() => {
@@ -651,7 +821,7 @@ export function LeoUiPage() {
       setProcessingRevealed(true);
     }, wait);
     return () => window.clearTimeout(timer);
-  }, [flowState, screen, viewScreen]);
+  }, [screen, viewScreen]);
 
   function cardNameChipMode(forScreen: LeoScreen): "edit" | "card" | "hidden" {
     if (forScreen === "theme") return "edit";
@@ -1142,8 +1312,14 @@ export function LeoUiPage() {
   function placePhotoFly(box: DOMRect, src: string) {
     const fly = photoFlyRef.current;
     const img = fly?.querySelector("img");
+    const video = fly?.querySelector("video");
     const local = stageLocalFromRect(box);
     if (!fly || !img || !local) return null;
+    if (video) {
+      video.pause();
+      gsap.set(video, { display: "none" });
+    }
+    gsap.set(img, { display: "block" });
     img.src = previewSource(src);
     gsap.killTweensOf(fly);
     gsap.set(fly, {
@@ -1158,6 +1334,40 @@ export function LeoUiPage() {
       scaleY: 1,
       opacity: 1,
       transformOrigin: "0% 0%",
+    });
+    return local;
+  }
+
+  /** Same fly layer, but with a looping video (Animating → Animated). */
+  function placeVideoFly(box: DOMRect, src: string, filter = PROCESSING_PHOTO_FILTER_CLEAR) {
+    const fly = photoFlyRef.current;
+    const img = fly?.querySelector("img");
+    const video = fly?.querySelector("video");
+    const local = stageLocalFromRect(box);
+    if (!fly || !video || !local) return null;
+    if (img) gsap.set(img, { display: "none" });
+    const url = previewSource(src);
+    if (video.getAttribute("src") !== url) video.src = url;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    gsap.set(video, { display: "block" });
+    void video.play().catch(() => undefined);
+    gsap.killTweensOf(fly);
+    gsap.set(fly, {
+      display: "block",
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      opacity: 1,
+      filter,
+      transformOrigin: "0% 0%",
+      ...SHELL_MASK_THUMB,
     });
     return local;
   }
@@ -1540,9 +1750,9 @@ export function LeoUiPage() {
 
     const clearFlyProps =
       "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
-    const img = preview?.querySelector<HTMLElement>("img");
+    const media = preview?.querySelector<HTMLElement>("video, img");
     const revealPreview = () => {
-      if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
+      if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
       gsap.set(fly, { display: "none", clearProps: clearFlyProps });
       photoShellGrowingRef.current = false;
     };
@@ -1551,8 +1761,8 @@ export function LeoUiPage() {
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Keep the frame; hide only the settled img until the fly lands over it.
-    if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER, opacity: 0 });
+    // Keep the frame; hide only the settled media until the fly lands over it.
+    if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 0 });
 
     if (!preview) {
       revealPreview();
@@ -1590,13 +1800,455 @@ export function LeoUiPage() {
       ease: "power3.inOut",
       overwrite: true,
       onComplete: () => {
-        if (img) gsap.set(img, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
+        if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
         gsap.to(fly, {
           opacity: 0,
           duration: 0.22,
           ease: "power2.out",
           overwrite: true,
           onComplete: () => {
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+          },
+        });
+      },
+    });
+  }
+
+  /** Animating → Animated / Dressing → Dressed: morph blurred clip into clear result. */
+  function settleFlyIntoClearPreview(preview: HTMLElement | null) {
+    const fly = photoFlyRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const media = preview?.querySelector<HTMLElement>("video, img");
+    const revealPreview = () => {
+      if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+      if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+      const flyVideo = fly.querySelector("video");
+      if (flyVideo) flyVideo.pause();
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 0 });
+    if (preview) gsap.set(preview, { opacity: 0, visibility: "hidden" });
+
+    if (!preview) {
+      revealPreview();
+      return;
+    }
+
+    const to = preview.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealPreview();
+      return;
+    }
+
+    if (reduce) {
+      revealPreview();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 16,
+      boxShadow: "0 0 0 0 transparent",
+      filter: PROCESSING_PHOTO_FILTER_CLEAR,
+      ...SHELL_MASK_THUMB,
+      duration: 0.75,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: () => {
+        if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+        if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo) flyVideo.pause();
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+          },
+        });
+      },
+    });
+  }
+
+  function settleFlyIntoAnimated() {
+    settleFlyIntoClearPreview(animatedPreviewRef.current);
+  }
+
+  function settleFlyIntoDressed() {
+    settleFlyIntoClearPreview(dressedPreviewRef.current);
+  }
+
+  /** Dressed → Meshing: morph into center preview, blur + fade (keep color). */
+  function settleFlyIntoMeshing() {
+    const fly = photoFlyRef.current;
+    const preview = meshingPreviewRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const media = preview?.querySelector<HTMLElement>("video, img");
+    const revealPreview = () => {
+      if (media) {
+        gsap.set(media, {
+          filter: MESHING_PHOTO_FILTER,
+          opacity: MESHING_PHOTO_OPACITY,
+        });
+      }
+      if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+      const flyVideo = fly.querySelector("video");
+      if (flyVideo) flyVideo.pause();
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (media) gsap.set(media, { filter: MESHING_PHOTO_FILTER, opacity: 0 });
+    if (preview) gsap.set(preview, { opacity: 0, visibility: "hidden" });
+
+    if (!preview) {
+      revealPreview();
+      return;
+    }
+
+    const to = preview.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealPreview();
+      return;
+    }
+
+    if (reduce) {
+      revealPreview();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 16,
+      boxShadow: "0 0 0 0 transparent",
+      filter: MESHING_PHOTO_FILTER,
+      opacity: MESHING_PHOTO_OPACITY,
+      ...SHELL_MASK_THUMB,
+      duration: 0.75,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: () => {
+        if (media) {
+          gsap.set(media, {
+            filter: MESHING_PHOTO_FILTER,
+            opacity: MESHING_PHOTO_OPACITY,
+          });
+        }
+        if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo) flyVideo.pause();
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+          },
+        });
+      },
+    });
+  }
+
+  /** Outfit → Dressing: morph hero into the center preview and blur/desaturate. */
+  function settleFlyIntoDressing() {
+    const fly = photoFlyRef.current;
+    const preview = dressingPreviewRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const media = preview?.querySelector<HTMLElement>("video, img");
+    const revealPreview = () => {
+      if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
+      if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+      const flyVideo = fly.querySelector("video");
+      if (flyVideo) flyVideo.pause();
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 0 });
+    if (preview) gsap.set(preview, { opacity: 0, visibility: "hidden" });
+
+    if (!preview) {
+      revealPreview();
+      return;
+    }
+
+    const to = preview.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealPreview();
+      return;
+    }
+
+    if (reduce) {
+      revealPreview();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 16,
+      boxShadow: "0 0 0 0 transparent",
+      filter: PROCESSING_PHOTO_FILTER,
+      ...SHELL_MASK_THUMB,
+      duration: 0.75,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: () => {
+        if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER, opacity: 1 });
+        if (preview) gsap.set(preview, { opacity: 1, visibility: "visible" });
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo) flyVideo.pause();
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+          },
+        });
+      },
+    });
+  }
+
+  /** Morph a flying clip into a confirm-style hero (Outfit / Adjust Mask). */
+  function settleFlyIntoHero(hero: HTMLDivElement | null) {
+    const fly = photoFlyRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const media = hero?.querySelector<HTMLElement>("video, img");
+    const revealHero = () => {
+      if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+      if (hero) gsap.set(hero, { opacity: 1, visibility: "visible" });
+      const flyVideo = fly.querySelector("video");
+      if (flyVideo) flyVideo.pause();
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (hero) gsap.set(hero, { opacity: 0, visibility: "hidden" });
+    if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 0 });
+
+    if (!hero) {
+      revealHero();
+      return;
+    }
+
+    const to = hero.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealHero();
+      return;
+    }
+
+    if (reduce) {
+      revealHero();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 11,
+      boxShadow: "0 0 0 0 transparent",
+      filter: PROCESSING_PHOTO_FILTER_CLEAR,
+      opacity: 1,
+      ...SHELL_MASK_THUMB,
+      duration: 0.75,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: () => {
+        if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+        if (hero) gsap.set(hero, { opacity: 1, visibility: "visible" });
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo) flyVideo.pause();
+            gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+            photoShellGrowingRef.current = false;
+          },
+        });
+      },
+    });
+  }
+
+  function settleFlyIntoOutfit() {
+    settleFlyIntoHero(outfitHeroRef.current);
+  }
+
+  /** Meshing → Adjust Mask: unblur + full opacity while flying into the hero. */
+  function settleFlyIntoSymbols() {
+    settleFlyIntoHero(symbolsHeroRef.current);
+  }
+
+  function settleFlyIntoCreated() {
+    settleFlyIntoClearPreview(createdPreviewRef.current);
+  }
+
+  function settleFlyIntoMask() {
+    const fly = photoFlyRef.current;
+    const hero = maskHeroRef.current;
+    placeCardShell("hidden", false);
+    placeCardNameChip("hidden", true);
+    if (!fly) return;
+
+    const clearFlyProps =
+      "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2";
+    const media = hero?.querySelector<HTMLElement>("video, img");
+    const revealHero = () => {
+      if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+      if (hero) gsap.set(hero, { opacity: 1, visibility: "visible" });
+      const flyVideo = fly.querySelector("video");
+      if (flyVideo) flyVideo.pause();
+      gsap.set(fly, { display: "none", clearProps: clearFlyProps });
+      photoShellGrowingRef.current = false;
+    };
+
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (hero) gsap.set(hero, { opacity: 0, visibility: "hidden" });
+    if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 0 });
+
+    if (!hero) {
+      revealHero();
+      return;
+    }
+
+    const to = hero.getBoundingClientRect();
+    const local = stageLocalFromRect(to);
+    if (!local || to.width < 8 || to.height < 4) {
+      revealHero();
+      return;
+    }
+
+    if (reduce) {
+      revealHero();
+      return;
+    }
+
+    photoShellGrowingRef.current = true;
+    gsap.killTweensOf(fly);
+    gsap.set(fly, {
+      display: "block",
+      filter: MESHING_PHOTO_FILTER,
+      opacity: MESHING_PHOTO_OPACITY,
+      ...SHELL_MASK_THUMB,
+    });
+    gsap.to(fly, {
+      left: local.left,
+      top: local.top,
+      width: local.width,
+      height: local.height,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      borderRadius: 11,
+      boxShadow: "0 0 0 0 transparent",
+      filter: PROCESSING_PHOTO_FILTER_CLEAR,
+      opacity: 1,
+      ...SHELL_MASK_THUMB,
+      duration: 0.85,
+      ease: "power3.inOut",
+      overwrite: true,
+      onComplete: () => {
+        if (media) gsap.set(media, { filter: PROCESSING_PHOTO_FILTER_CLEAR, opacity: 1 });
+        if (hero) gsap.set(hero, { opacity: 1, visibility: "visible" });
+        gsap.to(fly, {
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: true,
+          onComplete: () => {
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo) flyVideo.pause();
             gsap.set(fly, { display: "none", clearProps: clearFlyProps });
             photoShellGrowingRef.current = false;
           },
@@ -1998,14 +2650,19 @@ export function LeoUiPage() {
       } else if (viewScreen === "processing" && screen === "confirm") {
         const host = screenRef.current?.querySelector<HTMLElement>(".leo-ui__host-photo");
         const shell = cardShellRef.current;
-        const box = (host ?? shell)?.getBoundingClientRect();
+        // Prefer the processing-card rect — that's what the user sees morphing away.
+        const box = (host ?? shell)?.getBoundingClientRect()
+          ?? screenRef.current
+            ?.querySelector<HTMLElement>(".leo-ui__processing-card")
+            ?.getBoundingClientRect();
         const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
           (path) => pictureChoiceFromArtifact(path) != null,
         );
         const resultSrc =
-          (processingRevealed
-            ? artifacts[pictureChoice - 1] || artifacts[0]
-            : "") || image;
+          artifacts[pictureChoice - 1] ||
+          artifacts[0] ||
+          PLACEHOLDER_PROCESSED ||
+          image;
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-confirm";
@@ -2026,12 +2683,14 @@ export function LeoUiPage() {
         // Skip Confirm: processing host morphs straight into Animating preview.
         const host = screenRef.current?.querySelector<HTMLElement>(".leo-ui__host-photo");
         const shell = cardShellRef.current;
-        const box = (host ?? shell)?.getBoundingClientRect();
+        const box = (host ?? shell)?.getBoundingClientRect()
+          ?? screenRef.current
+            ?.querySelector<HTMLElement>(".leo-ui__processing-card")
+            ?.getBoundingClientRect();
         const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
           (path) => pictureChoiceFromArtifact(path) != null,
         );
-        const resultSrc =
-          (processingRevealed ? artifacts[0] : "") || artifacts[0] || image;
+        const resultSrc = artifacts[0] || PLACEHOLDER_PROCESSED || image;
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-animating";
@@ -2058,6 +2717,7 @@ export function LeoUiPage() {
           confirmOverride ||
           artifacts[pictureChoice - 1] ||
           artifacts[0] ||
+          PLACEHOLDER_PROCESSED ||
           image;
         const box = hero?.getBoundingClientRect();
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
@@ -2086,6 +2746,7 @@ export function LeoUiPage() {
           confirmOverride ||
           artifacts[pictureChoice - 1] ||
           artifacts[0] ||
+          PLACEHOLDER_PROCESSED ||
           image;
         const box = hero?.getBoundingClientRect();
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
@@ -2101,6 +2762,146 @@ export function LeoUiPage() {
               ...SHELL_MASK_THUMB,
             });
           }
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
+      } else if (viewScreen === "animating" && screen === "animated") {
+        // Blurred clip morphs into the clear Animated preview.
+        const preview = animatingPreviewRef.current;
+        const video = preview?.querySelector("video");
+        const box = preview?.getBoundingClientRect();
+        const src =
+          video?.currentSrc ||
+          video?.getAttribute("src") ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-animated";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER);
+          if (preview) gsap.set(preview, { opacity: 0 });
+        }
+      } else if (viewScreen === "animated" && screen === "outfit") {
+        // Result clip morphs into the Choose Outfit hero.
+        const preview = animatedPreviewRef.current;
+        const video = preview?.querySelector("video");
+        const box = preview?.getBoundingClientRect();
+        const src =
+          video?.currentSrc ||
+          video?.getAttribute("src") ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-outfit";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
+          if (preview) gsap.set(preview, { opacity: 0 });
+        }
+      } else if (viewScreen === "outfit" && screen === "dressing") {
+        // Outfit hero morphs into the Dressing preview and blurs.
+        const hero = outfitHeroRef.current;
+        const video = hero?.querySelector("video");
+        const box = hero?.getBoundingClientRect();
+        const src =
+          video?.currentSrc ||
+          video?.getAttribute("src") ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-dressing";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
+      } else if (viewScreen === "dressing" && screen === "dressed") {
+        // Blurred clip morphs into the clear Dressed preview.
+        const preview = dressingPreviewRef.current;
+        const video = preview?.querySelector("video");
+        const box = preview?.getBoundingClientRect();
+        const src =
+          video?.currentSrc ||
+          video?.getAttribute("src") ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-dressed";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER);
+          if (preview) gsap.set(preview, { opacity: 0 });
+        }
+      } else if (viewScreen === "dressed" && screen === "meshing") {
+        // Clear Dressed clip morphs into center Meshing preview (stay full color).
+        const preview = dressedPreviewRef.current;
+        const video = preview?.querySelector("video");
+        const box = preview?.getBoundingClientRect();
+        const src =
+          video?.currentSrc ||
+          video?.getAttribute("src") ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-meshing";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
+          if (preview) gsap.set(preview, { opacity: 0 });
+        }
+      } else if (viewScreen === "meshing" && screen === "mask") {
+        // Meshing clip lifts into the fly layer (still blurred), then settles into Adjust Mask hero.
+        const preview = meshingPreviewRef.current;
+        const video = preview?.querySelector("video");
+        const box = preview?.getBoundingClientRect();
+        const src =
+          video?.getAttribute("src") ||
+          video?.currentSrc ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-mask";
+          placeVideoFly(box, src, MESHING_PHOTO_FILTER);
+          const fly = photoFlyRef.current;
+          if (fly) {
+            gsap.set(fly, {
+              display: "block",
+              opacity: MESHING_PHOTO_OPACITY,
+              filter: MESHING_PHOTO_FILTER,
+              ...SHELL_MASK_THUMB,
+            });
+            const flyVideo = fly.querySelector("video");
+            if (flyVideo && video && !flyVideo.paused) {
+              try {
+                flyVideo.currentTime = video.currentTime;
+              } catch {
+                /* seek optional */
+              }
+            }
+          }
+          // Hide source media + lottie; keep the fly as the only visible clip.
+          if (video) gsap.set(video, { opacity: 0 });
+          const mark = preview?.querySelector<HTMLElement>(".leo-ui__play-mark");
+          if (mark) gsap.set(mark, { opacity: 0 });
+        }
+      } else if (viewScreen === "mask" && screen === "symbols") {
+        // Adjust Mask hero morphs into the Place Symbols hero.
+        const hero = maskHeroRef.current;
+        const video = hero?.querySelector("video");
+        const box = hero?.getBoundingClientRect();
+        const src =
+          video?.getAttribute("src") ||
+          video?.currentSrc ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-symbols";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
+      } else if (viewScreen === "symbols" && screen === "created") {
+        // Place Symbols hero morphs into the centered Game Created preview.
+        const hero = symbolsHeroRef.current;
+        const video = hero?.querySelector("video");
+        const box = hero?.getBoundingClientRect();
+        const src =
+          video?.getAttribute("src") ||
+          video?.currentSrc ||
+          PLACEHOLDER_ANIMATING_VIDEO;
+        if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-created";
+          placeVideoFly(box, src, PROCESSING_PHOTO_FILTER_CLEAR);
           if (hero) gsap.set(hero, { opacity: 0 });
         }
       } else if (viewScreen === "swimwear" && screen !== "photo") {
@@ -2180,6 +2981,14 @@ export function LeoUiPage() {
         travel === "to-swimwear" && Boolean(photoFrom) && Boolean(image.trim());
       const photoToConfirm = travel === "to-confirm" && Boolean(photoFrom);
       const photoToAnimating = travel === "to-animating" && Boolean(photoFrom);
+      const photoToAnimated = travel === "to-animated" && Boolean(photoFrom);
+      const photoToOutfit = travel === "to-outfit" && Boolean(photoFrom);
+      const photoToDressing = travel === "to-dressing" && Boolean(photoFrom);
+      const photoToDressed = travel === "to-dressed" && Boolean(photoFrom);
+      const photoToMeshing = travel === "to-meshing" && Boolean(photoFrom);
+      const photoToMask = travel === "to-mask" && Boolean(photoFrom);
+      const photoToSymbols = travel === "to-symbols" && Boolean(photoFrom);
+      const photoToCreated = travel === "to-created" && Boolean(photoFrom);
       const flipping =
         (Boolean(flipFrom || shellFrom) && chipMode !== "hidden") ||
         photoGrow ||
@@ -2187,7 +2996,15 @@ export function LeoUiPage() {
         photoToProcessing ||
         photoFromProcessing ||
         photoToConfirm ||
-        photoToAnimating;
+        photoToAnimating ||
+        photoToAnimated ||
+        photoToOutfit ||
+        photoToDressing ||
+        photoToDressed ||
+        photoToMeshing ||
+        photoToMask ||
+        photoToSymbols ||
+        photoToCreated;
 
       gsap.killTweensOf(el);
       // Measure destinations at rest — slide-in would skew slot rects by ~36px.
@@ -2210,6 +3027,22 @@ export function LeoUiPage() {
         settleFlyIntoConfirm();
       } else if (photoToAnimating) {
         settleFlyIntoAnimating();
+      } else if (photoToAnimated) {
+        settleFlyIntoAnimated();
+      } else if (photoToOutfit) {
+        settleFlyIntoOutfit();
+      } else if (photoToDressing) {
+        settleFlyIntoDressing();
+      } else if (photoToDressed) {
+        settleFlyIntoDressed();
+      } else if (photoToMeshing) {
+        settleFlyIntoMeshing();
+      } else if (photoToMask) {
+        settleFlyIntoMask();
+      } else if (photoToSymbols) {
+        settleFlyIntoSymbols();
+      } else if (photoToCreated) {
+        settleFlyIntoCreated();
       } else if (shellFrom && shellMode !== "hidden") {
         flipCardShell(shellFrom, shellMode);
       } else if (shellMode !== "hidden") {
@@ -2247,11 +3080,15 @@ export function LeoUiPage() {
       const bits = el.querySelectorAll(
         photoToConfirm
           ? ".leo-ui__title, .leo-ui__sub, .leo-ui__confirm-side, .leo-ui__confirm-thumbs"
-          : photoToAnimating
+          : photoToAnimating || photoToDressing || photoToMeshing
             ? ".leo-ui__title, .leo-ui__sub, .leo-ui__play-mark, .leo-ui__busy"
-            : flipping
-              ? ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__choices, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn"
-              : ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__upload-card, .leo-ui__choices, .leo-ui__confirm, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn",
+            : photoToAnimated || photoToDressed || photoToCreated
+              ? ".leo-ui__title, .leo-ui__sub"
+              : photoToOutfit || photoToMask || photoToSymbols
+                ? ".leo-ui__title, .leo-ui__sub, .leo-ui__confirm-side"
+                : flipping
+                  ? ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__choices, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn"
+                  : ".leo-ui__title, .leo-ui__sub, .leo-ui__search, .leo-ui__section-label, .leo-ui__list, .leo-ui__stack, .leo-ui__upload-card, .leo-ui__choices, .leo-ui__confirm, .leo-ui__preview, .leo-ui__selected-panel, .leo-ui__ghost-btn",
       );
       if (bits.length) {
         gsap.fromTo(
@@ -2267,6 +3104,34 @@ export function LeoUiPage() {
             delay: 0.04,
           },
         );
+      }
+      // Try Again slides up from under the preview bottom after the video lands.
+      if (viewScreen === "animated" || viewScreen === "dressed") {
+        const tryAgain = el.querySelector<HTMLElement>(
+          ".leo-ui__preview--animated .leo-ui__ghost-btn",
+        );
+        if (tryAgain) {
+          const reduceMotion =
+            typeof window !== "undefined" &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          gsap.killTweensOf(tryAgain);
+          if (reduceMotion) {
+            gsap.set(tryAgain, { opacity: 1, y: 0, clearProps: "transform" });
+          } else {
+            gsap.fromTo(
+              tryAgain,
+              { opacity: 0, y: "100%" },
+              {
+                opacity: 1,
+                y: 0,
+                duration: 0.45,
+                ease: "power3.out",
+                delay: photoToAnimated || photoToDressed ? 0.9 : 0.12,
+                clearProps: "transform",
+              },
+            );
+          }
+        }
       }
       if (flipping) {
         const card = el.querySelector<HTMLElement>(".leo-ui__upload-card--host");
@@ -2668,6 +3533,10 @@ export function LeoUiPage() {
         setConfirmUploadExitSrc("");
         setConfirmOverride(uploaded.path);
       }
+      if (target === "outfit") {
+        setOutfitOverride(uploaded.path);
+        setOutfitPanelSrc(uploaded.path);
+      }
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -2675,7 +3544,7 @@ export function LeoUiPage() {
     }
   }
 
-  function openUpload(target: "photo" | "bikini" | "face" | "confirm") {
+  function openUpload(target: "photo" | "bikini" | "face" | "confirm" | "outfit") {
     uploadTargetRef.current = target;
     const input =
       target === "bikini"
@@ -2773,21 +3642,19 @@ export function LeoUiPage() {
         return;
       }
       if (screen === "processing") {
-        const id = cardId.trim();
-        if (!id) {
-          setError("Still generating pictures…");
-          return;
-        }
-        const first =
-          readyPaths(flowState?.steps.picture?.artifacts).find(
-            (path) => pictureChoiceFromArtifact(path) != null,
-          ) ?? "";
-        if (!first) {
+        if (!processingRevealed) {
           setError("Wait for the picture to finish.");
           return;
         }
+        setError("");
         setPictureChoice(1);
-        if (pictureStatus === "review") {
+        if (!SKIP_CONFIRM) {
+          // Morph processing card → Confirm hero (approve happens on Use This Image).
+          setScreen("confirm");
+          return;
+        }
+        const id = cardId.trim();
+        if (pictureStatus === "review" && id) {
           const data = await api<LiteFlowState>(
             `/api/video-flow/${encodeURIComponent(id)}/approve`,
             {
@@ -2796,51 +3663,83 @@ export function LeoUiPage() {
             },
           );
           commitState(data);
-        } else if (pictureStatus !== "approved") {
-          setError("Wait for the picture to finish.");
-          return;
         }
         setScreen("animating");
         return;
       }
       if (screen === "confirm") {
-        if (SKIP_CONFIRM) {
-          setScreen("animating");
-          return;
-        }
+        // Layout testing: always let Use This Image advance (approve only when still in review).
+        setError("");
         const id = cardId.trim();
-        if (!id) {
-          setError("Still generating pictures…");
-          return;
+        if (pictureStatus === "review" && id) {
+          const data = await api<LiteFlowState>(
+            `/api/video-flow/${encodeURIComponent(id)}/approve`,
+            {
+              method: "POST",
+              body: JSON.stringify({ step: "picture", picture_choice: pictureChoice }),
+            },
+          );
+          commitState(data);
         }
-        if (pictureStatus !== "review" && pictureStatus !== "approved") {
-          setError("Wait for the pictures, then pick one.");
-          return;
-        }
-        if (pictureStatus === "approved") {
-          setError("This picture is already approved — re-run or continue from the dashboard.");
-          return;
-        }
-        const data = await api<LiteFlowState>(
-          `/api/video-flow/${encodeURIComponent(id)}/approve`,
-          {
-            method: "POST",
-            body: JSON.stringify({ step: "picture", picture_choice: pictureChoice }),
-          },
-        );
-        commitState(data);
         setScreen("animating");
         return;
       }
+      if (screen === "animating") {
+        // Layout testing: same as Processing Next — advance without waiting on the job.
+        setError("");
+        setScreen("animated");
+        return;
+      }
       if (screen === "animated") {
+        setError("");
         const id = cardId.trim();
-        if (!id) return;
-        const data = await api<LiteFlowState>(
-          `/api/video-flow/${encodeURIComponent(id)}/approve`,
-          { method: "POST", body: JSON.stringify({ step: "background" }) },
-        );
-        commitState(data);
-        setError("Outfit step comes next — vertical slice ends here for now.");
+        if (id && flowState?.steps.background?.status === "review") {
+          try {
+            const data = await api<LiteFlowState>(
+              `/api/video-flow/${encodeURIComponent(id)}/approve`,
+              { method: "POST", body: JSON.stringify({ step: "background" }) },
+            );
+            commitState(data);
+          } catch {
+            /* layout testing — still advance to Choose Outfit */
+          }
+        }
+        setScreen("outfit");
+        return;
+      }
+      if (screen === "outfit") {
+        setError("");
+        setScreen("dressing");
+        return;
+      }
+      if (screen === "dressing") {
+        // Layout testing: same as Animating Next — advance without waiting on a job.
+        setError("");
+        setScreen("dressed");
+        return;
+      }
+      if (screen === "dressed") {
+        setError("");
+        setScreen("meshing");
+        return;
+      }
+      if (screen === "meshing") {
+        setError("");
+        setScreen("mask");
+        return;
+      }
+      if (screen === "mask") {
+        setError("");
+        setScreen("symbols");
+        return;
+      }
+      if (screen === "symbols") {
+        setError("");
+        setScreen("created");
+        return;
+      }
+      if (screen === "created") {
+        openTryMotion();
       }
     } catch (caught) {
       setPendingStep(null);
@@ -2856,7 +3755,306 @@ export function LeoUiPage() {
     else if (screen === "swimwear") setScreen("photo");
     else if (screen === "processing") setScreen("swimwear");
     else if (screen === "confirm") setScreen(SKIP_CONFIRM ? "processing" : "swimwear");
-    else if (screen === "animated") setScreen(SKIP_CONFIRM ? "processing" : "confirm");
+    else if (screen === "animating") setScreen(SKIP_CONFIRM ? "processing" : "confirm");
+    else if (screen === "animated") setScreen("animating");
+    else if (screen === "outfit") setScreen("animated");
+    else if (screen === "dressing") setScreen("outfit");
+    else if (screen === "dressed") setScreen("dressing");
+    else if (screen === "meshing") setScreen("dressed");
+    else if (screen === "mask") setScreen("meshing");
+    else if (screen === "symbols") setScreen("mask");
+    else if (screen === "created") setScreen("symbols");
+  }
+
+  function preferReducedMotion() {
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  function createdPreviewMedia(): HTMLElement | null {
+    return (
+      createdPreviewRef.current?.querySelector<HTMLElement>("video, img") ?? null
+    );
+  }
+
+  function clearCreatedPreviewBlur() {
+    const media = createdPreviewMedia();
+    if (!media) return;
+    gsap.killTweensOf(media);
+    gsap.set(media, { clearProps: "filter" });
+  }
+
+  function finishTryMotionOpen() {
+    tryMotionAwaitingReadyRef.current = false;
+    if (tryMotionReadyFallbackRef.current) {
+      window.clearTimeout(tryMotionReadyFallbackRef.current);
+      tryMotionReadyFallbackRef.current = 0;
+    }
+    const stage = tryMotionStageRef.current;
+    const cover = tryMotionCoverRef.current;
+    // Drop filter containing-block + hide cover so scratch / X / check receive hits.
+    if (stage) {
+      gsap.set(stage, {
+        clearProps: "transform,transformOrigin,borderRadius,filter",
+        opacity: 1,
+      });
+    }
+    if (cover) {
+      gsap.set(cover, {
+        opacity: 0,
+        pointerEvents: "none",
+        visibility: "hidden",
+      });
+      cover.setAttribute("aria-hidden", "true");
+    }
+    tryMotionBusyRef.current = false;
+    stage
+      ?.querySelector<HTMLButtonElement>(".stage-game__pause")
+      ?.focus();
+  }
+
+  /** Scale + unblur once the scratch card videos are decode-ready. */
+  function revealTryMotion() {
+    if (!tryMotionAwaitingReadyRef.current) return;
+    tryMotionAwaitingReadyRef.current = false;
+    if (tryMotionReadyFallbackRef.current) {
+      window.clearTimeout(tryMotionReadyFallbackRef.current);
+      tryMotionReadyFallbackRef.current = 0;
+    }
+
+    const stage = tryMotionStageRef.current;
+    const cover = tryMotionCoverRef.current;
+    if (!stage) {
+      finishTryMotionOpen();
+      return;
+    }
+
+    tryMotionBusyRef.current = true;
+    const reduce = preferReducedMotion();
+    const from = tryMotionFromRectRef.current;
+    const targets = [stage, cover].filter(Boolean) as HTMLElement[];
+    gsap.killTweensOf(targets);
+
+    if (reduce || !from) {
+      finishTryMotionOpen();
+      return;
+    }
+
+    const tl = gsap.timeline({
+      defaults: { ease: "power2.inOut" },
+      onComplete: finishTryMotionOpen,
+    });
+    tl.to(
+      stage,
+      {
+        scale: 1,
+        borderRadius: 0,
+        filter: "blur(0px) brightness(1)",
+        duration: TRY_MOTION_SCALE_DURATION,
+      },
+      0,
+    );
+    if (cover) {
+      // opacity alone leaves an invisible hit-target if pointer-events stayed auto.
+      tl.to(
+        cover,
+        {
+          opacity: 0,
+          duration: 0.35,
+          ease: "power2.out",
+          onComplete: () => {
+            gsap.set(cover, { pointerEvents: "none", visibility: "hidden" });
+          },
+        },
+        TRY_MOTION_SCALE_DURATION * 0.25,
+      );
+    }
+  }
+
+  function openTryMotion() {
+    const dialog = tryMotionRef.current;
+    const stage = tryMotionStageRef.current;
+    const cover = tryMotionCoverRef.current;
+    const preview = createdPreviewRef.current;
+    if (!dialog || !stage || tryMotionBusyRef.current) return;
+    if (dialog.open) return;
+    setError("");
+
+    const previewMedia = createdPreviewMedia();
+    const from = preview?.getBoundingClientRect() ?? null;
+    const reduce = preferReducedMotion();
+    tryMotionFromRectRef.current = from;
+
+    // Blur the Game Created preview while the try stage loads behind it.
+    if (previewMedia) {
+      gsap.killTweensOf(previewMedia);
+      if (reduce) {
+        gsap.set(previewMedia, { filter: TRY_MOTION_PREVIEW_BLUR });
+      } else {
+        gsap.to(previewMedia, {
+          filter: TRY_MOTION_PREVIEW_BLUR,
+          duration: 0.28,
+          ease: "power2.out",
+        });
+      }
+    }
+
+    tryMotionUrlRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    setTryMotionOpen(true);
+    dialog.showModal();
+    dialog.classList.add("is-open");
+    // Not busy while waiting for videos — X can still dismiss.
+    tryMotionBusyRef.current = false;
+    tryMotionAwaitingReadyRef.current = true;
+
+    const parkAtPreview = () => {
+      // Cover blocks the loading game; must be cleared in finishTryMotionOpen.
+      if (cover) {
+        gsap.set(cover, {
+          opacity: 1,
+          visibility: "visible",
+          pointerEvents: "auto",
+        });
+      }
+
+      if (!from || reduce) {
+        gsap.set(stage, {
+          clearProps: "transform,transformOrigin,borderRadius,filter",
+          opacity: 1,
+        });
+        return;
+      }
+
+      // Park scaled + blurred until videos ready — then revealTryMotion() runs.
+      const to = stage.getBoundingClientRect();
+      const scale = tryMotionScaleFromPreview(from, to);
+      gsap.killTweensOf(stage);
+      gsap.set(stage, {
+        opacity: 1,
+        transformOrigin: "50% 50%",
+        x: 0,
+        y: 0,
+        scale,
+        borderRadius: 11,
+        filter: TRY_MOTION_PREVIEW_BLUR,
+      });
+    };
+
+    requestAnimationFrame(parkAtPreview);
+
+    if (tryMotionReadyFallbackRef.current) {
+      window.clearTimeout(tryMotionReadyFallbackRef.current);
+    }
+    tryMotionReadyFallbackRef.current = window.setTimeout(() => {
+      revealTryMotion();
+    }, TRY_MOTION_READY_FALLBACK_MS);
+  }
+
+  function closeTryMotion(options?: {
+    restoreUrl?: boolean;
+    onClosed?: () => void;
+  }) {
+    const dialog = tryMotionRef.current;
+    const stage = tryMotionStageRef.current;
+    const cover = tryMotionCoverRef.current;
+    const preview = createdPreviewRef.current;
+    if (!dialog?.open) {
+      options?.onClosed?.();
+      return;
+    }
+    // Block only mid-tween; allow dismiss while the card is still loading.
+    if (tryMotionBusyRef.current && !tryMotionAwaitingReadyRef.current) return;
+
+    const reduce = preferReducedMotion();
+    const from = preview?.getBoundingClientRect() ?? tryMotionFromRectRef.current;
+    const restoreUrl = options?.restoreUrl !== false;
+    tryMotionBusyRef.current = true;
+    tryMotionAwaitingReadyRef.current = false;
+    if (tryMotionReadyFallbackRef.current) {
+      window.clearTimeout(tryMotionReadyFallbackRef.current);
+      tryMotionReadyFallbackRef.current = 0;
+    }
+
+    const finishClose = () => {
+      dialog.classList.remove("is-open");
+      dialog.close();
+      setTryMotionOpen(false);
+      if (restoreUrl) {
+        const restore = tryMotionUrlRef.current;
+        if (
+          restore &&
+          `${window.location.pathname}${window.location.search}${window.location.hash}` !==
+            restore
+        ) {
+          window.history.replaceState(null, "", restore);
+        }
+      }
+      tryMotionUrlRef.current = "";
+      tryMotionFromRectRef.current = null;
+      gsap.set(stage, {
+        clearProps: "transform,transformOrigin,borderRadius,filter,opacity",
+      });
+      if (cover) {
+        gsap.set(cover, {
+          clearProps: "opacity,pointerEvents,visibility",
+        });
+        cover.removeAttribute("aria-hidden");
+      }
+      clearCreatedPreviewBlur();
+      tryMotionBusyRef.current = false;
+      if (!options?.onClosed) nextBtnRef.current?.focus();
+      options?.onClosed?.();
+    };
+
+    if (!stage || !from || reduce) {
+      finishClose();
+      return;
+    }
+
+    const to = stage.getBoundingClientRect();
+    const scale = tryMotionScaleFromPreview(from, to);
+    const targets = [stage, cover].filter(Boolean) as HTMLElement[];
+    gsap.killTweensOf(targets);
+    const tl = gsap.timeline({
+      defaults: { ease: "power2.inOut" },
+      onComplete: finishClose,
+    });
+    if (cover) {
+      tl.to(cover, { opacity: 1, duration: 0.2, ease: "power2.in" }, 0);
+    }
+    tl.to(
+      stage,
+      {
+        scale,
+        borderRadius: 11,
+        filter: TRY_MOTION_PREVIEW_BLUR,
+        duration: TRY_MOTION_SCALE_DURATION * 0.9,
+      },
+      0,
+    );
+  }
+
+  /** Check: accept card, kick publish pipeline, go to that model's Models page. */
+  function acceptTryMotionCard() {
+    const id = cardId.trim() || fieldsRef.current.cardId.trim();
+    const girl = modelId.trim() || fieldsRef.current.modelId.trim();
+    if (id) {
+      void finishAndPublishCard(id, {
+        ...fieldsRef.current,
+        cardId: id,
+        modelId: girl || fieldsRef.current.modelId,
+      }).catch((caught) => {
+        console.error(errorText(caught));
+      });
+    }
+
+    const next = girl
+      ? `/dashboard/models?model=${encodeURIComponent(girl)}`
+      : "/dashboard/models";
+    // Hard navigate so we leave /leo-ui cleanly and Models reads ?model=.
+    window.location.assign(next);
   }
 
   function openPromptDialog() {
@@ -2866,9 +4064,7 @@ export function LeoUiPage() {
     setError("");
     dialog.showModal();
     const panel = dialog.querySelector<HTMLElement>(".leo-ui__prompt-dialog-panel");
-    const reduce =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduce = preferReducedMotion();
     requestAnimationFrame(() => dialog.classList.add("is-open"));
     if (!panel || reduce) return;
     gsap.killTweensOf(panel);
@@ -2955,6 +4151,18 @@ export function LeoUiPage() {
     }
   }
 
+  /** Layout testing — send Dressed back to Dressing (dress job wiring later). */
+  function retryDressing() {
+    setError("");
+    setScreen("dressing");
+  }
+
+  /** Layout testing — send Adjust Mask back to Generating Mesh. */
+  function retryMeshing() {
+    setError("");
+    setScreen("meshing");
+  }
+
   const photoGallery = gallery.length > 0 ? gallery : DESIGN_GALLERY_PLACEHOLDERS;
   const isGalleryImage = (value: string, item: GalleryImage) =>
     Boolean(value) && (value === item.path || value === item.url);
@@ -2994,24 +4202,26 @@ export function LeoUiPage() {
     { dependencies: [viewScreen, photoFillReady, image, processingRevealed], scope: rootRef },
   );
 
-  // Animating cold-enter: blur/desaturate when no fly handoff is in progress.
+  // Animating / Dressing cold-enter: blur/desaturate when no fly handoff is in progress.
   useGSAP(
     () => {
-      if (viewScreen !== "animating") return;
+      if (viewScreen !== "animating" && viewScreen !== "dressing") return;
       const fly = photoFlyRef.current;
       if (fly && getComputedStyle(fly).display !== "none") return;
-      const img = animatingPreviewRef.current?.querySelector<HTMLElement>("img");
-      if (!img) return;
+      const media = (
+        viewScreen === "dressing" ? dressingPreviewRef : animatingPreviewRef
+      ).current?.querySelector<HTMLElement>("video, img");
+      if (!media) return;
       const reduce =
         typeof window !== "undefined" &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      gsap.killTweensOf(img);
+      gsap.killTweensOf(media);
       if (reduce) {
-        gsap.set(img, { filter: PROCESSING_PHOTO_FILTER });
+        gsap.set(media, { filter: PROCESSING_PHOTO_FILTER });
         return;
       }
       gsap.fromTo(
-        img,
+        media,
         { filter: PROCESSING_PHOTO_FILTER_CLEAR },
         {
           filter: PROCESSING_PHOTO_FILTER,
@@ -3021,6 +4231,58 @@ export function LeoUiPage() {
           overwrite: true,
         },
       );
+    },
+    { dependencies: [viewScreen], scope: rootRef },
+  );
+
+  // Animating / Dressing / Meshing subtitle: slot-machine reel through status lines.
+  useGSAP(
+    () => {
+      if (
+        viewScreen !== "animating" &&
+        viewScreen !== "dressing" &&
+        viewScreen !== "meshing"
+      ) {
+        return;
+      }
+      const reel = (
+        viewScreen === "meshing"
+          ? meshingSlotsRef
+          : viewScreen === "dressing"
+            ? dressingSlotsRef
+            : animatingSlotsRef
+      ).current;
+      if (!reel) return;
+      const lines = reel.querySelectorAll<HTMLElement>(".leo-ui__sub-slots-line");
+      if (lines.length < 2) return;
+      const lineH = lines[0].offsetHeight || 20;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      gsap.killTweensOf(reel);
+      gsap.set(reel, { y: 0 });
+      if (reduce) return;
+
+      // Last line duplicates the first so the loop can snap without a jump.
+      const steps = lines.length - 1;
+      const tl = gsap.timeline({ repeat: -1, defaults: { overwrite: "auto" } });
+      for (let i = 1; i <= steps; i++) {
+        tl.to(reel, {
+          y: -i * lineH,
+          duration: ANIMATING_SLOT_SPIN,
+          ease: "power4.inOut",
+        });
+        if (i < steps) {
+          tl.to({}, { duration: ANIMATING_SLOT_HOLD });
+        } else {
+          tl.to({}, { duration: ANIMATING_SLOT_HOLD * 0.6 });
+          tl.set(reel, { y: 0 });
+        }
+      }
+      return () => {
+        tl.kill();
+        gsap.set(reel, { clearProps: "transform" });
+      };
     },
     { dependencies: [viewScreen], scope: rootRef },
   );
@@ -3116,6 +4378,184 @@ export function LeoUiPage() {
     { dependencies: [viewScreen, confirmOverride, confirmUploadExitSrc], scope: rootRef },
   );
 
+  // Outfit upload thumb: scale in on add, scale out on × (same beat as Add Face).
+  useGSAP(
+    () => {
+      if (viewScreen !== "outfit") {
+        outfitOnScreenRef.current = "";
+        outfitReadyRef.current = false;
+        return;
+      }
+      const btn = outfitUploadBtnRef.current;
+      const thumb = outfitThumbRef.current;
+      const clear = outfitClearRef.current;
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const open = Boolean(outfitOverride.trim());
+
+      if (open) setOutfitPanelSrc(outfitOverride);
+
+      if (!outfitReadyRef.current) {
+        outfitReadyRef.current = true;
+        if (open) {
+          outfitOnScreenRef.current = outfitOverride;
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 0,
+              scale: 0,
+              visibility: "hidden",
+              pointerEvents: "none",
+            });
+          }
+          if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        } else if (btn) {
+          gsap.set(btn, {
+            opacity: 1,
+            scale: 1,
+            visibility: "visible",
+            pointerEvents: "auto",
+            clearProps: "transform",
+          });
+        }
+        return;
+      }
+
+      gsap.killTweensOf([btn, thumb, clear].filter(Boolean));
+
+      if (reduce) {
+        if (open) {
+          outfitOnScreenRef.current = outfitOverride;
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 0,
+              scale: 0,
+              visibility: "hidden",
+              pointerEvents: "none",
+            });
+          }
+          if (thumb) gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          if (clear) gsap.set(clear, { scale: 1, clearProps: "transform" });
+        } else {
+          outfitOnScreenRef.current = "";
+          if (btn) {
+            gsap.set(btn, {
+              opacity: 1,
+              scale: 1,
+              visibility: "visible",
+              pointerEvents: "auto",
+              clearProps: "transform",
+            });
+          }
+          setOutfitPanelSrc("");
+        }
+        return;
+      }
+
+      if (open) {
+        if (!btn || !thumb || !clear) return;
+        const returning = Boolean(outfitOnScreenRef.current);
+        outfitOnScreenRef.current = outfitOverride;
+        if (returning) {
+          gsap.set(btn, {
+            opacity: 0,
+            scale: 0,
+            visibility: "hidden",
+            pointerEvents: "none",
+          });
+          gsap.set(thumb, { opacity: 1, scale: 1, y: 0, clearProps: "transform" });
+          gsap.set(clear, { scale: 1, clearProps: "transform" });
+          return;
+        }
+        gsap.set(btn, {
+          opacity: 1,
+          scale: 1,
+          visibility: "visible",
+          pointerEvents: "none",
+          transformOrigin: "50% 50%",
+        });
+        gsap.set(thumb, { opacity: 0, scale: 0.86, y: 14, transformOrigin: "50% 50%" });
+        gsap.set(clear, { scale: 0.5, transformOrigin: "50% 50%" });
+        const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
+        tl.to(btn, { scale: 1.08, duration: 0.12, ease: "power2.out" });
+        tl.to(btn, {
+          scale: 0,
+          opacity: 0,
+          duration: 0.22,
+          ease: "power2.in",
+          onComplete: () => {
+            gsap.set(btn, { visibility: "hidden" });
+          },
+        });
+        tl.to(
+          thumb,
+          {
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 0.4,
+            ease: "power2.out",
+            clearProps: "transform",
+          },
+          "-=0.04",
+        );
+        tl.to(
+          clear,
+          { scale: 1, duration: 0.3, ease: "back.out(1.7)", clearProps: "transform" },
+          "-=0.28",
+        );
+      } else {
+        outfitOnScreenRef.current = "";
+        if (!btn) {
+          setOutfitPanelSrc("");
+          return;
+        }
+        if (!thumb || !clear) {
+          gsap.set(btn, {
+            opacity: 1,
+            scale: 1,
+            visibility: "visible",
+            pointerEvents: "auto",
+            clearProps: "transform",
+          });
+          setOutfitPanelSrc("");
+          return;
+        }
+        gsap.set(btn, {
+          opacity: 0,
+          scale: 0,
+          visibility: "visible",
+          pointerEvents: "none",
+          transformOrigin: "50% 50%",
+        });
+        gsap.set(thumb, { opacity: 1, scale: 1, y: 0, transformOrigin: "50% 50%" });
+        gsap.set(clear, { scale: 1, transformOrigin: "50% 50%" });
+        const tl = gsap.timeline({
+          defaults: { overwrite: "auto" },
+          onComplete: () => setOutfitPanelSrc(""),
+        });
+        tl.to(clear, { scale: 0.5, duration: 0.18, ease: "power2.in" });
+        tl.to(
+          thumb,
+          { opacity: 0, scale: 0.86, y: 14, duration: 0.28, ease: "power2.in" },
+          0,
+        );
+        tl.to(btn, { scale: 1.08, opacity: 1, duration: 0.2, ease: "power2.out" }, "-=0.06");
+        tl.to(btn, {
+          scale: 1,
+          duration: 0.16,
+          ease: "power2.inOut",
+          clearProps: "transform",
+          onComplete: () => {
+            gsap.set(btn, { pointerEvents: "auto", visibility: "visible" });
+          },
+        });
+      }
+    },
+    { dependencies: [outfitOverride, viewScreen], scope: rootRef },
+  );
+
   // Gallery select/deselect: ease opacity + scale (not an instant class toggle).
   useGSAP(
     () => {
@@ -3154,7 +4594,13 @@ export function LeoUiPage() {
   const pictureArtifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
     (path) => pictureChoiceFromArtifact(path) != null,
   );
-  const movingClip = readyPaths(flowState?.steps.background?.artifacts)[0] ?? "";
+  // Real options, or a single placeholder so morph/layout can run without a job.
+  const displayPictures =
+    pictureArtifacts.length > 0 ? pictureArtifacts : [PLACEHOLDER_PROCESSED];
+  const processedSrc =
+    displayPictures[pictureChoice - 1] || displayPictures[0] || image || PLACEHOLDER_PROCESSED;
+  const movingClip =
+    readyPaths(flowState?.steps.background?.artifacts)[0] || PLACEHOLDER_ANIMATING_VIDEO;
   const pictureStatus = flowState?.steps.picture?.status;
   const pictureBusy =
     pendingStep === "picture" || runningJob?.command[1] === "picture";
@@ -3166,22 +4612,16 @@ export function LeoUiPage() {
   );
   const canNextPhoto = Boolean(image.trim());
   const canNextSwimwear = Boolean(bikini.trim() && face.trim());
-  // Review is the normal Leo path; approved still has pickable artifacts for browsing.
-  const canUsePicture =
-    pictureArtifacts.length > 0 &&
-    (pictureStatus === "review" || pictureStatus === "approved");
-  const canUseVideo = flowState?.steps.background?.status === "review" && Boolean(movingClip);
-
+  const canLeaveProcessing = !pictureBusy && processingRevealed;
   const nextDisabled =
     navBusy ||
     (screen === "influencer" && !canNextInfluencer) ||
     (screen === "theme" && !canNextTheme) ||
     (screen === "photo" && !canNextPhoto) ||
     (screen === "swimwear" && (!canNextSwimwear || uploading)) ||
-    (screen === "processing" && (!canUsePicture || pictureBusy)) ||
-    (screen === "confirm" && (!canUsePicture || pictureBusy)) ||
-    screen === "animating" ||
-    (screen === "animated" && !canUseVideo);
+    (screen === "processing" && !canLeaveProcessing) ||
+    (screen === "confirm" && pictureBusy) ||
+    (screen === "outfit" && uploading);
 
   return (
     <main className="leo-ui" ref={rootRef}>
@@ -3384,14 +4824,16 @@ export function LeoUiPage() {
                             const digits = cardNameDigits(e.target.value);
                             setCardLabel(buildCardName(theme, digits, false));
                           }}
-                          onFocus={(e) => {
+                          onFocus={() => {
                             setCardNameFocused(true);
                             if (!themePrefix(theme)) return;
                             const digits = cardNameDigits(cardLabel);
                             const next = buildCardName(theme, digits, false);
                             setCardLabel(next);
+                            // setCardLabel remounts/replaces the input — e.currentTarget goes null.
                             requestAnimationFrame(() => {
-                              const el = e.currentTarget;
+                              const el = cardNameRef.current;
+                              if (!el) return;
                               const pos = next.length;
                               el.setSelectionRange(pos, pos);
                             });
@@ -3652,20 +5094,16 @@ export function LeoUiPage() {
                   className="leo-ui__upload-card leo-ui__upload-card--host leo-ui__processing-card"
                   ref={cardShellCardSlotRef}
                 >
-                  {photoFillReady && image ? (
-                    <div className="leo-ui__host-photo is-processing" aria-hidden>
-                      <img
-                        src={previewSource(
-                          processingRevealed
-                            ? pictureArtifacts[pictureChoice - 1] ||
-                                pictureArtifacts[0] ||
-                                image
-                            : image,
-                        )}
-                        alt=""
-                      />
-                    </div>
-                  ) : null}
+                  <div className="leo-ui__host-photo is-processing" aria-hidden>
+                    <img
+                      src={previewSource(
+                        processingRevealed
+                          ? processedSrc
+                          : image.trim() || PLACEHOLDER_PROCESSED,
+                      )}
+                      alt=""
+                    />
+                  </div>
                   <div className="leo-ui__processing-lottie" aria-hidden>
                     <DotLottieReact
                       src={PROCESSING_HANGER_LOTTIE}
@@ -3689,18 +5127,6 @@ export function LeoUiPage() {
                 </p>
                 {pictureBusy && pictureArtifacts.length === 0 ? (
                   <p className="leo-ui__busy">Generating picture options…</p>
-                ) : pictureArtifacts.length === 0 ? (
-                  <div className="leo-ui__confirm-empty">
-                    <p className="leo-ui__busy">No picture options yet.</p>
-                    <button
-                      type="button"
-                      className="leo-ui__confirm-rerun"
-                      onClick={() => void retryPicture()}
-                    >
-                      <RotateCcw size={15} aria-hidden />
-                      Re-Run
-                    </button>
-                  </div>
                 ) : (
                   <div className="leo-ui__confirm">
                     <div className="leo-ui__confirm-row">
@@ -3712,9 +5138,7 @@ export function LeoUiPage() {
                       >
                         <img
                           className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
-                          src={previewSource(
-                            pictureArtifacts[pictureChoice - 1] || pictureArtifacts[0],
-                          )}
+                          src={previewSource(processedSrc)}
                           alt="Selected photo option"
                         />
                         {confirmOverride || confirmUploadExitSrc ? (
@@ -3838,21 +5262,46 @@ export function LeoUiPage() {
             {viewScreen === "animating" ? (
               <>
                 <h1 className="leo-ui__title">Animating Image</h1>
-                <p className="leo-ui__sub">Moving Pixels…</p>
+                <div
+                  className="leo-ui__sub leo-ui__sub--slots"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <div className="leo-ui__sub-slots-window">
+                    <div className="leo-ui__sub-slots-reel" ref={animatingSlotsRef}>
+                      {ANIMATING_SLOT_LINES.map((line) => (
+                        <p key={line} className="leo-ui__sub-slots-line">
+                          {line}
+                        </p>
+                      ))}
+                      <p className="leo-ui__sub-slots-line" aria-hidden>
+                        {ANIMATING_SLOT_LINES[0]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
                 <div
                   className="leo-ui__preview leo-ui__preview--animating is-blurred"
                   ref={animatingPreviewRef}
                 >
-                  {pictureArtifacts[0] ? (
-                    <img
-                      src={previewSource(
-                        pictureArtifacts[pictureChoice - 1] || pictureArtifacts[0],
-                      )}
-                      alt=""
-                    />
-                  ) : null}
+                  <video
+                    src={previewSource(movingClip)}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    aria-hidden
+                  />
                   <div className="leo-ui__play-mark" aria-hidden>
-                    ▶
+                    <div className="leo-ui__play-mark-lottie">
+                      <DotLottieReact
+                        src={ANIMATING_VIDEO_LOTTIE}
+                        autoplay
+                        loop
+                        className="leo-ui__play-mark-lottie-player"
+                        style={{ width: "100%", height: "100%", pointerEvents: "none" }}
+                      />
+                    </div>
                   </div>
                 </div>
                 {backgroundBusy ? <p className="leo-ui__busy">Working on the clip…</p> : null}
@@ -3863,10 +5312,11 @@ export function LeoUiPage() {
               <>
                 <h1 className="leo-ui__title">Image Animated!</h1>
                 <p className="leo-ui__sub">Does the video look good, does it have any issues?</p>
-                <div className="leo-ui__preview">
-                  {movingClip ? (
-                    <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
-                  ) : null}
+                <div
+                  className="leo-ui__preview leo-ui__preview--animated"
+                  ref={animatedPreviewRef}
+                >
+                  <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
                   <div className="leo-ui__preview-overlay">
                     <button type="button" className="leo-ui__ghost-btn" onClick={() => void retryBackground()}>
                       <RotateCcw size={16} />
@@ -3874,6 +5324,292 @@ export function LeoUiPage() {
                     </button>
                   </div>
                 </div>
+              </>
+            ) : null}
+
+            {viewScreen === "outfit" ? (
+              <>
+                <h1 className="leo-ui__title">Choose Outfit</h1>
+                <p className="leo-ui__sub">
+                  Pick a reference look for the dress-up step — upload your own image.
+                </p>
+                <div className="leo-ui__confirm">
+                  <div className="leo-ui__confirm-row">
+                    <div className="leo-ui__confirm-hero" ref={outfitHeroRef}>
+                      <video
+                        className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
+                        src={previewSource(movingClip)}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                      />
+                    </div>
+                    <aside className="leo-ui__confirm-side leo-ui__confirm-side--bottom">
+                      <div className="leo-ui__confirm-card leo-ui__confirm-card--upload">
+                        <p>Upload your own outfit?</p>
+                        <div className="leo-ui__confirm-upload-slot">
+                          <button
+                            ref={outfitUploadBtnRef}
+                            type="button"
+                            className="leo-ui__confirm-upload"
+                            onClick={() => openUpload("outfit")}
+                            disabled={uploading}
+                            aria-hidden={Boolean(outfitOverride)}
+                            tabIndex={outfitOverride ? -1 : 0}
+                          >
+                            <span>Upload</span>
+                            <Upload size={22} strokeWidth={1.75} aria-hidden />
+                          </button>
+                          {outfitPanelSrc || outfitOverride ? (
+                            <div className="leo-ui__confirm-upload-preview">
+                              <button
+                                ref={outfitThumbRef}
+                                type="button"
+                                className="leo-ui__confirm-upload is-filled"
+                                onClick={() => openUpload("outfit")}
+                                aria-label="Replace outfit"
+                                tabIndex={outfitOverride ? 0 : -1}
+                              >
+                                <img
+                                  src={previewSource(outfitPanelSrc || outfitOverride)}
+                                  alt=""
+                                />
+                              </button>
+                              <button
+                                ref={outfitClearRef}
+                                type="button"
+                                className="leo-ui__clear leo-ui__preview-clear"
+                                aria-label="Remove uploaded outfit"
+                                tabIndex={outfitOverride ? 0 : -1}
+                                onClick={() => setOutfitOverride("")}
+                              >
+                                <span className="leo-ui__preview-clear-glass" aria-hidden>
+                                  <img
+                                    src={previewSource(outfitPanelSrc || outfitOverride)}
+                                    alt=""
+                                  />
+                                </span>
+                                <span className="leo-ui__preview-clear-mark" aria-hidden>
+                                  ×
+                                </span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </aside>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "dressing" ? (
+              <>
+                <h1 className="leo-ui__title">Dressing Outfit</h1>
+                <div
+                  className="leo-ui__sub leo-ui__sub--slots"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <div className="leo-ui__sub-slots-window">
+                    <div className="leo-ui__sub-slots-reel" ref={dressingSlotsRef}>
+                      {DRESSING_SLOT_LINES.map((line) => (
+                        <p key={line} className="leo-ui__sub-slots-line">
+                          {line}
+                        </p>
+                      ))}
+                      <p className="leo-ui__sub-slots-line" aria-hidden>
+                        {DRESSING_SLOT_LINES[0]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className="leo-ui__preview leo-ui__preview--animating is-blurred"
+                  ref={dressingPreviewRef}
+                >
+                  <video
+                    src={previewSource(movingClip)}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    aria-hidden
+                  />
+                  <div className="leo-ui__play-mark" aria-hidden>
+                    <div className="leo-ui__play-mark-lottie">
+                      <DotLottieReact
+                        src={ANIMATING_VIDEO_LOTTIE}
+                        autoplay
+                        loop
+                        className="leo-ui__play-mark-lottie-player"
+                        style={{ width: "100%", height: "100%", pointerEvents: "none" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "dressed" ? (
+              <>
+                <h1 className="leo-ui__title">Outfit Dressed!</h1>
+                <p className="leo-ui__sub">Does the video look good, does it have any issues?</p>
+                <div
+                  className="leo-ui__preview leo-ui__preview--animated"
+                  ref={dressedPreviewRef}
+                >
+                  <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
+                  <div className="leo-ui__preview-overlay">
+                    <button
+                      type="button"
+                      className="leo-ui__ghost-btn"
+                      onClick={retryDressing}
+                    >
+                      <RotateCcw size={16} />
+                      Try Again?
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "meshing" ? (
+              <>
+                <h1 className="leo-ui__title">Generating Mesh</h1>
+                <div
+                  className="leo-ui__sub leo-ui__sub--slots"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <div className="leo-ui__sub-slots-window">
+                    <div className="leo-ui__sub-slots-reel" ref={meshingSlotsRef}>
+                      {MESHING_SLOT_LINES.map((line) => (
+                        <p key={line} className="leo-ui__sub-slots-line">
+                          {line}
+                        </p>
+                      ))}
+                      <p className="leo-ui__sub-slots-line" aria-hidden>
+                        {MESHING_SLOT_LINES[0]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className="leo-ui__preview leo-ui__preview--animating leo-ui__preview--meshing"
+                  ref={meshingPreviewRef}
+                >
+                  <video
+                    src={previewSource(movingClip)}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    aria-hidden
+                  />
+                  <div className="leo-ui__play-mark" aria-hidden>
+                    <div className="leo-ui__play-mark-lottie leo-ui__play-mark-lottie--wide">
+                      <DotLottieReact
+                        src={MESHING_LOTTIE}
+                        autoplay
+                        loop
+                        className="leo-ui__play-mark-lottie-player"
+                        style={{ width: 160, height: 160, pointerEvents: "none" }}
+                        layout={{ fit: "contain", align: [0.5, 0.5] }}
+                        renderConfig={{ autoResize: true }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "mask" ? (
+              <>
+                <h1 className="leo-ui__title">Adjust Mask</h1>
+                <p className="leo-ui__sub">
+                  Fine-tune the scratch mask — tweak the prompt if you need to.
+                </p>
+                <div className="leo-ui__confirm">
+                  <div className="leo-ui__confirm-row">
+                    <div className="leo-ui__confirm-hero" ref={maskHeroRef}>
+                      <video
+                        className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
+                        src={previewSource(movingClip)}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                      />
+                    </div>
+                    <aside className="leo-ui__confirm-side leo-ui__confirm-side--top">
+                      <button
+                        type="button"
+                        className="leo-ui__confirm-card"
+                        onClick={openPromptDialog}
+                      >
+                        <span>Edit Mask</span>
+                        <SquarePen size={22} strokeWidth={1.5} aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="leo-ui__confirm-rerun"
+                        onClick={retryMeshing}
+                      >
+                        <RotateCcw size={15} aria-hidden />
+                        Re-Run
+                      </button>
+                    </aside>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "symbols" ? (
+              <>
+                <h1 className="leo-ui__title">Place Symbols</h1>
+                <p className="leo-ui__sub">
+                  Drop scratch symbols onto the card where you want them to land.
+                </p>
+                <div className="leo-ui__confirm">
+                  <div className="leo-ui__confirm-row">
+                    <div className="leo-ui__confirm-hero" ref={symbolsHeroRef}>
+                      <video
+                        className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
+                        src={previewSource(movingClip)}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {viewScreen === "created" ? (
+              <>
+                <h1 className="leo-ui__title">Game Created!</h1>
+                <p className="leo-ui__sub">
+                  Give it a go by tapping the video below to start.
+                </p>
+                <button
+                  type="button"
+                  className="leo-ui__preview leo-ui__preview--animated leo-ui__preview--try"
+                  ref={createdPreviewRef}
+                  aria-label="Try motion card"
+                  onClick={() => openTryMotion()}
+                >
+                  <video
+                    src={previewSource(movingClip)}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                  />
+                </button>
               </>
             ) : null}
           </div>
@@ -3888,6 +5624,7 @@ export function LeoUiPage() {
         </div>
         <div className="leo-ui__photo-fly" ref={photoFlyRef} aria-hidden>
           <img alt="" />
+          <video muted loop playsInline />
         </div>
         <div
           className="leo-ui__upload-card-top leo-ui__card-name-chip"
@@ -3965,6 +5702,42 @@ export function LeoUiPage() {
           e.currentTarget.value = "";
         }}
       />
+
+      <dialog
+        ref={tryMotionRef}
+        className="leo-ui__try-motion"
+        aria-label="Try motion card"
+        closedby="closerequest"
+        onCancel={(e) => {
+          e.preventDefault();
+          closeTryMotion();
+        }}
+      >
+        <div className="leo-ui__try-motion-stage" ref={tryMotionStageRef}>
+          {tryMotionOpen ? (
+            <Suspense fallback={null}>
+              <LeoTryMotionGame
+                onReady={revealTryMotion}
+                onClose={() => closeTryMotion()}
+                onAccept={acceptTryMotionCard}
+              />
+            </Suspense>
+          ) : null}
+          <div
+            className="leo-ui__try-motion-cover"
+            ref={tryMotionCoverRef}
+            aria-hidden
+          >
+            <video
+              src={previewSource(movingClip)}
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          </div>
+        </div>
+      </dialog>
 
       <dialog
         ref={promptDialogRef}
