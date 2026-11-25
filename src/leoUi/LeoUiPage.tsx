@@ -36,6 +36,8 @@ import providerXaiUrl from "./assets/icon-xai.svg";
 import searchUrl from "./assets/icon-search.svg";
 import logoUrl from "./assets/logo-sugar-scratch.svg";
 import { Theme } from "@radix-ui/themes";
+import { GooeyToaster, gooeyToast } from "goey-toast";
+import "goey-toast/styles.css";
 import { SymbolPointPicker } from "../videoFlow/SymbolPointPicker";
 import { LeoFaceCropDialog } from "./LeoFaceCropDialog";
 import { LeoMaskEditOverlay } from "./LeoMaskEditOverlay";
@@ -46,6 +48,11 @@ import "./leo-ui.css";
 const LeoTryMotionGame = lazy(() =>
   import("./LeoTryMotionGame").then((m) => ({ default: m.LeoTryMotionGame })),
 );
+
+const LEO_STATUS_TOAST = "leo-status";
+const LEO_ERROR_TOAST = "leo-error";
+/** Sit just under the Leo header (3.75rem) + stage top pad. */
+const LEO_TOAST_OFFSET = "calc(env(safe-area-inset-top, 0px) + 5.25rem)";
 
 gsap.registerPlugin(useGSAP);
 
@@ -3357,7 +3364,7 @@ export function LeoUiPage() {
         photoToConfirm
           ? ".leo-ui__title, .leo-ui__sub, .leo-ui__confirm-side, .leo-ui__confirm-thumbs"
           : photoToAnimating || photoToDressing || photoToMeshing
-            ? ".leo-ui__title, .leo-ui__sub, .leo-ui__play-mark, .leo-ui__busy"
+            ? ".leo-ui__title, .leo-ui__sub, .leo-ui__play-mark"
             : photoToAnimated || photoToDressed || photoToCreated
               ? ".leo-ui__title, .leo-ui__sub"
               : photoToOutfit || photoToMask || photoToSymbols
@@ -5374,8 +5381,95 @@ export function LeoUiPage() {
     (screen === "meshing" && !canLeaveMeshing) ||
     (screen === "symbols" && !canLeaveSymbols);
 
+  // Status / busy copy → toast under the header (replaces inline leo-ui__busy).
+  useEffect(() => {
+    let message = "";
+    if (viewScreen === "influencer" && !catalogReady) {
+      message = "Loading…";
+    } else if (viewScreen === "processing") {
+      message = pictureBusy
+        ? "Generating picture options…"
+        : pictureArtifacts.length === 0
+          ? "Waiting for picture options…"
+          : "";
+    } else if (
+      viewScreen === "confirm" &&
+      pictureBusy &&
+      pictureArtifacts.length === 0
+    ) {
+      message = "Generating picture options…";
+    } else if (viewScreen === "animating" && backgroundBusy) {
+      message = "Working on the clip…";
+    } else if (viewScreen === "dressing") {
+      message = dressBusy
+        ? "Working on the outfit…"
+        : dressClip
+          ? ""
+          : "Waiting for the outfit clip…";
+    } else if (viewScreen === "meshing" && meshBusy) {
+      message = "Building the mesh…";
+    } else if (viewScreen === "symbols" && !cardId.trim()) {
+      message = "Missing card for symbols.";
+    }
+
+    if (message) {
+      gooeyToast(message, {
+        id: LEO_STATUS_TOAST,
+        duration: Number.POSITIVE_INFINITY,
+        showTimestamp: false,
+        sound: false,
+      });
+    } else {
+      gooeyToast.dismiss(LEO_STATUS_TOAST);
+    }
+  }, [
+    viewScreen,
+    catalogReady,
+    pictureBusy,
+    pictureArtifacts.length,
+    backgroundBusy,
+    dressBusy,
+    dressClip,
+    meshBusy,
+    cardId,
+  ]);
+
+  // Errors → toast under the header (replaces inline leo-ui__error).
+  useEffect(() => {
+    const text = error.trim();
+    if (!text) {
+      gooeyToast.dismiss(LEO_ERROR_TOAST);
+      return;
+    }
+    gooeyToast.error(text, {
+      id: LEO_ERROR_TOAST,
+      duration: 5500,
+      showTimestamp: false,
+      sound: false,
+      onAutoClose: () => setError(""),
+      onDismiss: () => setError(""),
+    });
+  }, [error]);
+
+  useEffect(
+    () => () => {
+      gooeyToast.dismiss(LEO_STATUS_TOAST);
+      gooeyToast.dismiss(LEO_ERROR_TOAST);
+    },
+    [],
+  );
+
   return (
     <main className="leo-ui" ref={rootRef}>
+      <GooeyToaster
+        position="top-center"
+        theme="dark"
+        offset={LEO_TOAST_OFFSET}
+        sound={false}
+        showTimestamp={false}
+        closeButton
+        visibleToasts={3}
+      />
       <div className="leo-ui__stage">
         <header className="leo-ui__header">
           <img className="leo-ui__logo" src={logoUrl} alt="Sugar Scratch" />
@@ -5411,9 +5505,7 @@ export function LeoUiPage() {
                   ref={listRef}
                   data-scroll={listScroll}
                 >
-                  {!catalogReady ? (
-                    <p className="leo-ui__busy">Loading…</p>
-                  ) : (
+                  {!catalogReady ? null : (
                     filteredModels.map((model) => (
                       <button
                         key={model.id}
@@ -5870,11 +5962,6 @@ export function LeoUiPage() {
                     />
                   </div>
                 </div>
-                {pictureBusy ? (
-                  <p className="leo-ui__busy">Generating picture options…</p>
-                ) : pictureArtifacts.length === 0 ? (
-                  <p className="leo-ui__busy">Waiting for picture options…</p>
-                ) : null}
               </>
             ) : null}
 
@@ -5885,9 +5972,7 @@ export function LeoUiPage() {
                   Does the influencer have the same facial and body features as before? Is the theme
                   correct?
                 </p>
-                {pictureBusy && pictureArtifacts.length === 0 ? (
-                  <p className="leo-ui__busy">Generating picture options…</p>
-                ) : (
+                {pictureBusy && pictureArtifacts.length === 0 ? null : (
                   <div className="leo-ui__confirm">
                     <div className="leo-ui__confirm-row">
                       <div
@@ -6078,7 +6163,6 @@ export function LeoUiPage() {
                     </div>
                   </div>
                 </div>
-                {backgroundBusy ? <p className="leo-ui__busy">Working on the clip…</p> : null}
               </>
             ) : null}
 
@@ -6243,11 +6327,6 @@ export function LeoUiPage() {
                     </div>
                   </div>
                 </div>
-                {dressBusy ? (
-                  <p className="leo-ui__busy">Working on the outfit…</p>
-                ) : dressClip ? null : (
-                  <p className="leo-ui__busy">Waiting for the outfit clip…</p>
-                )}
               </>
             ) : null}
 
@@ -6333,7 +6412,6 @@ export function LeoUiPage() {
                     </div>
                   </div>
                 </div>
-                {meshBusy ? <p className="leo-ui__busy">Building the mesh…</p> : null}
               </>
             ) : null}
 
@@ -6415,9 +6493,7 @@ export function LeoUiPage() {
                           }}
                         />
                       </Theme>
-                    ) : (
-                      <p className="leo-ui__busy">Missing card for symbols.</p>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </>
@@ -6450,8 +6526,6 @@ export function LeoUiPage() {
             ) : null}
           </div>
         </div>
-
-        {error ? <p className="leo-ui__error">{error}</p> : null}
 
         <div className="leo-ui__upload-card-shell" ref={cardShellRef} aria-hidden>
           <img className="leo-ui__shell-photo" ref={shellPhotoRef} alt="" />
