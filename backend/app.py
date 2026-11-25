@@ -340,7 +340,7 @@ class VideoFlowRequest(BaseModel):
     model_id: str = ""
     resolution: str = "720p"
     enhance_dress_prompt: bool = True
-    tracker: Literal["cotracker", "bootstapir", "blend", "all"] = "all"
+    tracker: Literal["cotracker", "bootstapir", "blend", "all"] = "blend"
     write_webm: bool = False
     compress_preset: Literal["mobile", "hd", "master"] = "mobile"
     mesh_tune: MeshTuneOptions = Field(default_factory=MeshTuneOptions)
@@ -2183,7 +2183,9 @@ def get_video_flows() -> dict:
 def get_video_flow_state(card_id: str) -> dict:
     if not re.fullmatch(r"[a-z0-9_]+", card_id):
         raise HTTPException(status_code=400, detail="Invalid card id")
-    return flow_state(card_id)
+    # Polls hit this every few seconds — skip ffprobe so the sync handler
+    # cannot block the event loop (and starve operator session checks).
+    return flow_state(card_id, probe_videos=False)
 
 
 @app.post("/api/video-flow/{card_id}/draft")

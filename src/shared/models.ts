@@ -240,7 +240,7 @@ export async function createMotionCardDraft(
       model_id: modelId.trim(),
       resolution: "720p",
       enhance_dress_prompt: true,
-      tracker: "all",
+      tracker: "blend",
       write_webm: false,
       compress_preset: "mobile",
       source_mode: "upload",

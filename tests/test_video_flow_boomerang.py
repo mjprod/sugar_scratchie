@@ -182,9 +182,9 @@ def test_boomerang_backfill_keeps_later_steps(card_id):
         "dress",
         "boomerang",
         "card",
+        "compress",
         "mesh",
         "symbols",
-        "compress",
     ]
 
 
@@ -245,7 +245,11 @@ def test_boomerang_apply_and_undo(card_id, published_card):
     candidate = json.loads(video_flow.mesh_candidate_path(work, "blend").read_text())
     assert len(candidate["frames"]) == 2 * forward - 1
     approved = read_state(work)["approved"]
-    assert "symbols" in approved and "compress" not in approved
+    # Compress cleared; mesh/symbols drop with it (they depend on delivery).
+    assert "compress" not in approved
+    assert "mesh" not in approved
+    assert "symbols" not in approved
+    assert "card" in approved
 
     # Re-running starts from the originals instead of stacking boomerangs.
     video_flow.apply_boomerang_step(card_id, card_label="Test", seconds=1)

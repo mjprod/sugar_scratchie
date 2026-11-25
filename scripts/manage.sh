@@ -248,7 +248,7 @@ cmd_start() {
   exec npx concurrently -k --kill-others-on-fail \
     -n api,media,app \
     -c blue,magenta,green \
-    "${UVICORN} backend.app:app --host 127.0.0.1 --port 8090 --reload" \
+    "${UVICORN} backend.app:app --host 127.0.0.1 --port 8090 --reload --reload-exclude '.tmp/*' --reload-exclude 'public/*'" \
     "npm run dev" \
     "npm --prefix frontend-new run dev"
 }

@@ -55,12 +55,18 @@ from backend.services.grok import (
 from backend.services.garment_mask import generate_garment_mask
 from backend.services.mesh_boomerang import mirror_mesh_in_time
 from backend.services.mesh_symbols import (
+    SYMBOL_POINT_COUNT,
     clear_symbol_points,
     read_symbol_points,
     symbol_points_complete,
+    write_symbol_points,
 )
 from backend.services.mesh_tracking import generate_mesh
-from backend.services.mesh_tune import build_mesh_tracking_env, mesh_tune_from_dict
+from backend.services.mesh_tune import (
+    MeshTuneOptions,
+    build_mesh_tracking_env,
+    mesh_tune_from_dict,
+)
 from backend.services.video_prep import (
     BOOMERANG_DEFAULT_SECONDS,
     align_clip_to_reference,
@@ -233,16 +239,18 @@ MESH_TRACKERS: tuple[MeshTracker, MeshTracker, MeshTracker] = (
     "blend",
 )
 
-# Picture still → bikini video → dress edit → boomerang → publish + track → compress.
+# Picture still → bikini video → dress edit → boomerang → publish → finalize →
+# track delivery FG once → symbols. Mesh after compress so lite/Leo don't pay
+# for a 720p track that compress would invalidate.
 STEP_ORDER: list[VideoFlowStep] = [
     "picture",
     "background",
     "dress",
     "boomerang",
     "card",
+    "compress",
     "mesh",
     "symbols",
-    "compress",
 ]
 
 STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
@@ -251,9 +259,9 @@ STEP_DEPS: dict[VideoFlowStep, list[VideoFlowStep]] = {
     "dress": ["background"],
     "boomerang": ["dress"],
     "card": ["boomerang"],
-    "mesh": ["card"],
+    "compress": ["card"],
+    "mesh": ["compress"],
     "symbols": ["mesh"],
-    "compress": ["symbols"],
 }
 
 REVIEW_STEPS = frozenset({"picture", "background", "dress", "boomerang"})
@@ -309,6 +317,57 @@ def ensure_active_mesh_snapshotted(work: Path, card_id: str) -> MeshTracker | No
 
 def mesh_candidates_ready(work: Path) -> bool:
     return all(mesh_candidate_path(work, tracker).exists() for tracker in MESH_TRACKERS)
+
+
+def rebuild_mesh_for_delivery(
+    *,
+    card_id: str,
+    tracker: str,
+    tune: MeshTuneOptions,
+) -> Path:
+    """Re-track the published delivery foreground so UV holes match the player clip.
+
+    Mesh often runs on the pre-VideoSquash 720p dress clip. Compress replaces
+    ``foreground.mp4`` with a HandBrake/VideoSquash frame that is already
+    canvas-aspect; without a rebuild the cover-crop lattice from the 720p source
+    no longer lines up. Preserves ``symbolPoints`` when a full set was already saved.
+    """
+    mesh_out = MESH_DIR / f"{card_id}.json"
+    fg_dst = CARDS_DIR / card_id / "foreground.mp4"
+    if not output_video_ready(fg_dst):
+        raise RuntimeError("Delivery foreground missing — finalize card videos first.")
+
+    saved_points = read_symbol_points(mesh_out) if mesh_out.exists() else []
+    existing = read_mesh_tracker(mesh_out)
+    use_tracker: str
+    if existing in MESH_TRACKERS:
+        use_tracker = existing
+    elif tracker in MESH_TRACKERS:
+        use_tracker = tracker
+    else:
+        use_tracker = "blend"
+
+    print(
+        f"Rebuilding mesh from delivery foreground ({fg_dst.name}) "
+        f"with tracker={use_tracker}"
+    )
+    generate_mesh(
+        build_mesh_tracking_env(
+            input_video=str(fg_dst.relative_to(ROOT)),
+            output_json=str(mesh_out.relative_to(ROOT)),
+            tracker=use_tracker,
+            tune=tune,
+        )
+    )
+    print(f"Delivery mesh written: {mesh_out.name}")
+    try:
+        generate_garment_mask(mesh_out)
+    except Exception as exc:
+        print(f"Auto garment mask skipped for {mesh_out.name}: {exc}")
+    if len(saved_points) == SYMBOL_POINT_COUNT:
+        write_symbol_points(mesh_out, saved_points)
+        print(f"Restored {SYMBOL_POINT_COUNT} symbol points onto delivery mesh")
+    return mesh_out
 
 
 def publish_mesh_choice(work: Path, card_id: str, tracker: MeshTracker) -> Path:
@@ -413,7 +472,7 @@ def record_step_approved(work: Path, step: VideoFlowStep) -> None:
     data["steps"][step] = entry
     if not data.get("flow_started_at"):
         data["flow_started_at"] = stamp
-    if step == "compress":
+    if step == STEP_ORDER[-1]:
         data["completed_at"] = stamp
     write_timings(work, data)
 
@@ -504,7 +563,16 @@ def normalize_state(state: dict) -> dict:
 
 def write_state(work: Path, state: dict) -> None:
     state = normalize_state(state)
-    state_path(work).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    path = state_path(work)
+    payload = json.dumps(state, indent=2) + "\n"
+    # Skip no-op writes — every GET /state used to rewrite this file, which
+    # bounced uvicorn --reload and starved the rest of the API (incl. auth).
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == payload:
+            return
+    except OSError:
+        pass
+    path.write_text(payload, encoding="utf-8")
 
 
 def video_file_present(path: Path) -> bool:
@@ -788,7 +856,7 @@ def clear_step_outputs(work: Path, card_id: str, step: VideoFlowStep) -> None:
 
 
 def _invalidate_after_mesh_switch(state: dict) -> None:
-    for step in ("symbols", "compress"):
+    for step in ("symbols",):
         if step in state["approved"]:
             state["approved"].remove(step)
 
@@ -1006,12 +1074,14 @@ def import_manual_clips(
     state = read_state(work)
     state["approved"] = ["picture", "background", "dress", "boomerang", "card"]
     _write_boomerang_report(work, _skipped_boomerang_report())
-    # Keep mesh/symbols if those artifacts already exist for this card.
+    # Keep compress / mesh / symbols when those artifacts already exist.
     mesh_out = MESH_DIR / f"{card_id}.json"
-    if mesh_out.exists():
-        state["approved"].append("mesh")
-        if symbol_points_complete(mesh_out):
-            state["approved"].append("symbols")
+    if (work / "compress-report.json").exists():
+        state["approved"].append("compress")
+        if mesh_out.exists():
+            state["approved"].append("mesh")
+            if symbol_points_complete(mesh_out):
+                state["approved"].append("symbols")
     write_state(work, state)
     for approved_step in state["approved"]:
         record_step_approved(work, approved_step)
@@ -1295,7 +1365,12 @@ def recover_stale_approvals(
     else:
         return False
     mesh_out = MESH_DIR / f"{card_id}.json"
-    if "card" in restored and mesh_out.exists():
+    if "card" in restored and (work / "compress-report.json").exists():
+        card_bg = CARDS_DIR / card_id / "background.mp4"
+        card_fg = CARDS_DIR / card_id / "foreground.mp4"
+        if video_ok(card_bg) and video_ok(card_fg):
+            restored.append("compress")
+    if "compress" in restored and mesh_out.exists():
         restored.append("mesh")
     if "mesh" in restored and symbol_points_complete(mesh_out):
         restored.append("symbols")
@@ -1321,14 +1396,17 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
     work = work_dir(card_id)
     state = read_state(work)
     recovered = recover_stale_approvals(work, card_id, state, probe_videos=probe_videos)
+    dirty = recovered
     if "dress" in state["approved"] and _published_dress_is_stale(
         work, _paths(work)["foreground_dressed"]
     ):
         _invalidate_game_after_dress(work, card_id)
         state = read_state(work)
+        dirty = True
     if "mesh" in state["approved"]:
         ensure_active_mesh_snapshotted(work, card_id)
-    write_state(work, state)
+    if dirty or recovered:
+        write_state(work, state)
     if _should_skip_grok_boomerang(card_id, state):
         _record_boomerang_skip(card_id)
         state = read_state(work)
@@ -1346,7 +1424,7 @@ def flow_state(card_id: str, *, probe_videos: bool = True) -> dict:
         "approved": list(state["approved"]),
         "steps": steps,
         "complete": step_status(
-            work, card_id, "compress", state, probe_videos=probe_videos
+            work, card_id, STEP_ORDER[-1], state, probe_videos=probe_videos
         )
         == "approved",
         "mesh_compare": mesh_compare_entries(work, card_id),
@@ -2471,7 +2549,7 @@ def list_flow_summary(card_id: str) -> dict:
         "card_id": card_id,
         "approved": approved,
         "steps": steps,
-        "complete": "compress" in approved,
+        "complete": STEP_ORDER[-1] in approved,
         "mesh_compare": [],
         "compress_report": None,
         "recovered_approvals": False,
@@ -3744,6 +3822,7 @@ def run_video_flow_step(
             f"Delivery ready under {card_dir} "
             f"({report['preset_label']}, saved {report['saved']})"
         )
+        # Mesh runs after this step on the delivery foreground — no second track.
     else:  # pragma: no cover
         raise RuntimeError(f"Unknown step: {step}")
 

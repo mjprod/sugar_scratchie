@@ -4172,7 +4172,7 @@ export function LeoUiPage() {
       }
       if (screen === "meshing") {
         if (flowState?.steps.mesh?.status !== "approved") {
-          setError("Wait for the mesh to finish.");
+          setError("Wait for the delivery mesh to finish.");
           return;
         }
         setError("");
@@ -5346,9 +5346,11 @@ export function LeoUiPage() {
   const meshBusy =
     pendingStep === "boomerang" ||
     pendingStep === "card" ||
+    pendingStep === "compress" ||
     pendingStep === "mesh" ||
     runningJob?.command[1] === "boomerang" ||
     runningJob?.command[1] === "card" ||
+    runningJob?.command[1] === "compress" ||
     runningJob?.command[1] === "mesh";
   const canNextInfluencer = Boolean(modelId);
   const canNextTheme = Boolean(

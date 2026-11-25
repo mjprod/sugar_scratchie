@@ -2882,7 +2882,7 @@ export function RunMode(props: RunModeProps) {
   const meshStepApproved = flowState?.steps.mesh?.status === "approved";
   const meshInReview = flowState?.steps.mesh?.status === "review";
   // Only pin while the user still needs to pick a tracker. After approve, let
-  // the pipeline advance to Place symbols / Compress.
+  // the pipeline advance to Finalize / Place symbols.
   const meshComparePin = meshInReview && meshCompareCount >= 1;
 
   const [meshFocusOverride, setMeshFocusOverride] = useState(false);

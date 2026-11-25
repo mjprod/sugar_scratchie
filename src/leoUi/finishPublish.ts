@@ -22,12 +22,9 @@ type LiteFlowState = {
   complete: boolean;
 };
 
-const MESH_PREFIX_STEPS = ["boomerang", "card", "mesh"] as const;
-const FINISH_STEPS = [
-  ...MESH_PREFIX_STEPS,
-  "symbols",
-  "compress",
-] as const;
+/** Finalize delivery, then track once — Mask/Symbols edit that lattice. */
+const MESH_PREFIX_STEPS = ["boomerang", "card", "compress", "mesh"] as const;
+const FINISH_STEPS = [...MESH_PREFIX_STEPS, "symbols"] as const;
 
 type MeshPrefixStep = (typeof MESH_PREFIX_STEPS)[number];
 type FinishStep = (typeof FINISH_STEPS)[number];
@@ -100,7 +97,7 @@ async function enqueueStep(
 }
 
 /**
- * Run boomerang → card → mesh so Mask/Symbols have a published mesh.
+ * Run boomerang → card → compress → mesh so Mask/Symbols use the delivery mesh.
  * Skips steps already approved. Safe to await on the Meshing screen.
  */
 export async function runThroughMesh(
@@ -145,11 +142,13 @@ export async function runThroughMesh(
     for (const step of MESH_PREFIX_STEPS) {
       state = await loadState(id);
       opts?.onState?.(state);
-      if (state.steps[step]?.status === "approved" && !(forceMesh && step === "mesh")) {
+      // Remake mesh: re-run compress (clears mesh) then track the delivery clip once.
+      const forceStep = forceMesh && (step === "mesh" || step === "compress");
+      if (state.steps[step]?.status === "approved" && !forceStep) {
         continue;
       }
       opts?.onStep?.(step);
-      await enqueueStep(id, step, fields, forceMesh && step === "mesh");
+      await enqueueStep(id, step, fields, forceStep);
       state = await waitApproved(id, step);
       opts?.onState?.(state);
     }
@@ -178,7 +177,7 @@ async function waitApproved(
 }
 
 /**
- * Background finish: boomerang → publish card → mesh → symbols → compress.
+ * Background finish: boomerang → card → compress → mesh → symbols.
  * Safe to call after leaving Leo — does not touch React state.
  */
 export function finishAndPublishCard(

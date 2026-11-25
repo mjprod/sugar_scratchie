@@ -68,6 +68,8 @@ export async function fetchOperatorSession(): Promise<boolean> {
   const response = await fetch("/api/auth/operator/session", {
     credentials: "include",
     headers: dashboardAuthHeaders(),
+    // Dead/hung API must not leave the dashboard on "Checking operator access…" forever.
+    signal: AbortSignal.timeout(8_000),
   });
   return response.ok;
 }

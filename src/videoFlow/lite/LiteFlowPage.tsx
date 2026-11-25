@@ -62,9 +62,9 @@ const AUTO_STEPS = [
   "dress",
   "boomerang",
   "card",
+  "compress",
   "mesh",
   "symbols",
-  "compress",
 ] as const;
 
 /** Survives a strict-mode remount so a step is queued once. */
@@ -131,7 +131,7 @@ export function LiteFlowPage() {
   const [missingCard, setMissingCard] = useState(false);
   const [pendingStep, setPendingStep] = useState<string | null>(null);
   const [finishFailure, setFinishFailure] = useState<
-    "boomerang" | "card" | "mesh" | "symbols" | "compress" | null
+    "boomerang" | "card" | "compress" | "mesh" | "symbols" | null
   >(null);
   const [autoBlocked, setAutoBlocked] = useState<(typeof AUTO_STEPS)[number] | null>(null);
   const [catalogReady, setCatalogReady] = useState(false);
@@ -350,9 +350,9 @@ export function LiteFlowPage() {
     else if (dress === "approved" && !flowState.complete) {
       if (flowState.steps.boomerang?.status !== "approved") step = "boomerang";
       else if (flowState.steps.card?.status !== "approved") step = "card";
+      else if (flowState.steps.compress?.status !== "approved") step = "compress";
       else if (flowState.steps.mesh?.status !== "approved") step = "mesh";
       else if (flowState.steps.symbols?.status !== "approved") step = "symbols";
-      else if (flowState.steps.compress?.status !== "approved") step = "compress";
     }
     if (!step || autoBlocked === step) return;
     const token = `${cardId}:${step}`;
@@ -477,7 +477,7 @@ export function LiteFlowPage() {
         setAutoBlocked(step as (typeof AUTO_STEPS)[number]);
       }
       if (step !== "picture" && step !== "background" && step !== "dress") {
-        setFinishFailure(step as "boomerang" | "card" | "mesh" | "symbols" | "compress");
+        setFinishFailure(step as "boomerang" | "card" | "compress" | "mesh" | "symbols");
       }
       setPendingStep(null);
       setError("Something went wrong.");
@@ -547,18 +547,23 @@ export function LiteFlowPage() {
   const movingNodeStatus = nodeStatus("background", pictureStatus !== "approved");
   const outfitNodeStatus = nodeStatus("dress", backgroundStatus !== "approved");
   const meshStatus = stepStatus("mesh");
+  const compressStatus = stepStatus("compress");
   const symbolsStatus = stepStatus("symbols");
+  const compressReady = compressStatus === "approved";
   const meshNodeStatus: LiteNodeStatus =
-    nodeStatus("mesh", dressStatus !== "approved") === "running" ||
+    nodeStatus("mesh", !compressReady) === "running" ||
     (dressStatus === "approved" &&
       meshStatus !== "approved" &&
       (pendingStep === "boomerang" ||
         pendingStep === "card" ||
+        pendingStep === "compress" ||
         runningJob?.command[1] === "boomerang" ||
-        runningJob?.command[1] === "card"))
+        runningJob?.command[1] === "card" ||
+        runningJob?.command[1] === "compress"))
       ? "running"
-      : nodeStatus("mesh", dressStatus !== "approved");
-  const symbolsNodeStatus = nodeStatus("symbols", meshStatus !== "approved");
+      : nodeStatus("mesh", !compressReady);
+  const meshReady = meshStatus === "approved";
+  const symbolsNodeStatus = nodeStatus("symbols", !meshReady);
   const pendingFinish =
     dressStatus !== "approved" || flowState?.complete
       ? null
@@ -566,24 +571,33 @@ export function LiteFlowPage() {
         ? "boomerang"
         : flowState?.steps.card?.status !== "approved"
           ? "card"
-          : flowState?.steps.mesh?.status !== "approved"
-            ? "mesh"
-            : flowState?.steps.symbols?.status !== "approved"
-              ? "symbols"
-              : flowState?.steps.compress?.status !== "approved"
-                ? "compress"
+          : flowState?.steps.compress?.status !== "approved"
+            ? "compress"
+            : flowState?.steps.mesh?.status !== "approved"
+              ? "mesh"
+              : flowState?.steps.symbols?.status !== "approved"
+                ? "symbols"
                 : null;
   const gameFailedStep =
     pendingFinish != null &&
     (finishFailure === pendingFinish || (latestFailed && latestJob?.command[1] === pendingFinish))
       ? pendingFinish
       : null;
-  const gameNodeStatus: LiteNodeStatus =
-    nodeStatus("compress", symbolsStatus !== "approved") === "running"
-      ? "running"
-      : gameFailedStep
-        ? "failed"
-        : nodeStatus("compress", symbolsStatus !== "approved");
+  const gameRunning =
+    pendingStep === "compress" ||
+    pendingStep === "mesh" ||
+    pendingStep === "symbols" ||
+    runningJob?.command[1] === "compress" ||
+    runningJob?.command[1] === "mesh" ||
+    runningJob?.command[1] === "symbols" ||
+    nodeStatus("symbols", !meshReady) === "running";
+  const gameNodeStatus: LiteNodeStatus = gameRunning
+    ? "running"
+    : gameFailedStep
+      ? "failed"
+      : flowState?.complete
+        ? "approved"
+        : nodeStatus("symbols", !meshReady);
 
   return (
     <VideoFlowShell
@@ -893,7 +907,7 @@ export function LiteFlowPage() {
                       ? "Tracking the outfit…"
                       : meshStatus === "approved"
                         ? "The outfit is tracked."
-                        : "Mesh runs after the outfit."}
+                        : "Mesh runs on the delivery clip."}
                   </Text>
                   {meshNodeStatus !== "running" &&
                   (meshStatus === "approved" || meshNodeStatus === "failed") ? (
@@ -915,7 +929,7 @@ export function LiteFlowPage() {
               id: "symbols",
               title: "Symbols",
               status: symbolsNodeStatus,
-              wide: meshStatus === "approved" && Boolean(cardId.trim()),
+              wide: meshReady && Boolean(cardId.trim()),
               body: (
                 <Flex direction="column" gap="3">
                   <Text color="gray" size="2">
@@ -923,7 +937,9 @@ export function LiteFlowPage() {
                       ? "Placing 12 symbols…"
                       : symbolsStatus === "approved"
                         ? "12 symbols are on the outfit."
-                        : "Symbols go on the mesh."}
+                        : meshReady
+                          ? "Symbols go on the delivery mesh."
+                          : "Symbols wait for the delivery mesh."}
                   </Text>
                   {symbolsNodeStatus !== "running" &&
                   (symbolsStatus === "approved" || symbolsNodeStatus === "failed") ? (
@@ -951,7 +967,7 @@ export function LiteFlowPage() {
                       Try again
                     </Button>
                   ) : null}
-                  {meshStatus === "approved" && cardId.trim() ? (
+                  {meshReady && cardId.trim() ? (
                     <>
                       <MaskEditor
                         meshFile={`${cardId.trim()}.json`}

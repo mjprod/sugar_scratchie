@@ -225,7 +225,7 @@ export function readStoredVideoFlowDraft(): StoredVideoFlowDraft | null {
       writeWebm: parsed.writeWebm ?? false,
       compressPreset: parseCompressPreset(parsed.compressPreset),
       resolution: parsed.resolution ?? "720p",
-      tracker: parsed.tracker ?? "all",
+      tracker: parsed.tracker ?? "blend",
       meshTune: meshTuneFromApi(parsed.meshTune),
       sourceMode: parsed.sourceMode ?? "upload",
       sourcePrompt: isStockPortraitPrompt(parsed.sourcePrompt ?? "")
@@ -344,7 +344,7 @@ export function storedDraftFromApi(draft?: {
     writeWebm: draft.write_webm ?? false,
     compressPreset: parseCompressPreset(draft.compress_preset),
     resolution: draft.resolution ?? "720p",
-    tracker: (draft.tracker as StoredVideoFlowDraft["tracker"]) ?? "all",
+    tracker: (draft.tracker as StoredVideoFlowDraft["tracker"]) ?? "blend",
     meshTune: meshTuneFromApi(draft.mesh_tune),
     // Clamp to known modes for backward compatibility.
     sourceMode:

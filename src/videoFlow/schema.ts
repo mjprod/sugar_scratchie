@@ -473,7 +473,7 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
   id: "image-to-card",
   label: "Image To Card",
   description:
-    "Create a themed still from the source image and approve it, then animate that picture. A dress edit runs on those frames. Boomerang (or keep as-is) comes next, then the card and mesh; place symbol points, then compress.",
+    "Create a themed still from the source image and approve it, then animate that picture. A dress edit runs on those frames. Boomerang (or keep as-is) comes next, then the card; finalize delivery, track the delivery mesh once, then place symbol points.",
   version: 1,
   pipeline: [
     "picture",
@@ -481,9 +481,9 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     "dress",
     "boomerang",
     "card",
+    "compress",
     "mesh",
     "symbols",
-    "compress",
   ],
   reviewSteps: ["picture", "background", "dress", "boomerang"],
   canvas: { width: 1860, height: 200 },
@@ -570,12 +570,28 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       outputs: [{ id: "card", label: "card" }],
     },
     {
+      id: "compress",
+      kind: "process",
+      title: "Finalize",
+      subtitle: "390∶672 delivery",
+      description:
+        "Align foreground timing, then HandBrake HD + SD via VideoSquash. SD replaces the card MP4s; HD is saved beside them. Mesh tracks this delivery clip next.",
+      x: 1160,
+      y: 56,
+      step: "compress",
+      inputs: [
+        { id: "background", label: "background" },
+        { id: "foreground", label: "foreground" },
+      ],
+      outputs: [{ id: "clips", label: "clips" }],
+    },
+    {
       id: "mesh",
       kind: "process",
       title: "Generate mesh",
       subtitle: "Garment tracking",
-      description: "Track the foreground for garment-local scratching",
-      x: 1160,
+      description: "Track the delivery foreground for garment-local scratching",
+      x: 1340,
       y: 56,
       step: "mesh",
       inputs: [{ id: "card", label: "card" }],
@@ -586,28 +602,13 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
       kind: "process",
       title: "Place symbols",
       subtitle: "12 mesh points",
-      description: "Place 12 symbol points randomly (or by click) on the garment mesh",
-      x: 1340,
+      description:
+        "Place 12 symbol points randomly (or by click) on the delivery garment mesh",
+      x: 1520,
       y: 56,
       step: "symbols",
       inputs: [{ id: "mesh", label: "mesh" }],
       outputs: [{ id: "points", label: "points" }],
-    },
-    {
-      id: "compress",
-      kind: "process",
-      title: "Finalize",
-      subtitle: "390∶672 delivery",
-      description:
-        "Align foreground timing, then HandBrake HD + SD via VideoSquash. SD replaces the card MP4s; HD is saved beside them",
-      x: 1520,
-      y: 56,
-      step: "compress",
-      inputs: [
-        { id: "background", label: "background" },
-        { id: "foreground", label: "foreground" },
-      ],
-      outputs: [{ id: "clips", label: "clips" }],
     },
     {
       id: "output",
@@ -629,11 +630,10 @@ export const DEFAULT_VIDEO_FLOW_JSON: VideoFlowJson = {
     { from: "background", to: "boomerang" },
     { from: "dress", to: "boomerang" },
     { from: "boomerang", to: "card" },
-    { from: "card", to: "mesh" },
-    { from: "mesh", to: "symbols" },
-    { from: "symbols", to: "compress" },
     { from: "card", to: "compress" },
     { from: "boomerang", to: "compress" },
+    { from: "compress", to: "mesh" },
+    { from: "mesh", to: "symbols" },
     { from: "mesh", to: "output" },
   ],
   defaults: {
@@ -690,6 +690,29 @@ function migrateVideoFlow(flow: Partial<VideoFlowJson>): Partial<VideoFlowJson> 
       if (symbolsNode) nodes.push(symbolsNode);
     }
     changed = true;
+  }
+
+  // Track the delivery clip once: compress → mesh → symbols.
+  if (pipeline.includes("compress") && pipeline.includes("mesh")) {
+    const compressIndex = pipeline.indexOf("compress");
+    const meshIndex = pipeline.indexOf("mesh");
+    const symbolsIndex = pipeline.indexOf("symbols");
+    const hadSymbols = symbolsIndex >= 0;
+    const outOfOrder =
+      compressIndex > meshIndex ||
+      (hadSymbols && symbolsIndex < meshIndex) ||
+      (hadSymbols && symbolsIndex < compressIndex);
+    if (outOfOrder) {
+      pipeline = pipeline.filter(
+        (step) => step !== "symbols" && step !== "compress" && step !== "mesh",
+      );
+      const cardIndex = pipeline.indexOf("card");
+      const insertAt = cardIndex >= 0 ? cardIndex + 1 : pipeline.length;
+      const tail: VideoFlowStepKey[] = ["compress", "mesh"];
+      if (hadSymbols) tail.push("symbols");
+      pipeline.splice(insertAt, 0, ...tail);
+      changed = true;
+    }
   }
 
   if (!pipeline.includes("picture")) {

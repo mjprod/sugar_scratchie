@@ -30,6 +30,7 @@ export function OperatorGate({ children }: Props) {
         window.dispatchEvent(new PopStateEvent("popstate"));
       })
       .catch(() => {
+        // Timeout / network / dead API — send to login instead of spinning forever.
         if (cancelled) return;
         setState("denied");
         const next = `${window.location.pathname}${window.location.search}`;
