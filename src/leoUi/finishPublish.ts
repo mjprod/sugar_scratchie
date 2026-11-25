@@ -22,18 +22,20 @@ type LiteFlowState = {
   complete: boolean;
 };
 
+const MESH_PREFIX_STEPS = ["boomerang", "card", "mesh"] as const;
 const FINISH_STEPS = [
-  "boomerang",
-  "card",
-  "mesh",
+  ...MESH_PREFIX_STEPS,
   "symbols",
   "compress",
 ] as const;
 
+type MeshPrefixStep = (typeof MESH_PREFIX_STEPS)[number];
 type FinishStep = (typeof FINISH_STEPS)[number];
 
 /** Survives leaving /leo-ui so publish can finish after navigating to Models. */
 const running = new Set<string>();
+/** In-page mesh prefix (boomerang → card → mesh) — separate from background publish. */
+const meshPrefixRunning = new Set<string>();
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -85,15 +87,76 @@ async function enqueueStep(
   cardId: string,
   step: FinishStep,
   fields: LiteDraftInput,
+  force = false,
 ): Promise<void> {
   await api("/api/jobs/video-flow/step", {
     method: "POST",
     body: JSON.stringify({
       ...liteRequestBody({ ...fields, cardId }),
       step,
-      force: false,
+      force,
     }),
   });
+}
+
+/**
+ * Run boomerang → card → mesh so Mask/Symbols have a published mesh.
+ * Skips steps already approved. Safe to await on the Meshing screen.
+ */
+export async function runThroughMesh(
+  cardId: string,
+  fields: LiteDraftInput,
+  opts?: {
+    force?: boolean;
+    onState?: (state: LiteFlowState) => void;
+    onStep?: (step: MeshPrefixStep) => void;
+  },
+): Promise<LiteFlowState> {
+  const id = cardId.trim();
+  if (!id) throw new Error("Missing card.");
+  if (meshPrefixRunning.has(id)) {
+    // Another call is already driving this card — poll until mesh lands.
+    for (let i = 0; i < 180; i += 1) {
+      const state = await loadState(id);
+      opts?.onState?.(state);
+      if (state.steps.mesh?.status === "approved") return state;
+      await sleep(2000);
+    }
+    throw new Error("Timed out waiting for mesh.");
+  }
+  meshPrefixRunning.add(id);
+  try {
+    await api(`/api/video-flow/${encodeURIComponent(id)}/draft`, {
+      method: "POST",
+      body: JSON.stringify(liteRequestBody({ ...fields, cardId: id })),
+    });
+
+    let state = await loadState(id);
+    opts?.onState?.(state);
+
+    for (const step of ["picture", "background", "dress"] as const) {
+      if (state.steps[step]?.status === "review") {
+        state = await approveStep(id, step);
+        opts?.onState?.(state);
+      }
+    }
+
+    const forceMesh = Boolean(opts?.force);
+    for (const step of MESH_PREFIX_STEPS) {
+      state = await loadState(id);
+      opts?.onState?.(state);
+      if (state.steps[step]?.status === "approved" && !(forceMesh && step === "mesh")) {
+        continue;
+      }
+      opts?.onStep?.(step);
+      await enqueueStep(id, step, fields, forceMesh && step === "mesh");
+      state = await waitApproved(id, step);
+      opts?.onState?.(state);
+    }
+    return state;
+  } finally {
+    meshPrefixRunning.delete(id);
+  }
 }
 
 async function waitApproved(

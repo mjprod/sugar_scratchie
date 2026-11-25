@@ -35,21 +35,13 @@ import providerWavespeedUrl from "./assets/icon-wavespeed.svg";
 import providerXaiUrl from "./assets/icon-xai.svg";
 import searchUrl from "./assets/icon-search.svg";
 import logoUrl from "./assets/logo-sugar-scratch.svg";
-import symbolsChevronUrl from "./assets/symbols-tools/chevron.svg";
-import symbolsClearUrl from "./assets/symbols-tools/clear.svg";
-import symbolsDiceUrl from "./assets/symbols-tools/dice.svg";
-import symbolsHideMeshUrl from "./assets/symbols-tools/hide-mesh.svg";
-import symbolsHidePointsUrl from "./assets/symbols-tools/hide-points.svg";
-import symbolsUndoUrl from "./assets/symbols-tools/undo.svg";
-import maskSaveUrl from "./assets/mask-edit/save.svg";
+import { Theme } from "@radix-ui/themes";
+import { SymbolPointPicker } from "../videoFlow/SymbolPointPicker";
 import { LeoFaceCropDialog } from "./LeoFaceCropDialog";
 import { LeoMaskEditOverlay } from "./LeoMaskEditOverlay";
-import { finishAndPublishCard } from "./finishPublish";
+import { finishAndPublishCard, runThroughMesh } from "./finishPublish";
 import "./leo-cta-css.css";
 import "./leo-ui.css";
-
-const SYMBOLS_SAVE_CHECK_MS = 2000;
-const SYMBOLS_SAVE_SLOT_PX = 16;
 
 const LeoTryMotionGame = lazy(() =>
   import("./LeoTryMotionGame").then((m) => ({ default: m.LeoTryMotionGame })),
@@ -113,13 +105,6 @@ type SavedDraft = {
   model_id?: string;
 };
 
-/** Design-only filler when a model has no gallery yet. */
-const DESIGN_GALLERY_PLACEHOLDERS: GalleryImage[] = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
-  id: `design-ph-${n}`,
-  path: "",
-  url: `https://picsum.photos/seed/leo-gallery-${n}/144/228`,
-}));
-
 /** Main nav sections (progress dots). Sub-screens share a parent phase. */
 const PHASE_COUNT = 9;
 const PHASE_DOT_PX = 8;
@@ -151,8 +136,8 @@ const SCREEN_ORDER: LeoScreen[] = [
   "created",
 ];
 const PROCESSING_MIN_DWELL_MS = 1200;
-/** Flip on when layout is locked — auto-advance past processing once the first picture exists. */
-const PROCESSING_AUTO_ADVANCE = false;
+/** Auto-advance past processing once the first picture exists (after the reveal beat). */
+const PROCESSING_AUTO_ADVANCE = true;
 /** Confirm / multi-option pick — set true to auto-use picture-1 and jump to Animating. */
 const SKIP_CONFIRM = false;
 const PROCESSING_PHOTO_FILTER =
@@ -176,10 +161,6 @@ const TRY_MOTION_STAGE_IN = 0.48;
 const TRY_MOTION_STAGE_OUT = 0.36;
 /** Max wait for scratch videos before revealing anyway. */
 const TRY_MOTION_READY_FALLBACK_MS = 6000;
-/** Stand-in processed still when the picture step has no artifacts yet (layout / morph testing). */
-const PLACEHOLDER_PROCESSED = "/leo-ui/placeholder-processed.png";
-/** Stand-in clip on Animating / Animated when background artifacts are missing. */
-const PLACEHOLDER_ANIMATING_VIDEO = "/leo-ui/placeholder-animating.mp4";
 /** Animating subtitle — slot-machine reel copy. */
 const ANIMATING_SLOT_LINES = [
   "Waking up the pixels...",
@@ -294,7 +275,10 @@ function errorText(caught: unknown): string {
 function pictureChoiceFromArtifact(path: string): number | null {
   const name = path.split("?")[0].split("/").pop() ?? "";
   const match = /^picture-([123])\.png$/i.exec(name);
-  return match ? Number(match[1]) : null;
+  if (match) return Number(match[1]);
+  // Published winner (after approve) or single still — treat as take 1.
+  if (/^picture\.png$/i.test(name)) return 1;
+  return null;
 }
 
 function readyPaths(paths: string[] | undefined): string[] {
@@ -394,15 +378,8 @@ export function LeoUiPage() {
     width: number;
     height: number;
   } | null>(null);
-  /** Place Symbols hero — video fly docks here from mask. */
+  /** Place Symbols stage — video fly docks here from mask. */
   const symbolsHeroRef = useRef<HTMLDivElement | null>(null);
-  const symbolsSaveReelRef = useRef<HTMLSpanElement | null>(null);
-  const symbolsSaveSlotRef = useRef(0);
-  const symbolsSaveTimerRef = useRef(0);
-  const [symbolsToolsOpen, setSymbolsToolsOpen] = useState(false);
-  const [symbolsShowMesh, setSymbolsShowMesh] = useState(true);
-  const [symbolsShowPoints, setSymbolsShowPoints] = useState(true);
-  const [symbolsSaveOk, setSymbolsSaveOk] = useState(false);
   /** Game Created preview — video fly docks here from symbols (centered). */
   const createdPreviewRef = useRef<HTMLButtonElement | null>(null);
   /** Full-viewport try-motion dialog (Figma Step08 / 391:2643). */
@@ -535,6 +512,8 @@ export function LeoUiPage() {
   const [flowState, setFlowState] = useState<LiteFlowState | null>(null);
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [pendingStep, setPendingStep] = useState<string | null>(null);
+  /** Wall-clock when pendingStep was set — timeout must not reset on every poll. */
+  const pendingSinceRef = useRef(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [catalogReady, setCatalogReady] = useState(false);
@@ -866,7 +845,11 @@ export function LeoUiPage() {
   const runningJob = cardJobs.find((job) => job.status === "queued" || job.status === "running");
 
   useEffect(() => {
-    if (!pendingStep) return;
+    if (!pendingStep) {
+      pendingSinceRef.current = 0;
+      return;
+    }
+    if (!pendingSinceRef.current) pendingSinceRef.current = Date.now();
     const job = cardJobs.find((entry) => entry.command[1] === pendingStep);
     const status = flowState?.steps[pendingStep as VideoFlowStepKey]?.status;
     if (job?.status === "queued" || job?.status === "running") return;
@@ -877,9 +860,26 @@ export function LeoUiPage() {
       status === "review" ||
       status === "approved" ||
       // No live job and step already has artifacts — clear the busy flag.
-      (job == null && readyPaths(flowState?.steps[pendingStep as VideoFlowStepKey]?.artifacts).length > 0)
+      (job == null &&
+        readyPaths(flowState?.steps[pendingStep as VideoFlowStepKey]?.artifacts)
+          .length > 0)
     ) {
+      pendingSinceRef.current = 0;
       setPendingStep(null);
+      return;
+    }
+    // Job vanished while still "ready". Use elapsed time from when we set
+    // pending — do not restart the clock on every 2.5s state poll.
+    if (job == null) {
+      const remaining = Math.max(
+        0,
+        8000 - (Date.now() - pendingSinceRef.current),
+      );
+      const timer = window.setTimeout(() => {
+        pendingSinceRef.current = 0;
+        setPendingStep(null);
+      }, remaining);
+      return () => window.clearTimeout(timer);
     }
   }, [cardJobs, flowState, pendingStep]);
 
@@ -895,6 +895,7 @@ export function LeoUiPage() {
     async (step: VideoFlowStepKey, force: boolean) => {
       const id = fieldsRef.current.cardId.trim();
       if (!id) return;
+      pendingSinceRef.current = Date.now();
       setPendingStep(step);
       setError("");
       try {
@@ -910,6 +911,7 @@ export function LeoUiPage() {
         await refresh().catch(() => undefined);
       } catch (caught) {
         // Don't leave the Confirm/Processing screens stuck on "Generating…".
+        pendingSinceRef.current = 0;
         setPendingStep(null);
         throw caught;
       }
@@ -933,8 +935,9 @@ export function LeoUiPage() {
     });
   }, [cardId, enqueue, flowState, pendingStep, runningJob]);
 
-  // Leave animating once a background job finishes — not when it was already done
-  // (so Confirm → Animating layout can be inspected on completed cards).
+  // Leave animating once the background clip is ready (don't require the job
+  // to still be in /api/jobs — it may already have been pruned). Wait for any
+  // in-flight confirm→animating morph so the fly layer isn't left stranded.
   useEffect(() => {
     if (screen !== "animating") return;
     const bgBusy =
@@ -942,10 +945,32 @@ export function LeoUiPage() {
     if (bgBusy) return;
     const status = flowState?.steps.background?.status;
     if (status !== "review" && status !== "approved") return;
-    const ran = cardJobs.some((job) => job.command[1] === "background");
-    if (!ran) return;
-    setScreen("animated");
-  }, [cardJobs, flowState, pendingStep, runningJob, screen]);
+    const clip = readyPaths(flowState?.steps.background?.artifacts)[0];
+    if (!clip) return;
+    if (!photoShellGrowingRef.current) {
+      setScreen("animated");
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (photoShellGrowingRef.current) return;
+      window.clearInterval(timer);
+      setScreen((current) => (current === "animating" ? "animated" : current));
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [flowState, pendingStep, runningJob, screen]);
+
+  // Leave dressing once the dress clip is ready.
+  useEffect(() => {
+    if (screen !== "dressing") return;
+    const busy =
+      pendingStep === "dress" || runningJob?.command[1] === "dress";
+    if (busy) return;
+    const status = flowState?.steps.dress?.status;
+    if (status !== "review" && status !== "approved") return;
+    const clip = readyPaths(flowState?.steps.dress?.artifacts)[0];
+    if (!clip) return;
+    setScreen("dressed");
+  }, [flowState, pendingStep, runningJob, screen]);
 
   // Drop custom confirm / outfit uploads when leaving those steps.
   useEffect(() => {
@@ -969,8 +994,7 @@ export function LeoUiPage() {
     }
   }, [screen]);
 
-  // Processing done → swap to processed photo + re-saturate (then optional auto-advance).
-  // Uses real picture artifacts when present; otherwise PLACEHOLDER_PROCESSED after min dwell.
+  // Processing done → swap to processed photo once real artifacts exist.
   useEffect(() => {
     if (screen !== "processing") {
       processingRevealStartedRef.current = false;
@@ -978,6 +1002,12 @@ export function LeoUiPage() {
       return;
     }
     if (viewScreen !== "processing" || processingRevealStartedRef.current) return;
+    const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+      (path) => pictureChoiceFromArtifact(path) != null,
+    );
+    const busy =
+      pendingStep === "picture" || runningJob?.command[1] === "picture";
+    if (busy || artifacts.length === 0) return;
     const started = processingEnteredAtRef.current || Date.now();
     const wait = Math.max(0, PROCESSING_MIN_DWELL_MS - (Date.now() - started));
     const timer = window.setTimeout(() => {
@@ -989,7 +1019,7 @@ export function LeoUiPage() {
       setProcessingRevealed(true);
     }, wait);
     return () => window.clearTimeout(timer);
-  }, [screen, viewScreen]);
+  }, [screen, viewScreen, flowState, pendingStep, runningJob]);
 
   function cardNameChipMode(forScreen: LeoScreen): "edit" | "card" | "hidden" {
     if (forScreen === "theme") return "edit";
@@ -1474,6 +1504,20 @@ export function LeoUiPage() {
       width: box.width,
       height: box.height,
     };
+  }
+
+  function hidePhotoFly() {
+    const fly = photoFlyRef.current;
+    if (!fly) return;
+    gsap.killTweensOf(fly);
+    const flyVideo = fly.querySelector("video");
+    if (flyVideo) flyVideo.pause();
+    gsap.set(fly, {
+      display: "none",
+      clearProps:
+        "transform,filter,opacity,borderRadius,boxShadow,--shell-mask-0,--shell-mask-1,--shell-mask-2",
+    });
+    photoShellGrowingRef.current = false;
   }
 
   /** Park the fly layer at a viewport rect (stage-local left/top/size). */
@@ -2829,7 +2873,6 @@ export function LeoUiPage() {
         const resultSrc =
           artifacts[pictureChoice - 1] ||
           artifacts[0] ||
-          PLACEHOLDER_PROCESSED ||
           image;
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
           photoShellFromRef.current = box;
@@ -2858,7 +2901,7 @@ export function LeoUiPage() {
         const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
           (path) => pictureChoiceFromArtifact(path) != null,
         );
-        const resultSrc = artifacts[0] || PLACEHOLDER_PROCESSED || image;
+        const resultSrc = artifacts[0] || image;
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-animating";
@@ -2885,7 +2928,6 @@ export function LeoUiPage() {
           confirmOverride ||
           artifacts[pictureChoice - 1] ||
           artifacts[0] ||
-          PLACEHOLDER_PROCESSED ||
           image;
         const box = hero?.getBoundingClientRect();
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
@@ -2906,6 +2948,7 @@ export function LeoUiPage() {
         setConfirmUploadExitSrc("");
       } else if (viewScreen === "confirm" && screen === "animating") {
         // Approve → Animating: hero morphs into the center preview and blurs.
+        hidePhotoFly();
         const hero = confirmHeroRef.current;
         const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
           (path) => pictureChoiceFromArtifact(path) != null,
@@ -2914,7 +2957,6 @@ export function LeoUiPage() {
           confirmOverride ||
           artifacts[pictureChoice - 1] ||
           artifacts[0] ||
-          PLACEHOLDER_PROCESSED ||
           image;
         const box = hero?.getBoundingClientRect();
         if (box && box.width > 8 && box.height > 4 && resultSrc.trim()) {
@@ -2932,20 +2974,60 @@ export function LeoUiPage() {
           }
           if (hero) gsap.set(hero, { opacity: 0 });
         }
+      } else if (viewScreen === "confirm" && screen === "animated") {
+        // Clip already ready — morph confirm hero straight into Animated.
+        hidePhotoFly();
+        const hero = confirmHeroRef.current;
+        const box = hero?.getBoundingClientRect();
+        const clip = readyPaths(flowState?.steps.background?.artifacts)[0] || "";
+        const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+          (path) => pictureChoiceFromArtifact(path) != null,
+        );
+        const still =
+          confirmOverride ||
+          artifacts[pictureChoice - 1] ||
+          artifacts[0] ||
+          image;
+        if (box && box.width > 8 && box.height > 4) {
+          photoShellFromRef.current = box;
+          photoTravelKindRef.current = "to-animated";
+          if (clip) placeVideoFly(box, clip, PROCESSING_PHOTO_FILTER_CLEAR);
+          else if (still.trim()) placePhotoFly(box, still);
+          if (hero) gsap.set(hero, { opacity: 0 });
+        }
       } else if (viewScreen === "animating" && screen === "animated") {
         // Blurred clip morphs into the clear Animated preview.
         const preview = animatingPreviewRef.current;
         const video = preview?.querySelector("video");
+        const img = preview?.querySelector("img");
         const box = preview?.getBoundingClientRect();
         const src =
           video?.currentSrc ||
           video?.getAttribute("src") ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          readyPaths(flowState?.steps.background?.artifacts)[0] ||
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
+          hidePhotoFly();
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-animated";
           placeVideoFly(box, src, PROCESSING_PHOTO_FILTER);
           if (preview) gsap.set(preview, { opacity: 0 });
+        } else if (box && box.width > 8 && box.height > 4) {
+          // Still waiting on video element — fly the hero still instead of
+          // abandoning a mid-morph confirm→animating fly.
+          const pics = readyPaths(flowState?.steps.picture?.artifacts);
+          const still =
+            img?.currentSrc ||
+            img?.getAttribute("src") ||
+            pics[0] ||
+            image;
+          hidePhotoFly();
+          if (still.trim()) {
+            photoShellFromRef.current = box;
+            photoTravelKindRef.current = "to-animated";
+            placePhotoFly(box, still);
+            if (preview) gsap.set(preview, { opacity: 0 });
+          }
         }
       } else if (viewScreen === "animated" && screen === "outfit") {
         // Result clip morphs into the Choose Outfit hero.
@@ -2955,7 +3037,7 @@ export function LeoUiPage() {
         const src =
           video?.currentSrc ||
           video?.getAttribute("src") ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-outfit";
@@ -2970,7 +3052,7 @@ export function LeoUiPage() {
         const src =
           video?.currentSrc ||
           video?.getAttribute("src") ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-dressing";
@@ -2985,7 +3067,7 @@ export function LeoUiPage() {
         const src =
           video?.currentSrc ||
           video?.getAttribute("src") ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-dressed";
@@ -3000,7 +3082,7 @@ export function LeoUiPage() {
         const src =
           video?.currentSrc ||
           video?.getAttribute("src") ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-meshing";
@@ -3015,7 +3097,7 @@ export function LeoUiPage() {
         const src =
           video?.getAttribute("src") ||
           video?.currentSrc ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-mask";
@@ -3050,7 +3132,7 @@ export function LeoUiPage() {
         const src =
           video?.getAttribute("src") ||
           video?.currentSrc ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-symbols";
@@ -3065,7 +3147,7 @@ export function LeoUiPage() {
         const src =
           video?.getAttribute("src") ||
           video?.currentSrc ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-mask-back";
@@ -3080,7 +3162,7 @@ export function LeoUiPage() {
         const src =
           video?.getAttribute("src") ||
           video?.currentSrc ||
-          PLACEHOLDER_ANIMATING_VIDEO;
+          "";
         if (box && box.width > 8 && box.height > 4 && src.trim()) {
           photoShellFromRef.current = box;
           photoTravelKindRef.current = "to-created";
@@ -3905,20 +3987,29 @@ export function LeoUiPage() {
         return;
       }
       if (screen === "swimwear") {
-        setScreen("processing");
         setError("");
+        setScreen("processing");
         try {
           await ensureCardAndRunPicture(false);
         } catch (caught) {
           // Picture already in review/approved — load artifacts and stay on processing.
-          if (!/already exists/i.test(errorText(caught))) throw caught;
+          if (/already exists/i.test(errorText(caught))) {
+            setPendingStep(null);
+            await refresh().catch(() => undefined);
+            return;
+          }
+          // Don't leave the user parked on Processing with a hidden error.
           setPendingStep(null);
-          await refresh().catch(() => undefined);
+          setScreen("swimwear");
+          throw caught;
         }
         return;
       }
       if (screen === "processing") {
-        if (!processingRevealed) {
+        const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+          (path) => pictureChoiceFromArtifact(path) != null,
+        );
+        if (!processingRevealed || artifacts.length === 0) {
           setError("Wait for the picture to finish.");
           return;
         }
@@ -3944,24 +4035,53 @@ export function LeoUiPage() {
         return;
       }
       if (screen === "confirm") {
-        // Layout testing: always let Use This Image advance (approve only when still in review).
         setError("");
         const id = cardId.trim();
+        const artifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
+          (path) => pictureChoiceFromArtifact(path) != null,
+        );
+        if (!confirmOverride.trim() && artifacts.length === 0) {
+          setError("Wait for the picture to finish.");
+          return;
+        }
         if (pictureStatus === "review" && id) {
           const data = await api<LiteFlowState>(
             `/api/video-flow/${encodeURIComponent(id)}/approve`,
             {
               method: "POST",
-              body: JSON.stringify({ step: "picture", picture_choice: pictureChoice }),
+              body: JSON.stringify({
+                step: "picture",
+                picture_choice: pictureChoice,
+              }),
             },
           );
           commitState(data);
         }
-        setScreen("animating");
+        // Clip already exists (re-run / resumed card) — skip the wait screen.
+        const bgStatus = flowState?.steps.background?.status;
+        const bgClip = readyPaths(flowState?.steps.background?.artifacts)[0];
+        if (
+          bgClip &&
+          (bgStatus === "review" || bgStatus === "approved")
+        ) {
+          setScreen("animated");
+        } else {
+          setScreen("animating");
+        }
         return;
       }
       if (screen === "animating") {
-        // Layout testing: same as Processing Next — advance without waiting on the job.
+        const busy =
+          pendingStep === "background" ||
+          runningJob?.command[1] === "background";
+        const status = flowState?.steps.background?.status;
+        if (
+          busy ||
+          (status !== "review" && status !== "approved")
+        ) {
+          setError("Wait for the clip to finish.");
+          return;
+        }
         setError("");
         setScreen("animated");
         return;
@@ -3970,36 +4090,78 @@ export function LeoUiPage() {
         setError("");
         const id = cardId.trim();
         if (id && flowState?.steps.background?.status === "review") {
-          try {
-            const data = await api<LiteFlowState>(
-              `/api/video-flow/${encodeURIComponent(id)}/approve`,
-              { method: "POST", body: JSON.stringify({ step: "background" }) },
-            );
-            commitState(data);
-          } catch {
-            /* layout testing — still advance to Choose Outfit */
-          }
+          const data = await api<LiteFlowState>(
+            `/api/video-flow/${encodeURIComponent(id)}/approve`,
+            { method: "POST", body: JSON.stringify({ step: "background" }) },
+          );
+          commitState(data);
         }
         setScreen("outfit");
         return;
       }
       if (screen === "outfit") {
+        const id = cardId.trim();
+        if (!outfitOverride.trim()) {
+          setError("Add an outfit reference.");
+          return;
+        }
+        if (!id) {
+          setError("Missing card.");
+          return;
+        }
         setError("");
         setScreen("dressing");
+        leoHeld.delete(`${id}:dress`);
+        await enqueue("dress", false);
         return;
       }
       if (screen === "dressing") {
-        // Layout testing: same as Animating Next — advance without waiting on a job.
+        const busy =
+          pendingStep === "dress" || runningJob?.command[1] === "dress";
+        const status = flowState?.steps.dress?.status;
+        if (busy || (status !== "review" && status !== "approved")) {
+          setError("Wait for the outfit clip to finish.");
+          return;
+        }
         setError("");
         setScreen("dressed");
         return;
       }
       if (screen === "dressed") {
         setError("");
+        const id = cardId.trim();
+        if (id && flowState?.steps.dress?.status === "review") {
+          const data = await api<LiteFlowState>(
+            `/api/video-flow/${encodeURIComponent(id)}/approve`,
+            { method: "POST", body: JSON.stringify({ step: "dress" }) },
+          );
+          commitState(data);
+        }
         setScreen("meshing");
+        if (id) {
+          const token = `${id}:mesh-prefix`;
+          leoHeld.delete(token);
+          leoHeld.add(token);
+          try {
+            const state = await runThroughMesh(id, fieldsRef.current, {
+              onState: commitState,
+              onStep: (step) => setPendingStep(step),
+            });
+            commitState(state);
+            setPendingStep(null);
+          } catch (caught) {
+            leoHeld.delete(token);
+            setPendingStep(null);
+            throw caught;
+          }
+        }
         return;
       }
       if (screen === "meshing") {
+        if (flowState?.steps.mesh?.status !== "approved") {
+          setError("Wait for the mesh to finish.");
+          return;
+        }
         setError("");
         setScreen("mask");
         return;
@@ -4010,6 +4172,10 @@ export function LeoUiPage() {
         return;
       }
       if (screen === "symbols") {
+        if (flowState?.steps.symbols?.status !== "approved") {
+          setError("Save symbol points first.");
+          return;
+        }
         setError("");
         setScreen("created");
         return;
@@ -4059,59 +4225,6 @@ export function LeoUiPage() {
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
   }
-
-  function clearSymbolsSaveTimer() {
-    if (symbolsSaveTimerRef.current) {
-      window.clearTimeout(symbolsSaveTimerRef.current);
-      symbolsSaveTimerRef.current = 0;
-    }
-  }
-
-  function setSymbolsSaveReelSlot(
-    slot: number,
-    animate: boolean,
-    onDone?: () => void,
-  ) {
-    const reel = symbolsSaveReelRef.current;
-    if (!reel) {
-      onDone?.();
-      return;
-    }
-    gsap.killTweensOf(reel);
-    const y = -slot * SYMBOLS_SAVE_SLOT_PX;
-    if (!animate || preferReducedMotion()) {
-      gsap.set(reel, { y });
-      symbolsSaveSlotRef.current = slot === 2 ? 0 : slot;
-      onDone?.();
-      return;
-    }
-    gsap.to(reel, {
-      y,
-      duration: 0.34,
-      ease: "power2.inOut",
-      onComplete: () => {
-        if (slot === 2) {
-          gsap.set(reel, { y: 0 });
-          symbolsSaveSlotRef.current = 0;
-        } else {
-          symbolsSaveSlotRef.current = slot;
-        }
-        onDone?.();
-      },
-    });
-  }
-
-  function ackSymbolsSave() {
-    clearSymbolsSaveTimer();
-    setSymbolsSaveOk(true);
-    setSymbolsSaveReelSlot(1, true);
-    symbolsSaveTimerRef.current = window.setTimeout(() => {
-      symbolsSaveTimerRef.current = 0;
-      setSymbolsSaveReelSlot(2, true, () => setSymbolsSaveOk(false));
-    }, SYMBOLS_SAVE_CHECK_MS);
-  }
-
-  useEffect(() => () => clearSymbolsSaveTimer(), []);
 
   function createdPreviewMedia(): HTMLElement | null {
     return (
@@ -4697,10 +4810,27 @@ export function LeoUiPage() {
     }
   }
 
-  /** Layout testing — send Adjust Mask back to Generating Mesh. */
-  function retryMeshing() {
+  async function retryMeshing() {
+    const id = cardId.trim();
     setError("");
     setScreen("meshing");
+    if (!id) return;
+    const token = `${id}:mesh-prefix`;
+    leoHeld.delete(token);
+    leoHeld.add(token);
+    try {
+      const state = await runThroughMesh(id, fieldsRef.current, {
+        force: true,
+        onState: commitState,
+        onStep: (step) => setPendingStep(step),
+      });
+      commitState(state);
+      setPendingStep(null);
+    } catch (caught) {
+      leoHeld.delete(token);
+      setPendingStep(null);
+      setError(errorText(caught));
+    }
   }
 
   function openMaskEdit() {
@@ -4719,7 +4849,7 @@ export function LeoUiPage() {
     setMaskEditFrom(null);
   }
 
-  const photoGallery = gallery.length > 0 ? gallery : DESIGN_GALLERY_PLACEHOLDERS;
+  const photoGallery = gallery;
   const isGalleryImage = (value: string, item: GalleryImage) =>
     Boolean(value) && (value === item.path || value === item.url);
   const hasGallerySelection = photoGallery.some((item) => isGalleryImage(image, item));
@@ -5181,25 +5311,47 @@ export function LeoUiPage() {
   const pictureArtifacts = readyPaths(flowState?.steps.picture?.artifacts).filter(
     (path) => pictureChoiceFromArtifact(path) != null,
   );
-  // Real options, or a single placeholder so morph/layout can run without a job.
-  const displayPictures =
-    pictureArtifacts.length > 0 ? pictureArtifacts : [PLACEHOLDER_PROCESSED];
+  const displayPictures = pictureArtifacts;
   const processedSrc =
-    displayPictures[pictureChoice - 1] || displayPictures[0] || image || PLACEHOLDER_PROCESSED;
+    displayPictures[pictureChoice - 1] || displayPictures[0] || image;
   const movingClip =
-    readyPaths(flowState?.steps.background?.artifacts)[0] || PLACEHOLDER_ANIMATING_VIDEO;
+    readyPaths(flowState?.steps.background?.artifacts)[0] || "";
+  const dressClip =
+    readyPaths(flowState?.steps.dress?.artifacts)[0] || "";
+  const playClip = dressClip || movingClip;
   const pictureStatus = flowState?.steps.picture?.status;
+  const backgroundStatus = flowState?.steps.background?.status;
+  const dressStatus = flowState?.steps.dress?.status;
+  const meshStatus = flowState?.steps.mesh?.status;
+  const symbolsStatus = flowState?.steps.symbols?.status;
   const pictureBusy =
     pendingStep === "picture" || runningJob?.command[1] === "picture";
   const backgroundBusy =
     pendingStep === "background" || runningJob?.command[1] === "background";
+  const dressBusy =
+    pendingStep === "dress" || runningJob?.command[1] === "dress";
+  const meshBusy =
+    pendingStep === "boomerang" ||
+    pendingStep === "card" ||
+    pendingStep === "mesh" ||
+    runningJob?.command[1] === "boomerang" ||
+    runningJob?.command[1] === "card" ||
+    runningJob?.command[1] === "mesh";
   const canNextInfluencer = Boolean(modelId);
   const canNextTheme = Boolean(
     theme.trim() && themePrefix(theme) && cardNameDigits(cardLabel).length > 0,
   );
   const canNextPhoto = Boolean(image.trim());
   const canNextSwimwear = Boolean(bikini.trim() && face.trim());
-  const canLeaveProcessing = !pictureBusy && processingRevealed;
+  const canLeaveProcessing =
+    !pictureBusy && processingRevealed && pictureArtifacts.length > 0;
+  const canLeaveAnimating =
+    !backgroundBusy &&
+    (backgroundStatus === "review" || backgroundStatus === "approved");
+  const canLeaveDressing =
+    !dressBusy && (dressStatus === "review" || dressStatus === "approved");
+  const canLeaveMeshing = !meshBusy && meshStatus === "approved";
+  const canLeaveSymbols = symbolsStatus === "approved";
   const nextDisabled =
     navBusy ||
     (screen === "influencer" && !canNextInfluencer) ||
@@ -5207,8 +5359,14 @@ export function LeoUiPage() {
     (screen === "photo" && !canNextPhoto) ||
     (screen === "swimwear" && (!canNextSwimwear || uploading)) ||
     (screen === "processing" && !canLeaveProcessing) ||
-    (screen === "confirm" && pictureBusy) ||
-    (screen === "outfit" && uploading);
+    (screen === "confirm" &&
+      (pictureBusy ||
+        (pictureArtifacts.length === 0 && !confirmOverride.trim()))) ||
+    (screen === "animating" && !canLeaveAnimating) ||
+    (screen === "outfit" && (!outfitOverride.trim() || uploading)) ||
+    (screen === "dressing" && !canLeaveDressing) ||
+    (screen === "meshing" && !canLeaveMeshing) ||
+    (screen === "symbols" && !canLeaveSymbols);
 
   return (
     <main className="leo-ui" ref={rootRef}>
@@ -5690,7 +5848,7 @@ export function LeoUiPage() {
                       src={previewSource(
                         processingRevealed
                           ? processedSrc
-                          : image.trim() || PLACEHOLDER_PROCESSED,
+                          : image.trim(),
                       )}
                       alt=""
                     />
@@ -5706,6 +5864,11 @@ export function LeoUiPage() {
                     />
                   </div>
                 </div>
+                {pictureBusy ? (
+                  <p className="leo-ui__busy">Generating picture options…</p>
+                ) : pictureArtifacts.length === 0 ? (
+                  <p className="leo-ui__busy">Waiting for picture options…</p>
+                ) : null}
               </>
             ) : null}
 
@@ -5879,14 +6042,24 @@ export function LeoUiPage() {
                   className="leo-ui__preview leo-ui__preview--animating is-blurred"
                   ref={animatingPreviewRef}
                 >
-                  <video
-                    src={previewSource(movingClip)}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    aria-hidden
-                  />
+                  {movingClip ? (
+                    <video
+                      src={previewSource(movingClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      aria-hidden
+                    />
+                  ) : (
+                    <img
+                      src={previewSource(
+                        confirmOverride.trim() || processedSrc || image,
+                      )}
+                      alt=""
+                      aria-hidden
+                    />
+                  )}
                   <div className="leo-ui__play-mark" aria-hidden>
                     <div className="leo-ui__play-mark-lottie">
                       <DotLottieReact
@@ -5911,7 +6084,15 @@ export function LeoUiPage() {
                   className="leo-ui__preview leo-ui__preview--animated"
                   ref={animatedPreviewRef}
                 >
-                  <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
+                  {movingClip ? (
+                    <video
+                      src={previewSource(movingClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                  ) : null}
                   <div className="leo-ui__preview-overlay">
                     <button
                       type="button"
@@ -6028,14 +6209,22 @@ export function LeoUiPage() {
                   className="leo-ui__preview leo-ui__preview--animating is-blurred"
                   ref={dressingPreviewRef}
                 >
-                  <video
-                    src={previewSource(movingClip)}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    aria-hidden
-                  />
+                  {dressClip ? (
+                    <video
+                      src={previewSource(dressClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      aria-hidden
+                    />
+                  ) : (
+                    <img
+                      src={previewSource(processedSrc || image)}
+                      alt=""
+                      aria-hidden
+                    />
+                  )}
                   <div className="leo-ui__play-mark" aria-hidden>
                     <div className="leo-ui__play-mark-lottie">
                       <DotLottieReact
@@ -6048,6 +6237,11 @@ export function LeoUiPage() {
                     </div>
                   </div>
                 </div>
+                {dressBusy ? (
+                  <p className="leo-ui__busy">Working on the outfit…</p>
+                ) : dressClip ? null : (
+                  <p className="leo-ui__busy">Waiting for the outfit clip…</p>
+                )}
               </>
             ) : null}
 
@@ -6059,7 +6253,15 @@ export function LeoUiPage() {
                   className="leo-ui__preview leo-ui__preview--animated"
                   ref={dressedPreviewRef}
                 >
-                  <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
+                  {dressClip ? (
+                    <video
+                      src={previewSource(dressClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                  ) : null}
                   <div className="leo-ui__preview-overlay">
                     <button
                       type="button"
@@ -6099,14 +6301,16 @@ export function LeoUiPage() {
                   className="leo-ui__preview leo-ui__preview--animating leo-ui__preview--meshing"
                   ref={meshingPreviewRef}
                 >
-                  <video
-                    src={previewSource(movingClip)}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    aria-hidden
-                  />
+                  {playClip ? (
+                    <video
+                      src={previewSource(playClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      aria-hidden
+                    />
+                  ) : null}
                   <div className="leo-ui__play-mark" aria-hidden>
                     <div className="leo-ui__play-mark-lottie leo-ui__play-mark-lottie--wide">
                       <DotLottieReact
@@ -6121,6 +6325,7 @@ export function LeoUiPage() {
                     </div>
                   </div>
                 </div>
+                {meshBusy ? <p className="leo-ui__busy">Building the mesh…</p> : null}
               </>
             ) : null}
 
@@ -6137,14 +6342,16 @@ export function LeoUiPage() {
                       ref={maskHeroRef}
                       style={maskEditOpen ? { opacity: 0 } : undefined}
                     >
-                      <video
-                        className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
-                        src={previewSource(movingClip)}
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                      />
+                      {playClip ? (
+                        <video
+                          className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
+                          src={previewSource(playClip)}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                        />
+                      ) : null}
                     </div>
                     <aside className="leo-ui__confirm-side leo-ui__confirm-side--top">
                       <button
@@ -6159,7 +6366,7 @@ export function LeoUiPage() {
                         <button
                           type="button"
                           className="leo-cta-css leo-cta-css--fill"
-                          onClick={retryMeshing}
+                          onClick={() => void retryMeshing()}
                         >
                           <span className="leo-cta-css__title-row">
                             <RotateCcw size={15} aria-hidden />
@@ -6176,165 +6383,33 @@ export function LeoUiPage() {
             {viewScreen === "symbols" ? (
               <>
                 <h1 className="leo-ui__title">Place Symbols</h1>
-                <p className="leo-ui__sub">Tap to add by hand, then save.</p>
+                <p className="leo-ui__sub">
+                  Place all points on the garment, then save before continuing.
+                </p>
                 <div className="leo-ui__confirm leo-ui__confirm--solo">
-                  <div className="leo-ui__symbols-stage">
-                    <div className="leo-ui__confirm-hero" ref={symbolsHeroRef}>
-                      <video
-                        className="leo-ui__confirm-hero-layer leo-ui__confirm-hero-layer--gen"
-                        src={previewSource(movingClip)}
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                      />
-                    </div>
-                    {/* Figma 391:2467 / EditSymbols 425:1909 — same expand pattern as mask tools. */}
-                    <div
-                      className={`leo-ui__symbols-tools${
-                        symbolsToolsOpen ? " is-open" : ""
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        className="leo-ui__mask-edit-chip leo-ui__symbols-tools-toggle"
-                        aria-expanded={symbolsToolsOpen}
-                        aria-label={
-                          symbolsToolsOpen
-                            ? "Hide symbol tools"
-                            : "Show symbol tools"
-                        }
-                        onClick={() => setSymbolsToolsOpen((v) => !v)}
-                      >
-                        <img
-                          src={symbolsChevronUrl}
-                          alt=""
-                          width={24}
-                          height={24}
-                          className="leo-ui__symbols-tools-chevron"
+                  <div className="leo-ui__symbols-stage" ref={symbolsHeroRef}>
+                    {cardId.trim() ? (
+                      <Theme appearance="dark" accentColor="amber" radius="large">
+                        <SymbolPointPicker
+                          cardId={cardId.trim()}
+                          foregroundVideo={
+                            cardId.trim()
+                              ? `/cards/${encodeURIComponent(cardId.trim())}/foreground.mp4`
+                              : previewSource(playClip)
+                          }
+                          meshJsonPath={`/mesh/${encodeURIComponent(cardId.trim())}.json`}
+                          onSaved={() => {
+                            void refresh().catch(() => undefined);
+                            setError("");
+                          }}
+                          onError={(message) => {
+                            if (message) setError(message);
+                          }}
                         />
-                      </button>
-                      <div
-                        className="leo-ui__symbols-drawer"
-                        aria-hidden={!symbolsToolsOpen}
-                      >
-                        <button
-                          type="button"
-                          className="leo-ui__mask-edit-chip"
-                          aria-label="Randomize symbols"
-                          onClick={() => undefined}
-                        >
-                          <img
-                            src={symbolsDiceUrl}
-                            alt=""
-                            width={24}
-                            height={24}
-                          />
-                        </button>
-                        <div className="leo-ui__symbols-drawer-cluster">
-                          <button
-                            type="button"
-                            className={`leo-ui__mask-edit-chip${
-                              !symbolsShowMesh ? " is-active" : ""
-                            }`}
-                            aria-label={
-                              symbolsShowMesh ? "Hide mesh" : "Show mesh"
-                            }
-                            aria-pressed={!symbolsShowMesh}
-                            onClick={() => setSymbolsShowMesh((v) => !v)}
-                          >
-                            <img
-                              src={symbolsHideMeshUrl}
-                              alt=""
-                              width={24}
-                              height={24}
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            className={`leo-ui__mask-edit-chip${
-                              !symbolsShowPoints ? " is-active" : ""
-                            }`}
-                            aria-label={
-                              symbolsShowPoints ? "Hide points" : "Show points"
-                            }
-                            aria-pressed={!symbolsShowPoints}
-                            onClick={() => setSymbolsShowPoints((v) => !v)}
-                          >
-                            <img
-                              src={symbolsHidePointsUrl}
-                              alt=""
-                              width={24}
-                              height={24}
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            className="leo-ui__mask-edit-chip"
-                            aria-label="Undo"
-                            onClick={() => undefined}
-                          >
-                            <img
-                              src={symbolsUndoUrl}
-                              alt=""
-                              width={24}
-                              height={24}
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            className="leo-ui__symbols-tool-asset"
-                            aria-label="Clear symbols"
-                            onClick={() => undefined}
-                          >
-                            <img
-                              src={symbolsClearUrl}
-                              alt=""
-                              width={38}
-                              height={38}
-                            />
-                          </button>
-                        </div>
-                        <div className="leo-cta-css-wrap leo-cta-css-wrap--icon">
-                          <button
-                            type="button"
-                            className={`leo-cta-css leo-cta-css--icon leo-ui__symbols-save${
-                              symbolsSaveOk ? " is-saved" : ""
-                            }`}
-                            aria-label={
-                              symbolsSaveOk ? "Saved" : "Save symbols"
-                            }
-                            onClick={ackSymbolsSave}
-                          >
-                            <span
-                              className="leo-ui__symbols-save-window"
-                              aria-hidden
-                            >
-                              <span
-                                className="leo-ui__symbols-save-reel"
-                                ref={symbolsSaveReelRef}
-                              >
-                                <img
-                                  src={maskSaveUrl}
-                                  alt=""
-                                  width={16}
-                                  height={16}
-                                />
-                                <span className="leo-ui__symbols-save-check">
-                                  <Check size={16} strokeWidth={2.6} />
-                                </span>
-                                <img
-                                  src={maskSaveUrl}
-                                  alt=""
-                                  width={16}
-                                  height={16}
-                                />
-                              </span>
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                      </Theme>
+                    ) : (
+                      <p className="leo-ui__busy">Missing card for symbols.</p>
+                    )}
                   </div>
                 </div>
               </>
@@ -6353,22 +6428,22 @@ export function LeoUiPage() {
                   aria-label="Try motion card"
                   onClick={() => openTryMotion()}
                 >
-                  <video
-                    src={previewSource(movingClip)}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                  />
+                  {playClip ? (
+                    <video
+                      src={previewSource(playClip)}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                  ) : null}
                 </button>
               </>
             ) : null}
           </div>
         </div>
 
-        {error && viewScreen !== "processing" ? (
-          <p className="leo-ui__error">{error}</p>
-        ) : null}
+        {error ? <p className="leo-ui__error">{error}</p> : null}
 
         <div className="leo-ui__upload-card-shell" ref={cardShellRef} aria-hidden>
           <img className="leo-ui__shell-photo" ref={shellPhotoRef} alt="" />
@@ -6502,13 +6577,15 @@ export function LeoUiPage() {
             ref={tryMotionCoverRef}
             aria-hidden
           >
-            <video
-              src={previewSource(movingClip)}
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
+            {playClip ? (
+              <video
+                src={previewSource(playClip)}
+                autoPlay
+                loop
+                muted
+                playsInline
+              />
+            ) : null}
           </div>
         </div>
       </dialog>
@@ -6530,7 +6607,7 @@ export function LeoUiPage() {
           videoSrc={
             cardId.trim()
               ? `/cards/${encodeURIComponent(cardId.trim())}/foreground.mp4`
-              : previewSource(movingClip)
+              : previewSource(playClip)
           }
           meshFile={cardId.trim() ? `${cardId.trim()}.json` : "draft.json"}
           meshUrl={

@@ -1630,6 +1630,10 @@
   width: 100%;
 }
 
+.leo-ui__symbols-stage .symbol-picker-stage {
+  width: 100%;
+}
+
 /* Figma EditSymbols (425:1909) — chevron + drawer over hero, same beat as mask tools. */
 .leo-ui__symbols-tools {
   position: absolute;
