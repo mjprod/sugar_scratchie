@@ -9,6 +9,7 @@ import {
   type Box,
   type Corner,
 } from "../sugarDress/lib/resizeItem";
+import "./leo-cta-css.css";
 
 type Props = {
   src: string;
@@ -245,15 +246,27 @@ export function LeoFaceCropDialog({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            className="leo-ui__btn leo-ui__btn--next"
-            disabled={locked || !frame}
-            autoFocus
-            onClick={() => void confirmCrop()}
+          <div
+            className={`leo-cta-css-wrap leo-cta-css-wrap--fill${
+              locked || !frame ? " is-disabled" : ""
+            }`}
           >
-            {working ? "Cropping…" : "Use crop"}
-          </button>
+            <button
+              type="button"
+              className={`leo-cta-css leo-cta-css--fill${
+                locked || !frame ? " is-disabled" : ""
+              }`}
+              disabled={locked || !frame}
+              autoFocus
+              onClick={() => void confirmCrop()}
+            >
+              <span className="leo-cta-css__title-row">
+                <span className="leo-cta-css__label">
+                  {working ? "Cropping…" : "Use crop"}
+                </span>
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </dialog>

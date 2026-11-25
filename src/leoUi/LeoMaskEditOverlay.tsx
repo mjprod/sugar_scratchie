@@ -14,6 +14,7 @@ import plusUrl from "./assets/mask-edit/plus.svg";
 import saveUrl from "./assets/mask-edit/save.svg";
 import xLineAUrl from "./assets/mask-edit/x-line-a.svg";
 import xLineBUrl from "./assets/mask-edit/x-line-b.svg";
+import "./leo-cta-css.css";
 
 const BRUSH_MIN = 8;
 const BRUSH_MAX = 80;
@@ -524,25 +525,36 @@ export function LeoMaskEditOverlay({
             </button>
           </div>
 
-          <button
-            type="button"
-            className={`leo-ui__mask-edit-save${saveOk ? " is-saved" : ""}`}
-            aria-label={
-              saving ? "Saving" : saveOk ? "Saved" : "Save mask"
-            }
-            disabled={saving}
-            onClick={() => void saveMask()}
+          <div
+            className={`leo-cta-css-wrap leo-cta-css-wrap--icon${
+              saving ? " is-disabled" : ""
+            }`}
           >
-            <span className="leo-ui__mask-edit-save-window" aria-hidden>
-              <span className="leo-ui__mask-edit-save-reel" ref={saveReelRef}>
-                <img src={saveUrl} alt="" width={16} height={16} />
-                <span className="leo-ui__mask-edit-save-check">
-                  <Check size={16} strokeWidth={2.6} />
+            <button
+              type="button"
+              className={`leo-cta-css leo-cta-css--icon leo-ui__mask-edit-save${
+                saveOk ? " is-saved" : ""
+              }${saving ? " is-disabled" : ""}`}
+              aria-label={
+                saving ? "Saving" : saveOk ? "Saved" : "Save mask"
+              }
+              disabled={saving}
+              onClick={() => void saveMask()}
+            >
+              <span className="leo-ui__mask-edit-save-window" aria-hidden>
+                <span
+                  className="leo-ui__mask-edit-save-reel"
+                  ref={saveReelRef}
+                >
+                  <img src={saveUrl} alt="" width={16} height={16} />
+                  <span className="leo-ui__mask-edit-save-check">
+                    <Check size={16} strokeWidth={2.6} />
+                  </span>
+                  <img src={saveUrl} alt="" width={16} height={16} />
                 </span>
-                <img src={saveUrl} alt="" width={16} height={16} />
               </span>
-            </span>
-          </button>
+            </button>
+          </div>
         </div>
       </div>
 

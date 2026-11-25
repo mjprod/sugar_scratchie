@@ -14,11 +14,25 @@ import {
 import { api, uploadFile } from "../shared/api";
 import { createMotionCardDraft, fetchModels, type ModelInfo } from "../shared/models";
 import { fetchThemes, type ThemeInfo } from "../shared/themes";
-import { liteRequestBody, type LiteDraftInput } from "../videoFlow/lite/defaults";
+import {
+  modelsForRole,
+  useGenerationCatalog,
+  type GenerationModelInfo,
+  type GenerationModelRole,
+} from "../shared/generationModels";
+import {
+  liteBackgroundVideoModel,
+  liteDressVideoModel,
+  liteRequestBody,
+  type LiteDraftInput,
+} from "../videoFlow/lite/defaults";
 import { PROJECT_ID_PATTERN, slugifyProjectId } from "../videoFlow/projects";
 import type { VideoFlowStepKey } from "../videoFlow/schema";
 import { previewSource } from "../videoFlow/ui";
 import chevronUrl from "./assets/icon-chevron.svg";
+import providerEvolinkUrl from "./assets/icon-evolink.svg";
+import providerWavespeedUrl from "./assets/icon-wavespeed.svg";
+import providerXaiUrl from "./assets/icon-xai.svg";
 import searchUrl from "./assets/icon-search.svg";
 import logoUrl from "./assets/logo-sugar-scratch.svg";
 import symbolsChevronUrl from "./assets/symbols-tools/chevron.svg";
@@ -31,6 +45,7 @@ import maskSaveUrl from "./assets/mask-edit/save.svg";
 import { LeoFaceCropDialog } from "./LeoFaceCropDialog";
 import { LeoMaskEditOverlay } from "./LeoMaskEditOverlay";
 import { finishAndPublishCard } from "./finishPublish";
+import "./leo-cta-css.css";
 import "./leo-ui.css";
 
 const SYMBOLS_SAVE_CHECK_MS = 2000;
@@ -105,7 +120,19 @@ const DESIGN_GALLERY_PLACEHOLDERS: GalleryImage[] = [1, 2, 3, 4, 5, 6, 7, 8].map
   url: `https://picsum.photos/seed/leo-gallery-${n}/144/228`,
 }));
 
-const PHASE_COUNT = 5;
+/** Main nav sections (progress dots). Sub-screens share a parent phase. */
+const PHASE_COUNT = 9;
+const PHASE_DOT_PX = 8;
+const PHASE_PILL_W_PX = 30;
+const PHASE_PILL_DURATION = 0.5;
+/** Wind-up before the slide (squash + slight reverse). */
+const PHASE_PILL_ANTICIPATE = 0.12;
+const PHASE_PILL_ANTICIPATE_PX = 5;
+const PROVIDER_ICONS: Record<string, string> = {
+  xai: providerXaiUrl,
+  wavespeed: providerWavespeedUrl,
+  evolink: providerEvolinkUrl,
+};
 const SCREEN_ORDER: LeoScreen[] = [
   "influencer",
   "theme",
@@ -183,29 +210,59 @@ const ANIMATING_SLOT_HOLD = 1.45;
 const leoHeld = new Set<string>();
 
 function phaseFor(screen: LeoScreen): number {
-  if (screen === "influencer" || screen === "theme") return 0;
-  if (
-    screen === "photo" ||
-    screen === "swimwear" ||
-    screen === "processing" ||
-    screen === "confirm"
-  ) {
-    return 1;
+  switch (screen) {
+    case "influencer":
+      return 0;
+    case "theme":
+      return 1;
+    case "photo":
+      return 2;
+    case "swimwear":
+    case "processing":
+    case "confirm":
+      return 3;
+    case "animating":
+    case "animated":
+      return 4;
+    case "outfit":
+    case "dressing":
+    case "dressed":
+      return 5;
+    case "meshing":
+      return 6;
+    case "mask":
+    case "symbols":
+      return 7;
+    case "created":
+      return 8;
+    default:
+      return 0;
   }
-  if (screen === "animating" || screen === "animated") return 2;
-  if (screen === "outfit") return 3;
-  if (
-    screen === "dressing" ||
-    screen === "dressed" ||
-    screen === "meshing" ||
-    screen === "mask" ||
-    screen === "symbols" ||
-    screen === "created"
-  ) {
-    return 4;
-  }
-  return 0;
 }
+
+/** Landing screen when jumping via a progress dot. */
+const PHASE_SCREENS: LeoScreen[] = [
+  "influencer",
+  "theme",
+  "photo",
+  "swimwear",
+  "animated",
+  "outfit",
+  "meshing",
+  "symbols",
+  "created",
+];
+const PHASE_LABELS = [
+  "Influencer pick",
+  "Theme Card",
+  "Add Photo",
+  "Swimwear",
+  "Animating Image",
+  "Choose Outfit",
+  "Generating Mesh",
+  "Place Symbols",
+  "Game Created!",
+] as const;
 
 function screenDir(from: LeoScreen, to: LeoScreen): 1 | -1 {
   const a = SCREEN_ORDER.indexOf(from);
@@ -291,6 +348,7 @@ export function LeoUiPage() {
   const rootRef = useRef<HTMLElement | null>(null);
   const screenRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const modelListRef = useRef<HTMLUListElement | null>(null);
   const phasesRef = useRef<HTMLDivElement | null>(null);
   const phasePillRef = useRef<HTMLSpanElement | null>(null);
   const backBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -400,12 +458,23 @@ export function LeoUiPage() {
   const [promptDraft, setPromptDraft] = useState("");
   const promptDialogRef = useRef<HTMLDialogElement | null>(null);
   const promptDialogBusyRef = useRef(false);
+  /** Image→video / dress model for Try Again dialog. */
+  const [backgroundVideoModel, setBackgroundVideoModel] = useState("");
+  const [dressVideoModel, setDressVideoModel] = useState("");
+  const [retryModelRole, setRetryModelRole] =
+    useState<GenerationModelRole>("background_video");
+  const [bgModelDraft, setBgModelDraft] = useState("");
+  const bgModelDialogRef = useRef<HTMLDialogElement | null>(null);
+  const bgModelDialogBusyRef = useRef(false);
   const bikiniGalleryRef = useRef<HTMLDialogElement | null>(null);
   const bikiniGalleryBusyRef = useRef(false);
+  const { models: generationModels } = useGenerationCatalog();
 
   const [screen, setScreen] = useState<LeoScreen>("influencer");
   const [viewScreen, setViewScreen] = useState<LeoScreen>("influencer");
   const [navBusy, setNavBusy] = useState(false);
+  /** Furthest progress-dot index reached — stays unlocked for jump-back. */
+  const [maxPhaseReached, setMaxPhaseReached] = useState(0);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [themes, setThemes] = useState<ThemeInfo[]>([]);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -472,6 +541,9 @@ export function LeoUiPage() {
   const [selectedExiting, setSelectedExiting] = useState(false);
   const [shownSelectedId, setShownSelectedId] = useState("");
   const [cardNameFocused, setCardNameFocused] = useState(false);
+  const [modelListScroll, setModelListScroll] = useState<
+    "start" | "middle" | "end" | "none"
+  >("start");
   const [listScroll, setListScroll] = useState<"start" | "middle" | "end" | "none">(
     "start",
   );
@@ -491,6 +563,13 @@ export function LeoUiPage() {
     picturePromptExtra: "",
   });
 
+  const hasXaiKey = Boolean(health?.xai_key_loaded);
+  const hasWavespeedKey = Boolean(health?.wavespeed_key_loaded);
+  const resolvedBackgroundVideoModel =
+    backgroundVideoModel.trim() || liteBackgroundVideoModel(hasXaiKey, hasWavespeedKey);
+  const resolvedDressVideoModel =
+    dressVideoModel.trim() || liteDressVideoModel(hasXaiKey, hasWavespeedKey);
+
   fieldsRef.current = {
     cardId,
     cardLabel,
@@ -499,16 +578,44 @@ export function LeoUiPage() {
     bikini,
     face,
     theme,
-    costume: "",
-    hasXai: Boolean(health?.xai_key_loaded),
-    hasWavespeed: Boolean(health?.wavespeed_key_loaded),
+    costume: outfitOverride,
+    hasXai: hasXaiKey,
+    hasWavespeed: hasWavespeedKey,
     picturePromptExtra,
+    backgroundVideoModel: resolvedBackgroundVideoModel,
+    dressVideoModel: resolvedDressVideoModel,
   };
+
+  const filterAiModelsForKeys = useCallback(
+    (listed: GenerationModelInfo[]) =>
+      listed.filter((entry) => {
+        if (entry.provider === "wavespeed") return hasWavespeedKey || !hasXaiKey;
+        if (entry.provider === "xai") return hasXaiKey || !hasWavespeedKey;
+        return true;
+      }),
+    [hasXaiKey, hasWavespeedKey],
+  );
+
+  const backgroundAiModels = useMemo(
+    () => filterAiModelsForKeys(modelsForRole(generationModels, "background_video")),
+    [filterAiModelsForKeys, generationModels],
+  );
+
+  const dressAiModels = useMemo(
+    () => filterAiModelsForKeys(modelsForRole(generationModels, "dress_video")),
+    [filterAiModelsForKeys, generationModels],
+  );
+
+  const retryAiModels =
+    retryModelRole === "dress_video" ? dressAiModels : backgroundAiModels;
 
   const selectedModel =
     models.find((m) => m.id === (shownSelectedId || modelId)) ?? null;
   // Pill tracks the destination step so it slides during exit, not after swap.
   const phase = phaseFor(screen);
+  useEffect(() => {
+    setMaxPhaseReached((prev) => Math.max(prev, phase));
+  }, [phase]);
   // Back expands toward destination while content exits (same chain as phase pill).
   const showBack = screen !== "influencer";
   const showNextCheck =
@@ -542,21 +649,34 @@ export function LeoUiPage() {
     setShownSelectedId(modelId);
   }, [modelId]);
 
+  const syncScrollFade = useCallback(
+    (
+      el: HTMLElement | null,
+      setFade: (value: "start" | "middle" | "end" | "none") => void,
+    ) => {
+      if (!el) return;
+      const max = el.scrollHeight - el.clientHeight;
+      if (max <= 2) {
+        setFade("none");
+        return;
+      }
+      const top = el.scrollTop <= 2;
+      const bottom = el.scrollTop >= max - 2;
+      if (top && bottom) setFade("none");
+      else if (top) setFade("start");
+      else if (bottom) setFade("end");
+      else setFade("middle");
+    },
+    [],
+  );
+
   const syncListScrollFade = useCallback(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const max = el.scrollHeight - el.clientHeight;
-    if (max <= 2) {
-      setListScroll("none");
-      return;
-    }
-    const top = el.scrollTop <= 2;
-    const bottom = el.scrollTop >= max - 2;
-    if (top && bottom) setListScroll("none");
-    else if (top) setListScroll("start");
-    else if (bottom) setListScroll("end");
-    else setListScroll("middle");
-  }, []);
+    syncScrollFade(listRef.current, setListScroll);
+  }, [syncScrollFade]);
+
+  const syncModelListScrollFade = useCallback(() => {
+    syncScrollFade(modelListRef.current, setModelListScroll);
+  }, [syncScrollFade]);
 
   function clearSelection() {
     if (selectedExiting || !shownSelectedId) return;
@@ -601,6 +721,23 @@ export function LeoUiPage() {
       ro?.disconnect();
     };
   }, [viewScreen, filteredModels.length, catalogReady, syncListScrollFade]);
+
+  useEffect(() => {
+    const el = modelListRef.current;
+    if (!el) return;
+    syncModelListScrollFade();
+    const onScroll = () => syncModelListScrollFade();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(syncModelListScrollFade)
+        : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro?.disconnect();
+    };
+  }, [retryAiModels.length, syncModelListScrollFade]);
 
   const commitState = useCallback((next: LiteFlowState) => {
     epochRef.current += 1;
@@ -3222,31 +3359,90 @@ export function LeoUiPage() {
     },
     { dependencies: [cardLabel, viewScreen, navBusy], scope: rootRef },
   );
-  // Phase pill slides toward the destination while content exits/enters.
+
+  // Phase pill slides across; slot widths tween so dots make room.
   useGSAP(
     () => {
       const track = phasesRef.current;
       const pill = phasePillRef.current;
       if (!track || !pill) return;
-      const dots = track.querySelectorAll<HTMLElement>(".leo-ui__phase");
-      const active = dots[phase];
-      if (!active) return;
-      const trackBox = track.getBoundingClientRect();
-      const box = active.getBoundingClientRect();
-      const padL = Number.parseFloat(getComputedStyle(track).paddingLeft) || 0;
-      const targetW = 30;
-      const x = box.left - trackBox.left - padL - (targetW - box.width) / 2;
-      if (!pill.dataset.ready) {
-        gsap.set(pill, { x, width: targetW });
+      const dots = Array.from(track.querySelectorAll<HTMLElement>(".leo-ui__phase"));
+      if (dots.length === 0) return;
+
+      const styles = getComputedStyle(track);
+      const gap =
+        Number.parseFloat(styles.columnGap || styles.gap) || 4.5;
+      const padL = Number.parseFloat(styles.paddingLeft) || 0;
+      const slotLeft = (index: number, activeIdx: number) => {
+        let x = padL;
+        for (let i = 0; i < index; i += 1) {
+          x += (i === activeIdx ? PHASE_PILL_W_PX : PHASE_DOT_PX) + gap;
+        }
+        return x;
+      };
+      const targetX = slotLeft(phase, phase);
+      const reduce =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      if (!pill.dataset.ready || reduce) {
+        dots.forEach((dot, i) => {
+          gsap.set(dot, {
+            width: i === phase ? PHASE_PILL_W_PX : PHASE_DOT_PX,
+          });
+        });
+        gsap.set(pill, {
+          x: targetX,
+          width: PHASE_PILL_W_PX,
+          scaleX: 1,
+          scaleY: 1,
+          transformOrigin: "50% 50%",
+        });
         pill.dataset.ready = "1";
         return;
       }
-      gsap.to(pill, {
-        x,
-        width: targetW,
-        duration: 0.5,
-        ease: "power3.inOut",
-        overwrite: true,
+
+      const fromX = Number(gsap.getProperty(pill, "x")) || 0;
+      const dir = Math.sign(targetX - fromX) || 1;
+      gsap.killTweensOf([pill, ...dots]);
+
+      const tl = gsap.timeline();
+      // Anticipation: pull opposite + jelly squash, then launch.
+      tl.to(pill, {
+        x: fromX - dir * PHASE_PILL_ANTICIPATE_PX,
+        scaleX: 0.82,
+        scaleY: 1.18,
+        duration: PHASE_PILL_ANTICIPATE,
+        ease: "power2.out",
+      });
+      tl.to(
+        pill,
+        {
+          x: targetX,
+          width: PHASE_PILL_W_PX,
+          scaleX: 1.06,
+          scaleY: 0.94,
+          duration: PHASE_PILL_DURATION,
+          ease: "power3.inOut",
+        },
+        "travel",
+      );
+      dots.forEach((dot, i) => {
+        tl.to(
+          dot,
+          {
+            width: i === phase ? PHASE_PILL_W_PX : PHASE_DOT_PX,
+            duration: PHASE_PILL_DURATION,
+            ease: "power3.inOut",
+          },
+          "travel",
+        );
+      });
+      tl.to(pill, {
+        scaleX: 1,
+        scaleY: 1,
+        duration: 0.18,
+        ease: "power2.out",
       });
     },
     { dependencies: [phase], scope: rootRef },
@@ -3846,6 +4042,17 @@ export function LeoUiPage() {
     else if (screen === "created") setScreen("symbols");
   }
 
+  /** Jump to an unlocked main section via the progress dots. */
+  function goToPhase(target: number) {
+    if (navBusyRef.current || navBusy) return;
+    if (target < 0 || target >= PHASE_COUNT) return;
+    if (target > maxPhaseReached || target === phase) return;
+    const next = PHASE_SCREENS[target];
+    if (!next || next === screen) return;
+    setError("");
+    setScreen(next);
+  }
+
   function preferReducedMotion() {
     return (
       typeof window !== "undefined" &&
@@ -4282,6 +4489,93 @@ export function LeoUiPage() {
     closePromptDialog(() => setPicturePromptExtra(promptDraft.trim()));
   }
 
+  function openRetryModelDialog(role: GenerationModelRole) {
+    const dialog = bgModelDialogRef.current;
+    if (!dialog || bgModelDialogBusyRef.current) return;
+    const options =
+      role === "dress_video" ? dressAiModels : backgroundAiModels;
+    const current =
+      role === "dress_video"
+        ? resolvedDressVideoModel
+        : resolvedBackgroundVideoModel;
+    const first = options[0]?.id ?? current;
+    const known = options.some((entry) => entry.id === current);
+    setRetryModelRole(role);
+    setBgModelDraft(known ? current : first);
+    setError("");
+    dialog.showModal();
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__prompt-dialog-panel");
+    const reduce = preferReducedMotion();
+    requestAnimationFrame(() => {
+      dialog.classList.add("is-open");
+      syncModelListScrollFade();
+    });
+    if (!panel || reduce) return;
+    gsap.killTweensOf(panel);
+    gsap.fromTo(
+      panel,
+      { y: 56, opacity: 0, filter: "blur(14px)" },
+      {
+        y: 0,
+        opacity: 1,
+        filter: "blur(0px)",
+        duration: 0.42,
+        ease: "power3.out",
+        overwrite: true,
+      },
+    );
+  }
+
+  function closeBgModelDialog(after?: () => void) {
+    const dialog = bgModelDialogRef.current;
+    if (!dialog?.open || bgModelDialogBusyRef.current) {
+      after?.();
+      return;
+    }
+    const panel = dialog.querySelector<HTMLElement>(".leo-ui__prompt-dialog-panel");
+    const reduce = preferReducedMotion();
+    const finish = () => {
+      bgModelDialogBusyRef.current = false;
+      dialog.classList.remove("is-open");
+      gsap.set(panel, { clearProps: "transform,opacity,filter" });
+      dialog.close();
+      after?.();
+    };
+    dialog.classList.remove("is-open");
+    if (!panel || reduce) {
+      finish();
+      return;
+    }
+    bgModelDialogBusyRef.current = true;
+    gsap.killTweensOf(panel);
+    gsap.to(panel, {
+      y: 56,
+      opacity: 0,
+      filter: "blur(14px)",
+      duration: 0.32,
+      ease: "power2.in",
+      overwrite: true,
+      onComplete: finish,
+    });
+  }
+
+  function confirmBgModelDialog() {
+    const next = bgModelDraft.trim();
+    if (!next) {
+      setError("Pick an AI model first.");
+      return;
+    }
+    const role = retryModelRole;
+    closeBgModelDialog(() => {
+      if (role === "dress_video") {
+        setDressVideoModel(next);
+        void retryDressing(next);
+        return;
+      }
+      setBackgroundVideoModel(next);
+      void retryBackground(next);
+    });
+  }
   function openBikiniGallery() {
     const dialog = bikiniGalleryRef.current;
     if (!dialog || dialog.open || bikiniGalleryBusyRef.current) return;
@@ -4359,9 +4653,17 @@ export function LeoUiPage() {
     }
   }
 
-  async function retryBackground() {
+  async function retryBackground(modelOverride?: string) {
     const id = cardId.trim();
     if (!id) return;
+    const picked = modelOverride?.trim();
+    if (picked) {
+      setBackgroundVideoModel(picked);
+      fieldsRef.current = {
+        ...fieldsRef.current,
+        backgroundVideoModel: picked,
+      };
+    }
     setError("");
     leoHeld.delete(`${id}:background`);
     setScreen("animating");
@@ -4373,10 +4675,26 @@ export function LeoUiPage() {
     }
   }
 
-  /** Layout testing — send Dressed back to Dressing (dress job wiring later). */
-  function retryDressing() {
+  async function retryDressing(modelOverride?: string) {
+    const id = cardId.trim();
+    const picked = modelOverride?.trim();
+    if (picked) {
+      setDressVideoModel(picked);
+      fieldsRef.current = {
+        ...fieldsRef.current,
+        dressVideoModel: picked,
+      };
+    }
     setError("");
     setScreen("dressing");
+    if (!id) return;
+    leoHeld.delete(`${id}:dress`);
+    try {
+      await enqueue("dress", true);
+    } catch (caught) {
+      setPendingStep(null);
+      setError(errorText(caught));
+    }
   }
 
   /** Layout testing — send Adjust Mask back to Generating Mesh. */
@@ -5449,14 +5767,18 @@ export function LeoUiPage() {
                           <span>Change Prompt?</span>
                           <SquarePen size={22} strokeWidth={1.5} aria-hidden />
                         </button>
-                        <button
-                          type="button"
-                          className="leo-ui__confirm-rerun"
-                          onClick={() => void retryPicture()}
-                        >
-                          <RotateCcw size={15} aria-hidden />
-                          Re-Run
-                        </button>
+                        <div className="leo-cta-css-wrap leo-cta-css-wrap--fill leo-ui__confirm-rerun-wrap">
+                          <button
+                            type="button"
+                            className="leo-cta-css leo-cta-css--fill"
+                            onClick={() => void retryPicture()}
+                          >
+                            <span className="leo-cta-css__title-row">
+                              <RotateCcw size={15} aria-hidden />
+                              <span className="leo-cta-css__label">Re-Run</span>
+                            </span>
+                          </button>
+                        </div>
                         <div className="leo-ui__confirm-or" aria-hidden>
                           <span className="leo-ui__confirm-or-line" />
                           <span className="leo-ui__confirm-or-label">or</span>
@@ -5591,7 +5913,11 @@ export function LeoUiPage() {
                 >
                   <video src={previewSource(movingClip)} autoPlay loop muted playsInline />
                   <div className="leo-ui__preview-overlay">
-                    <button type="button" className="leo-ui__ghost-btn" onClick={() => void retryBackground()}>
+                    <button
+                      type="button"
+                      className="leo-ui__ghost-btn"
+                      onClick={() => openRetryModelDialog("background_video")}
+                    >
                       <RotateCcw size={16} />
                       Try Again?
                     </button>
@@ -5738,7 +6064,7 @@ export function LeoUiPage() {
                     <button
                       type="button"
                       className="leo-ui__ghost-btn"
-                      onClick={retryDressing}
+                      onClick={() => openRetryModelDialog("dress_video")}
                     >
                       <RotateCcw size={16} />
                       Try Again?
@@ -5829,14 +6155,18 @@ export function LeoUiPage() {
                         <span>Edit Mask</span>
                         <SquarePen size={22} strokeWidth={1.5} aria-hidden />
                       </button>
-                      <button
-                        type="button"
-                        className="leo-ui__confirm-rerun"
-                        onClick={retryMeshing}
-                      >
-                        <RotateCcw size={15} aria-hidden />
-                        Re-Run
-                      </button>
+                      <div className="leo-cta-css-wrap leo-cta-css-wrap--fill leo-ui__confirm-rerun-wrap">
+                        <button
+                          type="button"
+                          className="leo-cta-css leo-cta-css--fill"
+                          onClick={retryMeshing}
+                        >
+                          <span className="leo-cta-css__title-row">
+                            <RotateCcw size={15} aria-hidden />
+                            <span className="leo-cta-css__label">Re-Run</span>
+                          </span>
+                        </button>
+                      </div>
                     </aside>
                   </div>
                 </div>
@@ -5965,37 +6295,44 @@ export function LeoUiPage() {
                             />
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          className={`leo-ui__symbols-save${
-                            symbolsSaveOk ? " is-saved" : ""
-                          }`}
-                          aria-label={symbolsSaveOk ? "Saved" : "Save symbols"}
-                          onClick={ackSymbolsSave}
-                        >
-                          <span className="leo-ui__symbols-save-window" aria-hidden>
+                        <div className="leo-cta-css-wrap leo-cta-css-wrap--icon">
+                          <button
+                            type="button"
+                            className={`leo-cta-css leo-cta-css--icon leo-ui__symbols-save${
+                              symbolsSaveOk ? " is-saved" : ""
+                            }`}
+                            aria-label={
+                              symbolsSaveOk ? "Saved" : "Save symbols"
+                            }
+                            onClick={ackSymbolsSave}
+                          >
                             <span
-                              className="leo-ui__symbols-save-reel"
-                              ref={symbolsSaveReelRef}
+                              className="leo-ui__symbols-save-window"
+                              aria-hidden
                             >
-                              <img
-                                src={maskSaveUrl}
-                                alt=""
-                                width={16}
-                                height={16}
-                              />
-                              <span className="leo-ui__symbols-save-check">
-                                <Check size={16} strokeWidth={2.6} />
+                              <span
+                                className="leo-ui__symbols-save-reel"
+                                ref={symbolsSaveReelRef}
+                              >
+                                <img
+                                  src={maskSaveUrl}
+                                  alt=""
+                                  width={16}
+                                  height={16}
+                                />
+                                <span className="leo-ui__symbols-save-check">
+                                  <Check size={16} strokeWidth={2.6} />
+                                </span>
+                                <img
+                                  src={maskSaveUrl}
+                                  alt=""
+                                  width={16}
+                                  height={16}
+                                />
                               </span>
-                              <img
-                                src={maskSaveUrl}
-                                alt=""
-                                width={16}
-                                height={16}
-                              />
                             </span>
-                          </span>
-                        </button>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -6059,29 +6396,52 @@ export function LeoUiPage() {
             >
               Back
             </button>
-            <button
-              ref={nextBtnRef}
-              type="button"
-              className="leo-ui__btn leo-ui__btn--next"
-              disabled={nextDisabled}
-              onClick={() => void goNext()}
+            <div
+              className={`leo-cta-css-wrap leo-cta-css-wrap--fill${
+                nextDisabled ? " is-disabled" : ""
+              }`}
             >
-              <span className="leo-ui__btn-icon" ref={nextIconRef} aria-hidden>
-                <Check size={16} />
-              </span>
-              <span className="leo-ui__btn-label" ref={nextLabelRef}>
-                {nextLabel}
-              </span>
-            </button>
+              <button
+                ref={nextBtnRef}
+                type="button"
+                className={`leo-cta-css leo-cta-css--fill${
+                  nextDisabled ? " is-disabled" : ""
+                }`}
+                disabled={nextDisabled}
+                onClick={() => void goNext()}
+              >
+                <span className="leo-cta-css__title-row">
+                  <span className="leo-ui__btn-icon" ref={nextIconRef} aria-hidden>
+                    <Check size={16} />
+                  </span>
+                  <span
+                    className="leo-cta-css__label leo-ui__btn-label"
+                    ref={nextLabelRef}
+                  >
+                    {nextLabel}
+                  </span>
+                </span>
+              </button>
+            </div>
           </div>
           <div className="leo-ui__phases" ref={phasesRef} aria-label="Progress">
             <span className="leo-ui__phase-pill" ref={phasePillRef} aria-hidden />
-            {Array.from({ length: PHASE_COUNT }, (_, index) => (
-              <span
-                key={index}
-                className={`leo-ui__phase${index === phase ? " is-active" : ""}`}
-              />
-            ))}
+            {Array.from({ length: PHASE_COUNT }, (_, index) => {
+              const unlocked = index <= maxPhaseReached;
+              const active = index === phase;
+              const clickable = unlocked && !active && !navBusy;
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  className={`leo-ui__phase${active ? " is-active" : ""}${unlocked && !active ? " is-unlocked" : ""}`}
+                  aria-label={PHASE_LABELS[index]}
+                  aria-current={active ? "step" : undefined}
+                  disabled={!clickable}
+                  onClick={() => goToPhase(index)}
+                />
+              );
+            })}
           </div>
         </footer>
       </div>
@@ -6271,13 +6631,115 @@ export function LeoUiPage() {
             >
               Cancel
             </button>
+            <div className="leo-cta-css-wrap leo-cta-css-wrap--fill">
+              <button
+                type="button"
+                className="leo-cta-css leo-cta-css--fill"
+                onClick={savePromptDialog}
+              >
+                <span className="leo-cta-css__title-row">
+                  <span className="leo-cta-css__label">Save</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog
+        ref={bgModelDialogRef}
+        className="leo-ui__prompt-dialog"
+        aria-labelledby="leo-bg-model-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          closeBgModelDialog();
+        }}
+      >
+        <div className="leo-ui__prompt-dialog-panel">
+          <button
+            type="button"
+            className="leo-ui__clear leo-ui__prompt-dialog-close"
+            aria-label="Close"
+            onClick={() => closeBgModelDialog()}
+          >
+            ×
+          </button>
+          <h2 id="leo-bg-model-title" className="leo-ui__prompt-dialog-title">
+            Try Again
+          </h2>
+          <p className="leo-ui__prompt-dialog-sub">
+            {retryModelRole === "dress_video"
+              ? "Pick an AI model for the next dress run, then Re-Run."
+              : "Pick an AI model for the next image-to-video run, then Re-Run."}
+          </p>
+          <ul
+            className="leo-ui__model-list"
+            ref={modelListRef}
+            role="listbox"
+            aria-label="AI models"
+            data-scroll={modelListScroll}
+          >
+            {retryAiModels.length === 0 ? (
+              <li className="leo-ui__model-list-empty">
+                {retryModelRole === "dress_video"
+                  ? "No dress video models available."
+                  : "No background video models available."}
+              </li>
+            ) : (
+              retryAiModels.map((entry: GenerationModelInfo) => {
+                const selected = bgModelDraft === entry.id;
+                const providerIcon = PROVIDER_ICONS[entry.provider];
+                return (
+                  <li key={entry.id} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`leo-ui__card${selected ? " is-selected" : ""}`}
+                      onClick={() => setBgModelDraft(entry.id)}
+                    >
+                      <span
+                        className={`leo-ui__card-glow${selected ? " leo-ui__card-glow--green" : ""}`}
+                        aria-hidden
+                      />
+                      <span
+                        className={`leo-ui__avatar leo-ui__avatar--provider${providerIcon ? "" : " is-empty"}`}
+                        aria-hidden
+                      >
+                        {providerIcon ? <img src={providerIcon} alt="" /> : null}
+                      </span>
+                      <span className="leo-ui__card-text">
+                        <p className="leo-ui__card-name">{entry.label}</p>
+                      </span>
+                      <span className="leo-ui__chev" aria-hidden>
+                        <img src={chevronUrl} alt="" />
+                      </span>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+          <div className="leo-ui__prompt-dialog-actions">
             <button
               type="button"
-              className="leo-ui__btn leo-ui__btn--next"
-              onClick={savePromptDialog}
+              className="leo-ui__btn leo-ui__btn--back"
+              onClick={() => closeBgModelDialog()}
             >
-              Save
+              Cancel
             </button>
+            <div className="leo-cta-css-wrap leo-cta-css-wrap--fill">
+              <button
+                type="button"
+                className="leo-cta-css leo-cta-css--fill"
+                onClick={confirmBgModelDialog}
+                disabled={!bgModelDraft.trim() || retryAiModels.length === 0}
+              >
+                <span className="leo-cta-css__title-row">
+                  <span className="leo-cta-css__label">Re-Run</span>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       </dialog>

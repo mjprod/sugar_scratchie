@@ -38,7 +38,23 @@ export type LiteDraftInput = {
   hasWavespeed: boolean;
   /** Optional Leo UI note appended to each picture take prompt. */
   picturePromptExtra?: string;
+  /** Override auto-picked image→video model (Try Again dialog). */
+  backgroundVideoModel?: string;
+  /** Override auto-picked dress video model (Try Again dialog). */
+  dressVideoModel?: string;
 };
+
+export function liteBackgroundVideoModel(hasXai: boolean, hasWavespeed: boolean): string {
+  return liteUsesWavespeed(hasXai, hasWavespeed)
+    ? LITE_WAVESPEED_BACKGROUND_MODEL
+    : LITE_XAI_VIDEO_MODEL;
+}
+
+export function liteDressVideoModel(hasXai: boolean, hasWavespeed: boolean): string {
+  return liteUsesWavespeed(hasXai, hasWavespeed)
+    ? LITE_WAVESPEED_DRESS_MODEL
+    : LITE_XAI_VIDEO_MODEL;
+}
 
 /** Fixed settings for the lite canvas. Prompts are filled from the theme and never shown. */
 export function liteRequestBody(input: LiteDraftInput) {
@@ -48,6 +64,10 @@ export function liteRequestBody(input: LiteDraftInput) {
   const picturePrompts = defaultPicturePrompts(input.theme).map((prompt) =>
     extra ? `${prompt}\n\nAdditional direction: ${extra}` : prompt,
   );
+  const backgroundVideoModel =
+    input.backgroundVideoModel?.trim() || liteBackgroundVideoModel(input.hasXai, input.hasWavespeed);
+  const dressVideoModel =
+    input.dressVideoModel?.trim() || liteDressVideoModel(input.hasXai, input.hasWavespeed);
   return flowStepBody({
     image: input.image,
     theme: input.theme,
@@ -69,7 +89,7 @@ export function liteRequestBody(input: LiteDraftInput) {
     picturePicked: true,
     provider: wavespeed ? "wavespeed" : "xai",
     imageModel,
-    backgroundVideoModel: wavespeed ? LITE_WAVESPEED_BACKGROUND_MODEL : LITE_XAI_VIDEO_MODEL,
-    dressVideoModel: wavespeed ? LITE_WAVESPEED_DRESS_MODEL : LITE_XAI_VIDEO_MODEL,
+    backgroundVideoModel,
+    dressVideoModel,
   });
 }

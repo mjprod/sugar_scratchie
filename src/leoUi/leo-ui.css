@@ -220,8 +220,9 @@
   color: #fff;
 }
 
-.leo-ui__list {
-  /* 3 cards (4.125rem) + 2 gaps (0.4rem) */
+.leo-ui__list,
+.leo-ui__model-list {
+  /* 3 cards (4.125rem) + 2 gaps */
   --leo-list-row: 4.125rem;
   --leo-list-gap: 0.4rem;
   --leo-list-fade: 1.75rem;
@@ -251,7 +252,8 @@
   );
 }
 
-.leo-ui__list[data-scroll="middle"] {
+.leo-ui__list[data-scroll="middle"],
+.leo-ui__model-list[data-scroll="middle"] {
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -268,7 +270,8 @@
   );
 }
 
-.leo-ui__list[data-scroll="end"] {
+.leo-ui__list[data-scroll="end"],
+.leo-ui__model-list[data-scroll="end"] {
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -283,7 +286,8 @@
   );
 }
 
-.leo-ui__list[data-scroll="none"] {
+.leo-ui__list[data-scroll="none"],
+.leo-ui__model-list[data-scroll="none"] {
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -342,6 +346,12 @@
   transform: scale(1);
 }
 
+.leo-ui__card.is-selected .leo-ui__card-glow--green {
+  bottom: -6.3rem;
+  opacity: 1;
+  transform: scale(1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .leo-ui__card-glow {
     transition: none;
@@ -386,6 +396,25 @@
   object-fit: cover;
   background: #222;
   flex-shrink: 0;
+}
+
+.leo-ui__avatar--provider {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.leo-ui__avatar--provider.is-empty {
+  background: #222;
+}
+
+.leo-ui__avatar--provider img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .leo-ui__card-text {
@@ -1683,26 +1712,14 @@
   max-width: none;
 }
 
-/* Same magenta glass CTA as .leo-ui__btn--next / .leo-ui__mask-edit-save. */
+/* Save chip — plate comes from .leo-cta-css; reel sits on top. */
 .leo-ui__symbols-save {
-  box-sizing: border-box;
-  width: 38px;
-  height: 38px;
-  margin: 0;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 3, 121, 0.2);
-  border-radius: 11px;
-  background: var(--leo-magenta-glass);
-  cursor: pointer;
   color: #fff;
-  flex-shrink: 0;
 }
 
 .leo-ui__symbols-save-window {
   position: relative;
+  z-index: 1;
   display: block;
   width: 16px;
   height: 16px;
@@ -1900,24 +1917,10 @@
   min-height: 0;
 }
 
-.leo-ui__confirm-rerun {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
+.leo-ui__confirm-rerun-wrap {
   width: 100%;
   height: 3.5rem;
-  margin: 0;
-  padding: 0.5rem;
-  border: 1px solid rgba(255, 3, 121, 0.2);
-  border-radius: 11px;
-  background: var(--leo-magenta-glass);
-  color: #fff;
-  font-family: var(--leo-ui);
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  cursor: pointer;
+  max-width: none;
 }
 
 .leo-ui__confirm-or {
@@ -2144,16 +2147,22 @@
   pointer-events: auto;
 }
 
-.leo-ui__btn--next {
-  flex: 1;
+/* Next / primary actions use .leo-cta-css (frontend cssCTA plate). */
+.leo-ui__actions > .leo-cta-css-wrap,
+.leo-ui__face-crop-actions > .leo-cta-css-wrap,
+.leo-ui__prompt-dialog-actions > .leo-cta-css-wrap {
+  flex: 1 1 0;
   min-width: 0;
-  border-color: rgba(255, 3, 121, 0.2);
-  background: var(--leo-magenta-glass);
-  transform-origin: center;
+  height: 3.5rem;
 }
 
-.leo-ui__btn--next:disabled {
-  opacity: 0.45;
+.leo-ui__prompt-dialog-actions > .leo-cta-css-wrap {
+  height: 3.25rem;
+}
+
+.leo-ui__prompt-dialog-actions .leo-cta-css {
+  min-height: 3.25rem;
+  height: 100%;
 }
 
 .leo-ui__btn-icon {
@@ -2175,48 +2184,77 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  align-self: center;
+  width: max-content;
+  gap: 0.28rem;
   min-height: 2.2rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.25rem 0.75rem;
   border-radius: 60px;
-  border: 1px solid var(--leo-border);
-  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
+/* Sliding jelly pill — GSAP owns x/width; slots only reserve space. */
 .leo-ui__phase-pill {
   position: absolute;
   left: 0;
   top: 50%;
   width: 1.875rem;
-  height: 0.625rem;
-  margin-top: -0.3125rem;
-  border-radius: 59px;
+  height: 1rem;
+  margin-top: -0.5rem;
+  border-radius: 999px;
   pointer-events: none;
   z-index: 1;
+  transform-origin: 50% 50%;
   background: linear-gradient(
     180deg,
-    rgba(151, 0, 71, 0.9) 3%,
-    rgba(255, 33, 137, 0.95) 17%,
-    rgba(155, 0, 72, 0.9) 47%
+    #ff7ab8 0%,
+    #ff0071 38%,
+    #c40058 72%,
+    #8a003d 100%
   );
-  border: 1px solid rgba(215, 0, 101, 0.35);
+  border: 1px solid rgba(255, 140, 190, 0.55);
   box-shadow:
-    inset -0.5px 0.75px 0 rgba(255, 255, 255, 0.1),
-    inset 1.5px -2.5px 0 -2px rgba(255, 255, 255, 0.1);
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -2px 4px rgba(100, 0, 50, 0.45),
+    0 0 10px rgba(255, 0, 113, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 .leo-ui__phase {
-  position: relative;
-  z-index: 0;
-  width: 0.625rem;
-  height: 0.625rem;
-  border-radius: 59px;
-  background: rgba(255, 255, 255, 0.2);
   flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: default;
+  pointer-events: none;
+}
+
+.leo-ui__phase.is-unlocked {
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.leo-ui__phase.is-unlocked:hover,
+.leo-ui__phase.is-unlocked:focus-visible {
+  background: rgba(255, 255, 255, 0.7);
+  outline: none;
 }
 
 .leo-ui__phase.is-active {
-  background: rgba(255, 255, 255, 0.12);
+  height: 1rem;
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
 }
 
 .leo-ui__error {
@@ -2658,24 +2696,12 @@
 }
 
 .leo-ui__mask-edit-save {
-  box-sizing: border-box;
-  width: 38px;
-  height: 38px;
-  margin: 0;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 3, 121, 0.2);
-  border-radius: 11px;
-  background: var(--leo-magenta-glass);
-  cursor: pointer;
   color: #fff;
-  flex-shrink: 0;
 }
 
 .leo-ui__mask-edit-save-window {
   position: relative;
+  z-index: 1;
   display: block;
   width: 16px;
   height: 16px;
@@ -2705,7 +2731,6 @@
 }
 
 .leo-ui__mask-edit-save:disabled {
-  opacity: 0.45;
   cursor: wait;
 }
 
@@ -3006,14 +3031,67 @@
 
 .leo-ui__prompt-dialog-actions {
   display: flex;
+  align-items: stretch;
   gap: 0.65rem;
   margin-top: 0.25rem;
 }
 
 .leo-ui__prompt-dialog-actions .leo-ui__btn {
   flex: 1 1 0;
+  align-self: stretch;
   min-width: 0;
   height: 3.25rem;
+  min-height: 3.25rem;
+  box-sizing: border-box;
+}
+
+/* Dialog Cancel uses --back colors but must stay open (footer Back is GSAP-collapsed). */
+.leo-ui__prompt-dialog-actions .leo-ui__btn--back {
+  width: auto;
+  opacity: 1;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  margin-right: 0;
+  pointer-events: auto;
+  background: var(--leo-glass);
+}
+
+.leo-ui__model-list {
+  --leo-list-gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.leo-ui__model-list .leo-ui__card {
+  transform: scale(1);
+  opacity: 1;
+  transform-origin: center center;
+  transition:
+    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s ease;
+}
+
+.leo-ui__model-list .leo-ui__card-name {
+  font-size: 0.9rem;
+}
+
+.leo-ui__model-list:has(.leo-ui__card.is-selected) .leo-ui__card:not(.is-selected) {
+  transform: scale(0.98);
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leo-ui__model-list .leo-ui__card {
+    transition: none;
+  }
+}
+
+.leo-ui__model-list-empty {
+  margin: 0;
+  padding: 0.85rem 0.75rem;
+  color: var(--leo-muted);
+  font-size: 0.875rem;
 }
 
 @media (min-width: 720px) {
