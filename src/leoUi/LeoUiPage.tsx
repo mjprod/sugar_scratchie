@@ -6320,7 +6320,9 @@ export function LeoUiPage() {
                         className="leo-ui__play-mark-lottie-player"
                         style={{ width: 160, height: 160, pointerEvents: "none" }}
                         layout={{ fit: "contain", align: [0.5, 0.5] }}
-                        renderConfig={{ autoResize: true }}
+                        // autoResize measures subpixel boxes (e.g. 399×400) and
+                        // trips DotLottie's persistent buffer size check.
+                        renderConfig={{ autoResize: false }}
                       />
                     </div>
                   </div>
