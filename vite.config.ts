@@ -60,6 +60,15 @@ export default defineConfig(({ mode: _mode }) => {
     host: "0.0.0.0",
     port: 5080,
     https: true,
+    // The operator app is also opened through the public tunnel. Without this,
+    // the HMR client uses an empty port on that host and then falls back to
+    // wss://localhost:5080, which the remote browser cannot reach.
+    allowedHosts: ["sugarbackend.mxjprod.work"],
+    hmr: {
+      protocol: "wss",
+      host: "sugarbackend.mxjprod.work",
+      clientPort: 443,
+    },
     watch: {
       ignored: ["**/n8n/**", "**/n8n-data/**"],
     },
