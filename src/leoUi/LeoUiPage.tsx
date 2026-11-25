@@ -51,6 +51,8 @@ const LeoTryMotionGame = lazy(() =>
 
 const LEO_STATUS_TOAST = "leo-status";
 const LEO_ERROR_TOAST = "leo-error";
+/** Busy/status pills auto-dismiss so a long job doesn't pin them forever. */
+const LEO_STATUS_TOAST_MS = 10_000;
 /** Sit just under the Leo header (3.75rem) + stage top pad. */
 const LEO_TOAST_OFFSET = "calc(env(safe-area-inset-top, 0px) + 4rem)";
 
@@ -5465,7 +5467,7 @@ export function LeoUiPage() {
     if (message) {
       gooeyToast(message, {
         id: LEO_STATUS_TOAST,
-        duration: Number.POSITIVE_INFINITY,
+        duration: LEO_STATUS_TOAST_MS,
         showTimestamp: false,
         sound: false,
       });

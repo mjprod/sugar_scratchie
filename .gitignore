@@ -72,3 +72,4 @@ android/captures/
 *.swp
 *~
 public/mesh/index.json
+1.env
