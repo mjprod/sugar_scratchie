@@ -2112,6 +2112,11 @@
   gap: 0;
 }
 
+/* Processing / Animating / Dressing / Meshing — wait for auto-advance. */
+.leo-ui__actions.is-waiting {
+  display: none;
+}
+
 .leo-ui__btn {
   border: 1px solid var(--leo-border-strong);
   border-radius: 11px;

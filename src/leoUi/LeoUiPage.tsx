@@ -597,6 +597,12 @@ export function LeoUiPage() {
   }, [phase]);
   // Back expands toward destination while content exits (same chain as phase pill).
   const showBack = screen !== "influencer";
+  /** Wait screens auto-advance — hide Back/Next so the user isn't tapping a dead gate. */
+  const hideFooterActions =
+    viewScreen === "processing" ||
+    viewScreen === "animating" ||
+    viewScreen === "dressing" ||
+    viewScreen === "meshing";
   const showNextCheck =
     viewScreen === "confirm" ||
     viewScreen === "animated" ||
@@ -6463,28 +6469,33 @@ export function LeoUiPage() {
         </div>
 
         <footer className="leo-ui__footer">
-          <div className="leo-ui__actions">
+          <div
+            className={`leo-ui__actions${hideFooterActions ? " is-waiting" : ""}`}
+            aria-hidden={hideFooterActions}
+          >
             <button
               ref={backBtnRef}
               type="button"
               className="leo-ui__btn leo-ui__btn--back"
-              disabled={navBusy || !showBack}
+              disabled={navBusy || !showBack || hideFooterActions}
+              tabIndex={hideFooterActions ? -1 : undefined}
               onClick={goBack}
             >
               Back
             </button>
             <div
               className={`leo-cta-css-wrap leo-cta-css-wrap--fill${
-                nextDisabled ? " is-disabled" : ""
+                nextDisabled || hideFooterActions ? " is-disabled" : ""
               }`}
             >
               <button
                 ref={nextBtnRef}
                 type="button"
                 className={`leo-cta-css leo-cta-css--fill${
-                  nextDisabled ? " is-disabled" : ""
+                  nextDisabled || hideFooterActions ? " is-disabled" : ""
                 }`}
-                disabled={nextDisabled}
+                disabled={nextDisabled || hideFooterActions}
+                tabIndex={hideFooterActions ? -1 : undefined}
                 onClick={() => void goNext()}
               >
                 <span className="leo-cta-css__title-row">
