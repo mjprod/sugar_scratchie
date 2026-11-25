@@ -95,6 +95,16 @@
   flex-shrink: 0;
 }
 
+/*
+ * Sonner writes --offset-* / --mobile-offset-* as inline styles (mobile default
+ * 16px). Custom props without !important cannot win; pin `top` instead.
+ */
+.leo-ui [data-sonner-toaster][data-y-position="top"] {
+  --offset-top: calc(env(safe-area-inset-top, 0px) + 4rem) !important;
+  --mobile-offset-top: calc(env(safe-area-inset-top, 0px) + 4rem) !important;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem) !important;
+}
+
 .leo-ui__logo {
   height: 2.25rem;
   width: auto;

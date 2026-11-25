@@ -52,7 +52,7 @@ const LeoTryMotionGame = lazy(() =>
 const LEO_STATUS_TOAST = "leo-status";
 const LEO_ERROR_TOAST = "leo-error";
 /** Sit just under the Leo header (3.75rem) + stage top pad. */
-const LEO_TOAST_OFFSET = "calc(env(safe-area-inset-top, 0px) + 5.25rem)";
+const LEO_TOAST_OFFSET = "calc(env(safe-area-inset-top, 0px) + 4rem)";
 
 gsap.registerPlugin(useGSAP);
 
