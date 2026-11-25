@@ -78,6 +78,7 @@ type JobInfo = {
   kind: string;
   command: string[];
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  logs?: string[];
 };
 
 type LiteStepState = {
@@ -277,6 +278,41 @@ function errorText(caught: unknown): string {
     /* plain text */
   }
   return raw;
+}
+
+/** Last log line from a failed /api/jobs entry → toast copy. */
+function jobFailToast(logs: string[] | undefined): string {
+  const line = [...(logs ?? [])]
+    .reverse()
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+  if (!line) return "Something went wrong — check the Jobs tab.";
+  return line.replace(/^Job runner error:\s*/i, "").trim() || line;
+}
+
+/**
+ * Short pill title + full detail for goey-toast. Collapsed pill shows `title`;
+ * hover/expand reveals `description` (goey's built-in body).
+ */
+function splitErrorToast(text: string): { title: string; description?: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { title: "" };
+  if (trimmed.length <= 64 && !/\n/.test(trimmed)) return { title: trimmed };
+
+  const step = /^(Step\s+\d+\s+.+?\s+failed)\b/i.exec(trimmed);
+  if (step) return { title: step[1], description: trimmed };
+
+  if (/incorrect api key/i.test(trimmed)) {
+    return { title: "Invalid API key", description: trimmed };
+  }
+
+  const sentence = trimmed.split(/(?<=\.)\s+/)[0] ?? trimmed;
+  if (sentence.length <= 64 && sentence.length < trimmed.length) {
+    return { title: sentence, description: trimmed };
+  }
+
+  const cut = trimmed.slice(0, 52).replace(/\s+\S*$/, "").trimEnd();
+  return { title: `${cut}…`, description: trimmed };
 }
 
 function pictureChoiceFromArtifact(path: string): number | null {
@@ -521,6 +557,8 @@ export function LeoUiPage() {
   const [pendingStep, setPendingStep] = useState<string | null>(null);
   /** Wall-clock when pendingStep was set — timeout must not reset on every poll. */
   const pendingSinceRef = useRef(0);
+  /** Failed job ids already shown as toasts — avoid re-firing on every poll. */
+  const reportedFailRef = useRef<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [catalogReady, setCatalogReady] = useState(false);
@@ -856,6 +894,16 @@ export function LeoUiPage() {
     [jobs, cardId],
   );
   const runningJob = cardJobs.find((job) => job.status === "queued" || job.status === "running");
+
+  // Failed video-flow jobs for this card → Gooey error toast (via `error`).
+  useEffect(() => {
+    for (const job of cardJobs) {
+      if (job.status !== "failed") continue;
+      if (reportedFailRef.current.has(job.id)) continue;
+      reportedFailRef.current.add(job.id);
+      setError(jobFailToast(job.logs));
+    }
+  }, [cardJobs]);
 
   useEffect(() => {
     if (!pendingStep) {
@@ -5437,15 +5485,19 @@ export function LeoUiPage() {
   ]);
 
   // Errors → toast under the header (replaces inline leo-ui__error).
+  // Long copy uses title + description so the collapsed pill stays short;
+  // hover the toast to re-expand and read the full detail.
   useEffect(() => {
     const text = error.trim();
     if (!text) {
       gooeyToast.dismiss(LEO_ERROR_TOAST);
       return;
     }
-    gooeyToast.error(text, {
+    const { title, description } = splitErrorToast(text);
+    gooeyToast.error(title, {
       id: LEO_ERROR_TOAST,
-      duration: 5500,
+      description,
+      duration: description ? 8000 : 5500,
       showTimestamp: false,
       sound: false,
       onAutoClose: () => setError(""),
