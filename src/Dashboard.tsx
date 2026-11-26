@@ -1,23 +1,17 @@
 import {
   AlertTriangle,
   Check,
-  Clapperboard,
-  ExternalLink,
   FileArchive,
   FileUp,
   Image,
   LoaderCircle,
-  Package,
   Play,
   SlidersHorizontal,
   Square,
   Trash2,
-  UserRound,
-  Users,
   Video,
   WandSparkles,
   Workflow,
-  LogOut,
 } from "lucide-react";
 import {
   Badge,
@@ -42,7 +36,7 @@ import {
 } from "@radix-ui/themes";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, operatorLogout, uploadFile, type UploadedFileInfo } from "./shared/api";
+import { api, uploadFile, type UploadedFileInfo } from "./shared/api";
 import { hrefWithModel, readSavedModelId } from "./shared/currentModel";
 import { MaskEditor } from "./videoFlow/MaskEditor";
 
@@ -1060,45 +1054,6 @@ export function Dashboard() {
                   Refresh
                 </Button>
                 <Button asChild variant="soft">
-                  <a href="/dashboard/users">
-                    <Users {...iconProps} />
-                    Users
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/models">
-                    <UserRound {...iconProps} />
-                    Models
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/packs">
-                    <Package {...iconProps} />
-                    Packs
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/themes">Themes</a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/seasons">Seasons</a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/ai-models">
-                    <WandSparkles {...iconProps} />
-                    AI models
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/symbols">Symbols</a>
-                </Button>
-                <Button asChild variant="soft">
-                  <a href="/dashboard/video-flow">
-                    <Clapperboard {...iconProps} />
-                    Video Flow
-                  </a>
-                </Button>
-                <Button asChild variant="soft">
                   <a href={hrefWithModel("/dashboard/video-flow/dress", readSavedModelId())}>Dress</a>
                 </Button>
                 <Button asChild variant="soft">
@@ -1106,24 +1061,6 @@ export function Dashboard() {
                     <SlidersHorizontal {...iconProps} />
                     Transition lab
                   </a>
-                </Button>
-                <Button asChild>
-                  <a href="/">
-                    <ExternalLink {...iconProps} />
-                    Open prototype
-                  </a>
-                </Button>
-                <Button
-                  color="gray"
-                  variant="outline"
-                  onClick={() => {
-                    void operatorLogout().finally(() => {
-                      window.location.assign("/dashboard/login");
-                    });
-                  }}
-                >
-                  <LogOut {...iconProps} />
-                  Sign out
                 </Button>
               </Flex>
             </Flex>

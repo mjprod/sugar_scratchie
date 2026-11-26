@@ -2,8 +2,6 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
-  Home,
   LoaderCircle,
   Music2,
   Pencil,
@@ -477,36 +475,6 @@ export function ThemesPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/users">Users</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/models">Models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/seasons">Seasons</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/ai-models">AI models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

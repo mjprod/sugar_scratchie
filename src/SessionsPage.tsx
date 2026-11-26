@@ -1,4 +1,4 @@
-import { AlertTriangle, ExternalLink, Home, LoaderCircle, Trash2 } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Trash2 } from "lucide-react";
 import {
   Badge,
   Box,
@@ -164,21 +164,6 @@ export function SessionsPage() {
               <Button color="gray" variant="soft" onClick={() => refresh().catch((caught) => setError(String(caught)))}>
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

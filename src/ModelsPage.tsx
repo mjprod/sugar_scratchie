@@ -5,9 +5,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
-  ExternalLink,
   Gamepad2,
-  Home,
   Images,
   Import,
   LoaderCircle,
@@ -1434,33 +1432,6 @@ export function ModelsPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/users">Users</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/ai-models">AI models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

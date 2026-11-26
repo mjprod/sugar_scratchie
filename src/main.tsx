@@ -10,6 +10,7 @@ import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { ScratchPrototype } from "./ScratchPrototype";
+import { HomePickerPage } from "./HomePickerPage";
 import { SessionsPage } from "./SessionsPage";
 import { ThemesPage } from "./ThemesPage";
 import { AiModelsPage } from "./AiModelsPage";
@@ -97,7 +98,8 @@ function HomePage() {
       </Suspense>
     );
   }
-  return <ScratchPrototype />;
+  if (model) return <ScratchPrototype />;
+  return <HomePickerPage />;
 }
 
 function pickApp(pathname: string) {

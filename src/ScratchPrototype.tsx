@@ -4185,6 +4185,15 @@ export function ScratchPrototype() {
     setSelectedCardId(ordered[0]?.id ?? "");
   }
 
+  if (!cardsReady) {
+    return (
+      <main className="girl-picker girl-picker--empty" aria-busy="true">
+        <p className="girl-picker-eyebrow">Sugar Scratchie</p>
+        <p>Opening her cards…</p>
+      </main>
+    );
+  }
+
   if (showModelPicker) {
     const playableModels = models.filter(
       (model) => playlistCardsForModel(cards, model.id).length > 0,
