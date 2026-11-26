@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-def send_verify_email(*, to: str, code: str, mailer: Mailer | None = None) -> None:
+def send_verify_email(*, to: str, code: str, mailer: Mailer | None = None) -> bool:
     content = verify_email_content(code=code)
     try:
         (mailer or get_mailer()).send(
@@ -42,6 +42,8 @@ def send_verify_email(*, to: str, code: str, mailer: Mailer | None = None) -> No
     except Exception:
         # Auth must still succeed when delivery is down (no 500 / DB rollback).
         logger.exception("Failed to send verify email to %s", to)
+        return False
+    return True
 
 
 def send_reset_email(*, to: str, token: str, mailer: Mailer | None = None) -> None:

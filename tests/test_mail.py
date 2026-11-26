@@ -80,7 +80,7 @@ def test_reset_password_content_builds_link():
 
 def test_send_verify_email_uses_mailer(recording_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
-    send_verify_email(to="player@example.com", code="654321")
+    assert send_verify_email(to="player@example.com", code="654321") is True
     assert len(recording_mailer.messages) == 1
     message = recording_mailer.messages[0]
     assert message.to == "player@example.com"
@@ -100,6 +100,22 @@ def test_register_sends_verify_code(client, recording_mailer, monkeypatch):
     confirm = client.post("/api/auth/verify-email/confirm", json={"code": code})
     assert confirm.status_code == 200, confirm.text
     assert confirm.json()["user"]["emailVerified"] is True
+
+
+def test_register_reports_when_verify_email_sends(client, recording_mailer, monkeypatch):
+    monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
+    suffix = uuid.uuid4().hex[:10]
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": f"sent-{suffix}@example.com",
+            "password": "testpassword123",
+            "username": f"sent-{suffix}",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["verificationEmailSent"] is True
+    assert len(recording_mailer.messages) == 1
 
 
 def test_forgot_password_sends_reset_email(client, recording_mailer, monkeypatch):
@@ -278,7 +294,7 @@ def test_verify_email_confirm_survives_hash_collisions(client, recording_mailer,
 
 def test_send_helpers_swallow_delivery_errors(failing_mailer, monkeypatch):
     monkeypatch.setenv("APP_PUBLIC_URL", "https://localhost:5173")
-    send_verify_email(to="player@example.com", code="111111")
+    assert send_verify_email(to="player@example.com", code="111111") is False
     send_reset_email(to="player@example.com", token="tok-reset")
 
 
@@ -291,6 +307,7 @@ def test_register_succeeds_when_mail_delivery_fails(client, failing_mailer):
     )
     assert response.status_code == 200, response.text
     assert response.json()["ok"] is True
+    assert response.json()["verificationEmailSent"] is False
     assert response.json()["user"]["email"] == email
 
     # Account persisted despite delivery failure.
@@ -325,6 +342,6 @@ def test_verify_email_request_succeeds_when_mail_delivery_fails(client):
 
         response = client.post("/api/auth/verify-email/request", json={})
         assert response.status_code == 200, response.text
-        assert response.json() == {"ok": True}
+        assert response.json() == {"ok": False}
     finally:
         set_mailer_for_tests(None)
