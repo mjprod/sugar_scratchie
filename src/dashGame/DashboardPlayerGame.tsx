@@ -26,8 +26,8 @@ function leaveToPicker() {
 }
 
 /**
- * `/?model=&card=` on the operator app plays one motion card as a game hand,
- * the same scratch game the player app opens with `?game=1`.
+ * `/?model=` plays that girl's motion cards in playlist order.
+ * `/?model=&card=` plays that one card. Both use the same game hand as `?game=1`.
  */
 function writeGameUrl(modelId: string, cardId: string) {
   const url = new URL(window.location.href);
@@ -39,31 +39,63 @@ function writeGameUrl(modelId: string, cardId: string) {
   if (next !== current) window.history.replaceState(null, "", next);
 }
 
+function cardsInPlaylistOrder<T extends { id: string; sort_order?: number }>(
+  cards: T[],
+): T[] {
+  return [...cards].sort((a, b) => {
+    const orderA = a.sort_order ?? 0;
+    const orderB = b.sort_order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 async function ensureMotionHand(modelId: string, cardId: string) {
   const existing = loadGameSession();
   const resume =
     isGameModeUrl() &&
     existing?.phase === "motion" &&
-    existing.motionCardIds.includes(cardId);
-  if (resume) {
-    writeGameUrl(modelId, cardId);
+    existing.modelId === modelId &&
+    existing.motionCardIds.length > 0 &&
+    (!cardId || existing.motionCardIds.includes(cardId));
+  if (resume && existing) {
+    const playId =
+      (cardId && existing.motionCardIds.includes(cardId) ? cardId : "") ||
+      existing.motionCardIds.find(
+        (id) => !existing.completedMotionIds.includes(id),
+      ) ||
+      existing.motionCardIds[0] ||
+      "";
+    if (playId) writeGameUrl(modelId, playId);
     return;
   }
   try {
     const catalog = await loadGameCatalog();
-    const entry = catalog.motion.find((card) => card.id === cardId);
-    if (!entry) return;
-    startMotionSession([
-      {
-        ...entry,
-        model_id: entry.model_id || modelId,
-      },
-    ]);
+    const forModel = cardsInPlaylistOrder(
+      catalog.motion.filter((card) => card.model_id === modelId),
+    );
+    const hand = cardId
+      ? forModel.filter((card) => card.id === cardId)
+      : forModel;
+    const picked =
+      hand.length > 0
+        ? hand
+        : cardId
+          ? catalog.motion.filter((card) => card.id === cardId)
+          : [];
+    const first = picked[0];
+    if (!first) return;
+    startMotionSession(
+      picked.map((card) => ({
+        ...card,
+        model_id: card.model_id || modelId,
+      })),
+    );
+    writeGameUrl(modelId, first.id);
   } catch {
     // ScratchPrototype still loads the catalog itself.
     return;
   }
-  writeGameUrl(modelId, cardId);
 }
 
 function bootHand(modelId: string, cardId: string) {
@@ -143,7 +175,7 @@ export function DashboardPlayerGame() {
   const params = new URLSearchParams(window.location.search);
   const modelId = params.get("model")?.trim() || "";
   const cardId = params.get("card")?.trim() || "";
-  if (!modelId || !cardId) return null;
+  if (!modelId) return null;
 
   return (
     <DashboardAuthProvider>

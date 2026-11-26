@@ -369,7 +369,6 @@ export function GamePage() {
           </span>
           <nav className="game-hub-nav">
             <a href="/">Home</a>
-            <a href="/dashboard/models">Models</a>
           </nav>
         </div>
       </header>

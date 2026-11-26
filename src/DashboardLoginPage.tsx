@@ -20,15 +20,16 @@ const OPERATOR_NEXT_ROOTS = ["/dashboard", "/symbols", "/picture-flow", "/video-
 
 function nextPath(): string {
   const params = new URLSearchParams(window.location.search);
-  const raw = params.get("next") || "/dashboard";
+  const raw = params.get("next") || "/";
   // Block protocol-relative / absolute open redirects; keep path+query for aliases.
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
   const pathOnly = (raw.split("?")[0] ?? raw).replace(/\/+$/, "") || "/";
-  if (pathOnly === "/dashboard/login") return "/dashboard";
+  if (pathOnly === "/dashboard/login" || pathOnly === "/dashboard") return "/";
+  if (pathOnly === "/") return "/";
   const allowed = OPERATOR_NEXT_ROOTS.some(
     (root) => pathOnly === root || pathOnly.startsWith(`${root}/`),
   );
-  if (!allowed) return "/dashboard";
+  if (!allowed) return "/";
   return raw;
 }
 

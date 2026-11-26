@@ -22,7 +22,6 @@ import {
 } from "@/services/scratchCoinReward";
 import { gameReturnHrefFromSearch } from "@/shared/navigation/collectionReturn";
 import { useMarkPageReady } from "@/shared/ui/usePageReady";
-import { Volume2, VolumeX } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -31,13 +30,11 @@ import {
   useState,
   type AnimationEvent,
   type CSSProperties,
-  type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
 import {
   FairyDustCursor,
   fairyDustPerf,
-  resetFairyDustPerfPeak,
   type ParticleType,
 } from "../cursorFx/FairyDustCursor";
 import { loadLottieUrlSource } from "../cursorFx/loadLottieSource";
@@ -260,71 +257,6 @@ import {
 } from "./meshGeometry";
 import { fetchModels, type ModelInfo } from "./models";
 
-// Debug readouts that tick several times a second own their state, so updates
-// re-render only them instead of the whole ScratchPrototype tree.
-function CursorFxPerfReadout() {
-  const [perf, setPerf] = useState({ active: 0, peak: 0, avgFrameMs: 0 });
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      const active = fairyDustPerf.active;
-      const peak = fairyDustPerf.peak;
-      const avgFrameMs = Math.round(fairyDustPerf.avgFrameMs * 100) / 100;
-      setPerf((current) =>
-        current.active === active &&
-        current.peak === peak &&
-        current.avgFrameMs === avgFrameMs
-          ? current
-          : { active, peak, avgFrameMs },
-      );
-    }, UI_STATE_UPDATE_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, []);
-
-  return (
-    <p className="auto-scratch-hint">
-      Active {perf.active} · peak {perf.peak} · {perf.avgFrameMs.toFixed(2)}
-      ms/frame
-      {perf.peak >= 220 ? " — near cap (250)" : ""}
-    </p>
-  );
-}
-
-function VideoTimelineSlider({
-  duration,
-  onSeek,
-  videoRef,
-}: {
-  duration: number;
-  onSeek: (time: number) => void;
-  videoRef: RefObject<HTMLVideoElement | null>;
-}) {
-  const [currentTime, setCurrentTime] = useState(0);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      const time = videoRef.current?.currentTime;
-      if (typeof time === "number") setCurrentTime(time);
-    }, UI_STATE_UPDATE_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [videoRef]);
-
-  return (
-    <input
-      aria-label="Video timeline"
-      max={duration || 0}
-      min={0}
-      onChange={(event) => {
-        const time = Number(event.currentTarget.value);
-        onSeek(time);
-        setCurrentTime(time);
-      }}
-      step={0.05}
-      type="range"
-      value={Math.min(currentTime, duration || currentTime)}
-    />
-  );
-}
 
 // On-screen diagnostics (FPS, layer drift, raw video state) shown only when the
 // page is opened with ?debug=1. Self-contained: it polls the DOM/video elements
@@ -649,7 +581,6 @@ async function loadCards(): Promise<Card[]> {
   }
 }
 
-const MESH_INDEX_SRC = "/mesh/index.json";
 const MESH_DIRECTORY_SRC = "/mesh";
 const SYMBOL_SLOT_COUNT = SYMBOL_POINT_COUNT;
 const SYMBOL_REVEAL_STEP_MANUAL = 0.056;
@@ -715,14 +646,6 @@ function isGarmentFullyRevealed(
 
 type GameResult = "win" | "lose";
 
-const DESKTOP_SETTINGS_TABS = [
-  { id: "scratch-zoom", label: "Scratch zoom" },
-  { id: "sound", label: "Sound" },
-  { id: "auto-scratch", label: "Auto scratch" },
-  { id: "cursor-fx", label: "Cursor FX" },
-] as const;
-
-type DesktopSettingsTab = (typeof DESKTOP_SETTINGS_TABS)[number]["id"];
 
 // One chromatic note per symbol slot (C5 → B5); slot index always maps to the same pitch.
 const SYMBOL_NOTE_BASE_HZ = 523.25;
@@ -1251,25 +1174,6 @@ function syncVideoTime(
   }
 }
 
-function parseMeshIndex(value: unknown) {
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !Array.isArray((value as { files?: unknown }).files)
-  ) {
-    return [];
-  }
-
-  return (value as { files: unknown[] }).files
-    .filter((file): file is string => {
-      return (
-        typeof file === "string" &&
-        file.toLowerCase().endsWith(".json") &&
-        !file.includes("/")
-      );
-    })
-    .sort((a, b) => a.localeCompare(b));
-}
 
 // The fixed UV grid used to measure reveal progress. With a garment mask we keep
 // only samples that land on clothing, so progress means "how much of the dress is
@@ -1531,7 +1435,6 @@ export function ScratchPrototype({
   // Smoothed chest-follow camera offset, in clip units. Read by getCanvasPoint
   // to invert the pan when mapping a tap back to fabric UV.
   const cameraRef = useRef({ x: 0, y: 0 });
-  const [meshFiles, setMeshFiles] = useState<string[]>([]);
   const [cards, setCards] = useState<Card[]>(DEFAULT_CARDS);
   const [models, setModels] = useState<ModelInfo[]>(() =>
     skipToPlay ? [{ id: "julianaval", label: "Juliana", avatar: null }] : [],
@@ -1696,10 +1599,7 @@ export function ScratchPrototype({
     useState<CardTransitionState | null>(null);
   const cardTransitionHandoffRef = useRef(false);
   const [cardTransitionReady, setCardTransitionReady] = useState(false);
-  // Mesh lattice is a dev overlay — start hidden; toggle with "Show mesh".
-  const [showMesh, setShowMesh] = useState(false);
-  const showMeshRef = useRef(showMesh);
-  showMeshRef.current = showMesh;
+  const showMeshRef = useRef(false);
   const bodyMarkerRefs = useRef<(HTMLDivElement | null)[]>([]);
   // Last styles written to each body marker, so the render loop can skip
   // redundant DOM writes. See the marker loop in render() for why.
@@ -1915,9 +1815,7 @@ export function ScratchPrototype({
     isPaused,
     lastUpdatedAt: 0,
   });
-  const [scratchZoom, setScratchZoom] = useState<ScratchZoomSettings>(
-    loadScratchZoomSettings,
-  );
+  const [scratchZoom] = useState<ScratchZoomSettings>(loadScratchZoomSettings);
   const scratchZoomRef = useRef(scratchZoom);
   scratchZoomRef.current = scratchZoom;
   const [autoScratch, setAutoScratch] = useState<AutoScratchSettings>(
@@ -1945,8 +1843,7 @@ export function ScratchPrototype({
     x: number;
     y: number;
   } | null>(null);
-  const [cursorFx, setCursorFx] =
-    useState<CursorFxSettings>(loadCursorFxSettings);
+  const [cursorFx] = useState<CursorFxSettings>(loadCursorFxSettings);
   const cursorFxRef = useRef(cursorFx);
   cursorFxRef.current = cursorFx;
   /** Live progress for celebrate milestones (independent of throttled React progress). */
@@ -2390,12 +2287,6 @@ export function ScratchPrototype({
       }
     }, celebrateMs + showerMs + 40);
   }
-  // Phones hide the side panel, so the scratch-zoom config lives behind a gear
-  // button that opens this sheet.
-  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
-  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
-  const [desktopSettingsTab, setDesktopSettingsTab] =
-    useState<DesktopSettingsTab>("scratch-zoom");
   const [glError, setGlError] = useState<string | null>(null);
 
   function clearGameResultTimer() {
@@ -3763,22 +3654,6 @@ export function ScratchPrototype({
     selectedCardId,
   ]);
 
-  useEffect(() => {
-    let isCancelled = false;
-
-    fetch(`${MESH_INDEX_SRC}?v=${meshReloadToken}`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (isCancelled || !data) return;
-        // Dropdown list only — the active card owns selectedMeshFile.
-        setMeshFiles(parseMeshIndex(data));
-      })
-      .catch(() => undefined);
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [meshReloadToken]);
 
   useEffect(() => {
     if (!selectedMeshFile) {
@@ -4229,9 +4104,6 @@ export function ScratchPrototype({
     if (canvas) syncScratchZoomTransition(canvas, scratchZoom.zoomInMs);
   }, [scratchZoom]);
 
-  function updateScratchZoom(patch: Partial<ScratchZoomSettings>) {
-    setScratchZoom((current) => ({ ...current, ...patch }));
-  }
 
   function updateAutoScratch(patch: Partial<AutoScratchSettings>) {
     // HUD / panel can enable during the body hunt — player opted in.
@@ -4257,17 +4129,6 @@ export function ScratchPrototype({
     setAutoScratch((current) => ({ ...current, ...patch }));
   }
 
-  function updateCursorFx(patch: Partial<CursorFxSettings>) {
-    if (
-      patch.particleCount !== undefined ||
-      patch.fadeSpeed !== undefined ||
-      patch.particleSize !== undefined ||
-      patch.gravity !== undefined
-    ) {
-      resetFairyDustPerfPeak();
-    }
-    setCursorFx((current) => ({ ...current, ...patch }));
-  }
 
   function beginFinishAutoScratch() {
     autoPathIndexRef.current = 0;
@@ -5743,319 +5604,6 @@ export function ScratchPrototype({
   }
   addScratchRef.current = addScratch;
 
-  function setVideoTime(time: number) {
-    const bottomVideo = bottomVideoRef.current;
-    const foregroundVideo = foregroundVideoRef.current;
-    const nextTime = Math.max(0, Math.min(duration || 0, time));
-
-    if (bottomVideo) bottomVideo.currentTime = nextTime;
-    if (
-      !fgParkedRef.current &&
-      foregroundVideo &&
-      Number.isFinite(foregroundVideo.duration) &&
-      foregroundVideo.duration > 0 &&
-      bottomVideo
-    ) {
-      foregroundVideo.currentTime = foregroundTimeFromBottom(
-        bottomVideo,
-        foregroundVideo,
-      );
-    }
-    uiStateRef.current = {
-      ...uiStateRef.current,
-      currentTime: nextTime,
-      lastUpdatedAt: performance.now(),
-    };
-  }
-
-  function togglePlayback() {
-    const bottomVideo = bottomVideoRef.current;
-    const foregroundVideo = foregroundVideoRef.current;
-    if (!bottomVideo || !foregroundVideo) return;
-
-    if (bottomVideo.paused) {
-      void bottomVideo.play();
-      if (!fgParkedRef.current) void foregroundVideo.play();
-      uiStateRef.current = { ...uiStateRef.current, isPaused: false };
-      setIsPaused(false);
-    } else {
-      bottomVideo.pause();
-      if (!fgParkedRef.current) foregroundVideo.pause();
-      uiStateRef.current = { ...uiStateRef.current, isPaused: true };
-      setIsPaused(true);
-    }
-  }
-
-  const scratchZoomControls = (
-    <fieldset className="scratch-zoom-settings">
-      <legend>Scratch zoom</legend>
-      <label className="checkbox-label">
-        <input
-          checked={scratchZoom.enabled}
-          onChange={(event) =>
-            updateScratchZoom({ enabled: event.currentTarget.checked })
-          }
-          type="checkbox"
-        />
-        Enable zoom while scratching
-      </label>
-      <label>
-        Range ({scratchZoom.scale.toFixed(2)}×)
-        <input
-          disabled={!scratchZoom.enabled}
-          max={2}
-          min={1}
-          onChange={(event) =>
-            updateScratchZoom({ scale: Number(event.currentTarget.value) })
-          }
-          step={0.05}
-          type="range"
-          value={scratchZoom.scale}
-        />
-      </label>
-      <label>
-        Zoom in ({scratchZoom.zoomInMs} ms)
-        <input
-          disabled={!scratchZoom.enabled}
-          max={2000}
-          min={50}
-          onChange={(event) =>
-            updateScratchZoom({ zoomInMs: Number(event.currentTarget.value) })
-          }
-          step={10}
-          type="range"
-          value={scratchZoom.zoomInMs}
-        />
-      </label>
-      <label>
-        Zoom out ({scratchZoom.zoomOutMs} ms)
-        <input
-          disabled={!scratchZoom.enabled}
-          max={2000}
-          min={50}
-          onChange={(event) =>
-            updateScratchZoom({ zoomOutMs: Number(event.currentTarget.value) })
-          }
-          step={10}
-          type="range"
-          value={scratchZoom.zoomOutMs}
-        />
-      </label>
-      <label className="checkbox-label">
-        <input
-          checked={scratchZoom.bounce}
-          disabled={!scratchZoom.enabled}
-          onChange={(event) =>
-            updateScratchZoom({ bounce: event.currentTarget.checked })
-          }
-          type="checkbox"
-        />
-        Bounce easing
-      </label>
-    </fieldset>
-  );
-
-  const soundControls = (
-    <fieldset className="scratch-zoom-settings">
-      <legend>Sound</legend>
-      <label className="checkbox-label">
-        <input
-          checked={soundEnabled}
-          onChange={(event) => updateSoundEnabled(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        Game sounds
-      </label>
-    </fieldset>
-  );
-
-  const autoScratchControls = (
-    <fieldset className="scratch-zoom-settings">
-      <legend>Auto scratch</legend>
-      {autoScratchLocked ? (
-        <p className="auto-scratch-hint">
-          {introActive || introCover
-            ? "Intro + countdown — play unlocks when both finish."
-            : topBarPhase === "center"
-              ? "Scratch the foil to unlock play controls."
-              : introGateActive
-                ? "Get ready — play starts after the countdown."
-                : "Wait for play to unlock."}
-        </p>
-      ) : null}
-      <label className="checkbox-label">
-        <input
-          checked={autoScratch.enabled}
-          disabled={autoScratchLocked}
-          onChange={(event) =>
-            updateAutoScratch({ enabled: event.currentTarget.checked })
-          }
-          type="checkbox"
-        />
-        Enable auto scratch
-      </label>
-      <label>
-        Speed ({autoScratch.speed.toFixed(0)} pts/s)
-        <input
-          disabled={!autoScratch.enabled}
-          max={120}
-          min={1}
-          onChange={(event) =>
-            updateAutoScratch({ speed: Number(event.currentTarget.value) })
-          }
-          step={1}
-          type="range"
-          value={autoScratch.speed}
-        />
-      </label>
-    </fieldset>
-  );
-
-  const cursorFxControls = (
-    <fieldset className="scratch-zoom-settings">
-      <legend>Cursor FX</legend>
-      {cursorFx.fairyDust && !cursorFxPlayWindow ? (
-        <p className="auto-scratch-hint">
-          {introActive || introCover
-            ? "Intro + countdown — cursor FX starts when play unlocks."
-            : topBarPhase === "center"
-              ? "Scratch the foil first — cursor FX starts after the countdown."
-              : introGateActive
-                ? "Get ready — cursor FX starts after the countdown."
-                : "Cursor FX pauses once all symbols are found."}
-        </p>
-      ) : null}
-      <label className="checkbox-label">
-        <input
-          checked={cursorFx.fairyDust}
-          onChange={(event) =>
-            updateCursorFx({ fairyDust: event.currentTarget.checked })
-          }
-          type="checkbox"
-        />
-        Fairy Dust
-      </label>
-      <label>
-        Particle size ({cursorFx.particleSize})
-        <input
-          disabled={!cursorFx.fairyDust}
-          max={64}
-          min={10}
-          onChange={(event) =>
-            updateCursorFx({ particleSize: Number(event.currentTarget.value) })
-          }
-          step={1}
-          type="range"
-          value={cursorFx.particleSize}
-        />
-      </label>
-      <label>
-        Particles per move ({cursorFx.particleCount})
-        <input
-          disabled={!cursorFx.fairyDust}
-          max={8}
-          min={1}
-          onChange={(event) =>
-            updateCursorFx({ particleCount: Number(event.currentTarget.value) })
-          }
-          step={1}
-          type="range"
-          value={cursorFx.particleCount}
-        />
-      </label>
-      <label>
-        Gravity ({cursorFx.gravity.toFixed(3)})
-        <input
-          disabled={!cursorFx.fairyDust}
-          max={0.4}
-          min={0}
-          onChange={(event) =>
-            updateCursorFx({ gravity: Number(event.currentTarget.value) })
-          }
-          step={0.005}
-          type="range"
-          value={cursorFx.gravity}
-        />
-      </label>
-      <label>
-        Fade speed ({cursorFx.fadeSpeed.toFixed(2)})
-        <input
-          disabled={!cursorFx.fairyDust}
-          max={0.99}
-          min={0.9}
-          onChange={(event) =>
-            updateCursorFx({ fadeSpeed: Number(event.currentTarget.value) })
-          }
-          step={0.01}
-          type="range"
-          value={cursorFx.fadeSpeed}
-        />
-      </label>
-      {cursorFx.fairyDust ? <CursorFxPerfReadout /> : null}
-    </fieldset>
-  );
-
-  const desktopSettingsTabs = (
-    <div className="panel-settings-tabs">
-      <div
-        className="panel-settings-tablist"
-        role="tablist"
-        aria-label="Settings"
-      >
-        {DESKTOP_SETTINGS_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            id={`panel-tab-${tab.id}`}
-            aria-selected={desktopSettingsTab === tab.id}
-            aria-controls={`panel-tabpanel-${tab.id}`}
-            className={`panel-settings-tab${desktopSettingsTab === tab.id ? " is-active" : ""}`}
-            onClick={() => setDesktopSettingsTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div
-        id="panel-tabpanel-scratch-zoom"
-        role="tabpanel"
-        aria-labelledby="panel-tab-scratch-zoom"
-        hidden={desktopSettingsTab !== "scratch-zoom"}
-        className="panel-settings-tabpanel"
-      >
-        {scratchZoomControls}
-      </div>
-      <div
-        id="panel-tabpanel-sound"
-        role="tabpanel"
-        aria-labelledby="panel-tab-sound"
-        hidden={desktopSettingsTab !== "sound"}
-        className="panel-settings-tabpanel"
-      >
-        {soundControls}
-      </div>
-      <div
-        id="panel-tabpanel-auto-scratch"
-        role="tabpanel"
-        aria-labelledby="panel-tab-auto-scratch"
-        hidden={desktopSettingsTab !== "auto-scratch"}
-        className="panel-settings-tabpanel"
-      >
-        {autoScratchControls}
-      </div>
-      <div
-        id="panel-tabpanel-cursor-fx"
-        role="tabpanel"
-        aria-labelledby="panel-tab-cursor-fx"
-        hidden={desktopSettingsTab !== "cursor-fx"}
-        className="panel-settings-tabpanel"
-      >
-        {cursorFxControls}
-      </div>
-    </div>
-  );
-
   function openModel(modelId: string) {
     const ordered = playlistCardsForModel(cards, modelId);
     setPlaylistMode(true);
@@ -6806,279 +6354,7 @@ export function ScratchPrototype({
               onError={() => void beginCardTransitionHandoff(cardTransition)}
             />
           ) : null}
-          <div className="mobile-sound-wrap">
-            <button
-              type="button"
-              className={`mobile-reset mobile-sound-toggle${soundEnabled ? "" : " is-muted"}`}
-              aria-label={soundEnabled ? "Mute sounds" : "Unmute sounds"}
-              aria-pressed={soundEnabled}
-              onClick={() => updateSoundEnabled(!soundEnabled)}
-            >
-              {soundEnabled ? (
-                <Volume2 aria-hidden="true" size={20} strokeWidth={2.2} />
-              ) : (
-                <VolumeX aria-hidden="true" size={20} strokeWidth={2.2} />
-              )}
-            </button>
-          </div>
-          {/* Phones hide the dev panel, so surface compact controls on the stage
-              itself. Hidden on desktop where the panel is used. */}
-          <div className="mobile-controls-wrap">
-            <button
-              type="button"
-              className={`mobile-reset mobile-controls-toggle${mobileControlsOpen ? " is-open" : ""}`}
-              aria-label={
-                mobileControlsOpen ? "Hide controls" : "Show controls"
-              }
-              aria-expanded={mobileControlsOpen}
-              onClick={() => {
-                setMobileControlsOpen((current) => {
-                  if (current) setMobileSettingsOpen(false);
-                  return !current;
-                });
-              }}
-            >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {mobileControlsOpen && (
-              <div className="mobile-controls">
-                {gameMode ? (
-                  <a
-                    className="mobile-reset mobile-game-link"
-                    href="/collection"
-                  >
-                    Game
-                  </a>
-                ) : null}
-                <label className="mobile-card-switch">
-                  <span className="visually-hidden">Card</span>
-                  <select
-                    aria-label="Card clip"
-                    onChange={(event) =>
-                      setSelectedCardId(event.currentTarget.value)
-                    }
-                    value={card.id}
-                  >
-                    {remainingCards.map((entry, index) => (
-                      <option key={entry.id} value={entry.id}>
-                        {index + 1}. {entry.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="mobile-reset"
-                  aria-label="Reset scratch"
-                  onClick={resetScratch}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                    <path d="M3 3v5h5" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className={`mobile-reset${autoScratch.enabled ? " is-active" : ""}${symbolsHuntComplete ? " is-symbols-complete" : ""}`}
-                  disabled={autoScratchLocked}
-                  aria-label={
-                    autoScratchLocked
-                      ? "Auto scratch unlocks when play starts"
-                      : autoScratch.enabled
-                        ? "Auto scratch running"
-                        : "Enable auto scratch"
-                  }
-                  aria-pressed={autoScratch.enabled}
-                  onClick={() =>
-                    updateAutoScratch({ enabled: !autoScratch.enabled })
-                  }
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="mobile-reset mobile-settings-toggle"
-                  aria-label="Animation settings"
-                  aria-expanded={mobileSettingsOpen}
-                  onClick={() => setMobileSettingsOpen((current) => !current)}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                </button>
-              </div>
-            )}
-            {mobileControlsOpen && mobileSettingsOpen && (
-              <div
-                className="mobile-settings-sheet"
-                role="dialog"
-                aria-label="Animation settings"
-              >
-                {scratchZoomControls}
-                {autoScratchControls}
-                {cursorFxControls}
-              </div>
-            )}
-          </div>
         </div>
-        <aside className="panel">
-          <div>
-            <p className="eyebrow">
-              {gameMode
-                ? "GAME · motion hand"
-                : (activeModel?.label ?? "Sugar Scratchie")}
-            </p>
-            <h1>{card.label}</h1>
-            <p className="eyebrow">
-              Left {remainingCards.length}/{modelCards.length}
-              {completedCardIds.length > 0
-                ? ` · scratched ${completedCardIds.length}`
-                : ""}
-              {gameMode && gameSession
-                ? ` · prizes ${gameSession.photoPrizeTotal}`
-                : ""}
-            </p>
-          </div>
-          <div className="button-row">
-            {gameMode ? (
-              <a className="secondary-button" href="/collection">
-                Game
-              </a>
-            ) : (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setActiveModelId("");
-                  setSelectedCardId("");
-                  setCompletedCardIds([]);
-                  completedCardIdsRef.current = [];
-                }}
-              >
-                Girls
-              </button>
-            )}
-            <a className="secondary-button" href="/dashboard/models">
-              Models
-            </a>
-          </div>
-          <label>
-            Card
-            <select
-              aria-label="Card clip"
-              onChange={(event) => setSelectedCardId(event.currentTarget.value)}
-              value={card.id}
-            >
-              {remainingCards.map((entry, index) => (
-                <option key={entry.id} value={entry.id}>
-                  {index + 1}. {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Mesh
-            <select
-              aria-label="Mesh keyframe JSON"
-              disabled={meshFiles.length === 0}
-              onChange={(event) =>
-                setSelectedMeshFile(event.currentTarget.value)
-              }
-              value={selectedMeshFile}
-            >
-              {meshFiles.length === 0 ? (
-                <option value="">No mesh JSON files</option>
-              ) : (
-                meshFiles.map((file) => (
-                  <option key={file} value={file}>
-                    {file}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          <div className="timeline-controls">
-            <VideoTimelineSlider
-              duration={duration}
-              onSeek={setVideoTime}
-              videoRef={bottomVideoRef}
-            />
-          </div>
-          <div className="button-row">
-            <button type="button" onClick={togglePlayback}>
-              {isPaused ? "Play video" : "Pause video"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={resetScratch}
-            >
-              Reset scratch
-            </button>
-          </div>
-          <div className="button-row">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setShowMesh((current) => !current)}
-            >
-              {showMesh ? "Hide mesh" : "Show mesh"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setMeshReloadToken((current) => current + 1)}
-            >
-              Reload mesh
-            </button>
-          </div>
-          {desktopSettingsTabs}
-        </aside>
       </section>
     </main>
   );

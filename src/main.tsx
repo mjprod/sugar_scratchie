@@ -2,15 +2,12 @@ import React, { Suspense, lazy, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
-import { Dashboard } from "./Dashboard";
 import { DashboardLoginPage } from "./DashboardLoginPage";
 import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
 import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
 import { PhotoScratchTest } from "./PhotoScratchTest";
-import { ScratchPrototype } from "./ScratchPrototype";
-import { HomePickerPage } from "./HomePickerPage";
 import { SessionsPage } from "./SessionsPage";
 import { ThemesPage } from "./ThemesPage";
 import { AiModelsPage } from "./AiModelsPage";
@@ -65,7 +62,6 @@ function withOperatorGate(Page: React.ComponentType): React.ComponentType {
   return GatedPage;
 }
 
-const GatedDashboard = withOperatorGate(Dashboard);
 const GatedModelsPage = withOperatorGate(ModelsPage);
 const GatedPacksPage = withOperatorGate(PacksPage);
 const GatedThemesPage = withOperatorGate(ThemesPage);
@@ -85,21 +81,27 @@ const DashboardPlayerGame = lazy(() =>
   })),
 );
 
+function RedirectHome() {
+  useEffect(() => {
+    window.history.replaceState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+  return null;
+}
+
 function HomePage() {
   const params = new URLSearchParams(
     typeof window === "undefined" ? "" : window.location.search,
   );
   const model = params.get("model")?.trim();
-  const card = params.get("card")?.trim();
-  if (model && card) {
+  if (model) {
     return (
       <Suspense fallback={null}>
         <DashboardPlayerGame />
       </Suspense>
     );
   }
-  if (model) return <ScratchPrototype />;
-  return <HomePickerPage />;
+  return <GatedModelsPage />;
 }
 
 function pickApp(pathname: string) {
@@ -120,7 +122,7 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/users") return GatedUsersPage;
   if (path === "/symbols" || path === "/dashboard/symbols") return GatedSymbolsPage;
   if (path === "/dashboard/video-flow" || path === "/video-flow") return GatedVideoFlowHubPage;
-  if (path === "/dashboard") return GatedDashboard;
+  if (path === "/dashboard") return RedirectHome;
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/game") return GamePage;

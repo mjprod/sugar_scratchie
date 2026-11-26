@@ -2300,11 +2300,34 @@ textarea:focus-visible {
   box-shadow: 0 12px 32px rgba(40, 20, 10, 0.12);
 }
 
+.dropdown-trigger,
 .site-menu a {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   padding: 0.55rem 0.75rem;
   border-radius: 0.5rem;
   text-decoration: none;
+}
+
+.dropdown-trigger {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.dropdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.15rem 0 0.15rem 0.75rem;
+}
+
+.site-header:not(.is-wide) .site-menu a,
+.site-header:not(.is-wide) .dropdown-trigger {
+  display: flex;
+  inline-size: 100%;
 }
 
 .site-menu a:hover {
@@ -2319,9 +2342,20 @@ textarea:focus-visible {
 .menu-button:focus-visible,
 .site-signout:focus-visible,
 .site-logo:focus-visible,
+.dropdown-trigger:focus-visible,
 .site-menu a:focus-visible {
   outline: 2px solid var(--accent-9);
   outline-offset: 2px;
+}
+
+.dropdown-trigger:hover,
+.dropdown-trigger[aria-expanded="true"] {
+  background: var(--gray-3);
+}
+
+.nav-dropdown:has(a[aria-current="page"]) > .dropdown-trigger {
+  background: var(--accent-3);
+  box-shadow: inset 3px 0 0 var(--accent-9);
 }
 
 .site-header.is-wide .menu-button {
@@ -2349,8 +2383,45 @@ textarea:focus-visible {
   display: none;
 }
 
-.site-header.is-wide .site-menu a[aria-current="page"] {
+.site-header.is-wide .site-menu > li > a[aria-current="page"],
+.site-header.is-wide .nav-dropdown:has(a[aria-current="page"]) > .dropdown-trigger {
   box-shadow: inset 0 -2px 0 var(--accent-9);
+}
+
+.site-header.is-wide .dropdown-list[popover] {
+  position: fixed;
+  inset: auto;
+  inset-block-start: calc(4.75rem + 0.5rem);
+  inset-block-start: calc(anchor(bottom) + 0.5rem);
+  inset-inline-end: 1rem;
+  inset-inline-end: anchor(end);
+  height: auto;
+  inline-size: max-content;
+  min-inline-size: 12rem;
+  max-inline-size: calc(100dvw - 1rem);
+  margin: 0;
+  padding: 0.4rem;
+  overflow: visible;
+  border: 1px solid var(--gray-6);
+  border-radius: 0.75rem;
+  background: var(--color-background, #fff);
+  box-shadow: 0 12px 32px rgba(40, 20, 10, 0.12);
+}
+
+.site-header.is-wide .dropdown-list::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 100%;
+  block-size: 0.5rem;
+}
+
+.site-header.is-wide .dropdown-list:not(:is(:popover-open, .\:popover-open)) {
+  display: none;
+}
+
+.site-header.is-wide .dropdown-list:is(:popover-open, .\:popover-open) {
+  display: grid;
 }
 
 @supports not selector(:popover-open) {

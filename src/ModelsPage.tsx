@@ -98,6 +98,7 @@ import {
 } from "./videoFlow/projects";
 import { captureVideoFirstFrame, captureVideoSrcFirstFrame, dataUrlToFile } from "./shared/media";
 import { InfluencerN8nButton } from "./InfluencerN8nDialog";
+import { OperatorStatusBar } from "./OperatorStatusBar";
 import { ModelVideoSlot } from "./ModelVideoSlot";
 import { previewSource } from "./videoFlow/ui";
 
@@ -1414,6 +1415,7 @@ export function ModelsPage() {
     <main className="dashboard-root">
       <Container size="4">
         <Flex direction="column" gap="4" py="6">
+          <OperatorStatusBar />
           <Flex align="center" justify="between" wrap="wrap" gap="3">
             <Box>
               <Text className="eyebrow" size="2">
