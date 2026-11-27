@@ -1,8 +1,6 @@
 import {
   AlertTriangle,
   ArrowLeft,
-  ExternalLink,
-  Home,
   LoaderCircle,
   Search,
 } from "lucide-react";
@@ -158,24 +156,6 @@ export function PacksPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/models">Models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

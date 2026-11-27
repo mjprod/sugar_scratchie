@@ -5,9 +5,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
-  ExternalLink,
   Gamepad2,
-  Home,
   Images,
   Import,
   LoaderCircle,
@@ -100,6 +98,7 @@ import {
 } from "./videoFlow/projects";
 import { captureVideoFirstFrame, captureVideoSrcFirstFrame, dataUrlToFile } from "./shared/media";
 import { InfluencerN8nButton } from "./InfluencerN8nDialog";
+import { OperatorStatusBar } from "./OperatorStatusBar";
 import { ModelVideoSlot } from "./ModelVideoSlot";
 import { previewSource } from "./videoFlow/ui";
 
@@ -1416,6 +1415,7 @@ export function ModelsPage() {
     <main className="dashboard-root">
       <Container size="4">
         <Flex direction="column" gap="4" py="6">
+          <OperatorStatusBar />
           <Flex align="center" justify="between" wrap="wrap" gap="3">
             <Box>
               <Text className="eyebrow" size="2">
@@ -1434,33 +1434,6 @@ export function ModelsPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/users">Users</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/ai-models">AI models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>
