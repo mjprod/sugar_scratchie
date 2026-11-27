@@ -7,6 +7,7 @@ import { GamePage } from "./GamePage";
 import { ModelsPage } from "./ModelsPage";
 import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
+import { fetchOperatorSession } from "./shared/api";
 import { PhotoScratchTest } from "./PhotoScratchTest";
 import { SessionsPage } from "./SessionsPage";
 import { ThemesPage } from "./ThemesPage";
@@ -89,6 +90,34 @@ function RedirectHome() {
   return null;
 }
 
+function HomeEntry() {
+  const [operator, setOperator] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOperatorSession()
+      .then((ok) => {
+        if (!cancelled) setOperator(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setOperator(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Operators land on the catalog. Everyone else gets the public game hub.
+  // `/game` still links Home here, and that must not open operator login.
+  if (operator) return <GatedModelsPage />;
+  if (operator === false) return <GamePage />;
+  return (
+    <main className="dashboard-root">
+      <p className="game-hub-status">Loading…</p>
+    </main>
+  );
+}
+
 function HomePage() {
   const params = new URLSearchParams(
     typeof window === "undefined" ? "" : window.location.search,
@@ -101,7 +130,7 @@ function HomePage() {
       </Suspense>
     );
   }
-  return <GatedModelsPage />;
+  return <HomeEntry />;
 }
 
 function pickApp(pathname: string) {

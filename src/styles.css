@@ -2389,23 +2389,34 @@ textarea:focus-visible {
 }
 
 .site-header.is-wide .dropdown-list[popover] {
-  position: fixed;
-  inset: auto;
-  inset-block-start: calc(4.75rem + 0.5rem);
-  inset-block-start: calc(anchor(bottom) + 0.5rem);
-  inset-inline-end: 1rem;
-  inset-inline-end: anchor(end);
   height: auto;
   inline-size: max-content;
   min-inline-size: 12rem;
   max-inline-size: calc(100dvw - 1rem);
-  margin: 0;
   padding: 0.4rem;
   overflow: visible;
   border: 1px solid var(--gray-6);
   border-radius: 0.75rem;
   background: var(--color-background, #fff);
   box-shadow: 0 12px 32px rgba(40, 20, 10, 0.12);
+}
+
+@supports (position-area: block-end) {
+  .site-header.is-wide .dropdown-list[popover] {
+    inset: auto;
+    margin: 0;
+    margin-block-start: 0.5rem;
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  }
+}
+
+@supports not (position-area: block-end) {
+  .site-header.is-wide .dropdown-list[popover] {
+    position: fixed;
+    inset: 4.75rem 1rem auto auto;
+    margin: 0;
+  }
 }
 
 .site-header.is-wide .dropdown-list::before {
