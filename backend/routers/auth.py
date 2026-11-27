@@ -317,8 +317,10 @@ def register(body: RegisterRequest, request: Request, response: Response, db: An
         promoter_ref=promoter_ref,
     )
     code = _issue_verify_code(db, user)
-    send_verify_email(to=email, code=code)
-    return _issue(response, db, user, request)
+    sent = send_verify_email(to=email, code=code)
+    payload = _issue(response, db, user, request)
+    payload["verificationEmailSent"] = sent
+    return payload
 
 
 @router.post("/login")
@@ -498,8 +500,8 @@ def apple_login(
 
 def _send_verify_for_user(db: Session, user: User) -> dict:
     code = _issue_verify_code(db, user)
-    send_verify_email(to=user.email, code=code)
-    return {"ok": True}
+    sent = send_verify_email(to=user.email, code=code)
+    return {"ok": sent}
 
 
 @router.post("/verify-email/request")

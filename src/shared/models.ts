@@ -38,6 +38,84 @@ export const MODEL_SOCIAL_FIELDS = [
 
 export type ModelSocialKey = (typeof MODEL_SOCIAL_FIELDS)[number]["key"];
 
+/** Live in the app, hidden, or retired while buyers keep what they already own. */
+export const INFLUENCER_STATUSES = ["published", "unpublished", "deprecated"] as const;
+export type InfluencerStatus = (typeof INFLUENCER_STATUSES)[number];
+
+export const INFLUENCER_STATUS_OPTIONS: {
+  value: InfluencerStatus;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "published",
+    label: "Published",
+    hint: "Visible in the app. Players can buy her packs and cards.",
+  },
+  {
+    value: "unpublished",
+    label: "Unpublished",
+    hint: "Hidden from players. They cannot find or buy her.",
+  },
+  {
+    value: "deprecated",
+    label: "Deprecated",
+    hint: "She is no longer with us. Hidden from the store, but players who already bought her packs and cards keep them.",
+  },
+];
+
+export function influencerStatusOf(model: { status?: string | null }): InfluencerStatus {
+  if (model.status === "unpublished" || model.status === "deprecated") return model.status;
+  return "published";
+}
+
+/** Live in the store, or taken off while owners keep what they already have. */
+export const CARD_STATUSES = ["published", "unpublished"] as const;
+export type CardStatus = (typeof CARD_STATUSES)[number];
+
+export const CARD_STATUS_OPTIONS: {
+  value: CardStatus;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "published",
+    label: "Published",
+    hint: "Players can find and buy this card.",
+  },
+  {
+    value: "unpublished",
+    label: "Unpublished",
+    hint: "Hidden from the store. Players who already own it can still play it.",
+  },
+];
+
+/** Missing status counts as published so older API payloads stay live. */
+export function cardStatusOf(card: { status?: string | null }): CardStatus {
+  return card.status === "unpublished" ? "unpublished" : "published";
+}
+
+export async function updateCardStatus(cardId: string, status: CardStatus): Promise<void> {
+  await api(`/api/cards/${encodeURIComponent(cardId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function setPhotoScratchSlotStatus(
+  cardId: string,
+  slotId: string,
+  status: CardStatus,
+): Promise<{ status: CardStatus }> {
+  return api(
+    `/api/cards/${encodeURIComponent(cardId)}/photo-scratch/${encodeURIComponent(slotId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
 export type ModelGlobalMedia = {
   /** Foil 3D pack video 1, e.g. "/models/julianaval/pack-face.mp4". */
   packFaceVideoUrl?: string | null;
@@ -77,6 +155,7 @@ export type ModelInfo = {
   /** Invite-landing demo: scratch this model's card when the invitee has none. */
   defaultModal?: boolean;
   defaultModalCardId?: string | null;
+  status?: InfluencerStatus;
 } & ModelInfluencerProfile &
   ModelGlobalMedia;
 
@@ -117,6 +196,7 @@ export type UpdateModelPayload = {
   label?: string;
   defaultModal?: boolean;
   defaultModalCardId?: string | null;
+  status?: InfluencerStatus;
 } & ModelInfluencerProfile &
   Pick<ModelGlobalMedia, "cardPackName" | "cardPackName2">;
 
@@ -533,6 +613,8 @@ export type PhotoScratchSlot = {
   clothes_ref?: string;
   /** Whole-number price shown in the game UI; copied to the catalog on publish. */
   card_price?: number | null;
+  /** Catalog visibility once this slot is published as a photo game. */
+  status?: CardStatus;
   /** Per-slot static photo mesh URL (not the motion-card video mesh). */
   mesh?: string;
   has_symbols?: boolean;

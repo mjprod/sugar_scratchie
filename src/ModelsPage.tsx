@@ -3,9 +3,9 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
+  Eye,
+  EyeOff,
   Gamepad2,
-  Home,
   Images,
   Import,
   LoaderCircle,
@@ -59,6 +59,7 @@ import {
   publishPhotoScratchGame,
   reorderModelCards,
   updateCardPricing,
+  updateCardStatus,
   updateModel,
   uploadCardTrailer,
   uploadCardTrailerPoster,
@@ -70,9 +71,16 @@ import {
   uploadModelPoster,
   uploadModelCover,
   uploadModelProfileDress,
+  CARD_STATUS_OPTIONS,
+  INFLUENCER_STATUS_OPTIONS,
   MODEL_SOCIAL_FIELDS,
   MODEL_VIDEO_POSTER_KIND,
+  cardStatusOf,
+  influencerStatusOf,
+  setPhotoScratchSlotStatus,
   type CardPricing,
+  type CardStatus,
+  type InfluencerStatus,
   type CardTier,
   type ModelInfo,
   type ModelSocialKey,
@@ -90,6 +98,7 @@ import {
 } from "./videoFlow/projects";
 import { captureVideoFirstFrame, captureVideoSrcFirstFrame, dataUrlToFile } from "./shared/media";
 import { InfluencerN8nButton } from "./InfluencerN8nDialog";
+import { OperatorStatusBar } from "./OperatorStatusBar";
 import { ModelVideoSlot } from "./ModelVideoSlot";
 import { previewSource } from "./videoFlow/ui";
 
@@ -132,6 +141,8 @@ type CardInfo = {
   tier?: CardTier;
   replay_price?: number;
   max_win?: number;
+  /** published in the store, or unpublished while owners keep what they own. */
+  status?: CardStatus;
 };
 
 function modelSocials(model: ModelInfo): Record<ModelSocialKey, string> {
@@ -754,6 +765,7 @@ export function ModelsPage() {
       const haystack = [
         model.id,
         model.label,
+        model.status ?? "",
         model.influencerName ?? "",
         model.influencerCity ?? "",
         model.influencerCountry ?? "",
@@ -779,6 +791,7 @@ export function ModelsPage() {
         .filter(
           (model) =>
             !model.defaultModal &&
+            influencerStatusOf(model) === "published" &&
             (publishedCardsByModel.get(model.id) ?? []).length > 0,
         )
         .sort((a, b) => a.id.localeCompare(b.id)),
@@ -877,6 +890,19 @@ export function ModelsPage() {
     }
   }
 
+  async function handleSaveStatus(modelId: string, status: InfluencerStatus) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateModel(modelId, { status });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSaveTags(modelId: string, tags: string[]) {
     setBusy(true);
     setError("");
@@ -941,6 +967,36 @@ export function ModelsPage() {
     setError("");
     try {
       await updateCardPricing(cardId, pricing);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveCardStatus(cardId: string, status: CardStatus) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateCardStatus(cardId, status);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSavePhotoStatus(
+    cardId: string,
+    slotId: string,
+    status: CardStatus,
+  ) {
+    setBusy(true);
+    setError("");
+    try {
+      await setPhotoScratchSlotStatus(cardId, slotId, status);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -1359,6 +1415,7 @@ export function ModelsPage() {
     <main className="dashboard-root">
       <Container size="4">
         <Flex direction="column" gap="4" py="6">
+          <OperatorStatusBar />
           <Flex align="center" justify="between" wrap="wrap" gap="3">
             <Box>
               <Text className="eyebrow" size="2">
@@ -1377,33 +1434,6 @@ export function ModelsPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/users">Users</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/ai-models">AI models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>
@@ -1507,12 +1537,17 @@ export function ModelsPage() {
                 setProfileDressTargetId(selectedModel.id);
                 profileDressInputRef.current?.click();
               }}
+              onSaveStatus={(status) => void handleSaveStatus(selectedModel.id, status)}
               onSaveTags={(tags) => void handleSaveTags(selectedModel.id, tags)}
               onSetDefaultModal={(cardId) =>
                 void handleSetDefaultModal(selectedModel.id, cardId)
               }
               onSaveSocials={(socials) => void handleSaveSocials(selectedModel.id, socials)}
               onSaveCardPricing={(cardId, pricing) => void handleSaveCardPricing(cardId, pricing)}
+              onSaveCardStatus={(cardId, status) => void handleSaveCardStatus(cardId, status)}
+              onSavePhotoStatus={(cardId, slotId, status) =>
+                void handleSavePhotoStatus(cardId, slotId, status)
+              }
               onCancelCreateCard={closeCreateCard}
               onCancelRename={() => {
                 setEditingId("");
@@ -1766,6 +1801,7 @@ export function ModelsPage() {
                                       <span>
                                         <ModelFlagMark model={model} size={16} />
                                         {modelDisplayTitle(model)}
+                                        <InfluencerStatusBadge status={model.status} />
                                       </span>
                                     </Flex>
                                   </Text>
@@ -1841,14 +1877,17 @@ export function ModelsPage() {
                       <a key={model.id} className="models-list-card" href={modelDetailHref(model.id)}>
                         <ModelAvatar model={model} size={44} />
                         <Box style={{ minWidth: 0 }}>
-                          <Text as="div" size="3" weight="bold" truncate>
-                            <Flex align="center" gap="2" asChild>
-                              <span>
-                                <ModelFlagMark model={model} size={16} />
-                                {modelDisplayTitle(model)}
-                              </span>
-                            </Flex>
-                          </Text>
+                          <Flex align="center" gap="2">
+                            <Text as="div" size="3" weight="bold" truncate>
+                              <Flex align="center" gap="2" asChild>
+                                <span>
+                                  <ModelFlagMark model={model} size={16} />
+                                  {modelDisplayTitle(model)}
+                                </span>
+                              </Flex>
+                            </Text>
+                            <InfluencerStatusBadge status={model.status} />
+                          </Flex>
                           <Text as="div" color="gray" size="2">
                             {location || `${count} motion card${count === 1 ? "" : "s"}`}
                           </Text>
@@ -2809,6 +2848,166 @@ function SwipeMotionVideoSlot({
   );
 }
 
+function InfluencerStatusBadge({ status }: { status?: string | null }) {
+  const value = influencerStatusOf({ status });
+  const color = value === "published" ? "green" : value === "deprecated" ? "amber" : "gray";
+  const label = INFLUENCER_STATUS_OPTIONS.find((option) => option.value === value)?.label ?? "Published";
+  return (
+    <Badge color={color} size="1" variant="soft">
+      {label}
+    </Badge>
+  );
+}
+
+function CardStatusBadge({
+  status,
+  busy,
+  onToggle,
+}: {
+  status?: string | null;
+  busy?: boolean;
+  /** One-click flip. Saves immediately — no draft/confirm step. */
+  onToggle?: (status: CardStatus) => void;
+}) {
+  const value = cardStatusOf({ status });
+  const color = value === "published" ? "green" : "gray";
+  const label = CARD_STATUS_OPTIONS.find((option) => option.value === value)?.label ?? "Published";
+  if (!onToggle) {
+    return (
+      <Badge color={color} size="1" variant="soft">
+        {label}
+      </Badge>
+    );
+  }
+  const next = value === "published" ? "unpublished" : "published";
+  return (
+    <button
+      type="button"
+      className="models-card-status-badge-btn"
+      disabled={busy}
+      title={value === "published" ? "Unpublish this card" : "Publish this card"}
+      onClick={() => onToggle(next)}
+    >
+      <Badge color={color} size="1" variant="soft">
+        {label}
+      </Badge>
+    </button>
+  );
+}
+
+function CardStatusControl({
+  cardId,
+  status,
+  busy,
+  onSave,
+}: {
+  cardId: string;
+  status?: string | null;
+  busy: boolean;
+  onSave: (status: CardStatus) => void;
+}) {
+  const current = cardStatusOf({ status });
+  const [draft, setDraft] = useState<CardStatus>(current);
+  useEffect(() => {
+    setDraft(current);
+  }, [cardId, current]);
+  const selected =
+    CARD_STATUS_OPTIONS.find((option) => option.value === draft) ?? CARD_STATUS_OPTIONS[0];
+  const hintId = `card-status-hint-${cardId}`;
+  return (
+    <fieldset className="influencer-status card-status" aria-describedby={hintId}>
+      <legend>Card status</legend>
+      <p className="influencer-status-hint" id={hintId}>
+        {selected.hint}
+      </p>
+      <div className="influencer-status-options">
+        {CARD_STATUS_OPTIONS.map((option) => {
+          const id = `card-status-${cardId}-${option.value}`;
+          return (
+            <label key={option.value} htmlFor={id}>
+              <input
+                type="radio"
+                id={id}
+                name={`card-status-${cardId}`}
+                value={option.value}
+                checked={draft === option.value}
+                disabled={busy}
+                aria-describedby={hintId}
+                onChange={() => setDraft(option.value)}
+              />
+              {option.label}
+            </label>
+          );
+        })}
+      </div>
+      <Button
+        type="button"
+        size="1"
+        disabled={busy || draft === current}
+        onClick={() => onSave(draft)}
+      >
+        Save status
+      </Button>
+    </fieldset>
+  );
+}
+
+function InfluencerStatusControl({
+  model,
+  busy,
+  onSave,
+}: {
+  model: ModelInfo;
+  busy: boolean;
+  onSave: (status: InfluencerStatus) => void;
+}) {
+  const current = influencerStatusOf(model);
+  const [draft, setDraft] = useState<InfluencerStatus>(current);
+  useEffect(() => {
+    setDraft(current);
+  }, [model.id, current]);
+  const selected =
+    INFLUENCER_STATUS_OPTIONS.find((option) => option.value === draft) ??
+    INFLUENCER_STATUS_OPTIONS[0];
+  const hintId = `influencer-status-hint-${model.id}`;
+  return (
+    <fieldset className="influencer-status" aria-describedby={hintId}>
+      <legend>Status</legend>
+      <p className="influencer-status-hint" id={hintId}>
+        {selected.hint}
+      </p>
+      <div className="influencer-status-options">
+        {INFLUENCER_STATUS_OPTIONS.map((option) => {
+          const id = `influencer-status-${model.id}-${option.value}`;
+          return (
+            <label key={option.value} htmlFor={id}>
+              <input
+                type="radio"
+                id={id}
+                name={`influencer-status-${model.id}`}
+                value={option.value}
+                checked={draft === option.value}
+                disabled={busy}
+                aria-describedby={hintId}
+                onChange={() => setDraft(option.value)}
+              />
+              {option.label}
+            </label>
+          );
+        })}
+      </div>
+      <Button
+        type="button"
+        size="1"
+        disabled={busy || draft === current}
+        onClick={() => onSave(draft)}
+      >
+        Save status
+      </Button>
+    </fieldset>
+  );
+}
+
 function ModelDetail({
   busy,
   creatingCardFor,
@@ -2872,10 +3071,13 @@ function ModelDetail({
   onSwipePosterClick,
   onCoverClick,
   onProfileDressClick,
+  onSaveStatus,
   onSaveTags,
   onSetDefaultModal,
   onSaveSocials,
   onSaveCardPricing,
+  onSaveCardStatus,
+  onSavePhotoStatus,
 }: {
   busy: boolean;
   creatingCardFor: string;
@@ -2939,10 +3141,13 @@ function ModelDetail({
   onSwipePosterClick: () => void;
   onCoverClick: () => void;
   onProfileDressClick: () => void;
+  onSaveStatus: (status: InfluencerStatus) => void;
   onSaveTags: (tags: string[]) => void;
   onSetDefaultModal: (cardId: string | null) => void;
   onSaveSocials: (socials: Record<ModelSocialKey, string>) => void;
   onSaveCardPricing: (cardId: string, pricing: CardPricing) => void;
+  onSaveCardStatus: (cardId: string, status: CardStatus) => void;
+  onSavePhotoStatus: (cardId: string, slotId: string, status: CardStatus) => void;
 }) {
   const candidates = importableCards.filter((card) => card.model_id !== model.id);
   const publishedCards = modelCards.filter((entry) => !entry.draft);
@@ -3171,6 +3376,7 @@ function ModelDetail({
                   <Badge color="plum" variant="soft">
                     {model.id}
                   </Badge>
+                  <InfluencerStatusBadge status={model.status} />
                   {modelTags(model).map((tag) => (
                     <Badge key={tag} color={tagColor(tag)} variant="soft">
                       {tag}
@@ -3222,6 +3428,12 @@ function ModelDetail({
             </Text>
           </Box>
         </Flex>
+
+        <InfluencerStatusControl
+          busy={busy}
+          model={model}
+          onSave={onSaveStatus}
+        />
 
         <Flex gap="2" mb={creatingCardFor === model.id ? "2" : "3"} wrap="wrap">
           {publishedCards.length > 0 ? (
@@ -3581,6 +3793,10 @@ function ModelDetail({
                         onMoveUp={() => onMoveCard(card.id, -1)}
                         onPublishGame={() => onPublishGame(card.id)}
                         onSavePricing={(pricing) => onSaveCardPricing(card.id, pricing)}
+                        onSaveStatus={(status) => onSaveCardStatus(card.id, status)}
+                        onSavePhotoStatus={(slotId, status) =>
+                          onSavePhotoStatus(card.id, slotId, status)
+                        }
                         onTrailerClick={() => onTrailerClick(card.id)}
                         onTrailerPosterClick={() => onTrailerPosterClick(card.id)}
                         onGenerateTrailerPoster={() => {
@@ -4147,9 +4363,22 @@ function CardVideoThumb({ label, src }: { label: string; src: string }) {
   );
 }
 
-function PhotoScratchThumbs({ card }: { card: CardInfo }) {
+function PhotoScratchThumbs({
+  busy,
+  card,
+  onSaveStatus,
+}: {
+  busy: boolean;
+  card: CardInfo;
+  onSaveStatus: (slotId: string, status: CardStatus) => void;
+}) {
   const [thumbs, setThumbs] = useState<
-    Array<{ id: string; layers: SlotPreviewLayers; done: boolean }>
+    Array<{
+      id: string;
+      layers: SlotPreviewLayers;
+      done: boolean;
+      status?: CardStatus;
+    }>
   >([]);
   const [peek, setPeek] = useState<{
     label: string;
@@ -4178,11 +4407,15 @@ function PhotoScratchThumbs({ card }: { card: CardInfo }) {
               const src = previewSource(slotThumbSrc(slot));
               layers.clothes = src;
             }
-            return { id: slot.id, layers, done: slotIsDone(slot) };
+            return {
+              id: slot.id,
+              layers,
+              done: slotIsDone(slot),
+              status: slot.status ? cardStatusOf(slot) : undefined,
+            };
           })
           .filter(
-            (entry): entry is { id: string; layers: SlotPreviewLayers; done: boolean } =>
-              entry != null,
+            (entry): entry is NonNullable<typeof entry> => entry != null,
           );
         setThumbs(next);
       })
@@ -4200,6 +4433,8 @@ function PhotoScratchThumbs({ card }: { card: CardInfo }) {
     card.photo_scratch_mesh_count,
   ]);
 
+  const publishedSlots = thumbs.filter((thumb) => thumb.status);
+
   if (thumbs.length === 0) return null;
 
   return (
@@ -4212,6 +4447,7 @@ function PhotoScratchThumbs({ card }: { card: CardInfo }) {
             href={pictureFlowHref(card.id, thumb.id)}
             label={thumb.id}
             layers={thumb.layers}
+            status={thumb.status}
             onClosePeek={() => setPeek(null)}
             onOpenPeek={(point) =>
               setPeek({ label: thumb.id, layers: thumb.layers, point })
@@ -4219,6 +4455,23 @@ function PhotoScratchThumbs({ card }: { card: CardInfo }) {
           />
         ))}
       </div>
+      {publishedSlots.length > 0 ? (
+        <div className="models-card-ps-status-list">
+          {publishedSlots.map((thumb) => (
+            <div key={`status-${thumb.id}`} className="models-card-ps-status-row">
+              <Text size="1" weight="medium">
+                {thumb.id}
+              </Text>
+              <CardStatusControl
+                busy={busy}
+                cardId={`${card.id}-${thumb.id}`}
+                status={thumb.status}
+                onSave={(status) => onSaveStatus(thumb.id, status)}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
       {peek ? (
         <MiniMediaOverlay
           label={peek.label}
@@ -4236,6 +4489,7 @@ function PhotoScratchThumbLink({
   href,
   label,
   layers,
+  status,
   onOpenPeek,
   onClosePeek,
 }: {
@@ -4243,22 +4497,31 @@ function PhotoScratchThumbLink({
   href: string;
   label: string;
   layers: SlotPreviewLayers;
+  status?: CardStatus;
   onOpenPeek: (point: PeekPoint) => void;
   onClosePeek: () => void;
 }) {
   const peekHandlers = useInstagramPeek(onOpenPeek, onClosePeek);
+  const statusLabel = status ? cardStatusOf({ status }) : null;
 
   return (
     <a
-      className={`models-card-ps-thumb${done ? " is-done" : ""}`}
+      className={`models-card-ps-thumb${done ? " is-done" : ""}${
+        statusLabel === "unpublished" ? " is-unpublished" : ""
+      }`}
       href={href}
-      title={`${label}${done ? " (done)" : ""} · hold to preview`}
+      title={`${label}${done ? " (done)" : ""}${
+        statusLabel ? ` · ${statusLabel}` : ""
+      } · hold to preview`}
       onClick={(event) => {
         if (peekHandlers.consumeSuppressClick()) event.preventDefault();
       }}
       {...peekHandlers.bind}
     >
       <SlotPictureStack layers={layers} />
+      {statusLabel ? (
+        <span className="models-card-ps-thumb-status">{statusLabel}</span>
+      ) : null}
     </a>
   );
 }
@@ -4276,6 +4539,8 @@ function MotionCardRow({
   onMoveUp,
   onPublishGame,
   onSavePricing,
+  onSaveStatus,
+  onSavePhotoStatus,
   onTrailerClick,
   onTrailerPosterClick,
   onGenerateTrailerPoster,
@@ -4294,6 +4559,8 @@ function MotionCardRow({
   onMoveUp: () => void;
   onPublishGame: () => void;
   onSavePricing: (pricing: CardPricing) => void;
+  onSaveStatus: (status: CardStatus) => void;
+  onSavePhotoStatus: (slotId: string, status: CardStatus) => void;
   onTrailerClick: () => void;
   onTrailerPosterClick: () => void;
   onGenerateTrailerPoster: () => void;
@@ -4333,7 +4600,13 @@ function MotionCardRow({
                 <Badge color="amber" size="1" variant="soft">
                   draft
                 </Badge>
-              ) : null}
+              ) : (
+                <CardStatusBadge
+                  busy={busy}
+                  status={card.status}
+                  onToggle={onSaveStatus}
+                />
+              )}
               {!isDraft && hasTrailer ? (
                 <Badge color="green" size="1" variant="soft">
                   trailer
@@ -4384,6 +4657,33 @@ function MotionCardRow({
               </>
             ) : (
               <>
+                <ActionSlot>
+                  <Button
+                    color={cardStatusOf(card) === "published" ? "green" : "gray"}
+                    disabled={busy}
+                    size="1"
+                    title={
+                      cardStatusOf(card) === "published"
+                        ? "Unpublish this motion card"
+                        : "Publish this motion card"
+                    }
+                    variant="soft"
+                    onClick={() =>
+                      onSaveStatus(
+                        cardStatusOf(card) === "published"
+                          ? "unpublished"
+                          : "published",
+                      )
+                    }
+                  >
+                    {cardStatusOf(card) === "published" ? (
+                      <Eye {...iconProps} />
+                    ) : (
+                      <EyeOff {...iconProps} />
+                    )}
+                    {cardStatusOf(card) === "published" ? "Published" : "Unpublished"}
+                  </Button>
+                </ActionSlot>
                 <ActionSlot>
                   <Button
                     color="gray"
@@ -4456,7 +4756,13 @@ function MotionCardRow({
 
       {!isDraft ? (
         <div className="models-card-list-line">
-          <div className="models-card-list-identity-text">
+          <div className="models-card-list-identity-text" style={{ width: "100%" }}>
+            <CardStatusControl
+              busy={busy}
+              cardId={card.id}
+              status={card.status}
+              onSave={onSaveStatus}
+            />
             <Text as="div" className="models-card-list-line-label" color="gray" size="1" weight="medium">
               Pricing
             </Text>
@@ -4522,7 +4828,11 @@ function MotionCardRow({
           <Text className="models-card-list-line-label" color="gray" size="1" weight="medium">
             Photo Scratch
           </Text>
-          <PhotoScratchThumbs card={card} />
+          <PhotoScratchThumbs
+            busy={busy}
+            card={card}
+            onSaveStatus={onSavePhotoStatus}
+          />
           <PhotoScratchStatus card={card} />
         </div>
 

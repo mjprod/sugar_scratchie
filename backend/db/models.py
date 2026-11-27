@@ -47,13 +47,14 @@ class PreInfluencer(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(CITEXT, nullable=False)
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
+    social_handle: Mapped[str | None] = mapped_column(Text, nullable=True)
     invite_code: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     survey_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mjfp_last_notified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     asset_link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Operator catalog model created at confirm so Send influencer / foil n8n
-    # can run as onboarding step 2 before Order Landing Page (step 3).
+    # Operator catalog model created when the landing-page form is submitted
+    # so foil n8n can run as onboarding step 2 before Order Landing Page (step 3).
     model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -216,6 +217,37 @@ class Theme(Base):
     card_light_color_2: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ThemeSession(Base):
+    """One live window of catalog themes. Default has no start or end and means every theme."""
+
+    __tablename__ = "theme_sessions"
+    __table_args__ = (Index("theme_sessions_sort_order_idx", "sort_order"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    acronym: Mapped[str | None] = mapped_column(Text, nullable=True)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ThemeSessionTheme(Base):
+    """Themes picked for one custom session. Default has no rows."""
+
+    __tablename__ = "theme_session_themes"
+    __table_args__ = (Index("theme_session_themes_theme_idx", "theme_id"),)
+
+    session_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("theme_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    theme_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("themes.id", ondelete="CASCADE"), primary_key=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class GenerationModel(Base):
     """Operator catalog of Video Flow image and video models (provider endpoints, not weights)."""
 
@@ -268,9 +300,22 @@ class Creator(Base):
     """Admin catalog of creators / models (metadata only; avatars/flags/videos stay on disk)."""
 
     __tablename__ = "models"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('published','unpublished','deprecated')",
+            name="models_status_chk",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
+    # published: in the store. unpublished: hidden. deprecated: left, buyers keep what they own.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     influencer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -300,6 +345,9 @@ class Creator(Base):
 CARD_TIERS = ("standard", "premium", "ultra")
 
 
+CARD_STATUSES = ("published", "unpublished")
+
+
 class MotionCard(Base):
     """Admin catalog of motion cards (metadata only; videos/mesh/photos stay on disk)."""
 
@@ -308,6 +356,10 @@ class MotionCard(Base):
         Index("cards_model_sort_idx", "model_id", "sort_order"),
         CheckConstraint("tier IN ('standard','premium','ultra')", name="cards_tier_chk"),
         CheckConstraint("price >= 0 AND replay_price >= 0 AND max_win >= 0", name="cards_prices_chk"),
+        CheckConstraint(
+            "status IN ('published','unpublished')",
+            name="cards_status_chk",
+        ),
         Index(
             "cards_premium_model_theme_uq",
             "model_id",
@@ -324,6 +376,13 @@ class MotionCard(Base):
     theme_id: Mapped[str | None] = mapped_column(Text, ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     photos: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    # published: in the store. unpublished: hidden unless the player already owns or played it.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     # Diamonds. `price` is the first play (the unlock for premium / ultra cards).
     price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tier: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
@@ -340,6 +399,10 @@ class PhotoScratchCard(Base):
     __table_args__ = (
         CheckConstraint("slot_id ~ '^slot_[0-9]{2}$'", name="photo_scratch_cards_slot_chk"),
         CheckConstraint("card_price IS NULL OR card_price >= 0", name="photo_scratch_cards_price_chk"),
+        CheckConstraint(
+            "status IN ('published','unpublished')",
+            name="photo_scratch_cards_status_chk",
+        ),
         UniqueConstraint("card_id", "slot_id", name="photo_scratch_cards_card_slot_uq"),
         Index("photo_scratch_cards_card_idx", "card_id"),
         Index("photo_scratch_cards_sort_idx", "sort_order"),
@@ -356,6 +419,13 @@ class PhotoScratchCard(Base):
     clothes: Mapped[str] = mapped_column(Text, nullable=False)
     mesh: Mapped[str] = mapped_column(Text, nullable=False)
     card_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # published: in the store. unpublished: hidden unless the player already owns or played it.
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="published",
+        server_default=text("'published'"),
+    )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

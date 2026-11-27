@@ -327,7 +327,8 @@ def test_dress_remake_drops_boomerang_backups(card_id, published_card):
 
 
 @needs_ffmpeg
-def test_grok_flow_skips_boomerang_so_create_card_can_continue(card_id):
+def test_flow_state_does_not_auto_approve_boomerang_after_dress(card_id):
+    """Dress approval leaves Boomerang for the operator; Create card stays locked."""
     work = work_dir(card_id)
     _make_clip(work / "background-raw.mp4")
     _make_clip(work / "foreground-dressed.mp4")
@@ -335,25 +336,26 @@ def test_grok_flow_skips_boomerang_so_create_card_can_continue(card_id):
 
     flow = video_flow.flow_state(card_id)
 
-    assert flow["boomerang"]["skipped"] is True
-    assert flow["steps"]["boomerang"]["status"] == "approved"
-    assert flow["steps"]["card"]["status"] == "ready"
+    assert flow["boomerang"] is None
+    assert flow["steps"]["boomerang"]["status"] == "ready"
+    assert flow["steps"]["card"]["status"] == "locked"
+    assert "boomerang" not in read_state(work)["approved"]
     assert probe_video_timing(work / "background-raw.mp4")["frames"] == SOURCE_SECONDS * FPS
 
 
 @needs_ffmpeg
-def test_wavespeed_flow_keeps_boomerang_choice(card_id):
+def test_existing_boomerang_cut_survives_flow_state(card_id):
+    """A forward-and-reverse cut already on disk is not undone when state is read."""
     work = work_dir(card_id)
     _make_clip(work / "background-raw.mp4")
     _make_clip(work / "foreground-dressed.mp4")
     write_state(work, {"approved": ["background", "trim", "dress"]})
-    (work / "draft.json").write_text(
-        json.dumps({"background_video_model": "wan-2.2-spicy"}) + "\n",
-        encoding="utf-8",
-    )
 
+    video_flow.apply_boomerang_step(card_id, card_label="Test", seconds=2)
+    forward = 2 * FPS
     flow = video_flow.flow_state(card_id)
 
-    assert flow["boomerang"]["skipped"] is True
-    assert flow["steps"]["boomerang"]["status"] == "approved"
-    assert flow["steps"]["card"]["status"] == "ready"
+    assert flow["boomerang"]["skipped"] is not True
+    assert flow["boomerang"]["frames_after"] == 2 * forward - 1
+    assert flow["steps"]["boomerang"]["status"] == "review"
+    assert flow["steps"]["card"]["status"] == "locked"

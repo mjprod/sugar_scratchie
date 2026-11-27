@@ -2,15 +2,14 @@ import React, { Suspense, lazy, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { setWasmUrl } from "@lottiefiles/dotlottie-react";
 import { Theme } from "@radix-ui/themes";
-import { Dashboard } from "./Dashboard";
 import { DashboardLoginPage } from "./DashboardLoginPage";
 import { GamePage } from "./GamePage";
-import { JoinConfirmPage } from "./JoinConfirmPage";
 import { ModelsPage } from "./ModelsPage";
 import { PacksPage } from "./PacksPage";
 import { OperatorGate } from "./OperatorGate";
+import { fetchOperatorSession } from "./shared/api";
 import { PhotoScratchTest } from "./PhotoScratchTest";
-import { ScratchPrototype } from "./ScratchPrototype";
+import { SessionsPage } from "./SessionsPage";
 import { ThemesPage } from "./ThemesPage";
 import { AiModelsPage } from "./AiModelsPage";
 import { SymbolsPage } from "./SymbolsPage";
@@ -65,10 +64,10 @@ function withOperatorGate(Page: React.ComponentType): React.ComponentType {
   return GatedPage;
 }
 
-const GatedDashboard = withOperatorGate(Dashboard);
 const GatedModelsPage = withOperatorGate(ModelsPage);
 const GatedPacksPage = withOperatorGate(PacksPage);
 const GatedThemesPage = withOperatorGate(ThemesPage);
+const GatedSessionsPage = withOperatorGate(SessionsPage);
 const GatedAiModelsPage = withOperatorGate(AiModelsPage);
 const GatedUsersPage = withOperatorGate(UsersPage);
 const GatedSymbolsPage = withOperatorGate(SymbolsPage);
@@ -84,28 +83,62 @@ const DashboardPlayerGame = lazy(() =>
   })),
 );
 
+function RedirectHome() {
+  useEffect(() => {
+    window.history.replaceState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+  return null;
+}
+
+function HomeEntry() {
+  const [operator, setOperator] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOperatorSession()
+      .then((ok) => {
+        if (!cancelled) setOperator(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setOperator(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Operators land on the catalog. Everyone else gets the public game hub.
+  // `/game` still links Home here, and that must not open operator login.
+  if (operator) return <GatedModelsPage />;
+  if (operator === false) return <GamePage />;
+  return (
+    <main className="dashboard-root">
+      <p className="game-hub-status">Loading…</p>
+    </main>
+  );
+}
+
 function HomePage() {
   const params = new URLSearchParams(
     typeof window === "undefined" ? "" : window.location.search,
   );
   const model = params.get("model")?.trim();
-  const card = params.get("card")?.trim();
-  if (model && card) {
+  if (model) {
     return (
       <Suspense fallback={null}>
         <DashboardPlayerGame />
       </Suspense>
     );
   }
-  return <ScratchPrototype />;
+  return <HomeEntry />;
 }
 
 function pickApp(pathname: string) {
   const path = normalizePath(pathname);
   if (path === "/dashboard/login") return DashboardLoginPage;
-  // Invitee confirms email/name — public. Freeplay LP lives in frontend-new
-  // (e.g. https://localhost:5174/join?model=…&freeplay=1&card=…), not here.
-  if (path === "/join" || path === "/dashboard/join") return JoinConfirmPage;
+  // Freeplay LP + Forms step live in frontend-new
+  // (e.g. https://localhost:5174/join?model=…&freeplay=1&card=…&inviteCode=…).
   if (path === "/dashboard/video-flow/designer") return GatedVideoFlowDesignerPage;
   if (path === "/dashboard/video-flow/run") return GatedVideoFlowRunPage;
   if (path === "/dashboard/video-flow/lite") return GatedVideoFlowLitePage;
@@ -114,11 +147,12 @@ function pickApp(pathname: string) {
   if (path === "/dashboard/models") return GatedModelsPage;
   if (path === "/dashboard/packs") return GatedPacksPage;
   if (path === "/dashboard/themes") return GatedThemesPage;
+  if (path === "/dashboard/sessions" || path === "/dashboard/seasons") return GatedSessionsPage;
   if (path === "/dashboard/ai-models") return GatedAiModelsPage;
   if (path === "/dashboard/users") return GatedUsersPage;
   if (path === "/symbols" || path === "/dashboard/symbols") return GatedSymbolsPage;
   if (path === "/dashboard/video-flow" || path === "/video-flow") return GatedVideoFlowHubPage;
-  if (path === "/dashboard") return GatedDashboard;
+  if (path === "/dashboard") return RedirectHome;
   if (path === "/photo-scratch") return PhotoScratchTest;
   if (path === "/video-transition") return VideoTransitionPlaygroundRoute;
   if (path === "/leo-ui" || path === "/backend-leo-ui") return LeoUiPage;

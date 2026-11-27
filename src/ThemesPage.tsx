@@ -2,8 +2,6 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
-  Home,
   LoaderCircle,
   Music2,
   Pencil,
@@ -466,6 +464,7 @@ export function ThemesPage() {
                 Categories for motion cards and photo scratch. Pick one in Video Flow Setup.
                 Upload intro videos on the model page under each theme header. Set the game’s
                 default music here, and optionally a track that replaces it for one theme.
+                Which of these themes players see is chosen on Seasons.
               </Text>
             </Box>
             <Flex gap="2" wrap="wrap">
@@ -476,33 +475,6 @@ export function ThemesPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/users">Users</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/models">Models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/ai-models">AI models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/symbols">Symbols</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

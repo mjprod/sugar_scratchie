@@ -456,12 +456,6 @@ export function AiModelsPage() {
                 <Plus {...iconProps} />
                 Add a model
               </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/video-flow/run">Video Flow</a>
-              </Button>
-              <Button asChild color="gray" variant="soft">
-                <a href="/dashboard">Dashboard</a>
-              </Button>
             </Flex>
           </Flex>
 

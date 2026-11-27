@@ -1,4 +1,4 @@
-import { ExternalLink, LoaderCircle, Tags, UserRound } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { Box, Button, Flex, Heading, Text } from "@radix-ui/themes";
 import type { ReactNode } from "react";
 import { hrefWithModel, readCurrentModelId } from "../shared/currentModel";
@@ -27,7 +27,6 @@ export function VideoFlowShell({
   const girl = dressModelId?.trim() || readCurrentModelId();
   const dressHref = hrefWithModel("/dashboard/video-flow/dress", girl);
   const runHref = hrefWithModel("/dashboard/video-flow/run", girl);
-  const modelsHref = hrefWithModel("/dashboard/models", girl);
   return (
     <div className="video-flow-page">
       <header className="video-flow-header">
@@ -49,7 +48,7 @@ export function VideoFlowShell({
             </Text>
           </Box>
           <Flex align="center" gap="2" wrap="wrap">
-            <nav className="video-flow-nav">
+            <nav className="video-flow-nav" aria-label="Video flow">
               <a className={active === "run" ? "is-active" : ""} href={runHref}>
                 Run
               </a>
@@ -70,33 +69,6 @@ export function VideoFlowShell({
                 Dress
               </a>
             </nav>
-            <Button asChild color="gray" variant="soft">
-              <a href={modelsHref}>
-                <UserRound {...iconProps} />
-                Models
-              </a>
-            </Button>
-            <Button asChild color="gray" variant="soft">
-              <a href="/dashboard/packs">Packs</a>
-            </Button>
-            <Button asChild color="gray" variant="soft">
-              <a href="/dashboard/themes">
-                <Tags {...iconProps} />
-                Themes
-              </a>
-            </Button>
-            <Button asChild color="gray" variant="soft">
-              <a href="/dashboard/ai-models">AI models</a>
-            </Button>
-            <Button asChild color="gray" variant="soft">
-              <a href="/symbols">Symbols</a>
-            </Button>
-            <Button asChild color="gray" variant="soft">
-              <a href="/dashboard">
-                <ExternalLink {...iconProps} />
-                Dashboard
-              </a>
-            </Button>
             {onRefresh ? (
               <Button color="gray" variant="soft" onClick={onRefresh}>
                 <LoaderCircle {...iconProps} />

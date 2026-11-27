@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db.engine import get_engine, get_session, ping_db
-from backend.auth.operator import OperatorAuthMiddleware
+from backend.auth.operator import OperatorAuthMiddleware, operator_secret_ok, provided_operator_secret
 from backend.logging_config import configure_logging
 from backend.middleware.request_timing import RequestTimingMiddleware
 from backend.routers import auth as auth_router
@@ -56,6 +56,7 @@ from backend.cards_store import (
 from backend.cards import (
     CARD_PRICE_MAX,
     CardInfo,
+    CardStatus,
     CreateCardRequest,
     PhotoInfo,
     PhotoScratchSlot,
@@ -113,6 +114,20 @@ from backend.models_store import (
     upload_model_theme_avatar,
     upload_model_video,
 )
+from backend.theme_sessions_store import (
+    CreateThemeSessionRequest,
+    SetThemeSessionThemesRequest,
+    SetThemeSessionWindowRequest,
+    UpdateThemeSessionRequest,
+    create_theme_session,
+    delete_theme_session,
+    list_theme_sessions,
+    running_season_acronym,
+    running_theme_ids,
+    set_theme_session_themes,
+    set_theme_session_window,
+    update_theme_session,
+)
 from backend.themes_store import (
     CreateThemeRequest,
     ReorderThemesRequest,
@@ -149,6 +164,7 @@ from backend.photo_scratch_store import (
     ensure_photo_scratch_bootstrapped,
     list_photo_scratch_cards,
     set_published_card_price,
+    set_published_card_status,
 )
 from backend.symbols_store import (
     CreateSymbolGroupRequest,
@@ -497,6 +513,7 @@ class Job:
     logs: list[str] = field(default_factory=list)
     progress_token: str = ""
     key_provider: str = "byebg"
+    folder_base: str = ""
 
     def public(self) -> dict:
         return {
@@ -664,6 +681,7 @@ def enqueue(
     job_id: str | None = None,
     progress_token: str = "",
     key_provider: str = "byebg",
+    folder_base: str = "",
 ) -> Job:
     job = Job(
         id=job_id or uuid.uuid4().hex[:12],
@@ -672,6 +690,7 @@ def enqueue(
         action=action,
         progress_token=progress_token,
         key_provider=key_provider or "byebg",
+        folder_base=folder_base.strip(),
     )
     with jobs_lock:
         jobs[job.id] = job
@@ -800,8 +819,18 @@ def assets(db: Annotated[Session, Depends(get_session)]) -> dict:
 
 
 @app.get("/api/cards")
-def get_cards(db: Annotated[Session, Depends(get_session)]) -> dict:
-    cards = list_cards(db, ROOT, CARDS_DIR, MESH_DIR)
+def get_cards(
+    request: Request, db: Annotated[Session, Depends(get_session)]
+) -> dict:
+    # Public list is the store shelf. Owned unpublished cards stay off this
+    # endpoint and show on the creator board instead.
+    cards = list_cards(
+        db,
+        ROOT,
+        CARDS_DIR,
+        MESH_DIR,
+        player_catalog=not _operator_request(request),
+    )
     return {"cards": [card.dict() for card in cards]}
 
 
@@ -923,8 +952,12 @@ def remove_card_motion_poster(
 
 
 @app.get("/api/photo-scratch")
-def get_published_photo_scratch(db: Annotated[Session, Depends(get_session)]) -> dict:
-    cards = list_photo_scratch_cards(db, ROOT)
+def get_published_photo_scratch(
+    request: Request, db: Annotated[Session, Depends(get_session)]
+) -> dict:
+    cards = list_photo_scratch_cards(
+        db, ROOT, player_catalog=not _operator_request(request)
+    )
     return {"cards": [card.dict() for card in cards]}
 
 
@@ -989,10 +1022,31 @@ class SetSlotPriceRequest(BaseModel):
     card_price: int | None = Field(default=None, ge=0, le=CARD_PRICE_MAX)
 
 
+class SetSlotStatusRequest(BaseModel):
+    status: CardStatus
+
+
 @app.get("/api/cards/{card_id}/photo-scratch")
-def get_photo_scratch_slots(card_id: str, theme: str = "") -> dict:
+def get_photo_scratch_slots(
+    card_id: str,
+    db: Annotated[Session, Depends(get_session)],
+    theme: str = "",
+) -> dict:
     slots = list_photo_scratch_slots(CARDS_DIR, card_id, theme)
-    return {"slots": [slot.model_dump() for slot in slots]}
+    # Disk slots are the build pipeline. Catalog status exists only after
+    # publish-game; slots without a photo_scratch_cards row have no status.
+    published = {
+        info.slot_id: info.status
+        for info in list_photo_scratch_cards(db, ROOT)
+        if info.card_id == card_id
+    }
+    payload = []
+    for slot in slots:
+        data = slot.model_dump()
+        if slot.id in published:
+            data["status"] = published[slot.id]
+        payload.append(data)
+    return {"slots": payload}
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/publish-game")
@@ -1218,7 +1272,32 @@ def patch_photo_scratch_slot_price(
     slot = set_photo_scratch_slot_price(
         CARDS_DIR, card_id, slot_id, request.card_price, theme
     )
-    return slot.model_dump()
+    data = slot.model_dump()
+    for info in list_photo_scratch_cards(db, ROOT):
+        if info.card_id == card_id and info.slot_id == slot_id:
+            data["status"] = info.status
+            break
+    return data
+
+
+@app.patch("/api/cards/{card_id}/photo-scratch/{slot_id}/status")
+def patch_photo_scratch_slot_status(
+    card_id: str,
+    slot_id: str,
+    request: SetSlotStatusRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]+", card_id):
+        raise HTTPException(status_code=400, detail="Invalid card id")
+    if not re.fullmatch(r"slot_\d{2}", slot_id):
+        raise HTTPException(status_code=400, detail="Invalid slot_id")
+    info = set_published_card_status(db, ROOT, card_id, slot_id, request.status)
+    if info is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Publish this photo as a game before setting its status.",
+        )
+    return info.dict()
 
 
 @app.post("/api/cards/{card_id}/photo-scratch/generate")
@@ -1327,11 +1406,21 @@ def delete_photo_scratch_layer_endpoint(
     return slot.model_dump()
 
 
+def _operator_request(request: Request) -> bool:
+    return operator_secret_ok(provided_operator_secret(request.headers))
+
+
 @app.get("/api/models")
-def get_models(db: Annotated[Session, Depends(get_session)]) -> dict:
+def get_models(request: Request, db: Annotated[Session, Depends(get_session)]) -> dict:
+    from backend.models_store import PLAYER_MODEL_STATUSES
     from backend.services.promoter import lp_public_url
 
     models = list_models(db, MODELS_DIR)
+    # Deprecated stays in this public list so collection and profile links can
+    # resolve the creator. Store and swipe must skip anyone who is not published.
+    # Unpublished stays on the operator catalog only.
+    if not _operator_request(request):
+        models = [model for model in models if model.status in PLAYER_MODEL_STATUSES]
     return {
         "models": [model.dict() for model in models],
         "lpPublicUrl": lp_public_url(),
@@ -1570,7 +1659,12 @@ def remove_model_theme_avatar(
 
 
 @app.get("/api/collection")
-def get_collection(model: str = "", theme: str = "") -> dict:
+def get_collection(
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+    model: str = "",
+    theme: str = "",
+) -> dict:
     draft_themes: dict[str, str] = {}
     for flow in list_flows():
         card_id = str(flow.get("card_id") or "").strip()
@@ -1589,7 +1683,63 @@ def get_collection(model: str = "", theme: str = "") -> dict:
         draft_themes=draft_themes,
         model_filter=model or None,
         theme_filter=theme or None,
+        allowed_theme_ids=running_theme_ids(db),
+        player_catalog=not _operator_request(request),
     )
+
+
+@app.get("/api/theme-sessions")
+def get_theme_sessions(db: Annotated[Session, Depends(get_session)]) -> dict:
+    sessions = list_theme_sessions(db)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
+
+
+@app.post("/api/theme-sessions")
+def post_theme_session(
+    request: CreateThemeSessionRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = create_theme_session(db, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}")
+def put_theme_session(
+    session_id: str,
+    request: UpdateThemeSessionRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = update_theme_session(db, session_id, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}/themes")
+def put_theme_session_themes(
+    session_id: str,
+    request: SetThemeSessionThemesRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    session = set_theme_session_themes(db, session_id, request)
+    return session.model_dump(mode="json")
+
+
+@app.put("/api/theme-sessions/{session_id}/schedule")
+def put_theme_session_schedule(
+    session_id: str,
+    request: SetThemeSessionWindowRequest,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    sessions = set_theme_session_window(db, session_id, request)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
+
+
+@app.delete("/api/theme-sessions/{session_id}")
+def remove_theme_session(
+    session_id: str,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
+    sessions = delete_theme_session(db, session_id)
+    return {"sessions": [session.model_dump(mode="json") for session in sessions]}
 
 
 @app.get("/api/themes")
@@ -2555,6 +2705,7 @@ async def post_foil_n8n(
     import secrets
 
     from backend.services.foil_n8n import run_foil_pack_n8n, save_source
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import normalize_keyer, require_label
 
     if start != start or start < 0 or start > 60 * 60:
@@ -2562,14 +2713,15 @@ async def post_foil_n8n(
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or model.influencerName or model.label or model.id, "Name")
     influencer_code = require_label(code or model.id, "Code")
+    folder_base = pack_folder_base(influencer_name, running_season_acronym(db))
     chosen_keyer = normalize_keyer(keyer)
     source = save_source(ROOT, model.id, kind, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
     job = enqueue(
         "foil-n8n",
-        ["foil-n8n", model.id, kind, f"{start:.3f}", influencer_name, influencer_code],
-        lambda source=source, model_id=model.id, kind=kind, start=start, influencer_name=influencer_name, influencer_code=influencer_code, job_id=job_id, token=token: run_foil_pack_n8n(
+        ["foil-n8n", model.id, kind, f"{start:.3f}", influencer_name, influencer_code, folder_base],
+        lambda source=source, model_id=model.id, kind=kind, start=start, influencer_name=influencer_name, influencer_code=influencer_code, folder_base=folder_base, job_id=job_id, token=token: run_foil_pack_n8n(
             models_dir=MODELS_DIR,
             model_id=model_id,
             kind=kind,
@@ -2579,20 +2731,26 @@ async def post_foil_n8n(
             code=influencer_code,
             job_id=job_id,
             progress_token=token,
+            folder_base=folder_base,
         ),
         job_id=job_id,
         progress_token=token,
         key_provider=chosen_keyer,
+        folder_base=folder_base,
     )
     return job.public()
 
 
 @app.post("/api/internal/influencer-run")
-async def post_internal_influencer_run(request: Request) -> dict:
+async def post_internal_influencer_run(
+    request: Request,
+    db: Annotated[Session, Depends(get_session)],
+) -> dict:
     """n8n's form asks the Mac to run the creator steps. Docker cannot start After Effects."""
     import asyncio
     import secrets
 
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import FORM_RUN_TOKEN, normalize_keyer, require_label, run_form_steps
 
     token = request.headers.get("x-progress-token", "")
@@ -2607,6 +2765,9 @@ async def post_internal_influencer_run(request: Request) -> dict:
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
+    folder_base = str(payload.get("folderBase") or payload.get("folder_base") or "").strip()
+    if not folder_base:
+        folder_base = pack_folder_base(name, running_season_acronym(db))
     try:
         line = await asyncio.to_thread(
             run_form_steps,
@@ -2614,6 +2775,7 @@ async def post_internal_influencer_run(request: Request) -> dict:
             name=name,
             card_id=card,
             key_provider=normalize_keyer(str(payload.get("keyer") or "")),
+            folder_base=folder_base,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2632,6 +2794,7 @@ async def post_influencer_n8n(
     """Send an influencer name, id, and clip through the n8n creator steps."""
     import secrets
 
+    from backend.services.foil_packages import pack_folder_base
     from backend.services.influencer_n8n import (
         normalize_keyer,
         require_label,
@@ -2642,23 +2805,26 @@ async def post_influencer_n8n(
     model = get_model(db, MODELS_DIR, model_id)
     influencer_name = require_label(name or (model.influencerName or ""), "Name")
     influencer_id = require_label(card_id or model.id, "Id")
+    folder_base = pack_folder_base(influencer_name, running_season_acronym(db))
     chosen_keyer = normalize_keyer(keyer)
     clip = save_clip(ROOT, model.id, file.filename or "", await file.read())
     job_id = uuid.uuid4().hex[:12]
     token = secrets.token_urlsafe(24)
     job = enqueue(
         "influencer-n8n",
-        ["influencer-n8n", model.id, influencer_id, influencer_name],
-        lambda clip=clip, influencer_name=influencer_name, influencer_id=influencer_id, job_id=job_id, token=token: run_influencer_n8n(
+        ["influencer-n8n", model.id, influencer_id, influencer_name, folder_base],
+        lambda clip=clip, influencer_name=influencer_name, influencer_id=influencer_id, folder_base=folder_base, job_id=job_id, token=token: run_influencer_n8n(
             clip=clip,
             name=influencer_name,
             card_id=influencer_id,
             job_id=job_id,
             progress_token=token,
+            folder_base=folder_base,
         ),
         job_id=job_id,
         progress_token=token,
         key_provider=chosen_keyer,
+        folder_base=folder_base,
     )
     return job.public()
 
@@ -2715,6 +2881,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
     card = str(payload.get("id") or payload.get("card_id") or "")
     kind = str(payload.get("kind") or "")
     pack_model_id = str(payload.get("model_id") or "")
+    folder_base = str(payload.get("folderBase") or payload.get("folder_base") or "").strip() or job.folder_base
     clip_path = Path(str(payload.get("clip") or ""))
     if not clip_path.is_file():
         raise HTTPException(status_code=400, detail="Clip file was not found")
@@ -2740,6 +2907,7 @@ async def post_job_progress_run(job_id: str, request: Request) -> dict:
             models_dir=MODELS_DIR,
             report_line=report_line,
             key_provider=job.key_provider or "byebg",
+            folder_base=folder_base,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

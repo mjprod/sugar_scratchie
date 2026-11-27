@@ -136,6 +136,7 @@ def _row_to_info(
         tier=row.tier,
         replay_price=row.replay_price,
         max_win=row.max_win,
+        status=row.status if row.status in ("published", "unpublished") else "published",
     )
 
 
@@ -300,12 +301,17 @@ def list_cards(
     root: Path,
     cards_dir: Path,
     mesh_dir: Path,
+    *,
+    player_catalog: bool = False,
 ) -> list[CardInfo]:
+    # player_catalog drops unpublished rows. Owned unpublished cards resolve via the board.
     cards = [_original_card(root, cards_dir, mesh_dir)]
     rows = db.scalars(
         select(MotionCard).order_by(MotionCard.model_id.nullsfirst(), MotionCard.sort_order, MotionCard.id)
     ).all()
     for row in rows:
+        if player_catalog and row.status != "published":
+            continue
         info = _row_to_info(row, root, cards_dir, mesh_dir)
         if info is not None:
             cards.append(info)
@@ -449,7 +455,7 @@ def update_card(
         row.theme_id = _validate_theme_id(db, request.theme_id)
 
     _demote_unscoped_tier(row)
-    for field in ("price", "tier", "replay_price", "max_win"):
+    for field in ("price", "tier", "replay_price", "max_win", "status"):
         value = getattr(request, field)
         if value is not None:
             setattr(row, field, value)
@@ -764,14 +770,22 @@ def card_model_theme_ids(db: Session, card_id: str) -> tuple[str | None, str | N
     return row.model_id, row.theme_id
 
 
-def list_cards_standalone(root: Path, cards_dir: Path, mesh_dir: Path) -> list[CardInfo]:
+def list_cards_standalone(
+    root: Path,
+    cards_dir: Path,
+    mesh_dir: Path,
+    *,
+    player_catalog: bool = False,
+) -> list[CardInfo]:
     import backend.db.engine as db_engine
 
     db_engine.get_engine()
     assert db_engine.SessionLocal is not None
     session = db_engine.SessionLocal()
     try:
-        return list_cards(session, root, cards_dir, mesh_dir)
+        return list_cards(
+            session, root, cards_dir, mesh_dir, player_catalog=player_catalog
+        )
     finally:
         session.close()
 

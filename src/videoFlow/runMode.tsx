@@ -31,9 +31,13 @@ import {
   generatePhotoScratchLayer,
   photoScratchSlotIsDone,
   rejectPhotoScratchLayer,
+  CARD_STATUS_OPTIONS,
+  cardStatusOf,
   setPhotoScratchClothesRef,
   setPhotoScratchSlotPrice,
+  setPhotoScratchSlotStatus,
   setPhotoScratchSlotPrompt,
+  type CardStatus,
   slotLayerPrompt,
   uploadPhotoScratchLayer,
   type PhotoScratchImageChoice,
@@ -373,7 +377,6 @@ function BoomerangPanel({
   cardLabel,
   report,
   cardApproved,
-  seamlessLoop,
   busy,
   onBusy,
   onError,
@@ -384,7 +387,6 @@ function BoomerangPanel({
   cardLabel: string;
   report: BoomerangReport | null;
   cardApproved: boolean;
-  seamlessLoop: boolean;
   busy: boolean;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
@@ -419,73 +421,42 @@ function BoomerangPanel({
     }
   }
 
-  if (seamlessLoop && !applied) {
-    return (
-      <Flex direction="column" gap="3">
-        <Callout.Root color="blue">
-          <Callout.Text size="2">
-            This clip is not reversed. It plays forward only.
-            {cardApproved ? null : (
-              <>
-                {" "}
-                <strong>Continue</strong> to Create card.
-              </>
-            )}
-          </Callout.Text>
-        </Callout.Root>
-      </Flex>
-    );
-  }
-
   return (
     <Flex direction="column" gap="3">
       <Callout.Root color="blue">
         <Callout.Text size="2">
-          {seamlessLoop ? (
-            <>
-              This card still uses a forward-and-reverse boomerang. Undo it so the clip plays
-              forward only.
-            </>
-          ) : (
-            <>
-              Plays the first N seconds of the bikini clip and the dress clip forward, then the same
-              frames backwards. <strong>Create card</strong> publishes the version you approve here.
-              Keep the clips as-is when this card should stay a straight loop.
-            </>
-          )}
+          Plays the first N seconds of the bikini clip and the dress clip forward, then the same
+          frames backwards. <strong>Create card</strong> publishes the version you approve here.
+          Keep the clips as-is when this card should stay a straight loop.
         </Callout.Text>
       </Callout.Root>
       <Flex align="end" gap="3" wrap="wrap">
-        {seamlessLoop ? null : (
-          <>
-            <Field label="Forward seconds">
-              <TextField.Root
-                type="number"
-                min={BOOMERANG_MIN_SECONDS}
-                max={BOOMERANG_MAX_SECONDS}
-                step={0.5}
-                value={seconds}
-                onChange={(event) => setSeconds(event.currentTarget.value)}
-              />
-            </Field>
-            <Button
-              disabled={disabled || !secondsValid}
-              type="button"
-              onClick={() => void post("boomerang", { seconds: parsedSeconds })}
-            >
-              {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
-              {applied ? "Re-make boomerang" : "Make boomerang"}
-            </Button>
-            <Button
-              disabled={disabled}
-              type="button"
-              variant="soft"
-              onClick={() => void post("boomerang", { skip: true, seconds: BOOMERANG_DEFAULT_SECONDS })}
-            >
-              Keep as-is
-            </Button>
-          </>
-        )}
+        <Field label="Forward seconds">
+          <TextField.Root
+            type="number"
+            min={BOOMERANG_MIN_SECONDS}
+            max={BOOMERANG_MAX_SECONDS}
+            step={0.5}
+            value={seconds}
+            onChange={(event) => setSeconds(event.currentTarget.value)}
+          />
+        </Field>
+        <Button
+          disabled={disabled || !secondsValid}
+          type="button"
+          onClick={() => void post("boomerang", { seconds: parsedSeconds })}
+        >
+          {busy ? <Loader2 {...iconProps} className="spin" /> : <RotateCcw {...iconProps} />}
+          {applied ? "Re-make boomerang" : "Make boomerang"}
+        </Button>
+        <Button
+          disabled={disabled}
+          type="button"
+          variant="soft"
+          onClick={() => void post("boomerang", { skip: true, seconds: BOOMERANG_DEFAULT_SECONDS })}
+        >
+          Keep as-is
+        </Button>
         {applied ? (
           <Button
             disabled={disabled}
@@ -532,19 +503,13 @@ function BoomerangPanel({
   );
 }
 
-const HIDDEN_RUN_STEPS = new Set<VideoFlowStepKey>(["boomerang"]);
-
 function nextPipelineStep(
   flow: VideoFlowJson,
   current: VideoFlowStepKey,
 ): VideoFlowStepKey | null {
-  let index = flow.pipeline.indexOf(current);
-  while (index >= 0 && index < flow.pipeline.length - 1) {
-    index += 1;
-    const step = flow.pipeline[index];
-    if (step && !HIDDEN_RUN_STEPS.has(step)) return step;
-  }
-  return null;
+  const index = flow.pipeline.indexOf(current);
+  if (index < 0 || index >= flow.pipeline.length - 1) return null;
+  return flow.pipeline[index + 1] ?? null;
 }
 
 function formatStepJobError(log: string | undefined, step: VideoFlowStepKey | null): string {
@@ -950,6 +915,53 @@ function photoScratchSlotStatusBadge(slot: PhotoScratchSlot): {
   if (!slot.mesh) return { color: "orange", label: "3 layers · needs mesh" };
   if (!slot.has_symbols) return { color: "orange", label: "3 layers · needs symbols" };
   return { color: "orange", label: "3 layers · Picture Flow" };
+}
+
+function SlotStatusControl({
+  cardId,
+  slotId,
+  status,
+  onSaved,
+}: {
+  cardId: string;
+  slotId: string;
+  status?: CardStatus;
+  onSaved: (status: CardStatus) => void;
+}) {
+  const current = cardStatusOf({ status });
+  const [draft, setDraft] = useState<CardStatus>(current);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setDraft(current), [current, slotId]);
+  return (
+    <Flex align="center" gap="2" wrap="wrap">
+      <select
+        aria-label="Photo card status"
+        disabled={busy}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value as CardStatus)}
+        style={{ fontSize: 12, minHeight: 28 }}
+      >
+        {CARD_STATUS_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <Button
+        type="button"
+        size="1"
+        disabled={busy || draft === current}
+        onClick={() => {
+          setBusy(true);
+          void setPhotoScratchSlotStatus(cardId, slotId, draft)
+            .then((result) => onSaved(cardStatusOf(result)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Save status
+      </Button>
+    </Flex>
+  );
 }
 
 function SlotPriceInput({
@@ -1997,6 +2009,12 @@ function CardPhotosPanel({
     }
   }
 
+  function handleSlotStatusSaved(slotId: string, status: CardStatus) {
+    setSlots((prev) =>
+      prev.map((slot) => (slot.id === slotId ? { ...slot, status } : slot)),
+    );
+  }
+
   const pendingByLayer = (layer: PhotoScratchLayerType) =>
     slots.filter((s) => pendingChoices(s, layer).length > 0);
 
@@ -2629,6 +2647,14 @@ function CardPhotosPanel({
                         value={slot.card_price}
                         onCommit={(next) => handleSlotPriceCommit(slot.id, next)}
                       />
+                      {slot.status ? (
+                        <SlotStatusControl
+                          cardId={cardId.trim()}
+                          slotId={slot.id}
+                          status={slot.status}
+                          onSaved={(next) => handleSlotStatusSaved(slot.id, next)}
+                        />
+                      ) : null}
                       <Badge color={status.color} variant="soft">
                         {status.label}
                       </Badge>
@@ -3101,10 +3127,6 @@ export function RunMode(props: RunModeProps) {
   const canUseDressVideo = dressOnWavespeed ? canUseWavespeed : canUseGrok;
   const actionIsInteractive =
     actionStep === "symbols" || actionStep === "boomerang";
-  const grokSeamlessLoop =
-    backgroundVideoModel === "grok-imagine" ||
-    backgroundVideoModel === "grok-imagine-video" ||
-    backgroundVideoModel === "grok-imagine-video-1.5";
 
   const meshCompareArtifacts = useMemo((): MeshCompareEntry[] => {
     if (flowState?.mesh_compare?.length) {
@@ -3453,13 +3475,6 @@ export function RunMode(props: RunModeProps) {
     return nodeId ? nodeStates[nodeId] ?? "locked" : "locked";
   }
 
-  useEffect(() => {
-    if (activeNode !== "boomerang") return;
-    const next = nextPipelineStep(flow, "boomerang");
-    const nodeId = next ? stepToNodeMap[next] : stepToNodeMap.dress;
-    if (nodeId) setActiveNode(nodeId);
-  }, [activeNode, flow, stepToNodeMap]);
-
   function selectStep(step: VideoFlowStepKey | "source") {
     if (step === "source") {
       setMeshFocusOverride(true);
@@ -3493,7 +3508,7 @@ export function RunMode(props: RunModeProps) {
               <span>Source image & card id</span>
             </span>
           </button>
-          {flow.pipeline.filter((step) => !HIDDEN_RUN_STEPS.has(step)).map((step, index) => {
+          {flow.pipeline.map((step, index) => {
             const status = stepListStatus(step);
             const node = flow.nodes.find((entry) => entry.step === step);
             const badge = flowStepBadge(status);
@@ -3643,9 +3658,7 @@ export function RunMode(props: RunModeProps) {
                 <Heading size="4">{activeMeta.title}</Heading>
               </Flex>
               <Text color="gray" size="2">
-                {activeNode === "boomerang" && grokSeamlessLoop
-                  ? "This clip plays forward. It is not reversed into a boomerang."
-                  : activeMeta.description}
+                {activeMeta.description}
               </Text>
             </div>
 
@@ -3654,9 +3667,8 @@ export function RunMode(props: RunModeProps) {
             <Callout.Text>
               {activeStep === "boomerang" ? (
                 <>
-                  {grokSeamlessLoop
-                    ? "This step is finished. The clip plays forward and is not reversed."
-                    : "This step is finished. Use the controls below to make a boomerang or keep the clips as-is."}
+                  This step is finished. Use the controls below to make a boomerang or keep the clips
+                  as-is.
                   {cardApproved ? " Changing the clips means you should run Finalize again." : null}
                 </>
               ) : activeStep === "picture" ? (
@@ -4099,7 +4111,6 @@ export function RunMode(props: RunModeProps) {
             cardLabel={cardLabel.trim()}
             report={flowState?.boomerang ?? null}
             cardApproved={cardApproved}
-            seamlessLoop={grokSeamlessLoop}
             busy={importBusy || jobBusy}
             onBusy={setImportBusy}
             onError={onError}
@@ -4187,9 +4198,7 @@ export function RunMode(props: RunModeProps) {
               <>
                 <Text color="gray" size="2">
                   Card already published. Re-importing replaces both videos and keeps mesh ready.
-                  {grokSeamlessLoop
-                    ? "The clip plays forward and is not reversed."
-                    : "Change the loop on the Boomerang step."}
+                  Change the loop on the Boomerang step.
                 </Text>
               </>
             ) : cardApproved && !cardArtifactsReady ? (
@@ -4488,17 +4497,13 @@ export function RunMode(props: RunModeProps) {
                     ? " — use the picture you added"
                     : " — use this picture"
                   : actionStep === "boomerang"
-                    ? grokSeamlessLoop
-                      ? " — the clip plays forward; continue to Create card"
-                      : " — make a boomerang or keep the clips, then continue"
+                    ? " — make a boomerang or keep the clips, then continue"
                     : " — watch the clip, then continue"
                 : actionStatus === "review" && actionStep === "mesh"
                   ? " — compare trackers and pick one"
                   : actionStatus === "ready"
                   ? actionStep === "boomerang"
-                    ? grokSeamlessLoop
-                      ? " — the clip plays forward; continue to Create card"
-                      : " — make a boomerang or keep the clips as-is"
+                    ? " — make a boomerang or keep the clips as-is"
                     : actionIsInteractive
                       ? " — place points on the mesh, then save"
                       : " — ready to run"

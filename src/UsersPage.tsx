@@ -1,8 +1,6 @@
 import {
   AlertTriangle,
   Ban,
-  ExternalLink,
-  Home,
   LoaderCircle,
   ShieldCheck,
   Trash2,
@@ -37,7 +35,6 @@ import {
   type WalletCurrency,
   type WalletTransaction,
 } from "./shared/users";
-import { operatorLogout } from "./shared/api";
 
 const iconProps = { size: 16, strokeWidth: 2 } as const;
 const PAGE_SIZE = 50;
@@ -303,38 +300,6 @@ export function UsersPage() {
               >
                 <LoaderCircle {...iconProps} />
                 Refresh
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/models">Models</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/packs">Packs</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard/themes">Themes</a>
-              </Button>
-              <Button asChild variant="soft">
-                <a href="/dashboard">
-                  <ExternalLink {...iconProps} />
-                  Dashboard
-                </a>
-              </Button>
-              <Button
-                color="gray"
-                variant="outline"
-                onClick={() => {
-                  void operatorLogout().finally(() => {
-                    window.location.assign("/dashboard/login");
-                  });
-                }}
-              >
-                Sign out
-              </Button>
-              <Button asChild>
-                <a href="/">
-                  <Home {...iconProps} />
-                  Home
-                </a>
               </Button>
             </Flex>
           </Flex>

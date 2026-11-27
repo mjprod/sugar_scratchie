@@ -2,6 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { Box, Flex, Text } from "@radix-ui/themes";
 import { type ReactNode, useEffect, useState } from "react";
 import { fetchOperatorSession } from "./shared/api";
+import { OperatorFrame } from "./OperatorNav";
 
 type Props = {
   children: ReactNode;
@@ -11,6 +12,11 @@ type Props = {
  * Gates /dashboard/* behind an operator cookie (or optional VITE_DASHBOARD_TOKEN).
  * Login lives at /dashboard/login and is not wrapped.
  */
+function isCanvasRoute() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return path === "/dress" || path === "/dashboard/video-flow/dress";
+}
+
 export function OperatorGate({ children }: Props) {
   const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
 
@@ -43,7 +49,10 @@ export function OperatorGate({ children }: Props) {
     };
   }, []);
 
-  if (state === "ok") return <>{children}</>;
+  if (state === "ok") {
+    if (isCanvasRoute()) return children;
+    return <OperatorFrame>{children}</OperatorFrame>;
+  }
 
   return (
     <main className="dashboard-root">

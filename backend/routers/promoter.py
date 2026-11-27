@@ -1,8 +1,9 @@
-"""Public invite check and pre-influencer confirm for the join page.
+"""Public invite check and pre-influencer form for the join landing page.
 
 The bearer token stays on the server. The page only learns whether the
-manager's code is still open. Confirm upserts pre_influencers and notifies
-MJ Promoter. Order landing page is called by MJ Promoter with an internal token.
+manager's code is still open. Form submit upserts pre_influencers and notifies
+MJ Promoter. Default / order landing page and package routes are called by
+MJ Promoter with an internal token.
 """
 
 from __future__ import annotations
@@ -38,17 +39,32 @@ _MODELS_DIR = Path(__file__).resolve().parents[2] / "public" / "models"
 _CODE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SLUG = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_HANDLE = re.compile(r"^@?[A-Za-z0-9._-]{1,80}$")
 
 
-class ConfirmPreInfluencerBody(BaseModel):
+# The catalog label is "first last". Each part must leave room for the other
+# name (at least one character) and the space between them. The joined name is
+# checked again because the two parts share one CATALOG_LABEL_MAX budget.
+_NAME_PART_MAX = CATALOG_LABEL_MAX - 2
+
+
+class FormPreInfluencerBody(BaseModel):
     invite_code: str = Field(min_length=4, max_length=64)
     email: str = Field(min_length=3, max_length=320)
-    full_name: str = Field(min_length=1, max_length=CATALOG_LABEL_MAX)
+    first_name: str = Field(min_length=1, max_length=_NAME_PART_MAX)
+    last_name: str = Field(min_length=1, max_length=_NAME_PART_MAX)
+    social_handle: str = Field(min_length=1, max_length=80)
 
 
 class InviteeBody(BaseModel):
     invite_code: str = Field(min_length=4, max_length=64)
     invitee_email: str = Field(min_length=3, max_length=320)
+
+
+class DefaultLandingPageBody(BaseModel):
+    invite_code: str = Field(min_length=4, max_length=64)
+    invitee_email: str | None = Field(default=None, max_length=320)
+    invitee_username: str | None = Field(default=None, max_length=80)
 
 
 class OrderLandingPageBody(InviteeBody):
@@ -77,6 +93,24 @@ def _normalize_name(raw: str) -> str:
     return name
 
 
+def _catalog_full_name(first_name: str, last_name: str) -> str:
+    """Join form names into the catalog label, which cannot exceed the label cap."""
+    full_name = _normalize_name(f"{first_name} {last_name}")
+    if len(full_name) > CATALOG_LABEL_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Name must be at most {CATALOG_LABEL_MAX} characters.",
+        )
+    return full_name
+
+
+def _normalize_handle(raw: str) -> str:
+    handle = raw.strip().lstrip("@")
+    if not handle or not _HANDLE.fullmatch(handle):
+        raise HTTPException(status_code=422, detail="A valid social handle is required.")
+    return handle
+
+
 def _internal_token() -> str:
     return os.environ.get("MJPROMOTER_INTERNAL_TOKEN", "").strip()
 
@@ -100,6 +134,42 @@ def _require_open_invite(code: str, email: str):
     return result
 
 
+def _optional_email(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return _normalize_email(str(raw))
+
+
+def _optional_username(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return _normalize_handle(str(raw))
+
+
+def _default_demo_url(
+    *,
+    invite_code: str,
+    invitee_email: str | None,
+    invitee_username: str | None,
+    db: Session,
+) -> str:
+    demo = pick_default_modal_demo(db)
+    if demo is not None:
+        demo_model, demo_card = demo
+        return build_landing_page_url(
+            model=demo_model,
+            card=demo_card,
+            invite_code=invite_code,
+            invitee_email=invitee_email,
+            invitee_username=invitee_username,
+        )
+    return build_landing_page_url(
+        invite_code=invite_code,
+        invitee_email=invitee_email,
+        invitee_username=invitee_username,
+    )
+
+
 @router.get("/invites/{code}")
 def get_invite(code: str):
     normalized = _normalize_code(code)
@@ -114,14 +184,59 @@ def get_invite(code: str):
     }
 
 
-@router.post("/pre-influencers/confirm")
-def confirm_pre_influencer(
-    body: ConfirmPreInfluencerBody,
+@router.post("/pre-influencers/default-landing-page")
+def default_landing_page(
+    body: DefaultLandingPageBody,
+    db: Annotated[Session, Depends(get_session)],
+    _: None = Depends(_require_internal_token),
+):
+    """Return the shared demo /join URL for Forms. Does not advance steps.
+
+    Username-only invites omit ``invitee_email``. The join form collects the
+    address; promoter verifies it when the person becomes an influencer.
+    """
+    code = _normalize_code(body.invite_code)
+    email = _optional_email(body.invitee_email)
+    username = _optional_username(body.invitee_username)
+    if not email and not username:
+        raise HTTPException(status_code=422, detail="A username or email is required.")
+    result = lookup_invite(code)
+    if not result.ok:
+        raise HTTPException(status_code=result.status_code, detail=result.detail)
+    if email and result.invitee_email and result.invitee_email != email:
+        raise HTTPException(
+            status_code=400,
+            detail="This invite was sent to a different email.",
+        )
+
+    asset_link = _default_demo_url(
+        invite_code=code,
+        invitee_email=email,
+        invitee_username=username,
+        db=db,
+    )
+    return {
+        "ok": True,
+        "asset_link": asset_link,
+        "invite_code": code,
+        "invitee_email": email,
+        "invitee_username": username,
+        "survey_step": 0,
+    }
+
+
+@router.post("/pre-influencers/form")
+def submit_pre_influencer_form(
+    body: FormPreInfluencerBody,
     db: Annotated[Session, Depends(get_session)],
 ):
+    """Forms step: create the pre-influencer + empty model, notify step 1."""
     code = _normalize_code(body.invite_code)
     email = _normalize_email(str(body.email))
-    full_name = _normalize_name(body.full_name)
+    first_name = _normalize_name(body.first_name)
+    last_name = _normalize_name(body.last_name)
+    social_handle = _normalize_handle(body.social_handle)
+    full_name = _catalog_full_name(first_name, last_name)
     _require_open_invite(code, email)
 
     row = db.query(PreInfluencer).filter(PreInfluencer.invite_code == code).one_or_none()
@@ -130,6 +245,7 @@ def confirm_pre_influencer(
             id=uuid4(),
             email=email,
             full_name=full_name,
+            social_handle=social_handle,
             invite_code=code,
             status="confirmed",
             survey_step=1,
@@ -142,6 +258,7 @@ def confirm_pre_influencer(
                 detail="This invite was already confirmed with a different email.",
             )
         row.full_name = full_name
+        row.social_handle = social_handle
         row.updated_at = utcnow()
         # Never move a building/live / later-step row backwards.
         if row.survey_step < 1:
@@ -151,7 +268,7 @@ def confirm_pre_influencer(
         elif row.status not in ("building", "live") and row.survey_step < 2:
             row.status = "confirmed"
 
-    # Empty operator model so Send influencer / foil n8n can run as step 2.
+    # Empty operator model so foil n8n can run as step 2.
     row.model_id = ensure_pre_influencer_model(
         db,
         _MODELS_DIR,
@@ -178,6 +295,7 @@ def confirm_pre_influencer(
         "preInfluencerId": str(row.id),
         "email": row.email,
         "fullName": row.full_name,
+        "socialHandle": row.social_handle,
         "inviteCode": row.invite_code,
         "status": row.status,
         "surveyStep": row.survey_step,
@@ -230,7 +348,7 @@ def package_workspace(
     if row.survey_step < 1:
         raise HTTPException(
             status_code=400,
-            detail="Confirm email and name before making the package.",
+            detail="Submit the landing-page form before making the package.",
         )
 
     row.model_id = ensure_pre_influencer_model(
@@ -292,7 +410,7 @@ def make_package(
     if row.survey_step < 1:
         raise HTTPException(
             status_code=400,
-            detail="Confirm email and name before making the package.",
+            detail="Submit the landing-page form before making the package.",
         )
 
     row.model_id = ensure_pre_influencer_model(
@@ -375,12 +493,12 @@ def order_landing_page(
     if row.survey_step < 1:
         raise HTTPException(
             status_code=400,
-            detail="Confirm email and name before ordering a landing page.",
+            detail="Submit the landing-page form before ordering a landing page.",
         )
     if row.survey_step < 2:
         raise HTTPException(
             status_code=400,
-            detail="Make the n8n package before ordering a landing page.",
+            detail="Finish n8n before ordering a landing page.",
         )
 
     # Pre-migration live rows finished Order LP before Make package existed.
@@ -393,7 +511,7 @@ def order_landing_page(
     if legacy_live:
         asset_link = (row.asset_link or "").strip() or build_landing_page_url()
     else:
-        # Reuse the confirm-time model (create if an older row never got one).
+        # Reuse the form-time model (create if an older row never got one).
         model_id = ensure_pre_influencer_model(
             db,
             _MODELS_DIR,
@@ -406,7 +524,7 @@ def order_landing_page(
                 status_code=409,
                 detail=(
                     f"Pack video not ready on model {model_id}. "
-                    "Finish Make package before ordering the landing page."
+                    "Finish n8n before ordering the landing page."
                 ),
             )
 

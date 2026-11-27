@@ -48,6 +48,9 @@ class _UserCardState:
         ):
             self.played[(row.card_kind, row.card_id)] = row
 
+    def unlocked(self, kind: str, card_id: str) -> bool:
+        return (kind, card_id) in self.owned or (kind, card_id) in self.played
+
     def describe(self, kind: str, card_id: str, price: int) -> dict[str, Any]:
         owned = (kind, card_id) in self.owned
         row = self.played.get((kind, card_id))
@@ -59,21 +62,43 @@ class _UserCardState:
         }
 
 
-def _static_card(photo: PhotoScratchCard, state: _UserCardState) -> dict[str, Any]:
+def _visible(status: str, state: _UserCardState, kind: str, card_id: str) -> bool:
+    """Published cards always show. Unpublished ones stay for owners / prior plays."""
+    return status == "published" or state.unlocked(kind, card_id)
+
+
+def _static_card(
+    photo: PhotoScratchCard, state: _UserCardState, *, for_sale: bool
+) -> dict[str, Any]:
     price = photo.card_price or 0
     return {
         "id": photo.id,
         "slotId": photo.slot_id,
         "label": photo.label,
         "price": price,
+        # First-play offer. False when the card or influencer is off the store.
+        "forSale": for_sale,
         **state.describe("photo", photo.id, price),
     }
 
 
 def _motion_card(
-    card: MotionCard, photos: list[PhotoScratchCard], state: _UserCardState
+    card: MotionCard,
+    photos: list[PhotoScratchCard],
+    state: _UserCardState,
+    *,
+    creator_for_sale: bool,
 ) -> dict[str, Any]:
-    statics = [_static_card(photo, state) for photo in photos]
+    # Photo forSale also needs the parent motion published (via motion_for_sale).
+    motion_for_sale = creator_for_sale and card.status == "published"
+    statics = [
+        _static_card(
+            photo,
+            state,
+            for_sale=motion_for_sale and photo.status == "published",
+        )
+        for photo in photos
+    ]
     described = state.describe("motion", card.id, card.price)
     return {
         "id": card.id,
@@ -83,8 +108,12 @@ def _motion_card(
         "price": card.price,
         "replayPrice": card.replay_price,
         "maxWin": card.max_win,
+        # Locked + forSale false is not a purchase. Unlocked cards still replay.
+        "forSale": motion_for_sale,
         **described,
         "status": "unlocked" if described["unlocked"] else "locked",
+        # Unpublished photos the player does not own are filtered out above, so
+        # this total shrinks for strangers when a photo is unpublished.
         "staticCardsOwned": sum(1 for s in statics if s["owned"]),
         "staticCardsTotal": len(statics),
         "staticCards": statics,
@@ -100,21 +129,25 @@ def creator_board(
     """Everything the creator screen needs for one player, in one response.
 
     Prices are diamonds. A card is `unlocked` once revealed from a pack or
-    played (the first play is the purchase / unlock). `freePlayable` follows the
-    theme free-play rule: played once and bought, pack-revealed, or free.
+    played (the first play is the purchase / unlock). `forSale` is false when
+    the influencer or the card is off the store: locked cards must not offer a
+    first play. Unpublished cards are omitted unless this player already owns
+    or has played them. `freePlayable` follows the theme free-play rule: played
+    once and bought, pack-revealed, or free.
     """
     creator = db.get(Creator, model_id)
-    if creator is None:
+    # Unpublished is hidden from buyers too (use deprecated to keep the profile).
+    if creator is None or creator.status == "unpublished":
         raise HTTPException(status_code=404, detail="Creator not found.")
 
-    cards = list(
+    all_cards = list(
         db.scalars(
             select(MotionCard)
             .where(MotionCard.model_id == model_id)
             .order_by(MotionCard.sort_order, MotionCard.id)
         )
     )
-    card_ids = [card.id for card in cards]
+    card_ids = [card.id for card in all_cards]
     photos_by_card: dict[str, list[PhotoScratchCard]] = {card_id: [] for card_id in card_ids}
     if card_ids:
         for photo in db.scalars(
@@ -126,6 +159,18 @@ def creator_board(
     photo_ids = [p.id for photos in photos_by_card.values() for p in photos]
     state = _UserCardState(db, user.id, card_ids + photo_ids)
 
+    cards = [
+        card
+        for card in all_cards
+        if _visible(card.status, state, "motion", card.id)
+    ]
+    for card_id, photos in list(photos_by_card.items()):
+        photos_by_card[card_id] = [
+            photo
+            for photo in photos
+            if _visible(photo.status, state, "photo", photo.id)
+        ]
+
     theme_ids = sorted({card.theme_id for card in cards if card.theme_id})
     themes_by_id = (
         {theme.id: theme for theme in db.scalars(select(Theme).where(Theme.id.in_(theme_ids)))}
@@ -134,8 +179,14 @@ def creator_board(
     )
     theme_entries: dict[str | None, dict[str, Any]] = {}
     ultra: dict[str, Any] | None = None
+    creator_for_sale = creator.status == "published"
     for card in cards:
-        described = _motion_card(card, photos_by_card[card.id], state)
+        described = _motion_card(
+            card,
+            photos_by_card.get(card.id, []),
+            state,
+            creator_for_sale=creator_for_sale,
+        )
         if card.tier == "ultra":
             ultra = described
             continue
@@ -178,9 +229,10 @@ def creator_board(
             "onlyfansUrl": creator.onlyfans_url,
             "joinedAt": _ms(creator.created_at),
         },
+        # Deprecated creators keep the board, but the pack is not offered for sale.
         "pack": (
             {"id": pack.id, "price": pack.diamond_cost, "priceAmountCents": pack.price_amount_cents}
-            if pack is not None
+            if pack is not None and creator.status == "published"
             else None
         ),
         "motionCardsOwned": sum(1 for card in cards if ("motion", card.id) in state.owned),

@@ -2907,8 +2907,8 @@ export function VideoTransitionPlayground() {
               <button type="button" className="secondary-button" onClick={() => void loadCards()}>
                 Reload cards
               </button>
-              <a className="secondary-button" href="/dashboard">
-                Dashboard
+              <a className="secondary-button" href="/">
+                Home
               </a>
             </div>
           </section>
